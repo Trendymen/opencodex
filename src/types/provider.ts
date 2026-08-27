@@ -197,6 +197,7 @@ export interface OcxProviderConfig {
    * preserved after it, and parallel calls stay together with the reasoning turn that produced them.
    */
   requiresAdjacentResponsesToolResults?: boolean;
+  inferResponsesMessagePhaseModels?: string[];
   /**
    * Provider fallback for canonical Fast capability over an OpenAI `service_tier` wire.
    * This pure tri-state feeds catalog publication, routing eligibility, compatibility

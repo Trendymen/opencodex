@@ -34,17 +34,16 @@ function reasoningTextOf(item: Record<string, unknown>): string {
 /** Move a reasoning item's content channel into the summary channel. */
 function reasoningItemToSummaryShape(item: Record<string, unknown>): Record<string, unknown> {
   if (item.type !== "reasoning") return item;
-  // `encrypted_content` is opaque, state-bearing provider data, so the entire item must retain its
-  // upstream shape unless that backend has an explicit replay contract permitting a rewrite. This
-  // defensively protects content-channel backends that do issue blobs when the client replays the
-  // stored item. The delta rewrite can still provide the expandable trace for the live turn.
-  // DeepSeek — the provider this rewrite was verified against — is `statelessResponses` and issues
-  // no blob, so it is unaffected.
-  if (typeof item.encrypted_content === "string" && item.encrypted_content.length > 0) return item;
   const text = reasoningTextOf(item);
   // Items that already use the summary channel (or carry no content text at
   // all) are left untouched: rewriting them could clear a valid summary.
   if (text.length === 0) return item;
+  // Opaque provider state must round-trip verbatim. Keep the raw content alongside the
+  // summary so a terminal snapshot cannot erase the live summary delta before Codex renders it.
+  if (typeof item.encrypted_content === "string" && item.encrypted_content.length > 0) {
+    if (Array.isArray(item.summary) && item.summary.length > 0) return item;
+    return { ...item, summary: [{ type: "summary_text", text }] };
+  }
   const next: Record<string, unknown> = { ...item };
   delete next.content;
   next.summary = [{ type: "summary_text", text }];

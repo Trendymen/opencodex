@@ -40,6 +40,17 @@ const JSON_UPSTREAM = {
   ],
 };
 
+const OPAQUE_REASONING_STATE = "deepseek-opaque-state";
+
+const OPAQUE_SSE_UPSTREAM_FRAMES = [
+  `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_opaque", status: "in_progress", output: [] } })}\n\n`,
+  `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: "rs_opaque", status: "in_progress", content: [], summary: [] } })}\n\n`,
+  `data: ${JSON.stringify({ type: "response.reasoning_text.delta", content_index: 0, delta: "think", item_id: "rs_opaque", output_index: 0 })}\n\n`,
+  `data: ${JSON.stringify({ type: "response.reasoning_text.done", content_index: 0, text: "think", item_id: "rs_opaque", output_index: 0 })}\n\n`,
+  `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: { type: "reasoning", id: "rs_opaque", status: "completed", content: [{ type: "reasoning_text", text: "think" }], summary: [], encrypted_content: OPAQUE_REASONING_STATE } })}\n\n`,
+  `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_opaque", status: "completed", output: [{ type: "reasoning", id: "rs_opaque", status: "completed", content: [{ type: "reasoning_text", text: "think" }], summary: [], encrypted_content: OPAQUE_REASONING_STATE }] } })}\n\n`,
+];
+
 async function runHandleResponses(body: Record<string, unknown>, upstreamBody: unknown, contentType: string) {
   const encoder = new TextEncoder();
   const payload = typeof upstreamBody === "string"
@@ -67,6 +78,21 @@ async function runHandleResponses(body: Record<string, unknown>, upstreamBody: u
     { model: "", provider: "" },
     { abortSignal: AbortSignal.timeout(5_000) },
   );
+}
+
+function sseEvents(text: string): Record<string, unknown>[] {
+  return text.split("\n\n").flatMap(frame => {
+    const data = frame.split("\n").find(line => line.startsWith("data: "))?.slice(6);
+    if (!data || data === "[DONE]") return [];
+    try {
+      const parsed: unknown = JSON.parse(data);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? [parsed as Record<string, unknown>]
+        : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 describe("passthrough reasoning summary rewrite honors hideThinkingSummary", () => {
@@ -117,5 +143,27 @@ describe("passthrough reasoning summary rewrite honors hideThinkingSummary", () 
     const text = await response.text();
     expect(text).toContain('"summary":[{"type":"summary_text","text":"think"}]');
     expect(text).not.toContain('"content":[{"type":"reasoning_text","text":"think"}]');
+  });
+
+  test("SSE: requested summary preserves opaque DeepSeek state while exposing the terminal summary", async () => {
+    const response = await runHandleResponses(
+      { model: "deepseek-v4-flash", input: "ping", stream: true, reasoning: { effort: "max", summary: "detailed" } },
+      OPAQUE_SSE_UPSTREAM_FRAMES.join(""),
+      "text/event-stream",
+    );
+    const events = sseEvents(await response.text());
+    expect(events.some(event => event.type === "response.reasoning_summary_text.delta")).toBe(true);
+    const expectedReasoning = {
+      type: "reasoning",
+      id: "rs_opaque",
+      status: "completed",
+      content: [{ type: "reasoning_text", text: "think" }],
+      summary: [{ type: "summary_text", text: "think" }],
+      encrypted_content: OPAQUE_REASONING_STATE,
+    };
+    const done = events.find(event => event.type === "response.output_item.done");
+    expect(done?.item).toEqual(expectedReasoning);
+    const completed = events.find(event => event.type === "response.completed");
+    expect((completed?.response as { output?: unknown[] } | undefined)?.output?.[0]).toEqual(expectedReasoning);
   });
 });

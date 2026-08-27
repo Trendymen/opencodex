@@ -210,10 +210,8 @@ describe("responses reasoning summary channel rewrite", () => {
     expect(rewrite("[1,2]")).toBe("[1,2]");
   });
 
-  // `encrypted_content` is opaque, state-bearing provider data, so preserve the complete item
-  // shape defensively when the client replays it. This rewrite's round-trip was verified against
-  // DeepSeek, which is stateless and issues no blob; providers that do issue one joined later
-  // through `preserveReasoningContentModels`.
+  // `encrypted_content` is opaque, state-bearing provider data. Preserve it and the original
+  // content verbatim while adding the summary Desktop needs for its terminal snapshot.
   describe("items carrying encrypted_content", () => {
     const blobItem = {
       type: "reasoning",
@@ -224,24 +222,43 @@ describe("responses reasoning summary channel rewrite", () => {
       summary: [],
     };
 
-    test("are returned byte-for-byte on output_item.done", () => {
+    test("keep opaque state and raw content while adding a summary on output_item.done", () => {
       const payload = { type: "response.output_item.done", output_index: 0, item: blobItem };
-      expect(apply(payload)).toEqual(payload);
+      expect(apply(payload)).toEqual({
+        ...payload,
+        item: { ...blobItem, summary: [{ type: "summary_text", text: "thinking" }] },
+      });
     });
 
-    test("are returned byte-for-byte inside response.completed output", () => {
+    test("keep opaque state and raw content while adding a summary inside response.completed", () => {
       const payload = {
         type: "response.completed",
         response: { id: "resp_1", output: [blobItem] },
       };
-      expect(apply(payload)).toEqual(payload);
+      expect(apply(payload)).toEqual({
+        ...payload,
+        response: { ...payload.response, output: [{ ...blobItem, summary: [{ type: "summary_text", text: "thinking" }] }] },
+      });
     });
 
-    test("are returned byte-for-byte through the non-streaming document rewrite", () => {
+    test("keep opaque state and raw content while adding a summary through the non-streaming document rewrite", () => {
       const doc = { id: "resp_1", object: "response", output: [blobItem] };
-      expect(rewriteReasoningSummaryInJson(doc)).toBe(doc);
+      const expected = {
+        ...doc,
+        output: [{ ...blobItem, summary: [{ type: "summary_text", text: "thinking" }] }],
+      };
+      expect(rewriteReasoningSummaryInJson(doc)).toEqual(expected);
       const json = JSON.stringify(doc);
-      expect(rewriteReasoningSummaryInJsonString(json)).toBe(json);
+      expect(rewriteReasoningSummaryInJsonString(json)).toBe(JSON.stringify(expected));
+    });
+
+    test("preserve an upstream summary when opaque state also carries raw content", () => {
+      const item = {
+        ...blobItem,
+        summary: [{ type: "summary_text", text: "upstream summary" }],
+      };
+      const payload = { type: "response.output_item.done", output_index: 0, item };
+      expect(apply(payload)).toEqual(payload);
     });
 
     // Only the stored item is protected: the live trace Codex renders comes from the delta events,
