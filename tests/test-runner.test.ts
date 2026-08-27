@@ -95,6 +95,7 @@ describe("bun test argv", () => {
   test("the default full suite quarantines load-sensitive files into one-worker lanes", () => {
     const plan = resolveBunTestPlan([]);
     expect(plan).toHaveLength(SERIAL_FULL_SUITE_FILES.length + 1);
+    expect(SERIAL_FULL_SUITE_FILES).toContain("server-auth.test.ts");
     expect(plan[0]?.label).toBe("parallel suite");
     expect(plan[0]?.args).toContain("--parallel=4");
     expect(plan[0]?.args).toContain("./tests/");
