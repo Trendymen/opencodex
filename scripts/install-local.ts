@@ -15,6 +15,7 @@ import {
   type ServiceInstallationProbe,
 } from "../src/service";
 import { statusWinswRaw, type WinswStatus } from "../src/lib/winsw";
+import { runWithBundledDependencies } from "./install-local-vendor";
 
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 
@@ -304,15 +305,17 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
   run(["bun", "run", "build:gui"]);
 
   console.log("==> Packing immutable local snapshot...");
-  const packInvocation = commandInvocation("npm", ["pack", "--json"]);
-  const pack = Bun.spawnSync([packInvocation.file, ...packInvocation.args], {
-    cwd: root,
-    stdout: "pipe",
-    stderr: "inherit",
-    ...(packInvocation.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+  const tarball = runWithBundledDependencies(join(root, "package.json"), () => {
+    const packInvocation = commandInvocation("npm", ["pack", "--json"]);
+    const pack = Bun.spawnSync([packInvocation.file, ...packInvocation.args], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "inherit",
+      ...(packInvocation.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+    });
+    if (pack.exitCode !== 0) throw new Error(`npm pack failed (${pack.exitCode})`);
+    return validatedPackedTarball(root, new TextDecoder().decode(pack.stdout));
   });
-  if (pack.exitCode !== 0) throw new Error(`npm pack failed (${pack.exitCode})`);
-  const tarball = validatedPackedTarball(root, new TextDecoder().decode(pack.stdout));
 
   try {
     const serviceProbe = probeLocalServiceInstallation();
@@ -340,7 +343,11 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
       replace: () => {
         console.log("==> Replacing global package...");
         run(["npm", "uninstall", "-g", name], { allowFailure: true });
-        run(["npm", "install", "-g", tarball]);
+        // Every dependency ships inside the tarball (bundleDependencies), so
+        // lifecycle scripts can only repeat work the pack step already did —
+        // the bun postinstall download in particular. Skip them; the launcher
+        // keeps its install.js fallback for a genuinely missing binary.
+        run(["npm", "install", "-g", "--ignore-scripts", tarball]);
         run(["ocx", "--version"]);
         localInstallAfterReplace(serviceWasInstalled, restart);
       },
