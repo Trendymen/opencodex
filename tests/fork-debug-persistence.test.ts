@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { appendDebugLogLine, getDebugLogEntries, resetDebugLogBufferForTests } from "../src/lib/debug-log-buffer";
 import { providerDebugLogPath } from "../src/fork/debug-persistence";
 
@@ -49,6 +49,7 @@ describe("fork provider debug persistence", () => {
     // and now remains append-only until the operator clears or archives the file.
     const seedLine = JSON.stringify({ seq: 0, at: 0, line: "x".repeat(4096) });
     const seeded = Array.from({ length: 1100 }, () => seedLine).join("\n") + "\n";
+    mkdirSync(dirname(providerDebugLogPath()), { recursive: true, mode: 0o700 });
     writeFileSync(providerDebugLogPath(), seeded, { mode: 0o600 });
     appendDebugLogLine("fork-persist-after-threshold");
     const appended = readFileSync(providerDebugLogPath(), "utf8");

@@ -525,10 +525,15 @@ export function persistInboundResponsesDebugSummary(args: {
   const textCaptureTruncated = observerSummary.textCaptureTruncated === true;
   const { textSamples: _s, textCaptureTruncated: _t, ...summary } =
     observerSummary as unknown as Record<string, unknown>;
+  const now = new Date();
+  const debugDay = now.toISOString().slice(0, 10);
+  const debugHour = String(now.getUTCHours()).padStart(2, "0");
+  const artifactDayDir = join("provider-debug-artifacts", debugDay, debugHour);
+  const timelineDayDir = join("provider-debug", debugDay, debugHour, "timelines");
   let textRef: string | undefined;
   if (args.writeArtifact !== false && textSamples.length > 0) {
-    const dir = join(getConfigDir(), "provider-debug-artifacts");
-    textRef = join("provider-debug-artifacts", `${Date.now()}-${randomUUID()}.jsonl`);
+    const dir = join(getConfigDir(), artifactDayDir);
+    textRef = join(artifactDayDir, `${Date.now()}-${randomUUID()}.jsonl`);
     try {
       recordOwnedConfigPath(getConfigDir(), dir);
       mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -545,6 +550,38 @@ export function persistInboundResponsesDebugSummary(args: {
       textRef = undefined;
     }
   }
+  // Also register the day-hour parents so removeOwnedConfigState's manifest loop reaches the
+  // deepest timelines directory even if some intermediate directories do not yet exist.
+  recordOwnedConfigPath(getConfigDir(), join(getConfigDir(), "provider-debug-artifacts"));
+  recordOwnedConfigPath(getConfigDir(), join(getConfigDir(), "provider-debug-artifacts", debugDay));
+  recordOwnedConfigPath(getConfigDir(), join(getConfigDir(), "provider-debug"));
+  recordOwnedConfigPath(getConfigDir(), join(getConfigDir(), "provider-debug", debugDay));
+  const sourceTimeline = summary.timeline as Array<Record<string, unknown>>;
+  const timelineRows = sourceTimeline.filter(
+    row => typeof (row as { type?: unknown }).type === "string"
+      && String((row as { type?: unknown }).type).endsWith(".delta"),
+  );
+  let timelineRef: string | undefined;
+  if (timelineRows.length > 0) {
+    const dir = join(getConfigDir(), timelineDayDir);
+    timelineRef = join(timelineDayDir, `timeline-${Date.now()}-${randomUUID()}.jsonl`);
+    try {
+      recordOwnedConfigPath(getConfigDir(), dir);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      hardenArtifactPath(dir, 0o700);
+      const timelinePath = join(getConfigDir(), timelineRef);
+      const payloadLines = timelineRows.map(row => `${JSON.stringify(row)}\n`).join("");
+      appendFileSync(timelinePath, payloadLines, { encoding: "utf8", mode: 0o600 });
+      hardenArtifactPath(timelinePath, 0o600);
+      summary.timeline = sourceTimeline.filter(
+        row => !(typeof (row as { type?: unknown }).type === "string"
+          && String((row as { type?: unknown }).type).endsWith(".delta")),
+      );
+    } catch {
+      try { if (timelineRef) unlinkSync(join(getConfigDir(), timelineRef)); } catch { /* best-effort */ }
+      timelineRef = undefined;
+    }
+  }
   const entry: Record<string, unknown> = {
     ...summary,
     // Downstream observations are a distinct kind so operator tooling can separate the
@@ -552,6 +589,7 @@ export function persistInboundResponsesDebugSummary(args: {
     ...(args.stage === "downstream-after-rewrite" ? { kind: "inbound-downstream-summary" } : {}),
     ...(args.stage ? { stage: args.stage } : {}),
     ...(textRef ? { textRef } : {}),
+    timelineRef,
     ...(textCaptureTruncated ? { textCaptureTruncated: true } : {}),
     host: context(args.host),
     pathname: context(args.pathname),
