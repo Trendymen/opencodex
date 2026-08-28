@@ -47,7 +47,7 @@ describe("responses reasoning summary channel rewrite", () => {
     });
   });
 
-  test("moves reasoning item content into summary on output_item.done", () => {
+  test("adds a summary while retaining reasoning content on output_item.done", () => {
     expect(apply({
       type: "response.output_item.done",
       output_index: 0,
@@ -65,12 +65,13 @@ describe("responses reasoning summary channel rewrite", () => {
         type: "reasoning",
         id: "rs_1",
         status: "completed",
+        content: [{ type: "reasoning_text", text: "thinking" }],
         summary: [{ type: "summary_text", text: "thinking" }],
       },
     });
   });
 
-  test("moves reasoning item content into summary inside response.completed", () => {
+  test("adds a summary while retaining reasoning content inside response.completed", () => {
     const payload = {
       type: "response.completed",
       response: {
@@ -93,6 +94,7 @@ describe("responses reasoning summary channel rewrite", () => {
       type: "reasoning",
       id: "rs_1",
       status: "completed",
+      content: [{ type: "reasoning_text", text: "thinking" }],
       summary: [{ type: "summary_text", text: "thinking" }],
     });
     expect(result.response.output[1]).toEqual(payload.response.output[1]);
@@ -145,7 +147,7 @@ describe("responses reasoning summary channel rewrite", () => {
     });
   });
 
-  test("rewrites reasoning items inside a bare completed response document", () => {
+  test("adds summaries to reasoning items inside a bare completed response document", () => {
     const doc = {
       id: "resp_1",
       object: "response",
@@ -166,12 +168,13 @@ describe("responses reasoning summary channel rewrite", () => {
       type: "reasoning",
       id: "rs_1",
       status: "completed",
+      content: [{ type: "reasoning_text", text: "thinking" }],
       summary: [{ type: "summary_text", text: "thinking" }],
     });
     expect(result.output[1]).toEqual(doc.output[1]);
   });
 
-  test("rewrites reasoning items inside an SSE completed event document", () => {
+  test("adds summaries to reasoning items inside an SSE completed event document", () => {
     const doc = {
       type: "response.completed",
       response: {
@@ -193,6 +196,7 @@ describe("responses reasoning summary channel rewrite", () => {
       type: "reasoning",
       id: "rs_1",
       status: "completed",
+      content: [{ type: "reasoning_text", text: "thinking" }],
       summary: [{ type: "summary_text", text: "thinking" }],
     });
   });

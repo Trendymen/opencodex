@@ -31,7 +31,7 @@ function reasoningTextOf(item: Record<string, unknown>): string {
     .join("");
 }
 
-/** Move a reasoning item's content channel into the summary channel. */
+/** Add a summary channel to a content-channel reasoning item without dropping its raw data. */
 function reasoningItemToSummaryShape(item: Record<string, unknown>): Record<string, unknown> {
   if (item.type !== "reasoning") return item;
   const text = reasoningTextOf(item);
@@ -44,10 +44,7 @@ function reasoningItemToSummaryShape(item: Record<string, unknown>): Record<stri
     if (Array.isArray(item.summary) && item.summary.length > 0) return item;
     return { ...item, summary: [{ type: "summary_text", text }] };
   }
-  const next: Record<string, unknown> = { ...item };
-  delete next.content;
-  next.summary = [{ type: "summary_text", text }];
-  return next;
+  return { ...item, summary: [{ type: "summary_text", text }] };
 }
 
 /**
