@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { compareReleaseTags } from "../scripts/release-notes";
+import { forkVersionTagError } from "../src/fork/version-policy.mjs";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 
@@ -96,6 +97,11 @@ describe("release version line", () => {
     const highest = highestReleaseTag(tags);
     expect(highest).not.toBeNull();
 
+    const forkTagError = forkVersionTagError(version, tags, tagPointsAtHead);
+    if (forkTagError !== undefined) {
+      expect(forkTagError).toBeNull();
+      return;
+    }
     const ordering = compareReleaseTags("v" + version, highest!);
     if (ordering === 0) {
       // Legal only on the release commit that tag names.

@@ -23,6 +23,21 @@ import {
 
 const MODEL_DISCOVERY_MAX_FILTER_VALUES = 256;
 const MODEL_DISCOVERY_MAX_FILTER_STRING_LENGTH = 1_024;
+const ZHIPU_BIGMODEL_CODEX_PROVIDER = "zhipu-bigmodel-codex";
+const ZHIPU_BIGMODEL_CODEX_BASE_URL = "https://open.bigmodel.cn/api/v1";
+const ZHIPU_BIGMODEL_CODEX_DISCOVERY: ProviderModelDiscoverySpec = {
+  envelopeKey: "models",
+  modelIdKey: "slug",
+};
+
+function isZhipuBigmodelCodexDiscoveryProvider(
+  providerName: string,
+  provider: Pick<OcxProviderConfig, "baseUrl" | "adapter">,
+): boolean {
+  return providerName === ZHIPU_BIGMODEL_CODEX_PROVIDER
+    && provider.adapter === "openai-responses"
+    && provider.baseUrl.replace(/\/+$/, "") === ZHIPU_BIGMODEL_CODEX_BASE_URL;
+}
 
 export interface ResolvedProviderModelDiscovery {
   spec?: ProviderModelDiscoverySpec;
@@ -108,6 +123,15 @@ export function providerModelDiscoverySpecError(spec: ProviderModelDiscoverySpec
       return "discovery path must not contain parent-directory segments";
     }
   }
+  if ((spec.envelopeKey === undefined) !== (spec.modelIdKey === undefined)) {
+    return "envelopeKey and modelIdKey must be configured together";
+  }
+  if (spec.envelopeKey !== undefined && spec.envelopeKey !== "models") {
+    return 'envelopeKey must be "models" when configured';
+  }
+  if (spec.modelIdKey !== undefined && spec.modelIdKey !== "slug") {
+    return 'modelIdKey must be "slug" when configured';
+  }
   const queryEntries = Object.entries(spec.query ?? {});
   if (queryEntries.length > 32) return "discovery query may contain at most 32 entries";
   if (queryEntries.some(([key, value]) => !key.trim() || key.length > 128 || typeof value !== "string" || value.length > 512)) {
@@ -145,7 +169,9 @@ export function resolveProviderModelDiscovery(
   const entry = namedEntry
     ? (providerMatchesRegistryTransport(providerName, provider) ? namedEntry : undefined)
     : registryEntryForProviderDestination(provider);
-  const spec = entry?.modelDiscovery;
+  const spec = isZhipuBigmodelCodexDiscoveryProvider(providerName, provider)
+    ? ZHIPU_BIGMODEL_CODEX_DISCOVERY
+    : entry?.modelDiscovery;
   return {
     ...(spec ? { spec } : {}),
     maxResponseBytes: positiveIntegerAtMost(spec?.maxResponseBytes, MODEL_DISCOVERY_MAX_RESPONSE_BYTES),
@@ -414,7 +440,11 @@ export function extractProviderModelItems(
     if (value.length > limit) return { ok: false, reason: "too_many_models" };
     data = value;
   } else {
-    const envelope = extractModelEnvelopeRows(value, discovery.maxModels, ["data"]);
+    const envelope = extractModelEnvelopeRows(
+      value,
+      discovery.maxModels,
+      discovery.spec?.envelopeKey === "models" ? ["models"] : ["data"],
+    );
     if (!envelope.ok) return envelope;
     data = envelope.rows;
     siblings = buildSiblingIndex(value, limit);
@@ -426,7 +456,9 @@ export function extractProviderModelItems(
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return { ok: false, reason: "invalid_shape" };
     }
-    const id = (raw as { id?: unknown }).id;
+    const id = discovery.spec?.modelIdKey === "slug"
+      ? (raw as { slug?: unknown }).slug
+      : (raw as { id?: unknown }).id;
     if (!isValidModelDiscoveryModelId(id)) return { ok: false, reason: "invalid_shape" };
     const prefix = discovery.spec?.stripIdPrefix;
     let finalId = id;
@@ -434,7 +466,9 @@ export function extractProviderModelItems(
       finalId = finalId.slice(prefix.length);
       if (!isValidModelDiscoveryModelId(finalId)) continue;
     }
-    const item = finalId === id ? raw as ProviderModelsApiItem : { ...(raw as ProviderModelsApiItem), id: finalId };
+    const item = finalId === id && discovery.spec?.modelIdKey !== "slug"
+      ? raw as ProviderModelsApiItem
+      : { ...(raw as ProviderModelsApiItem), id: finalId };
     // Admission is decided on the ORIGINAL `data[]` row, before any sibling
     // enrichment. Merging first let a `models[]` entry supply the very field a
     // provider filter requires — reproduced against the real Chutes policy,
