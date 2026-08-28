@@ -1,5 +1,7 @@
 /** In-memory ring buffer of debug log lines for `ocx debug logs` / GUI tailing. */
 
+import { persistDebugEntry } from "../fork/debug-persistence";
+
 export interface DebugLogEntry {
   /** Monotonic cursor for pagination; survives same-millisecond bursts. */
   seq: number;
@@ -30,6 +32,7 @@ export function appendDebugLogLine(line: string): void {
   const entry: DebugLogEntry = { seq: nextSeq++, at: Date.now(), line: retainedLine };
   buffer.push(entry);
   bufferBytes += retainedUtf8Bytes(retainedLine);
+  persistDebugEntry(entry);
   while (buffer.length > MAX_LINES) removeOldestEntry();
   enforceAppOwnedMemoryBudget();
   for (const listener of listeners.keys()) {

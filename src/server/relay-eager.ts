@@ -165,10 +165,12 @@ export function relaySseEagerBounded(
     if (!activeRewrite) return new Uint8Array(0);
     // Decoder-flushed bytes logically follow everything already decoded.
     let tail = frameBuffer + rewriteDecoder!.decode();
-    const rewritten = activeRewrite(tail);
-    // Multiple emitted blocks must stay separately framed (#893 review);
-    // join places the delimiter only between blocks, never after the last.
-    tail = rewritten.join(tail.includes("\r\n") ? "\r\n\r\n" : "\n\n");
+    const rewritten = tail.length > 0 ? activeRewrite(tail) : [];
+    const flushed = activeRewrite.flush?.() ?? [];
+    const delimiter = tail.includes("\r\n") ? "\r\n\r\n" : "\n\n";
+    const rewrittenText = rewritten.join(delimiter);
+    const flushedText = flushed.map(block => block + delimiter).join("");
+    tail = rewrittenText + (rewrittenText && flushedText ? delimiter : "") + flushedText;
     frameBuffer = "";
     if (rewriteBudget && frameBufferBytes > 0) {
       rewriteBudget.releaseRetained(frameBufferBytes, { kind: "live_transient" });
@@ -409,14 +411,17 @@ export function relaySseEagerBounded(
         // committing to the synthetic terminal (adversarial review blocker).
         const tail = encodeFailedTail(err);
         if (tail && !cancelled && !upstream.signal.aborted) {
-          // Inspection and client framing have separate bounded parsers. If
-          // inspection resynchronized after an oversized frame and observed a
-          // later real terminal, it still must not suppress a terminal delivery
-          // to the client. Only accounting remains tied to the inspected result.
+          // Flush any held phase/nested rewrite output before the safe failure tail.
+          const retainedTail = activeRewrite ? flushRewriteTail() : new Uint8Array(0);
+          // Inspection and client framing have separate bounded parsers. A later
+          // inspected terminal never suppresses the client's required delivery tail.
           if (!hooks.sawTerminal()) syntheticKind = "failed";
           deliveryFallbackSent = true;
-          queuedBytes += tail.byteLength;
-          try { controllerRef?.enqueue(tail); } catch { /* client already torn down */ }
+          queuedBytes += retainedTail.byteLength + tail.byteLength;
+          try {
+            if (retainedTail.byteLength > 0) controllerRef?.enqueue(retainedTail);
+            controllerRef?.enqueue(tail);
+          } catch { /* client already torn down */ }
           try { controllerRef?.close(); } catch { /* client already torn down */ }
         }
       }

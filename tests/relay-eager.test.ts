@@ -13,6 +13,7 @@ import {
 } from "../src/server/relay";
 import { relaySseEagerBounded, type EagerRelayHooks } from "../src/server/relay-eager";
 import { createTranslatorBudget } from "../src/lib/translator-budget";
+import type { SseBlockRewrite } from "../src/server/sse-payload-rewrite";
 import type { RequestLogContext } from "../src/server/request-log";
 import { MAX_CLIENT_SSE_FRAME_BYTES } from "../src/server/sse-frame-buffer";
 
@@ -191,6 +192,21 @@ describe("relaySseEagerBounded — inline payload rewrite (#864)", () => {
     // belong to the gateway's retained connection and must not hold Codex open.
     expect(text).not.toContain("trailing-partial");
     expect(text.endsWith("data: [DONE]\n\n")).toBe(true);
+  });
+
+  test("flushes retained block-rewrite output at EOF", async () => {
+    const up = controlledUpstream();
+    const { hooks } = makeHooks();
+    hooks.rewriteBlocks = Object.assign(
+      (block: string): readonly string[] => block.includes('"type":"held"') ? [] : [block],
+      { flush: (): readonly string[] => ['data: {"type":"flush"}'] },
+    ) as SseBlockRewrite;
+    const reading = readAll(relaySseEagerBounded(up.stream, new AbortController(), hooks));
+
+    up.push(enc.encode('data: {"type":"held"}\n\n'));
+    up.close();
+
+    expect(await reading).toContain('data: {"type":"flush"}');
   });
 
   test("identity rewrite preserves framing byte-for-byte", async () => {
@@ -1287,6 +1303,22 @@ describe("relaySseEagerBounded — error paths", () => {
     expect(rec.synthetics).toEqual(["failed"]);
     expect(rec.dones).toBe(1);
     expect(upstreamAc.signal.aborted).toBe(true);
+  });
+
+  test("flushes held block-rewrite output before its synthetic failed tail", async () => {
+    const { hooks } = makeHooks();
+    hooks.rewriteBlocks = Object.assign(
+      (block: string): readonly string[] => block.includes('"type":"held"') ? [] : [block],
+      { flush: (): readonly string[] => ['data: {"type":"flush"}'] },
+    ) as SseBlockRewrite;
+    const up = controlledUpstream();
+    const relayed = relaySseEagerBounded(up.stream, new AbortController(), hooks);
+
+    up.push(enc.encode('data: {"type":"held"}\n\n'));
+    up.fail(new Error("socket reset"));
+    const output = await readAll(relayed);
+
+    expect(output.indexOf('"type":"flush"')).toBeLessThan(output.indexOf('"type":"response.failed"'));
   });
 
   test("(090-2) upstream failure after a protocol terminal emits no duplicate terminal", async () => {

@@ -186,6 +186,7 @@ export const SERIAL_FULL_SUITE_FILES = [
   "issue-452-empty-503.test.ts",
   "openai-provider-option-e2e.test.ts",
   "release-helper.test.ts",
+  "server-auth.test.ts",
   "update-stop-first.test.ts",
 ] as const;
 

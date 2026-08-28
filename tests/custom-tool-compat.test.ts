@@ -142,9 +142,32 @@ describe("routed custom-tool compatibility", () => {
   test("converted exec preserves the JavaScript input contract", () => {
     const description = convertedInputDescription("exec");
     expect(description).toContain("JavaScript");
-    expect(description).toContain("tools.exec_command");
+    expect(description).toContain("await tools.<name>(...)");
     expect(description).toContain("text(...)");
-    expect(description).toContain("do not provide a bare shell command");
+    expect(description).toContain("Never emit nested tool names");
+  });
+
+  test("lowers custom output content parts to the function_call_output string wire", () => {
+    const rewritten = rewriteRoutedCustomToolsForUpstream({
+      tools: [{ type: "custom", name: "exec", description: "Run", format: { type: "text" } }],
+      input: [
+        { type: "custom_tool_call", id: "ctc_1", call_id: "call_1", name: "exec", input: "1 + 1" },
+        {
+          type: "custom_tool_call_output",
+          call_id: "call_1",
+          output: [
+            { type: "input_text", text: "completed" },
+            { type: "refusal", refusal: "policy denied" },
+          ],
+        },
+      ],
+    });
+    const body = rewritten.body as { input: Array<Record<string, unknown>> };
+    expect(body.input[1]).toMatchObject({
+      type: "function_call_output",
+      call_id: "call_1",
+      output: "completed\npolicy denied",
+    });
   });
 
   test("other converted custom tools keep the generic raw-input contract", () => {

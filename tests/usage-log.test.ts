@@ -113,6 +113,31 @@ describe("usage log", () => {
     expect(readUsageEntries()[0]?.attempts?.[0]?.recoveryKinds).toEqual(["rate-limit-429"]);
   });
 
+  test("persists the agent-task-recovery kind on attempts", () => {
+    const entry: PersistedUsageEntry = {
+      requestId: "ocx-agent-task-recovery-kind",
+      timestamp: 1,
+      provider: "openai",
+      model: "gpt-5.6-terra",
+      status: 200,
+      durationMs: 4,
+      usageStatus: "reported",
+      attempts: [{
+        ordinal: 1,
+        provider: "openai",
+        model: "gpt-5.6-terra",
+        adapter: "openai-responses",
+        status: 200,
+        durationMs: 4,
+        sendCount: 2,
+        recoveryKinds: ["agent-task-recovery", "agent-task-recovery"],
+        usageStatus: "reported",
+      }],
+    };
+    appendUsageEntry(entry);
+    expect(readUsageEntries()[0]?.attempts?.[0]?.recoveryKinds).toEqual(["agent-task-recovery"]);
+  });
+
   test("persists the empty-completion recovery kind on attempts", () => {
     const entry: PersistedUsageEntry = {
       requestId: "ocx-empty-completion-kind",
@@ -161,6 +186,19 @@ describe("usage log", () => {
     };
     appendUsageEntry(entry);
     expect(readUsageEntries()[0]?.attempts?.[0]?.recoveryKinds).toEqual(["opaque-blob-rejection"]);
+  });
+
+  test("keeps the GUI recovery-kind map exhaustive with the persisted backend union", () => {
+    const backendSource = readFileSync(join(import.meta.dir, "../src/usage/log.ts"), "utf8");
+    const guiSource = readFileSync(join(import.meta.dir, "../gui/src/pages/Logs.tsx"), "utf8");
+    const backendBlock = /export type AttemptRecoveryKind =([\s\S]*?);\n\nexport interface PersistedUsageAttempt/.exec(backendSource)?.[1];
+    const guiBlock = /const RECOVERY_KIND_KEYS = \{([\s\S]*?)\n\} as const satisfies Record<AttemptRecoveryKind, string>/.exec(guiSource)?.[1];
+
+    expect(backendBlock).toBeDefined();
+    expect(guiBlock).toBeDefined();
+    const backendKinds = [...backendBlock!.matchAll(/\|\s*"([^"]+)"/g)].map(match => match[1]).sort();
+    const guiKinds = [...guiBlock!.matchAll(/^\s*"([^"]+)":/gm)].map(match => match[1]).sort();
+    expect(guiKinds).toEqual(backendKinds);
   });
 
   /** Build one minimal persisted-usage JSONL line for the given request id. */

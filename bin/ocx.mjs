@@ -17,6 +17,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";
 import { npmInvocation } from "../src/update/npm-invocation.mjs";
+import { forkUpdateDecision } from "../src/fork/version-policy.mjs";
 import {
   npmCachePreflightFailureMessage,
   runNpmCachePreflight,
@@ -136,9 +137,14 @@ function runNpmSelfUpdate() {
   const latest = latestResult.status === 0 ? latestResult.stdout.trim() : "";
 
   console.log(`opencodex v${current} (installed via npm, tag ${tag})`);
-  if (latest && latest === current) {
+  const forkDecision = forkUpdateDecision(latest || null, current);
+  if (forkDecision === "same") {
     console.log(`Already on the latest ${tag} version (v${latest}).`);
     process.exit(0);
+  }
+  if (forkDecision === "unresolved") {
+    console.error("opencodex: could not resolve the registry version for this fork build; aborting before stopping the proxy.");
+    process.exit(1);
   }
 
   const cachePreflight = runNpmCachePreflight();

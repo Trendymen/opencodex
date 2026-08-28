@@ -62,6 +62,28 @@ const launcherSource = readFileSync(join(import.meta.dir, "..", "bin", "ocx.mjs"
 const serverSource = readFileSync(join(import.meta.dir, "..", "src", "server", "index.ts"), "utf8");
 const dispatchSource = readFileSync(join(import.meta.dir, "..", "src", "cli", "dispatch.ts"), "utf8");
 
+/**
+ * The recovery integration replaces npm with a fake executable through PATH. Some Bun runners
+ * prepend their selected Node runtime directory when resolving the bare `node` command, which
+ * hides that fake and can invoke the real npm instead. Skip only where that fixture cannot be
+ * represented; runners that preserve the supplied PATH order still exercise the full recovery.
+ */
+function bunSpawnPreservesSuppliedPathPrecedence(): boolean {
+  const delimiter = process.platform === "win32" ? ";" : ":";
+  const marker = process.platform === "win32" ? "C:\\ocx-test-path-marker" : "/ocx-test-path-marker";
+  const suppliedPath = `${marker}${delimiter}${process.env.PATH ?? process.env.Path ?? ""}`;
+  const probe = Bun.spawnSync(["node", "-e", "process.stdout.write(process.env.PATH ?? process.env.Path ?? '')"], {
+    env: { ...process.env, PATH: suppliedPath },
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (probe.exitCode !== 0) return false;
+  const observedPath = new TextDecoder().decode(probe.stdout);
+  return observedPath === marker || observedPath.startsWith(`${marker}${delimiter}`);
+}
+
+const canExerciseFakeNpmRecovery = process.platform !== "win32" && bunSpawnPreservesSuppliedPathPrecedence();
+
 describe("update stops the running proxy before replacing files", () => {
   test("a failed cache pre-flight aborts before the stop callback can run", () => {
     let stopped = false;
@@ -159,7 +181,7 @@ describe("update stops the running proxy before replacing files", () => {
     expect(updateSource).toContain("runtimeTrusted");
   });
 
-  test.skipIf(process.platform === "win32")(
+  test.skipIf(!canExerciseFakeNpmRecovery)(
     "npm launcher restarts the stopped runtime after a staged update failure",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "ocx-update-recovery-"));

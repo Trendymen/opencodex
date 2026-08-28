@@ -65,6 +65,40 @@ describe("sanitizeReasoningInputContent scoping", () => {
     expect("encrypted_content" in out[0]!).toBe(false);
     expect(out[0]!.content).toEqual([]);
   });
+
+  test("native GPT replay drops a raw third-party opaque reasoning blob but retains its own summary blob", () => {
+    const out = inputOf(sanitizeReasoningInputContent({
+      model: "gpt-5.6-terra",
+      input: [
+        reasoningItem({ id: "rs_deepseek", encrypted_content: "third-party-opaque-state" }),
+        { type: "reasoning", id: "rs_openai", summary: [], encrypted_content: "gAAAA-openai-issued-state" },
+      ],
+    }, { stripRawContentBackedEncryptedContent: true }));
+
+    expect(out).toEqual([
+      { type: "reasoning", id: "rs_deepseek", content: [] },
+      { type: "reasoning", id: "rs_openai", summary: [], encrypted_content: "gAAAA-openai-issued-state" },
+    ]);
+  });
+
+  test("native GPT replay preserves an opaque blob when content has no reasoning_text", () => {
+    const out = inputOf(sanitizeReasoningInputContent({
+      model: "gpt-5.6-terra",
+      input: [{
+        type: "reasoning",
+        id: "rs_non_raw_content",
+        content: [{ type: "output_text", text: "not raw reasoning" }],
+        encrypted_content: "opaque-non-raw-state",
+      }],
+    }, { stripRawContentBackedEncryptedContent: true }));
+
+    expect(out).toEqual([{
+      type: "reasoning",
+      id: "rs_non_raw_content",
+      content: [],
+      encrypted_content: "opaque-non-raw-state",
+    }]);
+  });
 });
 
 describe("DeepSeek Responses replay keeps reasoning on the wire", () => {
@@ -120,5 +154,30 @@ describe("DeepSeek Responses replay keeps reasoning on the wire", () => {
     const body = buildBody(provider);
     const item = (body.input as Record<string, unknown>[])[0]!;
     expect(item.content).toEqual([]);
+  });
+
+  test("a canonical OpenAI continuation removes an interrupted DeepSeek opaque reasoning token", () => {
+    const provider = { ...providerConfigSeed(getProviderRegistryEntry("openai-apikey")!), apiKey: "sk-test" };
+    const built = createResponsesPassthroughAdapter(provider).buildRequest({
+      modelId: "gpt-5.6-terra",
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: {
+        model: "gpt-5.6-terra",
+        input: [
+          reasoningItem({ id: "rs_interrupted_deepseek", encrypted_content: "deepseek-opaque-token" }),
+          { type: "reasoning", id: "rs_prior_gpt", summary: [], encrypted_content: "gAAAA-openai-issued-state" },
+          { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+        ],
+      },
+    } as Parameters<ReturnType<typeof createResponsesPassthroughAdapter>["buildRequest"]>[0], { headers: new Headers() });
+    const body = JSON.parse(String(built.body)) as { input: Record<string, unknown>[] };
+
+    expect(body.input).toEqual([
+      { type: "reasoning", id: "rs_interrupted_deepseek", content: [] },
+      { type: "reasoning", id: "rs_prior_gpt", summary: [], encrypted_content: "gAAAA-openai-issued-state" },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+    ]);
   });
 });

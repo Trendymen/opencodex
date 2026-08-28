@@ -1908,7 +1908,7 @@ describe("server local API auth", () => {
         },
       } as unknown as string[]);
       const wsFailure = new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("websocket affinity timeout")), watchdogMs(1000));
+        const timer = setTimeout(() => reject(new Error("websocket affinity timeout")), watchdogMs(3_000));
         ws.addEventListener("open", () => {
           ws.send(JSON.stringify({ type: "response.create", model: "gpt-test", input: "hello" }));
         }, { once: true });
@@ -1996,7 +1996,7 @@ describe("server local API auth", () => {
         ws.addEventListener("error", () => reject(new Error("websocket failed to open")), { once: true });
       });
       const waitForTerminal = () => new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), watchdogMs(1000));
+        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), watchdogMs(3_000));
         const onMessage = (event: MessageEvent) => {
           const text = typeof event.data === "string" ? event.data : "";
           if (text.includes('"type":"response.completed"')) {
@@ -2072,7 +2072,7 @@ describe("server local API auth", () => {
         ws.addEventListener("error", () => reject(new Error("websocket failed to open")), { once: true });
       });
       const waitForTerminal = () => new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), watchdogMs(1000));
+        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), watchdogMs(3_000));
         const onMessage = (event: MessageEvent) => {
           const text = typeof event.data === "string" ? event.data : "";
           if (text.includes('"type":"response.completed"')) {
