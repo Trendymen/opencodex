@@ -97,6 +97,7 @@ selector，而不是分配一个新名称。
 | `noTopPModels?` | `string[]` | 会拒绝调用方指定 `top_p` 的模型。 |
 | `noPenaltyModels?` | `string[]` | 会拒绝 presence/frequency penalty 的模型。 |
 | `noStructuredOutputModels?` | `string[]` | `openai-chat` 端点拒绝 `response_format` 的精确模型 ID。仅当请求模型与条目完全匹配时才省略该字段；其他 `openai-chat` 模型仍启用 structured-output 转换。 |
+| `inferResponsesMessagePhaseModels?` | `string[]` | 原生 `openai-responses` 上游缺少 assistant message `phase` 的精确模型 ID，默认关闭。仅对缺少 phase 的文本推断：后续仍有工作时标记为 `commentary`，正常完成的终态文本标记为 `final_answer`；不会生成、复制或摘要任何文字。上游已有 phase 保持不变；但若同一 item 的最终 snapshot 与已经观察到的后续工作相矛盾，则会将这个异常 snapshot 归一为已被证明的 `commentary`。失败/不完整回合绝不会合成 `final_answer`，但已经由后续工作证明的真实中间文本会保留为 `commentary`；即使列入配置，模型 ID 含 `gpt` 或 `openai` 时也始终排除。 |
 | `parallelToolCalls?` | `boolean` | 切换并行工具调用。OpenAI Chat 默认开启；非 chat 适配器只有显式 `true` 时才会声明支持。 |
 | `responsesItemIdRepair?` | `{ message?: string[]; reasoning?: string[]; repairMissingTerminalIds?: boolean; repairInvalidIds?: boolean }` | 默认关闭的下游 SSE 修复，用于精确占位 id、缺失的终止 id，以及（`repairInvalidIds`）缺少规范 `msg_`/`rs_` 前缀的 message/reasoning id。function-call id 永远不会被重写。内置 DeepSeek 默认启用后两项。 |
 | `responsesSnapshotRepair?` | `boolean` | 默认关闭的客户端修复，用于补全 SSE 与 JSON 中稀疏 Responses 生命周期快照缺失的 status、output 和工具元数据；原始检查与持久化保持不变。 |

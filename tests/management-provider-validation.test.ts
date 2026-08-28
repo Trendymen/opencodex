@@ -432,6 +432,27 @@ describe("provider management validation", () => {
     })).toContain("canonical built-in provider seed");
   });
 
+  test("provider management validates message phase inference model ids", () => {
+    const base = { adapter: "openai-responses", baseUrl: "https://api.example.test/v1" };
+    expect(providerManagementConfigError("custom", {
+      ...base,
+      inferResponsesMessagePhaseModels: ["glm-5.3", "kimi-k3"],
+    })).toBeNull();
+    expect(providerManagementConfigError("custom", {
+      ...base,
+      inferResponsesMessagePhaseModels: ["   "],
+    })).toContain("inferResponsesMessagePhaseModels");
+
+    const dto = safeConfigDTO({
+      port: 10100,
+      defaultProvider: "custom",
+      providers: {
+        custom: { ...base, inferResponsesMessagePhaseModels: ["glm-5.3", "kimi-k3"] },
+      },
+    } as OcxConfig) as { providers: Record<string, { inferResponsesMessagePhaseModels?: string[] }> };
+    expect(dto.providers.custom?.inferResponsesMessagePhaseModels).toEqual(["glm-5.3", "kimi-k3"]);
+  });
+
   test("provider management validates retryOn429 bounds and unknown keys", () => {
     const base = { adapter: "openai-chat", baseUrl: "https://api.openai.com/v1" };
     expect(providerManagementConfigError("custom", {
@@ -1607,6 +1628,74 @@ describe("provider management validation", () => {
         providers: Record<string, { noStructuredOutputModels?: string[] }>;
       };
       expect(saved.providers["structured-output-toggle"].noStructuredOutputModels).toBeUndefined();
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("provider PATCH persists and clears message phase inference models", async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    saveConfig(config("127.0.0.1"));
+
+    const server = startServer(0);
+    try {
+      const createRes = await fetch(new URL("/api/providers", server.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "phase-toggle",
+          provider: {
+            adapter: "openai-responses",
+            baseUrl: "https://relay.example/v1",
+            liveModels: false,
+            models: ["glm-5.3", "kimi-k3"],
+            inferResponsesMessagePhaseModels: [" glm-5.3 ", "glm-5.3", "kimi-k3"],
+          },
+        }),
+      });
+      expect(createRes.status).toBe(200);
+
+      const afterCreate = await fetch(new URL("/api/providers", server.url)).then(response => response.json()) as Array<{
+        name: string;
+        inferResponsesMessagePhaseModels?: string[];
+      }>;
+      expect(afterCreate.find(provider => provider.name === "phase-toggle")?.inferResponsesMessagePhaseModels)
+        .toEqual(["glm-5.3", "kimi-k3"]);
+
+      const invalid = await fetch(new URL("/api/providers?name=phase-toggle", server.url), {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ inferResponsesMessagePhaseModels: [" "] }),
+      });
+      expect(invalid.status).toBe(400);
+
+      const patchRes = await fetch(new URL("/api/providers?name=phase-toggle", server.url), {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ inferResponsesMessagePhaseModels: [" glm-5.3 ", "glm-5.3", "kimi-k3"] }),
+      });
+      expect(patchRes.status).toBe(200);
+
+      const providers = await fetch(new URL("/api/providers", server.url)).then(response => response.json()) as Array<{
+        name: string;
+        inferResponsesMessagePhaseModels?: string[];
+      }>;
+      expect(providers.find(provider => provider.name === "phase-toggle")?.inferResponsesMessagePhaseModels)
+        .toEqual(["glm-5.3", "kimi-k3"]);
+
+      const clearRes = await fetch(new URL("/api/providers?name=phase-toggle", server.url), {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ inferResponsesMessagePhaseModels: null }),
+      });
+      expect(clearRes.status).toBe(200);
+
+      const saved = await fetch(new URL("/api/config", server.url)).then(response => response.json()) as {
+        providers: Record<string, { inferResponsesMessagePhaseModels?: string[] }>;
+      };
+      expect(saved.providers["phase-toggle"].inferResponsesMessagePhaseModels).toBeUndefined();
     } finally {
       await server.stop(true);
     }

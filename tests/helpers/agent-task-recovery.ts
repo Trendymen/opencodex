@@ -147,7 +147,11 @@ export async function post(
   input: unknown[],
   headers: HeadersInit = {},
   abortSignal?: AbortSignal,
-  options: { tools?: unknown[]; translatorBudget?: TranslatorBudget } = {},
+  options: {
+    tools?: unknown[];
+    translatorBudget?: TranslatorBudget;
+    body?: Record<string, unknown>;
+  } = {},
 ): Promise<Response> {
   return handleResponses(new Request("http://localhost/v1/responses", {
     method: "POST",
@@ -155,7 +159,13 @@ export async function post(
       "content-type": "application/json",
       ...Object.fromEntries(new Headers(headers)),
     },
-    body: JSON.stringify({ model, input, stream: false, ...(options.tools ? { tools: options.tools } : {}) }),
+    body: JSON.stringify({
+      model,
+      input,
+      stream: false,
+      ...(options.tools ? { tools: options.tools } : {}),
+      ...(options.body ?? {}),
+    }),
   }), config, { model: "", provider: "" }, { abortSignal, translatorBudget: options.translatorBudget });
 }
 

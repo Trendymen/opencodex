@@ -245,6 +245,8 @@ export interface ResetRetryOptions {
 export interface TransientRetryOptions extends ResetRetryOptions {
   /** Test seam: per-attempt slow budget override (defaults to TRANSIENT_RETRY_SLOW_ATTEMPT_MS). */
   slowAttemptMs?: number;
+  /** Called only when every configured transient-status attempt returned a retryable status. */
+  onTransientExhausted?: () => void;
 }
 
 export type UpstreamSendRecovery = "connection-reset" | "transient-5xx";
@@ -387,6 +389,9 @@ export async function fetchWithTransientRetry(
       // this rejection is not pre-connection and must not classify as neutral.
       throw new UpstreamRetryEvidenceError(transientStatuses, err);
     }
+  }
+  if (isTransientUpstreamStatus(res.status) && !opts.abortSignal?.aborted) {
+    opts.onTransientExhausted?.();
   }
   return res;
 }

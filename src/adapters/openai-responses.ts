@@ -21,6 +21,8 @@ import { rewriteRoutedToolSearchForUpstream } from "../responses/tool-search-com
 import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-tool-compat";
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeXaiResponsesWebSearch } from "./xai-web-search";
+import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../fork/glm-kimi-compat";
+import { debugResponsesOutboundShape } from "../fork/outbound-debug";
 import {
   isXaiSchemaTarget,
   normalizeXaiToolParameters,
@@ -67,6 +69,7 @@ export function sanitizeReasoningInputContent(
     preserveRawReasoningContent?: boolean;
     dropNullContentChannel?: boolean;
     stripEncryptedContent?: boolean;
+    stripRawContentBackedEncryptedContent?: boolean;
   },
 ): unknown {
   if (!body || typeof body !== "object" || Array.isArray(body)) return body;
@@ -79,13 +82,27 @@ export function sanitizeReasoningInputContent(
     const rec = item as Record<string, unknown>;
     if (rec.type !== "reasoning") return item;
     const hasRawContent = Array.isArray(rec.content) && rec.content.length > 0;
+    const hasRawReasoningText = Array.isArray(rec.content)
+      && rec.content.some(part => part && typeof part === "object" && !Array.isArray(part)
+        && (part as Record<string, unknown>).type === "reasoning_text");
     // ocxr1 envelopes are proxy-minted (Anthropic signatures), not OpenAI encryption — the native
     // backend cannot decrypt them and would reject the request. Strip regardless of content shape.
     const hasOcxEnvelope = typeof rec.encrypted_content === "string" && rec.encrypted_content.startsWith(OCX_REASONING_PREFIX);
     const hasOutputStatus = Object.prototype.hasOwnProperty.call(rec, "status");
     const hasEncryptedContent = Object.prototype.hasOwnProperty.call(rec, "encrypted_content");
     const stripEncryptedContent = hasOcxEnvelope
-      || (opts?.stripEncryptedContent === true && hasEncryptedContent);
+      || (opts?.stripEncryptedContent === true && hasEncryptedContent)
+      // A third-party Responses turn can be interrupted after it has emitted raw reasoning but
+      // before it records a terminal route identity. A later native GPT replay must not carry
+      // that provider's opaque continuation token alongside the raw content it came with. Native
+      // OpenAI reasoning items are summary-only on replay, so this leaves their own opaque blobs
+      // intact while dropping the observed cross-provider shape.
+      || (
+        opts?.stripRawContentBackedEncryptedContent === true
+        && hasRawReasoningText
+        && hasEncryptedContent
+        && !(typeof rec.encrypted_content === "string" && rec.encrypted_content.startsWith("gAAAA"))
+      );
     // Codex serializes an absent reasoning content channel as `"content": null`. The field is
     // optional and null carries nothing, but a strict gateway rejects the item on its declared type
     // — xAI answers `Could not decode the compaction blob`, naming the sibling `encrypted_content`
@@ -1097,17 +1114,6 @@ function normalizeResponsesToolResultAdjacency(body: unknown): unknown {
   return { ...body, input: normalized };
 }
 
-/**
- * Remove `previous_response_id` before forwarding. Two triggers:
- * - the proxy expanded the request into a full input replay (the id is now redundant), or
- * - the target is the ChatGPT backend (`authMode: "forward"`), whose Codex REST endpoint
- *   categorically rejects the parameter with `{"detail":"Unsupported parameter:
- *   previous_response_id"}` (strict allowlist; it also rejects `metadata` and
- *   `max_output_tokens`). Codex only sends the id on WS turns, and ocx converts those to
- *   internal HTTP requests, so forwarding it upstream is a guaranteed 400 — stripping is
- *   strictly better even when the local replay state missed. API-key mode keeps the field on
- *   unexpanded requests: the platform `/v1/responses` supports real server-side storage.
- */
 function stripPreviousResponseId(body: unknown, strip: boolean): unknown {
   if (!strip || !isPlainObject(body) || !Object.prototype.hasOwnProperty.call(body, "previous_response_id")) return body;
   const { previous_response_id: _previousResponseId, ...rest } = body;
@@ -2067,6 +2073,14 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (parsed._compactionRequest === true && !isCanonicalOpenAiForwardProvider(provider)) {
         outBody = buildRoutedCompactionBody(outBody);
       }
+      const glmKimiCompatibility = applyGlmKimiOutboundCompatibility({
+        body: outBody,
+        provider,
+        modelId: parsed.modelId,
+        threadId: incoming.headers.get("thread-id") ?? incoming.headers.get("thread_id"),
+        url,
+      });
+      outBody = glmKimiCompatibility.body;
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       const sanitizedBody = normalizeToolSchemas(
         stripSparkCompatibility(
@@ -2084,6 +2098,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
                       preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
                       dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
                       stripEncryptedContent: threadServingIdentityChanged,
+                      stripRawContentBackedEncryptedContent: isOpenAiOperatedResponsesDestination(provider),
                     },
                   ),
                 ),
@@ -2112,9 +2127,29 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         actualServiceTier,
       );
       const body = JSON.stringify(finalBody);
+      const bodyBytes = new TextEncoder().encode(body).byteLength;
+      persistKimiToolSchemaCatalog({
+        body: finalBody,
+        provider,
+        modelId: parsed.modelId,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+        url,
+      });
+      debugResponsesOutboundShape({
+        url,
+        provider,
+        model: parsed.modelId,
+        body: finalBody,
+        bodyBytes,
+        convertedCustomToolNames: convertedRoutedCustomToolNames,
+        convertedToolSearchNames: convertedRoutedToolSearchNames,
+        convertedNamespaceAliases: convertedRoutedNamespaceToolAliases,
+        kimiToolSchemaLowering: glmKimiCompatibility.kimiToolSchemaLowering,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+      });
       const releaseBodyObservation = translatorBudget.observeExternallyCapped(
         "passthrough_serialization",
-        new TextEncoder().encode(body).byteLength,
+        bodyBytes,
       );
       return {
         url,

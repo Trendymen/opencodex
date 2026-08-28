@@ -5,9 +5,11 @@ import { describe, expect, test } from "bun:test";
 import { createImageGenCallRestoreRewrite } from "../src/server/responses-image-gen-repair";
 import { createResponsesItemIdPayloadRewrite } from "../src/server/responses-item-id-repair";
 import {
+  composeSseBlockRewrites,
   composeSsePayloadRewrites,
   relaySseWithBlockRewrite,
   relaySseWithPayloadRewrite,
+  type SseBlockRewrite,
 } from "../src/server/sse-payload-rewrite";
 import { createTestTranslatorBudget } from "./helpers/translator-budget";
 import { relaySseWithFailedTail } from "../src/server/relay";
@@ -135,6 +137,30 @@ describe("SSE payload rewrite composition", () => {
       'event: keep\ndata: {"type":"keep","delta":"ok"}\n\n',
     );
     expect(budget.snapshot().currentBytes).toBe(0);
+  });
+
+  test("emits a block rewrite's retained tail on clean EOF", async () => {
+    const budget = createTestTranslatorBudget();
+    const rewrite = Object.assign(
+      (block: string): readonly string[] => [block],
+      { flush: (): readonly string[] => ['data: {"type":"flush"}'] },
+    ) as SseBlockRewrite;
+
+    const output = await readAll(relaySseWithBlockRewrite(streamFromText(""), rewrite, budget));
+
+    expect(output).toBe('data: {"type":"flush"}\n\n');
+    expect(budget.snapshot().currentBytes).toBe(0);
+    budget.dispose();
+  });
+
+  test("passes a flushed block through later rewrite stages", () => {
+    const retained = Object.assign(
+      (block: string): readonly string[] => [block],
+      { flush: (): readonly string[] => ['data: {"type":"held"}'] },
+    ) as SseBlockRewrite;
+    const suffix: SseBlockRewrite = block => [block.replace("held", "flushed")];
+
+    expect(composeSseBlockRewrites(retained, suffix).flush?.()).toEqual(['data: {"type":"flushed"}']);
   });
 
   test("unterminated rewrite accumulation closes through a typed failed tail", async () => {
