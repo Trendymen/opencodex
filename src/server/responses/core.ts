@@ -288,6 +288,11 @@ import {
   routeUsesResponsesMessagePhaseInference,
 } from "../../fork/responses-message-phase";
 import {
+  createInboundResponsesDebugObserver,
+  persistInboundResponsesDebugSummary,
+} from "../../fork/inbound-response-debug";
+import { isDebugEnabled } from "../../lib/debug-settings";
+import {
   createImageGenCallRestoreRewrite,
   imageGenToolCallAliases,
   restoreImageGenCallsInJson,
@@ -3324,7 +3329,41 @@ async function handleResponsesInner(
     // check sees nothing undeclared, and the refused turn enters continuation state anyway. So the
     // rejection is sticky for the whole turn, set from every parsed payload on the inspection side.
     let inspectionSawUndeclaredTool = false;
+    const inboundDebugObserver = isDebugEnabled() ? createInboundResponsesDebugObserver() : undefined;
+    let inboundDebugUsesRawTerminalRepairTap = false;
+    let inboundDebugContext: { host: string; pathname: string; httpStatus?: number } | undefined;
+    let inboundDebugPersisted = false;
+    const persistInboundDebugOnce = (): void => {
+      if (inboundDebugPersisted || !inboundDebugObserver || !inboundDebugContext) return;
+      inboundDebugPersisted = true;
+      persistInboundResponsesDebugSummary({
+        observer: inboundDebugObserver,
+        host: inboundDebugContext.host,
+        pathname: inboundDebugContext.pathname,
+        model: route.modelId,
+        threadIdTag: request.threadIdTag,
+        httpStatus: inboundDebugContext.httpStatus,
+      });
+    };
+    const setInboundDebugContext = (response: Response): void => {
+      if (!inboundDebugObserver) return;
+      let host = "";
+      let pathname = "";
+      try {
+        const parsedUrl = new URL(request.url);
+        host = parsedUrl.host;
+        pathname = parsedUrl.pathname;
+      } catch {
+        pathname = "invalid-url";
+      }
+      inboundDebugContext = {
+        host,
+        pathname,
+        httpStatus: response.status,
+      };
+    };
     const noteInspectedPayload = (payload: unknown) => {
+      if (!inboundDebugUsesRawTerminalRepairTap) inboundDebugObserver?.notePayload(payload);
       // Gated on the same flag as the guard itself: with no readable catalog (or a forward-auth
       // provider) every name looks undeclared, and flipping this would stop recording continuation
       // state for exactly the passthrough traffic the guard deliberately stands down for.
@@ -4034,6 +4073,12 @@ async function handleResponsesInner(
         route.provider,
         route.modelId,
       );
+      const rawInboundSseInspector = terminalRepairPolicy && inboundDebugObserver
+        ? createSseInspector({
+          onParsedPayload: payload => inboundDebugObserver.notePayload(payload),
+        })
+        : undefined;
+      inboundDebugUsesRawTerminalRepairTap = rawInboundSseInspector !== undefined;
       const passthroughSseBody = terminalRepairPolicy
         ? relayResponsesSseWithTerminalRepair(
           upstreamResponse.body,
@@ -4041,6 +4086,13 @@ async function handleResponsesInner(
           terminalRepairPolicy,
           translatorBudget,
           options.responsesTerminalRepairScheduler,
+          rawInboundSseInspector
+            ? {
+              onChunk: chunk => rawInboundSseInspector.feed(chunk),
+              onFinish: () => rawInboundSseInspector.finish(),
+              onDispose: () => rawInboundSseInspector.dispose(),
+            }
+            : undefined,
         )
         : upstreamResponse.body;
       const repairConfig = route.provider.responsesItemIdRepair;
@@ -4174,11 +4226,13 @@ async function handleResponsesInner(
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
         });
+        setInboundDebugContext(upstreamResponse);
         const eagerBody = relaySseEagerBounded(passthroughSseBody, turnAc, {
           inspectChunk: chunk => inspector.feed(chunk),
           finishInspection: () => inspector.finish(),
           disposeInspection: () => {
             inspector.dispose();
+            persistInboundDebugOnce();
             nestedExecInspection?.dispose();
           },
           // Stream lifetime follows the protocol terminal even when this request
@@ -4200,7 +4254,10 @@ async function handleResponsesInner(
             }
           },
           onClientCancel: () => options.onNativePassthroughCancel?.(),
-          onDone: () => unregisterTurn(turnAc),
+          onDone: () => {
+            persistInboundDebugOnce();
+            unregisterTurn(turnAc);
+          },
         }, inlineEagerRewrite ? { rewriteBudget: translatorBudget } : undefined);
         // When selected, this relay closes response.completed even if upstream
         // keeps the connection alive. Marked Codex WS traffic, Windows
@@ -4226,6 +4283,7 @@ async function handleResponsesInner(
         pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
         onParsedPayload: noteInspectedPayload,
       };
+      setInboundDebugContext(upstreamResponse);
       if (recordTerminalOutcomes) {
         // A real terminal was parsed from the (teed) inspection stream — record it as the outcome
         // even if the client has already disconnected: the turn genuinely reached that terminal, so
@@ -4256,6 +4314,7 @@ async function handleResponsesInner(
           reportNativeTerminal,
           turnAc.signal,
           () => {
+            persistInboundDebugOnce();
             nestedExecInspection?.dispose();
             unregisterTurn(turnAc);
           },
@@ -4271,6 +4330,7 @@ async function handleResponsesInner(
           logCtx,
           turnAc.signal,
           () => {
+            persistInboundDebugOnce();
             nestedExecInspection?.dispose();
             unregisterTurn(turnAc);
           },
@@ -4299,15 +4359,28 @@ async function handleResponsesInner(
       // without limit. This path is no longer rare — WebSocket turns for models whose
       // streaming terminal event is unreliable are deliberately answered with bounded JSON.
       // Oversize and stall deadlines both fail closed; a partial body is never parsed.
+      setInboundDebugContext(upstreamResponse);
       const bounded = await readBoundedResponseBody(upstreamResponse, UPSTREAM_JSON_BODY_READ_OPTIONS);
       if (bounded.oversized) {
+        inboundDebugObserver?.noteJsonResponse({});
+        persistInboundDebugOnce();
         return formatErrorResponse(502, "upstream_error", "upstream JSON response exceeded the safe body limit");
       }
       if (bounded.truncated) {
+        inboundDebugObserver?.noteJsonResponse({});
+        persistInboundDebugOnce();
         return formatErrorResponse(502, "upstream_error", "upstream JSON response stalled before completing");
       }
       const text = bounded.text;
       inspectResponseLogJson(logCtx, text);
+      try {
+        inboundDebugObserver?.noteJsonResponse(JSON.parse(text));
+      } catch {
+        // The client-facing error path keeps the original malformed body behavior; the diagnostic
+        // marks only that a JSON-labelled response arrived and never stores the body itself.
+        inboundDebugObserver?.noteJsonResponse({});
+      }
+      persistInboundDebugOnce();
       const nestedUpstreamJson = nestedExecRepairPlan
         ? repairNestedExecCallsInJson(text, nestedExecRepairPlan)
         : text;

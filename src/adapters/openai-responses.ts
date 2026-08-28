@@ -2157,6 +2157,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         headers,
         body,
         releaseBodyObservation,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
         ...(convertedRoutedCustomToolNames ? { convertedRoutedCustomToolNames } : {}),
         ...(routedCustomToolRepairNames ? { routedCustomToolRepairNames } : {}),
         ...(convertedRoutedToolSearchNames ? { convertedRoutedToolSearchNames } : {}),

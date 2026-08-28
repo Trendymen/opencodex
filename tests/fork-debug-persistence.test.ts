@@ -44,16 +44,18 @@ describe("fork provider debug persistence", () => {
     expect(entries.at(-1)?.line).toBe("fork-persist-resilient");
   });
 
-  test("rotation keeps the file within the byte and line budget", () => {
-    // Pre-seed just over the 4 MiB cap so the next append triggers rotation.
+  test("append-only persistence keeps existing lines after the former 4 MiB threshold", () => {
+    // Pre-seed just over the former rotation threshold. Provider debug is operator evidence
+    // and now remains append-only until the operator clears or archives the file.
     const seedLine = JSON.stringify({ seq: 0, at: 0, line: "x".repeat(4096) });
     const seeded = Array.from({ length: 1100 }, () => seedLine).join("\n") + "\n";
     writeFileSync(providerDebugLogPath(), seeded, { mode: 0o600 });
-    appendDebugLogLine("fork-persist-after-rotation");
-    const rotated = readFileSync(providerDebugLogPath(), "utf8");
-    const lines = rotated.trim().split("\n");
-    expect(lines.length).toBeLessThanOrEqual(1001);
-    expect(statSync(providerDebugLogPath()).size).toBeLessThanOrEqual(4 * 1024 * 1024 + 4096);
-    expect(lines.at(-1)).toContain("fork-persist-after-rotation");
+    appendDebugLogLine("fork-persist-after-threshold");
+    const appended = readFileSync(providerDebugLogPath(), "utf8");
+    const lines = appended.trim().split("\n");
+    expect(lines.length).toBe(1101);
+    expect(lines[0]).toBe(seedLine);
+    expect(statSync(providerDebugLogPath()).size).toBeGreaterThan(4 * 1024 * 1024);
+    expect(lines.at(-1)).toContain("fork-persist-after-threshold");
   });
 });
