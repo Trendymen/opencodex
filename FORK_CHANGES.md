@@ -59,7 +59,7 @@ commit SHA。
 
 ## 当前运行时差异
 
-### 火山方舟 Agent Plan GLM/Kimi 兼容
+### 火山方舟 Agent Plan GLM/Kimi 与智谱 GLM Responses 兼容
 
 - **状态：** Fork 独有——保留。
 - **行为：** 只对 `openai-responses` 且 base URL 精确为
@@ -67,14 +67,19 @@ commit SHA。
   Kimi-K3 遇到 Ark 拒绝 assistant prefill 时追加尾部 user turn。Kimi-K3 的
   function schema 在深度/节点预算内降级 `$defs`、`$ref`、`oneOf`、`allOf` 和
   根级 `anyOf`；保留嵌套 `anyOf`、工具名称、描述、可见 properties 和 App 原始
-  schema。
+  schema。智谱 Codex 仅在 `openai-responses`、base URL 精确为
+  `https://open.bigmodel.cn/api/v1` 且模型为 `glm-5.3` 或 `glm-5.3-flash` 时复用
+  同一 provider-facing schema compiler；GLM 不写 Kimi schema catalog，也不触发
+  Kimi 专用 trace 或诊断字段。
 - **代码：** `src/fork/glm-kimi-compat.ts`；最小接线位于
   `src/adapters/openai-responses.ts` 和 `src/server/responses/core.ts`。
 - **测试：** `tests/fork-glm-kimi-compat.test.ts`、
-  `tests/fork-kimi-schema-compiler.test.ts`。39 工具测试是与已观察数量一致的合成
-  目录，不等同于真实 Codex App fixture。
-- **官方对比：** `v2.34.0` 有通用 Provider schema 处理，但没有精确 Ark/Kimi
-  compiler、prefill 修复或 Kimi schema catalog 诊断。
+  `tests/fork-kimi-schema-compiler.test.ts`、
+  `tests/fork-zhipu-glm-schema-lowering.test.ts`。39 工具测试是与已观察数量一致的
+  合成目录，不等同于真实 Codex App fixture；智谱测试另覆盖顶层工具和 Responses
+  Lite `additional_tools`。
+- **官方对比：** `v2.34.0` 有通用 Provider schema 处理，但没有精确 Ark/Kimi 或
+  智谱 GLM compiler、prefill 修复或 Kimi schema catalog 诊断。
 
 ### 原生 Responses message phase 推断
 

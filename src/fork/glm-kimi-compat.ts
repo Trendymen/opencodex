@@ -1,4 +1,4 @@
-/** Exact Volcengine Ark Responses compatibility for the relay fork. */
+/** Exact Ark/Kimi and Zhipu GLM Responses compatibility for the relay fork. */
 
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
@@ -9,6 +9,7 @@ import { getConfigDir } from "../config/paths";
 import { isOwnedConfigPath, recordOwnedConfigPath } from "../lib/config-ownership";
 
 const ARK_AGENT_PLAN_V3 = "https://ark.cn-beijing.volces.com/api/plan/v3";
+const ZHIPU_CODEX_RESPONSES = "https://open.bigmodel.cn/api/v1";
 const KIMI_SCHEMA_MAX_DEPTH = 32;
 const KIMI_SCHEMA_MAX_NODES = 4_096;
 
@@ -37,6 +38,17 @@ export function usesVolcengineAgentPlanResponses(provider: OcxProviderConfig): b
 
 export function isVolcengineAgentPlanKimi(provider: OcxProviderConfig, modelId: string): boolean {
   return modelId === "kimi-k3" && usesVolcengineAgentPlanResponses(provider);
+}
+
+function isZhipuCodexGlmSchemaTarget(provider: OcxProviderConfig, modelId: string): boolean {
+  return provider.adapter === "openai-responses"
+    && provider.baseUrl.replace(/\/+$/, "") === ZHIPU_CODEX_RESPONSES
+    && (modelId === "glm-5.3" || modelId === "glm-5.3-flash");
+}
+
+function usesProviderToolSchemaLowering(provider: OcxProviderConfig, modelId: string): boolean {
+  return isVolcengineAgentPlanKimi(provider, modelId)
+    || isZhipuCodexGlmSchemaTarget(provider, modelId);
 }
 
 function debugOpaqueTag(value: string | null | undefined): string | undefined {
@@ -285,7 +297,7 @@ function lowerKimiFunctionToolSchemas(
   provider: OcxProviderConfig,
   modelId: string,
 ): { body: unknown; diagnostic?: KimiToolSchemaLoweringDiagnostic } {
-  if (!isVolcengineAgentPlanKimi(provider, modelId) || !isPlainObject(body)) return { body };
+  if (!usesProviderToolSchemaLowering(provider, modelId) || !isPlainObject(body)) return { body };
   const loweredTools: Array<{ name: string; originalBytes: number; loweredBytes: number }> = [];
   const lowerGroup = (tools: unknown[]): unknown[] => tools.map(tool => {
     if (!isPlainObject(tool) || tool.type !== "function" || typeof tool.name !== "string" || !isPlainObject(tool.parameters) || !containsKimiUnsupportedSchemaFeature(tool.parameters)) return tool;
@@ -356,6 +368,6 @@ export function applyGlmKimiOutboundCompatibility(args: {
   return {
     body: lowered.body,
     ...(threadIdTag ? { threadIdTag } : {}),
-    ...(lowered.diagnostic ? { kimiToolSchemaLowering: lowered.diagnostic } : {}),
+    ...(kimiTrace && lowered.diagnostic ? { kimiToolSchemaLowering: lowered.diagnostic } : {}),
   };
 }
