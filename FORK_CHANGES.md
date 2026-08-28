@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.34.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.34.0) |
 | 官方 Tag commit | `80fff9a7f47332a4445df2b26ea175053fa55b0b` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `ffdb37774bca4ca507b00ff47806dc27f75c6588` |
-| Fork 包版本 | `2.34.0-ben.2` |
-| 本轮派生 Tag | `v2.34.0-ben.2`，在本文档末尾提交完成后创建 |
+| 本轮实现 HEAD | `042af6dd9a1ae872b94bb0c6a2af19c49b570a25` |
+| Fork 包版本 | `2.34.0-ben.3` |
+| 本轮派生 Tag | `v2.34.0-ben.3`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.34.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 91 个文件，新增 7,378 行，删除 149 行 |
+| 已提交修改面 | 93 个文件，新增 7,609 行，删除 160 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 当前实现栈中与能力直接相关的提交：
@@ -51,11 +51,13 @@
 - `5789a619f`：`ben` Fork 修订版本策略；
 - `49763c34c`：本地安装默认开启 macOS provider debug。
 - `ffdb37774`：修复 install-local 平台用例并推进 `ben.2`。
+- `727cb58ec`：智谱 GLM 复杂工具 schema lowering；`042af6dd9`：保留 provider 转换原始字段。
 
-`93ccabdaf` 是上一版维护文档提交，`06b2e67d1` 是 `ben.1` 的末尾维护文档提交，
-两者都不属于运行时能力。`ben.2` 修订新增 `ffdb37774`：install-local 平台用例的
-显式平台修复和版本推进。后续审计应记录被审计的实现 HEAD，而不是让文档引用自己的
-commit SHA。
+`93ccabdaf` 是上一版维护文档提交，`06b2e67d1` 与各轮末尾文档提交均不属于运行时
+能力。`ben.2` 修订新增 `ffdb37774`：install-local 平台用例的显式平台修复和版本推进。
+`ben.3` 修订新增 `727cb58ec`（智谱 GLM 复杂工具 schema lowering）与 `042af6dd9`
+（provider 转换原始字段保真）。后续审计应记录被审计的实现 HEAD，而不是让文档引用
+自己的 commit SHA。
 
 ## 当前运行时差异
 
@@ -164,11 +166,14 @@ commit SHA。
 - **行为：** DeepSeek terminal reasoning 在补 summary channel 的同时保留 opaque/
   encrypted state 与 raw content。同一历史随后转向原生 OpenAI GPT 时，删除由第三方
   raw `reasoning_text` 支撑的 opaque token，保留真正的 OpenAI blob。
+  `ben.3` 补充字段保真边界：summary 转换只追加 `summary_text`，不再删除
+  `reasoning.content`；message phase 改写保留 message 的全部原始字段，只新增 phase。
 - **代码：** `src/server/responses-reasoning-summary-rewrite.ts` 和
   `src/adapters/openai-responses.ts` 中的 reasoning input sanitizer。
 - **测试：** `tests/deepseek-reasoning-replay.test.ts`、
   `tests/responses-reasoning-summary-passthrough.test.ts`、
-  `tests/responses-reasoning-summary-rewrite.test.ts`。
+  `tests/responses-reasoning-summary-rewrite.test.ts`、
+  `tests/responses-original-field-preservation.test.ts`。
 - **官方对比：** 官方已有普通 reasoning text → summary 与若干 replay 清理；Fork
   差异仅是 opaque terminal 保留和跨 Provider raw-backed blob 删除。
 

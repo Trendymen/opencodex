@@ -37,7 +37,7 @@ const forkPolicy = forkVersion as typeof forkVersion & ForkVersionPolicy;
 describe("Trendymen fork version policy", () => {
   test("uses the official stable base plus the current ben revision", () => {
     const pkg = JSON.parse(readRepoFile("package.json")) as { version?: unknown };
-    expect(pkg.version).toBe("2.34.0-ben.2");
+    expect(pkg.version).toBe("2.34.0-ben.3");
   });
 
   test("recognizes only the numbered ben fork suffix and exposes its upstream base", () => {
