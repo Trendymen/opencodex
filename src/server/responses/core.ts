@@ -2600,7 +2600,7 @@ async function handleResponsesInner(
     inboundWire === "responses"
     &&
     threadSpawn
-    && routedUnreadableEncryptedAgentTask
+    && (routedUnreadableEncryptedAgentTask || strictBackendEncryptedAgentTask)
     && agentTaskRecovery
     && !isCanonicalOpenAiForwardProvider(route.provider)
     && !options.comboAttempt
