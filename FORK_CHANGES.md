@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.34.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.34.0) |
 | 官方 Tag commit | `80fff9a7f47332a4445df2b26ea175053fa55b0b` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `612a8bec95234d8b96fcd7a253004101ce4ad4bf` |
-| Fork 包版本 | `2.34.0-ben.6` |
-| 本轮派生 Tag | `v2.34.0-ben.6`，在本文档末尾提交完成后创建 |
+| 本轮实现 HEAD | `80e5e6f431719ced45cd6d7d03597147772527e5` |
+| Fork 包版本 | `2.34.0-ben.7` |
+| 本轮派生 Tag | `v2.34.0-ben.7`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.34.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 103 个文件，新增 8,698 行，删除 178 行 |
+| 已提交修改面 | 106 个文件，新增 9,944 行，删除 191 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 当前实现栈中与能力直接相关的提交：
@@ -52,8 +52,7 @@
 - `49763c34c`：本地安装默认开启 macOS provider debug。
 - `ffdb37774`：修复 install-local 平台用例并推进 `ben.2`。
 - `727cb58ec`：智谱 GLM 复杂工具 schema lowering；`042af6dd9`：保留 provider 转换原始字段。
-- `1bf175bf2`：严格密文子任务的路由恢复修复。
-- `ff0325abe`：原生 Responses 入站摘要落盘。
+- `7f8ced19d`：第三方推理摘要生命周期修复、双阶段诊断附件与展示优化（ben.7 压缩栈）。
 
 `93ccabdaf` 是上一版维护文档提交，`06b2e67d1` 与各轮末尾文档提交均不属于运行时
 能力。`ben.2` 修订新增 `ffdb37774`：install-local 平台用例的显式平台修复和版本推进。
@@ -75,6 +74,10 @@
 fail-closed）与 `ff0325abe`（debug 开启时按 allowlisted 事件结构把原生
 Responses 入站摘要有界落盘到 `provider-debug.jsonl`），并推进包版本为
 `2.34.0-ben.6`。
+`ben.7` 修订将 `ben.6` 之后的三个提交（`20abbeefa` 修复 reasoning summary
+分片生命周期；`96bbb0be5` 记录 Responses 双阶段诊断附件；
+`68c943c19` 优化第三方推理摘要展示）压缩为单一 commit `7f8ced19d`
+（树内容与原栈逐字节等价），并推进包版本为 `2.34.0-ben.7`。
 
 ## 当前运行时差异
 
@@ -173,11 +176,19 @@ Responses 入站摘要有界落盘到 `provider-debug.jsonl`），并推进包�
   类型聚合脱敏摘要（event counts、文本字节、有界 timeline、安全 context 值、
   不透明 threadIdTag 与 httpStatus），经 terminal repair 的 raw tap 观测原始上游
   字节，一次性落盘到 `provider-debug.jsonl`；观测失败不影响 relay 本身。
+- **双阶段诊断（`ben.7`）：** 分别记录 upstream-inbound（客户端改写前的原始
+  上游流）与 downstream-after-rewrite（Codex 实际收到的流，OCX 可能补 phase）。
+  经用户明确授权后，可捕获有界文本样本：每条字符串硬性 UTF-8 安全截断
+  （默认 256B、上限 8KB），每轮至多 512 条，总量不超 live 诊断预算；样本存入
+  引用型 provider-debug artifact 文件（redactSecretString 脱敏、目录/文件权限
+  加固），`provider-debug.jsonl` 只携带结构摘要与相对引用。eager relay 通过
+  `onClientChunk` hook 观测改写后真正下发到客户端的字节。
 - **代码：** `src/fork/outbound-debug.ts`、`src/fork/debug-persistence.ts`、
   `src/fork/glm-kimi-compat.ts` 的诊断部分，以及 `src/fork/inbound-response-debug.ts`
   与 `src/server/responses-terminal-repair.ts` 的 raw tap 接线。
 - **测试：** `tests/fork-debug-persistence.test.ts`、
   `tests/fork-kimi-schema-compiler.test.ts`、`tests/fork-inbound-response-debug.test.ts`。
+- `ben.7` 增补 `tests/fork-relay-eager-client-observation.test.ts`。
 - **官方对比：** 官方有 `debugProviderDiagnostic` 和内存 ring buffer，但没有 Fork 的
   durable log、outbound shape 摘要或入站结构化摘要落盘。
 
@@ -191,10 +202,16 @@ Responses 入站摘要有界落盘到 `provider-debug.jsonl`），并推进包�
   `reasoning.content`；message phase 改写保留 message 的全部原始字段，只新增 phase。
 - **代码：** `src/server/responses-reasoning-summary-rewrite.ts` 和
   `src/adapters/openai-responses.ts` 中的 reasoning input sanitizer。
+- `ben.7` 增强：content part 事件补 `reasoning_summary_part.added/done` 生命周期；
+  有状态 block rewrite 等到第一句（或 100 codepoint 有界回退）才发出首条
+  summary delta，投影为 TUI 可读的粗体标题 + 原始正文
+  （`projectRawReasoningSummary`）。
 - **测试：** `tests/deepseek-reasoning-replay.test.ts`、
   `tests/responses-reasoning-summary-passthrough.test.ts`、
   `tests/responses-reasoning-summary-rewrite.test.ts`、
-  `tests/responses-original-field-preservation.test.ts`。
+  `tests/responses-original-field-preservation.test.ts`、
+  `tests/responses-reasoning-summary-lifecycle.test.ts`、
+  `tests/responses-reasoning-summary-display-projection.test.ts`。
 - **官方对比：** 官方已有普通 reasoning text → summary 与若干 replay 清理；Fork
   差异仅是 opaque terminal 保留和跨 Provider raw-backed blob 删除。
 
