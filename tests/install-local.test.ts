@@ -170,7 +170,7 @@ describe("local installer provider debug handling", () => {
   });
 
   test("restart environment preserves existing variables while forcing provider debug", () => {
-    expect(localInstallRestartEnv({ PATH: "/usr/bin", OCX_DEBUG: "0" })).toEqual({
+    expect(localInstallRestartEnv({ PATH: "/usr/bin", OCX_DEBUG: "0" }, "darwin")).toEqual({
       PATH: "/usr/bin",
       OCX_DEBUG: "1",
     });
