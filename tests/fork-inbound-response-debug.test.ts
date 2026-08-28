@@ -415,9 +415,13 @@ describe("inbound upstream Responses debug observer", () => {
       paths: string[];
     };
     expect(persisted).toHaveLength(3);
-    expect(manifest.paths).toContain("provider-debug-artifacts");
-    expect(manifest.paths.filter(path => path.startsWith("provider-debug-artifacts/"))).toEqual([]);
+    expect(manifest.paths.some(path => path.startsWith("provider-debug-artifacts/"))).toBe(true);
+    // One bounded directory entry per day-hour leaf, never per random artifact file.
+    expect(manifest.paths.filter(path => path.startsWith("provider-debug-artifacts/")).length).toBeLessThan(10);
+    expect(manifest.paths.some(path => path.startsWith("provider-debug/") && path.endsWith("/timelines"))).toBe(true);
 
+    // Nested day/hour directories under two debug roots are removed recursively; the roots
+    // themselves stay (the ownership loop removes exactly the manifest-listed paths).
     expect(removeOwnedConfigState(testDir)).toMatchObject({ status: "removed" });
     expect(existsSync(testDir)).toBe(false);
   });
@@ -584,6 +588,69 @@ describe("inbound upstream Responses debug observer", () => {
         },
       ]);
     }
+  });
+
+  test("routes delta timeline rows to a referenced side journal and keeps only done rows in the summary", () => {
+    setDebugSettings({ debug: true });
+    const observer = createInboundResponsesDebugObserver({ textSampleLimit: 0 });
+    observer.notePayload({ type: "response.created", response: { id: "resp_split", output: [] } });
+    observer.notePayload({
+      type: "response.output_item.added",
+      item: { type: "reasoning", id: "rs_split", summary: [] },
+    });
+    observer.notePayload({
+      type: "response.reasoning_summary_text.delta",
+      item_id: "rs_split",
+      delta: "delta text must never enter the main summary",
+    });
+    observer.notePayload({
+      type: "response.reasoning_summary_text.delta",
+      item_id: "rs_split",
+      delta: "second delta",
+    });
+    observer.notePayload({
+      type: "response.reasoning_summary_text.done",
+      item_id: "rs_split",
+      text: "done text",
+    });
+    observer.notePayload({
+      type: "response.completed",
+      response: { id: "resp_split", status: "completed", output: [] },
+    });
+
+    const persisted: Record<string, unknown>[] = [];
+    persistInboundResponsesDebugSummary({
+      observer,
+      host: "api.deepseek.com",
+      pathname: "/responses",
+      model: "deepseek-v4-flash",
+      writeArtifact: false,
+      persist: entry => persisted.push(entry),
+    });
+
+    const entry = persisted[0] as {
+      eventCounts: Record<string, number>;
+      timeline: Array<Record<string, unknown>>;
+      timelineRef?: string;
+    };
+    expect(entry.eventCounts["response.reasoning_summary_text.delta"]).toBe(2);
+    expect(entry.eventCounts["response.reasoning_summary_text.done"]).toBe(1);
+    expect(entry.timeline.map(row => row.type)).toEqual([
+      "response.created",
+      "response.output_item.added",
+      "response.reasoning_summary_text.done",
+      "response.completed",
+    ]);
+    expect(entry.timelineRef).toMatch(/^provider-debug\/\d{4}-\d{2}-\d{2}\/.+\.jsonl$/);
+    const journal = readFileSync(join(testDir, entry.timelineRef as string), "utf8")
+      .trim()
+      .split("\n")
+      .map(line => JSON.parse(line) as Record<string, unknown>);
+    expect(journal.map(row => row.type)).toEqual([
+      "response.reasoning_summary_text.delta",
+      "response.reasoning_summary_text.delta",
+    ]);
+    expect(JSON.stringify(journal)).not.toContain("delta text must never enter the main summary");
   });
 
   test("core captures the original upstream SSE lifecycle and persists only its structural summary", async () => {
