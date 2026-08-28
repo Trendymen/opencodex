@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.34.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.34.0) |
 | 官方 Tag commit | `80fff9a7f47332a4445df2b26ea175053fa55b0b` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `89f939ddbd05bd743056054d06ae7c0a74456e7c` |
-| Fork 包版本 | `2.34.0-ben.4` |
-| 本轮派生 Tag | `v2.34.0-ben.4`，在本文档末尾提交完成后创建 |
+| 本轮实现 HEAD | `791cce539bee36a175cf270c62d1dfdd8150b21a` |
+| Fork 包版本 | `2.34.0-ben.5` |
+| 本轮派生 Tag | `v2.34.0-ben.5`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.34.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 95 个文件，新增 7,707 行，删除 160 行 |
+| 已提交修改面 | 95 个文件，新增 7,721 行，删除 160 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 当前实现栈中与能力直接相关的提交：
@@ -64,6 +64,10 @@
 `ben.4` 修订新增 `89f939ddb`：本地安装器在 npm pack 前临时注入
 `bundleDependencies`（pack 后逐字节还原 package.json），全局替换改用
 `--ignore-scripts`，安装期依赖从 tarball 内静态解出。
+`ben.5` 修订为提交形态收敛：`ben.4` 之后的整个实现栈（含压缩提交、
+版本推进、安装器依赖内置）再次压缩为单一 commit `791cce539`，内容与
+`ben.4` 栈逐字节等价（仅 package.json 版本号推进为 ben.5），并同步更新
+本文档基线。
 
 ## 当前运行时差异
 
