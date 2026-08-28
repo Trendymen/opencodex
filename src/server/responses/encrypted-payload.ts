@@ -102,6 +102,22 @@ export function looksLikeBackendCiphertext(payload: string): boolean {
   return payload.length >= 64 && /^[A-Za-z0-9+/=_-]+$/.test(payload);
 }
 
+/**
+ * The canonical backend's task ciphertext currently uses the Fernet-looking
+ * `gAAAA` prefix. This is deliberately only a token-shape predicate: callers
+ * that could make a routing or recovery decision must additionally bind it to
+ * the strict NEW_TASK envelope below.
+ */
+export function backendTaskCiphertextRuns(payload: string): string[] {
+  return payload.match(/gAAAA[A-Za-z0-9+/=_-]{59,}/g)
+    ?.filter(run => looksLikeBackendCiphertext(run)) ?? [];
+}
+
+export function isBackendTaskCiphertext(payload: string): boolean {
+  const runs = backendTaskCiphertextRuns(payload);
+  return runs.length === 1 && runs[0] === payload;
+}
+
 
 
 /**
@@ -182,6 +198,52 @@ export const AGENT_MESSAGE_ROUTING_ENVELOPE = /(?:^|\n)Message Type\s*:\s*NEW_TA
 // removed independently, and a following routing envelope remains available to the
 // envelope stripper below.
 export const AGENT_MESSAGE_CONTROL_PREAMBLE = /(?:^|\n)\[CXC-[A-Z0-9-]+\][^\n]*(?:\n(?!\n|Message Type\s*:)[^\n]*)*(?=\n{2,}|\nMessage Type\s*:|$)/gi;
+
+const STRICT_NEW_TASK_HEADER = /^Message Type[ \t]*:[ \t]*NEW_TASK[ \t]*\r?\nTask name[ \t]*:[ \t]*(\S+)[ \t]*\r?\nSender[ \t]*:[ \t]*(\S+)[ \t]*\r?\nPayload[ \t]*:[ \t]*(?:\r?\n)?$/;
+
+function currentAgentMessage(input: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(input)) return null;
+  let index = input.length - 1;
+  while (index >= 0) {
+    const item = input[index];
+    const type = item && typeof item === "object" ? (item as { type?: unknown }).type : undefined;
+    if (type !== "compaction_trigger" && type !== "additional_tools") break;
+    index -= 1;
+  }
+  const item = input[index];
+  return item && typeof item === "object" && (item as { type?: unknown }).type === "agent_message"
+    ? item as Record<string, unknown>
+    : null;
+}
+
+/**
+ * Accept only the current codex-rs NEW_TASK shape that can safely be submitted
+ * to the opt-in backend recovery endpoint. In particular, a `gAAAA` string in
+ * ordinary text, reasoning, history, or an ambiguous multipart agent message
+ * is never a recovery candidate.
+ */
+export function hasStrictBackendEncryptedAgentTask(input: unknown): boolean {
+  const item = currentAgentMessage(input);
+  if (!item || typeof item.author !== "string" || typeof item.recipient !== "string") return false;
+  const content = item.content;
+  if (!Array.isArray(content) || content.length !== 2) return false;
+
+  const header = content[0] as { type?: unknown; text?: unknown } | null;
+  const encrypted = content[1] as { type?: unknown; encrypted_content?: unknown } | null;
+  if (
+    !header
+    || (header.type !== "input_text" && header.type !== "text")
+    || typeof header.text !== "string"
+    || !encrypted
+    || encrypted.type !== "encrypted_content"
+    || typeof encrypted.encrypted_content !== "string"
+    || !isBackendTaskCiphertext(encrypted.encrypted_content)
+    || structurallyValidFernetTokens(encrypted.encrypted_content).length > 0
+  ) return false;
+
+  const match = STRICT_NEW_TASK_HEADER.exec(header.text);
+  return !!match && match[1] === item.recipient && match[2] === item.author;
+}
 
 export function hasUnreadableEncryptedAgentTask(input: unknown): boolean {
   if (!Array.isArray(input)) return false;

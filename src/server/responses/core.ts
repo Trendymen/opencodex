@@ -165,6 +165,7 @@ import {
   applyUpstreamRecoveryInit,
   fetchWithResetRetry,
   fetchWithTransientRetry,
+  isTransientUpstreamStatus,
   prepareSameTarget429Wait,
 } from "../../lib/upstream-retry";
 import { ForwardAdmissionCredentialError, validateForwardAdmissionCredential } from "../auth-cors";
@@ -296,7 +297,12 @@ import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/cat
 
 import { buildToolBridgeMaps, collabSurface, injectDeveloperMessage, multiAgentGuidanceText } from "./collaboration";
 import { mapCodexAuthContextErrorToResponse } from "./codex-auth-error";
-import { hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace } from "./encrypted-payload";
+import {
+  hasStrictBackendEncryptedAgentTask,
+  hasUnreadableEncryptedAgentTask,
+  looksLikeBackendCiphertext,
+  sanitizeEncryptedContentInPlace,
+} from "./encrypted-payload";
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel, safeOriginLabel } from "./fetch-helpers";
 import { classifyTransportFailureKind, transportErrorCode } from "../../lib/upstream-reachability";
 import {
@@ -1921,6 +1927,9 @@ export async function handleComboResponses(
 
   const unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (body as { input?: unknown } | undefined)?.input,
+  ) || (
+    agentTaskRecoveryConfig(config) !== null
+    && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input)
   );
   const canDecryptUnreadableAgentTask = (target: (typeof combo.targets)[number]): boolean => {
     const provider = config.providers[target.provider];
@@ -2300,9 +2309,13 @@ async function handleResponsesInner(
       onRequestBodyRead: undefined,
     });
   }
-  let unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+  let routedUnreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (body as { input?: unknown } | undefined)?.input,
   );
+  let strictBackendEncryptedAgentTask = agentTaskRecovery !== null
+    && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+  let unreadableEncryptedAgentTask = routedUnreadableEncryptedAgentTask
+    || strictBackendEncryptedAgentTask;
   const inboundClientThreadId = req.headers.get("x-codex-parent-thread-id")?.trim() || undefined;
   const cursorClientThreadId = codexPoolAffinityKey(req.headers);
   const originalBody = body;
@@ -2587,7 +2600,7 @@ async function handleResponsesInner(
     inboundWire === "responses"
     &&
     threadSpawn
-    && unreadableEncryptedAgentTask
+    && routedUnreadableEncryptedAgentTask
     && agentTaskRecovery
     && !isCanonicalOpenAiForwardProvider(route.provider)
     && !options.comboAttempt
@@ -2605,9 +2618,13 @@ async function handleResponsesInner(
       recovered = false;
     }
     if (recovered) {
-      unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+      routedUnreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
         (body as { input?: unknown } | undefined)?.input,
       );
+      strictBackendEncryptedAgentTask = agentTaskRecovery !== null
+        && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+      unreadableEncryptedAgentTask = routedUnreadableEncryptedAgentTask
+        || strictBackendEncryptedAgentTask;
       if (!unreadableEncryptedAgentTask) {
         try {
           const reparsed = parseRequest(body);
@@ -2717,6 +2734,13 @@ async function handleResponsesInner(
   // runs against the FINAL route so native-only fallback can rescue a routed primary.
   if (!isCanonicalOpenAiForwardProvider(route.provider) && unreadableEncryptedAgentTask) {
     return unreadableEncryptedAgentTaskResponse();
+  }
+
+  // A strict backend task remains opaque even when the canonical native target can consume it
+  // directly. Keep the outbound bytes unchanged, but bar the request body from the local
+  // continuation cache before any direct-success observer can persist the ciphertext.
+  if (strictBackendEncryptedAgentTask && isCanonicalOpenAiForwardProvider(route.provider)) {
+    markBodyNonPersistable(parsed._rawBody);
   }
 
   // The canonical ChatGPT backend rejects previous_response_id, so a local replay miss leaves no
@@ -3410,8 +3434,8 @@ async function handleResponsesInner(
     linkAbortSignal(upstream, options.abortSignal);
     const connectMs = config.connectTimeoutMs ?? 200_000;
     let upstreamResponse: Response;
-    const transportFailureResponse = (err: unknown): Response => {
-      upstream.abort();
+    const transportFailureResponse = (err: unknown, abortUpstream = true): Response => {
+      if (abortUpstream) upstream.abort();
       if (options.abortSignal?.aborted) {
         releaseUpstreamHostAdmission(hostAdmissionLease);
         hostAdmissionLease = null;
@@ -3452,6 +3476,7 @@ async function handleResponsesInner(
         : describeUpstreamConnectFailure(err, connectMs);
       return formatErrorResponse(502, "upstream_error", msg);
     };
+    let transientRetryExhausted = false;
     try {
       // Transient-5xx pre-stream retry (devlog/_plan/260716_claudecode_hardening/010):
       // the ChatGPT backend emits transient 502/520s that an immediate retry absorbs.
@@ -3476,7 +3501,11 @@ async function handleResponsesInner(
               return res;
             });
         },
-        { abortSignal: upstream.signal, label: safeHostLabel(request.url) },
+        {
+          abortSignal: upstream.signal,
+          label: safeHostLabel(request.url),
+          onTransientExhausted: () => { transientRetryExhausted = true; },
+        },
       );
     } catch (err) {
       return transportFailureResponse(err);
@@ -3490,13 +3519,15 @@ async function handleResponsesInner(
     let rateLimitRetries = 0;
     const rebuildAndRefetch = async (
       recovery: AttemptRecoveryKind,
+      oneShot = false,
+      discardBeforeSend?: Response,
     ): Promise<Response | { failed: Response }> => {
       const retryAdapter = resolveAdapter(
         resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
         config.cacheRetention,
       );
       if (!("passthrough" in retryAdapter) || !retryAdapter.passthrough) {
-        upstream.abort();
+        if (!oneShot) upstream.abort();
         return { failed: formatErrorResponse(502, "upstream_error", "Recovery changed the provider wire unexpectedly") };
       }
       try {
@@ -3508,7 +3539,7 @@ async function handleResponsesInner(
         recordAdapterReasoning(logCtx, request);
         recordAdapterTier(logCtx, request);
       } catch (err) {
-        upstream.abort();
+        if (!oneShot) upstream.abort();
         if (options.abortSignal?.aborted) return { failed: clientCancelledResponse() };
         const msg = err instanceof Error ? err.message : String(err);
         return { failed: formatErrorResponse(400, "invalid_request_error", redactSecretString(msg)) };
@@ -3525,36 +3556,95 @@ async function handleResponsesInner(
         retryAdapter.name,
         logCtx.accountLogLabel,
       );
+      const refetch = (innerRecovery?: "connection-reset" | "transient-5xx"): Promise<Response> => {
+        noteAttemptSend(logCtx.activeAttempt, passthroughEstimate, innerRecovery ?? recovery);
+        return fetchWithHeaderTimeout(request.url, applyUpstreamRecoveryInit({
+          method: request.method,
+          headers: request.headers,
+          body: request.body,
+        }, innerRecovery), upstream.signal, connectMs, parsed.stream,
+          providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+            providerName: route.providerName,
+            modelId: route.modelId,
+          }),
+          route.provider.authMode === "forward")
+          .then(response => {
+            settleObservedHostResponse();
+            return response;
+          });
+      };
       try {
+        if (oneShot) {
+          const replacement = await refetch();
+          try { void discardBeforeSend?.body?.cancel().catch(() => {}); } catch { /* already consumed */ }
+          return replacement;
+        }
         return await fetchWithTransientRetry(
-          innerRecovery => {
-            noteAttemptSend(logCtx.activeAttempt, passthroughEstimate, innerRecovery ?? recovery);
-            return fetchWithHeaderTimeout(request.url, applyUpstreamRecoveryInit({
-              method: request.method,
-              headers: request.headers,
-              body: request.body,
-            }, innerRecovery), upstream.signal, connectMs, parsed.stream,
-              providerFetch(route.provider, options.codexWsRuntimeIdentity, {
-                providerName: route.providerName,
-                modelId: route.modelId,
-              }),
-              route.provider.authMode === "forward")
-              .then(response => {
-                settleObservedHostResponse();
-                return response;
-              });
-          },
+          innerRecovery => refetch(innerRecovery),
           { abortSignal: upstream.signal, label: safeHostLabel(request.url) },
         );
       } catch (err) {
-        return { failed: transportFailureResponse(err) };
+        return { failed: transportFailureResponse(err, !oneShot) };
       } finally {
         request.releaseBodyObservation?.();
       }
     };
 
+    // The canonical native child normally receives its ciphertext untouched. Only after its
+    // existing pre-output transient retry budget is exhausted can the explicit recovery opt-in
+    // recover a strict NEW_TASK backend ciphertext and replay this exact target once.
+    let agentTaskRecoveryReplayTerminal = false;
+    if (
+      transientRetryExhausted
+      && isTransientUpstreamStatus(upstreamResponse.status)
+      && inboundWire === "responses"
+      && threadSpawn
+      && agentTaskRecovery
+      && isCanonicalOpenAiForwardProvider(route.provider)
+      && !options.comboAttempt
+      && strictBackendEncryptedAgentTask
+    ) {
+      let recovered = false;
+      try {
+        recovered = await recoverEncryptedAgentTask(
+          req,
+          (parsed._rawBody as { input?: unknown } | undefined)?.input,
+          agentTaskRecovery,
+          config,
+          { parentThreadId, abortSignal: options.abortSignal },
+        );
+      } catch {
+        recovered = false;
+      }
+      if (options.abortSignal?.aborted || req.signal.aborted) {
+        return transportFailureResponse(
+          options.abortSignal?.reason ?? req.signal.reason ?? new DOMException("client disconnected", "AbortError"),
+        );
+      }
+      if (recovered) {
+        markBodyNonPersistable(parsed._rawBody);
+        try {
+          const reparsed = parseRequest(parsed._rawBody);
+          // Only the task-bearing input changed. Keep the already-settled model, tier, account,
+          // provider and replay provenance while refreshing the input-derived context.
+          parsed = { ...parsed, context: reparsed.context, _rawBody: reparsed._rawBody };
+          const retried = await rebuildAndRefetch("agent-task-recovery", true, upstreamResponse);
+          if ("failed" in retried) {
+            if (options.abortSignal?.aborted || req.signal.aborted) return retried.failed;
+          } else {
+            upstreamResponse = retried;
+            agentTaskRecoveryReplayTerminal = true;
+          }
+        } catch {
+          // Optional recovery never replaces the original terminal upstream response when its
+          // bounded plaintext replay cannot be built or sent.
+        }
+      }
+    }
+
     // Keep recovery kinds in sync with the generic `recovery:` loop below.
     passthroughRecovery: for (;;) {
+    if (agentTaskRecoveryReplayTerminal) break;
 
     // Native Responses providers return before the generic adapter recovery loop below. Keep
     // their OAuth contract identical: one pre-stream 401 forces a credential refresh and one
