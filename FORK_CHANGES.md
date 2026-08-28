@@ -31,14 +31,14 @@
 | 项目 | 当前值 |
 | --- | --- |
 | 审计日期 | 2026-08-28 |
-| 最新官方稳定 Release | [`v2.34.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.34.0) |
-| 官方 Tag commit | `80fff9a7f47332a4445df2b26ea175053fa55b0b` |
+| 最新官方稳定 Release | [`v2.35.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.35.0) |
+| 官方 Tag commit | `fc4de772b58c13f7b16b5029b1e981d612a5db06` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `1450ad1b213bfab608b3fcf8c3c829a3a2f05e83` |
-| Fork 包版本 | `2.34.0-ben.9` |
-| 本轮派生 Tag | `v2.34.0-ben.9`，在本文档末尾提交完成后创建 |
-| 同步分支 | `sync/v2.34.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 105 个文件，新增 11,017 行，删除 171 行 |
+| 本轮实现 HEAD | `e10b2ee281ac712a11167842ad3b36fcefd8d9a4` |
+| Fork 包版本 | `2.35.0-ben.1` |
+| 本轮派生 Tag | `v2.35.0-ben.1`，在本文档末尾提交完成后创建 |
+| 同步分支 | `sync/v2.35.0`，最终必须与派生 Tag 指向同一 commit |
+| 已提交修改面 | 105 个文件，新增 11,019 行，删除 171 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 当前实现栈中与能力直接相关的提交：
@@ -52,7 +52,10 @@
 - `49763c34c`：本地安装默认开启 macOS provider debug。
 - `ffdb37774`：修复 install-local 平台用例并推进 `ben.2`。
 - `727cb58ec`：智谱 GLM 复杂工具 schema lowering；`042af6dd9`：保留 provider 转换原始字段。
-- `7f8ced19d`：第三方推理摘要生命周期修复、双阶段诊断附件与展示优化（ben.7 压缩栈）。
+- `0124c2809`：v2.34.0-ben.7 fork 完整扩展栈（含第三方推理摘要生命周期/展示优化、
+  双阶段诊断附件等全部能力，rebase 后的承载提交）；
+- `65a66590f`：passthrough tee-lane 保持官方响应构造形状；
+- `bf2daa5fc`：provider 诊断按日期/小时分目录并拆分 delta timeline 子日志。
 
 `93ccabdaf` 是上一版维护文档提交，`06b2e67d1` 与各轮末尾文档提交均不属于运行时
 能力。`ben.2` 修订新增 `ffdb37774`：install-local 平台用例的显式平台修复和版本推进。
@@ -78,6 +81,17 @@ Responses 入站摘要有界落盘到 `provider-debug.jsonl`），并推进包�
 分片生命周期；`96bbb0be5` 记录 Responses 双阶段诊断附件；
 `68c943c19` 优化第三方推理摘要展示）压缩为单一 commit `7f8ced19d`
 （树内容与原栈逐字节等价），并推进包版本为 `2.34.0-ben.7`。
+`ben.8` / `ben.9`（v2.34.0 基线）为本地开发轮次：`5f51c177b`+`1c8c8feab`
+推进并同步文档，`14fd7793d` 保持 passthrough tee-lane 官方响应构造形状，
+`24af0874b` 将 provider 诊断按日期/小时分目录并拆分 delta timeline 子日志。
+官方发布 `v2.35.0`（`fc4de772b`，219 文件 +18208/−498）后，整个 Fork 栈
+rebase 到新基线并收敛为包版本 `2.35.0-ben.1`：仅 package.json 版本号出现
+冲突（按惯例解决为 ben.1），其余 13 个重叠文件（含 `core.ts`、
+`openai-responses.ts`、`base.ts`、`usage/log.ts` 与 9 个 GUI i18n）全部
+自动合并；官方恢复模块扩展了 strict backend ciphertext envelope 识别，但
+触发门控与转发 fail-closed 边界仍由 Fork core 接线承载（见
+「原生加密子任务恢复接力」）。完整 `bun run prepush`（typecheck、全量
+测试、privacy scan、GUI doctor）通过。
 
 
 `ben.8` 修订为修改面收敛与历史压缩：将官方 v2.34.0 基线之后的全部历史提交压缩为单一 commit `b26cf4a20`（树内容与压缩前逐字节一致）。收敛内容：原仓库测试文件中的纯新增 fork 用例全部迁入新建 `tests/fork-*.test.ts`；还原 `server-auth` 三处 watchdog 预算、serial lane membership 及配套断言；还原 `core.ts` 与 `openai-responses.ts` 两处非必要注释 churn。收敛后原仓库测试修改从 20 个文件降至 8 个（剩余均为必要回归或宿主环境适配），共 +78/-28 行。
@@ -257,7 +271,7 @@ Responses 入站摘要有界落盘到 `provider-debug.jsonl`），并推进包�
 
 ### 原生加密子任务恢复接力
 
-- **状态：** Fork 独有——保留；真实 ciphertext 验收仍有缺口。
+- **状态：** 官方部分覆盖——保留差异；真实 ciphertext 验收仍有缺口。
 - **行为：** 受同一个 `agentTaskRecovery.enabled` 开关控制。原生目标先按现有
   transient 5xx 策略直发；只有重试真实耗尽、且严格匹配 canonical backend-
   ciphertext `NEW_TASK` envelope 时，才恢复明文，并对同一已确定 Provider、模型、
@@ -266,6 +280,11 @@ Responses 入站摘要有界落盘到 `provider-debug.jsonl`），并推进包�
   unreadable 集合，也会在最终路由确定后、派发给非官方转发 Provider 前触发同一
   恢复路径；恢复失败时保持 fail-closed。恢复重放不再进入其他
   OAuth/429/account/opaque/combo 重试。
+  `v2.35.0` 起官方恢复模块（`agent-task-recovery.ts`）扩展了 strict backend
+  ciphertext 的 envelope 识别，但官方 core 的触发条件仍是 Fernet 系
+  `hasUnreadableEncryptedAgentTask`；Fork 保留 core 触发门控
+  （routed-unreadable ∪ strict-backend）与对 canonical OpenAI 转发 Provider 的
+  fail-closed 拒转（`src/server/responses/core.ts`）。
 - **隐私边界：** 严格 envelope 只接受精确 header/author/recipient/task、两段 content
   与一个完整非 Fernet ciphertext。直接成功和恢复后的 body 都不得进入 continuation
   state，避免 ciphertext/plaintext 写入 `responses-state.json`。
