@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.34.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.34.0) |
 | 官方 Tag commit | `80fff9a7f47332a4445df2b26ea175053fa55b0b` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `042af6dd9a1ae872b94bb0c6a2af19c49b570a25` |
-| Fork 包版本 | `2.34.0-ben.3` |
-| 本轮派生 Tag | `v2.34.0-ben.3`，在本文档末尾提交完成后创建 |
+| 本轮实现 HEAD | `89f939ddbd05bd743056054d06ae7c0a74456e7c` |
+| Fork 包版本 | `2.34.0-ben.4` |
+| 本轮派生 Tag | `v2.34.0-ben.4`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.34.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 93 个文件，新增 7,609 行，删除 160 行 |
+| 已提交修改面 | 95 个文件，新增 7,707 行，删除 160 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 当前实现栈中与能力直接相关的提交：
@@ -56,8 +56,14 @@
 `93ccabdaf` 是上一版维护文档提交，`06b2e67d1` 与各轮末尾文档提交均不属于运行时
 能力。`ben.2` 修订新增 `ffdb37774`：install-local 平台用例的显式平台修复和版本推进。
 `ben.3` 修订新增 `727cb58ec`（智谱 GLM 复杂工具 schema lowering）与 `042af6dd9`
-（provider 转换原始字段保真）。后续审计应记录被审计的实现 HEAD，而不是让文档引用
-自己的 commit SHA。
+（provider 转换原始字段保真）。`ben.4` 修订不含运行时能力变化：官方基线仍为
+`v2.34.0`，实现栈压缩为单一 commit `b4e0f2a1f`（内容与原 14 个扩展提交逐字节
+等价），并删除了 `tests/fork-version-policy.test.ts` 中硬编码当前包版本号的断言，
+此后推进 ben 版本不再需要修改该测试文件。后续审计应记录被审计的实现 HEAD，而不是
+让文档引用自己的 commit SHA。
+`ben.4` 修订新增 `89f939ddb`：本地安装器在 npm pack 前临时注入
+`bundleDependencies`（pack 后逐字节还原 package.json），全局替换改用
+`--ignore-scripts`，安装期依赖从 tarball 内静态解出。
 
 ## 当前运行时差异
 
@@ -240,10 +246,17 @@
 - **状态：** Fork 独有——与运行时兼容层分开保留。
 - **行为：** `bun run install:local` 构建 GUI，通过 `npm pack --json` 生成并校验仓库
   根目录下唯一的 regular `.tgz`，安全停止现有安装、替换全局包，并恢复原服务模式。
-  服务状态未知或非 Scheduler 服务停止后仍运行时 fail closed。
+  服务状态未知或非 Scheduler 服务停止后仍运行时 fail closed。`ben.4` 起，pack 前
+  临时把全部 runtime dependencies 写入 `bundleDependencies`（结束后逐字节还原
+  package.json），tarball 自带完整依赖子树；全局替换使用 `npm install -g
+  --ignore-scripts`，安装期不解析 registry、不执行 bun postinstall 下载，launcher
+  保留 install.js 兜底。
 - **代码：** `scripts/install-local.ts`、`install:local` package script、Fork 包版本和
-  根目录包产物 ignore 规则。
-- **测试：** `tests/install-scripts.test.ts` 固定顺序、包路径与服务状态决策。这些是
+  根目录包产物 ignore 规则；`ben.4` 新增 `scripts/install-local-vendor.ts`
+  （bundleDependencies 注入与字节级还原）。
+- **测试：** `tests/install-scripts.test.ts` 固定顺序、包路径与服务状态决策；
+  `tests/install-local-vendor.test.ts` 覆盖 bundle 列表排序、成功与抛错路径的字节级
+  还原；`tests/install-local.test.ts` 覆盖平台化 restart 行为。这些是
   unit/static contract；安装器行为变化后仍需独立做真实全局替换和服务恢复验收。
 - **官方对比：** 官方稳定 Tag 与当前 upstream 开发分支没有同等本地源码安装器。
 
@@ -283,6 +296,7 @@
 - **测试：** 新增 `tests/fork-version-policy.test.ts`；
   `tests/release-version-line.test.ts` 只增加经用户批准的最小门禁调用。Node/Bun 策略、
   package-shaped npm launcher、包清单与版本传播均验证通过；实现提交为 `5789a619f`。
+  `ben.4` 起，该测试不再硬编码当前包版本号，版本推进只改 `package.json`。
 - **前端边界：** 按用户要求不修改 `gui/src/App.tsx` 或 CSS。GUI 继续通过现有链路显示
   真实版本，视觉缩短仅来自实际包版本从 `2.34.1-trendymen.1` 改为 `ben` 系列。
 
