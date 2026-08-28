@@ -4414,8 +4414,11 @@ async function handleResponsesInner(
       const rewrittenBody = clientBlockRewrite !== undefined
         ? relaySseWithBlockRewrite(nativeBody, clientBlockRewrite, translatorBudget)
         : nativeBody;
-      const clientBody = relaySseWithFailedTail(rewrittenBody, upstream, reason => clientGone.abort(reason));
-      return markNativePassthroughSseResponse(new Response(observeClientBoundSse(clientBody), {
+      // Keep the official tee-lane shape: the downstream diagnostic observer wraps the
+      // stream variable itself, so the response constructor stays byte-identical to the
+      // upstream invariant this lane's platform gate asserts on.
+      const clientBody = observeClientBoundSse(relaySseWithFailedTail(rewrittenBody, upstream, reason => clientGone.abort(reason)));
+      return markNativePassthroughSseResponse(new Response(clientBody, {
         status: upstreamResponse.status,
         headers,
       }));
