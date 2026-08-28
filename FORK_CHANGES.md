@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.34.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.34.0) |
 | 官方 Tag commit | `80fff9a7f47332a4445df2b26ea175053fa55b0b` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `80e5e6f431719ced45cd6d7d03597147772527e5` |
-| Fork 包版本 | `2.34.0-ben.7` |
-| 本轮派生 Tag | `v2.34.0-ben.7`，在本文档末尾提交完成后创建 |
+| 本轮实现 HEAD | `5f51c177b6a62fa91326a03286f130190c857182` |
+| Fork 包版本 | `2.34.0-ben.8` |
+| 本轮派生 Tag | `v2.34.0-ben.8`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.34.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 106 个文件，新增 9,944 行，删除 191 行 |
+| 已提交修改面 | 105 个文件，新增 10,898 行，删除 171 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 当前实现栈中与能力直接相关的提交：
@@ -78,6 +78,9 @@ Responses 入站摘要有界落盘到 `provider-debug.jsonl`），并推进包�
 分片生命周期；`96bbb0be5` 记录 Responses 双阶段诊断附件；
 `68c943c19` 优化第三方推理摘要展示）压缩为单一 commit `7f8ced19d`
 （树内容与原栈逐字节等价），并推进包版本为 `2.34.0-ben.7`。
+
+
+`ben.8` 修订为修改面收敛与历史压缩：将官方 v2.34.0 基线之后的全部历史提交压缩为单一 commit `b26cf4a20`（树内容与压缩前逐字节一致）。收敛内容：原仓库测试文件中的纯新增 fork 用例全部迁入新建 `tests/fork-*.test.ts`；还原 `server-auth` 三处 watchdog 预算、serial lane membership 及配套断言；还原 `core.ts` 与 `openai-responses.ts` 两处非必要注释 churn。收敛后原仓库测试修改从 20 个文件降至 8 个（剩余均为必要回归或宿主环境适配），共 +78/-28 行。
 
 ## 当前运行时差异
 
