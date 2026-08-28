@@ -278,7 +278,7 @@ import {
   repairResponsesJsonItemIds,
 } from "../responses-item-id-repair";
 import {
-  createReasoningSummaryChannelPayloadRewrite,
+  createReasoningSummaryChannelBlockRewrite,
   rewriteReasoningSummaryInJsonString,
   routeUsesContentChannelReasoning,
 } from "../responses-reasoning-summary-rewrite";
@@ -3329,10 +3329,65 @@ async function handleResponsesInner(
     // check sees nothing undeclared, and the refused turn enters continuation state anyway. So the
     // rejection is sticky for the whole turn, set from every parsed payload on the inspection side.
     let inspectionSawUndeclaredTool = false;
-    const inboundDebugObserver = isDebugEnabled() ? createInboundResponsesDebugObserver() : undefined;
+    const inboundDebugObserver = isDebugEnabled()
+      ? createInboundResponsesDebugObserver({ stage: "upstream-inbound" })
+      : undefined;
     let inboundDebugUsesRawTerminalRepairTap = false;
     let inboundDebugContext: { host: string; pathname: string; httpStatus?: number } | undefined;
     let inboundDebugPersisted = false;
+    const downstreamObserver = isDebugEnabled()
+      ? createInboundResponsesDebugObserver({ stage: "downstream-after-rewrite" })
+      : undefined;
+    let downstreamPersisted = false;
+    const persistDownstreamOnce = (): void => {
+      if (downstreamPersisted || !downstreamObserver || !inboundDebugContext) return;
+      downstreamPersisted = true;
+      persistInboundResponsesDebugSummary({
+        observer: downstreamObserver,
+        host: inboundDebugContext.host,
+        pathname: inboundDebugContext.pathname,
+        model: route.modelId,
+        stage: "downstream-after-rewrite",
+        threadIdTag: request.threadIdTag,
+        httpStatus: inboundDebugContext.httpStatus,
+      });
+    };
+    const observeClientBoundSse = (body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> => {
+      if (!downstreamObserver) return body;
+      const inspector = createSseInspector({
+        onParsedPayload: payload => downstreamObserver.notePayload(payload),
+      });
+      const reader = body.getReader();
+      let settled = false;
+      const settle = (): void => {
+        if (settled) return;
+        settled = true;
+        try { inspector.finish(); } catch { /* diagnostics must not alter delivery */ }
+        inspector.dispose();
+        persistDownstreamOnce();
+      };
+      return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              settle();
+              controller.close();
+              return;
+            }
+            if (value) inspector.feed(value);
+            controller.enqueue(value);
+          } catch (error) {
+            settle();
+            controller.error(error);
+          }
+        },
+        cancel(reason) {
+          settle();
+          return reader.cancel(reason);
+        },
+      });
+    };
     const persistInboundDebugOnce = (): void => {
       if (inboundDebugPersisted || !inboundDebugObserver || !inboundDebugContext) return;
       inboundDebugPersisted = true;
@@ -3341,6 +3396,7 @@ async function handleResponsesInner(
         host: inboundDebugContext.host,
         pathname: inboundDebugContext.pathname,
         model: route.modelId,
+        stage: "upstream-inbound",
         threadIdTag: request.threadIdTag,
         httpStatus: inboundDebugContext.httpStatus,
       });
@@ -4104,6 +4160,10 @@ async function handleResponsesInner(
         && parsed._responseModelId !== parsed.modelId
         ? createResponsesModelPayloadRewrite(parsed._responseModelId)
         : undefined;
+      const reasoningSummaryBlockRewrite = parsed.options.hideThinkingSummary !== true
+        && routeUsesContentChannelReasoning(route.provider, route.modelId)
+        ? createReasoningSummaryChannelBlockRewrite()
+        : undefined;
       // Compose opt-in payload rewrites into one parse/stringify pass (image-gen restore first).
       const payloadRewrites = [
         createImageGenCallRestoreRewrite(imageGenCallAliases),
@@ -4114,10 +4174,6 @@ async function handleResponsesInner(
           ? createResponsesItemIdPayloadRewrite(repairConfig!, translatorBudget)
           : undefined,
         responseModelRewrite,
-        parsed.options.hideThinkingSummary !== true
-          && routeUsesContentChannelReasoning(route.provider, route.modelId)
-          ? createReasoningSummaryChannelPayloadRewrite()
-          : undefined,
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
       // #893: sparse-snapshot gateways get field backfills AND lifecycle event
       // injection at the block level, after payload rewrites. Defaults come
@@ -4127,6 +4183,7 @@ async function handleResponsesInner(
         payloadRewrites.length > 0
           ? payloadRewriteAsBlockRewrite(composeSsePayloadRewrites(...payloadRewrites))
           : undefined,
+        reasoningSummaryBlockRewrite,
         inferResponsesMessagePhases
           ? createResponsesMessagePhaseBlockRewrite(translatorBudget)
           : undefined,
@@ -4226,6 +4283,9 @@ async function handleResponsesInner(
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
         });
+        const clientInspector = downstreamObserver
+          ? createSseInspector({ onParsedPayload: payload => downstreamObserver.notePayload(payload) })
+          : undefined;
         setInboundDebugContext(upstreamResponse);
         const eagerBody = relaySseEagerBounded(passthroughSseBody, turnAc, {
           inspectChunk: chunk => inspector.feed(chunk),
@@ -4235,6 +4295,11 @@ async function handleResponsesInner(
             persistInboundDebugOnce();
             nestedExecInspection?.dispose();
           },
+          ...(clientInspector
+            ? {
+              onClientChunk: chunk => clientInspector.feed(chunk),
+            }
+            : {}),
           // Stream lifetime follows the protocol terminal even when this request
           // has no outcome callback configured (reported() would stay false).
           sawTerminal: () => inspector.terminalSeen(),
@@ -4255,7 +4320,10 @@ async function handleResponsesInner(
           },
           onClientCancel: () => options.onNativePassthroughCancel?.(),
           onDone: () => {
+            try { clientInspector?.finish(); } catch { /* bounded diagnostics only */ }
+            clientInspector?.dispose();
             persistInboundDebugOnce();
+            persistDownstreamOnce();
             unregisterTurn(turnAc);
           },
         }, inlineEagerRewrite ? { rewriteBudget: translatorBudget } : undefined);
@@ -4347,7 +4415,7 @@ async function handleResponsesInner(
         ? relaySseWithBlockRewrite(nativeBody, clientBlockRewrite, translatorBudget)
         : nativeBody;
       const clientBody = relaySseWithFailedTail(rewrittenBody, upstream, reason => clientGone.abort(reason));
-      return markNativePassthroughSseResponse(new Response(clientBody, {
+      return markNativePassthroughSseResponse(new Response(observeClientBoundSse(clientBody), {
         status: upstreamResponse.status,
         headers,
       }));
@@ -4498,7 +4566,7 @@ async function handleResponsesInner(
           const sseHeaders = sanitizePassthroughHeaders(headers);
           sseHeaders.set("content-type", "text/event-stream");
           sseHeaders.set("cache-control", "no-store");
-          return new Response(stream, {
+          return new Response(observeClientBoundSse(stream), {
             status: upstreamResponse.status,
             statusText: upstreamResponse.statusText,
             headers: sseHeaders,
@@ -4522,6 +4590,14 @@ async function handleResponsesInner(
           }
         })()
         : clientJson;
+      if (downstreamObserver) {
+        try {
+          downstreamObserver.noteJsonResponse(JSON.parse(outboundJson));
+        } catch {
+          downstreamObserver.noteJsonResponse({});
+        }
+        persistDownstreamOnce();
+      }
       return new Response(outboundJson, {
         status: upstreamResponse.status,
         statusText: upstreamResponse.statusText,

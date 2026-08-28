@@ -120,7 +120,7 @@ describe("passthrough reasoning summary rewrite honors hideThinkingSummary", () 
     );
     const text = await response.text();
     expect(text).toContain("response.reasoning_summary_text.delta");
-    expect(text).toContain('"summary":[{"type":"summary_text","text":"think"}]');
+    expect(text).toContain('"summary":[{"type":"summary_text","text":"**think**\\n\\nthink"}]');
   });
 
   test("bounded JSON: hidden thinking keeps the content shape", async () => {
@@ -158,7 +158,7 @@ describe("passthrough reasoning summary rewrite honors hideThinkingSummary", () 
       id: "rs_opaque",
       status: "completed",
       content: [{ type: "reasoning_text", text: "think" }],
-      summary: [{ type: "summary_text", text: "think" }],
+      summary: [{ type: "summary_text", text: "**think**\n\nthink" }],
       encrypted_content: OPAQUE_REASONING_STATE,
     };
     const done = events.find(event => event.type === "response.output_item.done");

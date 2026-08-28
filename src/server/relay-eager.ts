@@ -68,6 +68,11 @@ export type EagerRelayHooks = {
   onClientCancel: () => void;
   /** Exactly once, after the producer fully stops (unregisterTurn parity). */
   onDone: () => void;
+  /**
+   * Observe client-bound bytes AFTER inline block rewrites (phase inference,
+   * call restore). Unlike inspectChunk, this sees what Codex actually receives.
+   */
+  onClientChunk?: (chunk: Uint8Array) => void;
 };
 
 export type EagerRelayOptions = {
@@ -159,6 +164,10 @@ export function relaySseEagerBounded(
       frameBufferBytes = rewriteEncoder!.encode(frameBuffer).byteLength;
     }
     return rewriteEncoder!.encode(out);
+  };
+  const observeClientBytes = (value: Uint8Array): void => {
+    if (!hooks.onClientChunk) return;
+    try { hooks.onClientChunk(value); } catch { /* diagnostics must not break relaying */ }
   };
   /** Flush any trailing partial block at upstream end (rewrite applied, matching the pull relay). */
   const flushRewriteTail = (): Uint8Array => {
@@ -266,6 +275,7 @@ export function relaySseEagerBounded(
             const safeTail = encodeFailedTail(rewriteError);
             if (safeTail && !cancelled && !upstream.signal.aborted) {
               if (!hooks.sawTerminal()) syntheticKind = "failed";
+              observeClientBytes(safeTail);
               queuedBytes += safeTail.byteLength;
               try { controllerRef?.enqueue(safeTail); } catch { /* client already torn down */ }
               try { controllerRef?.close(); } catch { /* client already gone */ }
@@ -273,11 +283,13 @@ export function relaySseEagerBounded(
             break;
           }
           if (clientTail.byteLength > 0 && !cancelled) {
+            observeClientBytes(clientTail);
             queuedBytes += clientTail.byteLength;
             try { controllerRef?.enqueue(clientTail); } catch { /* client already gone */ }
           }
           if (terminalBoundary.terminalSeen()) {
             if (!terminalBoundary.doneSeen() && !cancelled) {
+              observeClientBytes(terminalSentinel);
               queuedBytes += terminalSentinel.byteLength;
               try { controllerRef?.enqueue(terminalSentinel); } catch { /* client already gone */ }
             }
@@ -286,7 +298,9 @@ export function relaySseEagerBounded(
             // Codex as one incomplete turn, followed by the normal sentinel.
             queuedBytes += adapterEofFrame.byteLength + terminalSentinel.byteLength;
             try {
+              observeClientBytes(adapterEofFrame);
               controllerRef?.enqueue(adapterEofFrame);
+              observeClientBytes(terminalSentinel);
               controllerRef?.enqueue(terminalSentinel);
             } catch { /* client already gone */ }
             syntheticKind = "incomplete";
@@ -319,6 +333,7 @@ export function relaySseEagerBounded(
           outbound = terminalBounded;
         }
         if (outbound.byteLength > 0) {
+          observeClientBytes(outbound);
           queuedBytes += outbound.byteLength;
           try {
             controllerRef?.enqueue(outbound);
@@ -335,6 +350,7 @@ export function relaySseEagerBounded(
           // gateway keeps its HTTP connection alive. Add the conventional
           // sentinel and stop the single-reader relay at that protocol boundary.
           if (!terminalBoundary.doneSeen()) {
+            observeClientBytes(terminalSentinel);
             queuedBytes += terminalSentinel.byteLength;
             try { controllerRef?.enqueue(terminalSentinel); } catch { /* client already gone */ }
           }
@@ -382,6 +398,7 @@ export function relaySseEagerBounded(
         }
       }
       if (clientTail.byteLength > 0 && !cancelled && !upstream.signal.aborted) {
+        observeClientBytes(clientTail);
         queuedBytes += clientTail.byteLength;
         try { controllerRef?.enqueue(clientTail); } catch { /* client already torn down */ }
       }
@@ -395,12 +412,14 @@ export function relaySseEagerBounded(
         if (safeTail && !cancelled && !upstream.signal.aborted) {
           if (!hooks.sawTerminal()) syntheticKind = "failed";
           deliveryFallbackSent = true;
+          observeClientBytes(safeTail);
           queuedBytes += safeTail.byteLength;
           try { controllerRef?.enqueue(safeTail); } catch { /* client already torn down */ }
           try { controllerRef?.close(); } catch { /* client already gone */ }
         }
       } else if (tailTerminal && !cancelled && !upstream.signal.aborted) {
         if (!tailDone) {
+          observeClientBytes(terminalSentinel);
           queuedBytes += terminalSentinel.byteLength;
           try { controllerRef?.enqueue(terminalSentinel); } catch { /* client already gone */ }
         }
@@ -419,7 +438,11 @@ export function relaySseEagerBounded(
           deliveryFallbackSent = true;
           queuedBytes += retainedTail.byteLength + tail.byteLength;
           try {
-            if (retainedTail.byteLength > 0) controllerRef?.enqueue(retainedTail);
+            if (retainedTail.byteLength > 0) {
+              observeClientBytes(retainedTail);
+              controllerRef?.enqueue(retainedTail);
+            }
+            observeClientBytes(tail);
             controllerRef?.enqueue(tail);
           } catch { /* client already torn down */ }
           try { controllerRef?.close(); } catch { /* client already torn down */ }
