@@ -1,4 +1,6 @@
-import { lstatSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { commandInvocation } from "../src/lib/win-exec";
@@ -7,6 +9,8 @@ import {
   probeServiceInstallation,
   probeWindowsSchedulerTask,
   proxyStillLiveAfterStop,
+  launchctlLoadFailed,
+  runLaunchctl,
   type ServiceDiagnostic,
   type ServiceInstallationProbe,
 } from "../src/service";
@@ -16,6 +20,159 @@ const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)))
 
 export function localInstallRestartArgs(serviceWasInstalled: boolean): string[] {
   return serviceWasInstalled ? ["ocx", "service", "repair"] : ["ocx", "start"];
+}
+
+export function launchdProxyPlistPath(home = homedir()): string {
+  return join(home, "Library", "LaunchAgents", "com.opencodex.proxy.plist");
+}
+
+/** Narrow seams for command execution and launchd plist updates. */
+type InstallLocalRunOptions = { allowFailure?: boolean; env?: NodeJS.ProcessEnv };
+type InstallLocalRun = (command: string[], options?: InstallLocalRunOptions) => void;
+type LaunchdPlistWriteDeps = {
+  patch?: (path: string) => void;
+  validate?: (path: string) => void;
+};
+
+type CapturedCommandResult = { status: number; stdout: string; stderr: string };
+
+function decodeCommandOutput(value: Uint8Array | string | undefined): string {
+  if (typeof value === "string") return value;
+  return value ? new TextDecoder().decode(value) : "";
+}
+
+function runCaptured(command: string[], env = process.env): CapturedCommandResult {
+  const [executable, ...args] = command;
+  const invocation = commandInvocation(executable ?? "", args);
+  try {
+    const result = Bun.spawnSync([invocation.file, ...invocation.args], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+      ...(invocation.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+    });
+    return {
+      status: result.exitCode,
+      stdout: decodeCommandOutput(result.stdout),
+      stderr: decodeCommandOutput(result.stderr),
+    };
+  } catch (error) {
+    return {
+      status: -1,
+      stdout: "",
+      stderr: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function plistHasProviderDebug(plistPath: string): boolean {
+  const keyPath = "EnvironmentVariables.OCX_DEBUG";
+  const type = runCaptured(["plutil", "-type", keyPath, plistPath]);
+  if (type.status !== 0 || type.stdout.trim().toLowerCase() !== "string") return false;
+  const result = runCaptured([
+    "plutil",
+    "-extract",
+    keyPath,
+    "raw",
+    "-o",
+    "-",
+    plistPath,
+  ]);
+  return result.status === 0 && (result.stdout === "1" || result.stdout === "1\n");
+}
+
+function patchProviderDebugWithPlutil(plistPath: string): void {
+  const keyPath = "EnvironmentVariables.OCX_DEBUG";
+  const replace = runCaptured(["plutil", "-replace", keyPath, "-string", "1", plistPath]);
+  if (replace.status === 0) return;
+  const insert = runCaptured(["plutil", "-insert", keyPath, "-string", "1", plistPath]);
+  if (insert.status !== 0) {
+    const detail = insert.stderr.trim() || replace.stderr.trim() || `exit ${insert.status}`;
+    throw new Error(`could not set OCX_DEBUG in launchd plist: ${detail}`);
+  }
+}
+
+function validateProviderDebugPlist(plistPath: string): void {
+  const result = runCaptured(["plutil", "-lint", plistPath]);
+  if (result.status !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.status}`;
+    throw new Error(`launchd plist validation failed: ${detail}`);
+  }
+}
+
+/** Atomically make the current macOS launchd plist default to provider debug on. */
+export function ensureProviderDebugLaunchdDefault(
+  plistPath = launchdProxyPlistPath(),
+  deps: LaunchdPlistWriteDeps = {},
+): boolean {
+  if (process.platform !== "darwin") return false;
+  if (!existsSync(plistPath)) throw new Error(`launchd plist not found: ${plistPath}`);
+  const stat = lstatSync(plistPath);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("launchd plist must be a regular file");
+  if (plistHasProviderDebug(plistPath)) {
+    chmodSync(plistPath, 0o600);
+    return false;
+  }
+
+  const current = readFileSync(plistPath);
+  const temporary = `${plistPath}.ocx.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, current, { mode: 0o600, flag: "wx" });
+    chmodSync(temporary, 0o600);
+    (deps.patch ?? patchProviderDebugWithPlutil)(temporary);
+    (deps.validate ?? validateProviderDebugPlist)(temporary);
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, plistPath);
+  } catch (error) {
+    try { rmSync(temporary, { force: true }); } catch { /* best-effort cleanup */ }
+    throw error;
+  }
+  return true;
+}
+
+/** Reload launchd only when install-local changed the service definition. */
+export function refreshProviderDebugLaunchd(
+  plistPath = launchdProxyPlistPath(),
+  deps: LaunchdPlistWriteDeps & { launchctl?: typeof runLaunchctl } = {},
+): void {
+  if (process.platform !== "darwin") return;
+  if (!ensureProviderDebugLaunchdDefault(plistPath, deps)) return;
+  const launchctl = deps.launchctl ?? runLaunchctl;
+  const unloaded = launchctl(["unload", plistPath]);
+  if (!unloaded.ok) {
+    throw new Error(`launchctl could not unload ${plistPath}: ${unloaded.stderr || "command failed"}`);
+  }
+  const loaded = launchctl(["load", "-w", plistPath]);
+  if (!loaded.ok || launchctlLoadFailed(loaded.stderr)) {
+    throw new Error(`launchctl could not load ${plistPath}: ${loaded.stderr || "command failed"}`);
+  }
+}
+
+export function localInstallRestartEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  return platform === "darwin" ? { ...env, OCX_DEBUG: "1" } : { ...env };
+}
+
+export function localInstallAfterReplace(
+  serviceWasInstalled: boolean,
+  restart: boolean,
+  ensure: () => void = () => { ensureProviderDebugLaunchdDefault(); },
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (!restart && serviceWasInstalled && platform === "darwin") ensure();
+}
+
+export function restartLocalInstall(
+  serviceWasInstalled: boolean,
+  deps: { run?: InstallLocalRun; refresh?: () => void } = {},
+  platform: NodeJS.Platform = process.platform,
+): void {
+  const runCommand = deps.run ?? run;
+  runCommand(localInstallRestartArgs(serviceWasInstalled), { env: localInstallRestartEnv(process.env, platform) });
+  if (serviceWasInstalled && platform === "darwin") (deps.refresh ?? refreshProviderDebugLaunchd)();
 }
 
 type LocalServiceInstallationProbe = Pick<ServiceInstallationProbe, "state" | "detail">;
@@ -91,7 +248,7 @@ export async function runLocalInstallLifecycle(
   await deps.ready();
 }
 
-function run(command: string[], options?: { allowFailure?: boolean }): void {
+function run(command: string[], options?: InstallLocalRunOptions): void {
   const [executable, ...args] = command;
   const invocation = commandInvocation(executable ?? "", args);
   const result = Bun.spawnSync([invocation.file, ...invocation.args], {
@@ -99,6 +256,7 @@ function run(command: string[], options?: { allowFailure?: boolean }): void {
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
+    env: options?.env ?? process.env,
     ...(invocation.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
   if (!options?.allowFailure && result.exitCode !== 0) {
@@ -184,12 +342,13 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         run(["npm", "uninstall", "-g", name], { allowFailure: true });
         run(["npm", "install", "-g", tarball]);
         run(["ocx", "--version"]);
+        localInstallAfterReplace(serviceWasInstalled, restart);
       },
       restart: () => {
         console.log(serviceWasInstalled
           ? "==> Refreshing background service with packaged proxy..."
           : "==> Starting packaged proxy...");
-        run(localInstallRestartArgs(serviceWasInstalled));
+        restartLocalInstall(serviceWasInstalled);
       },
       ready: () => {
         run(["ocx", "ready", "--json", "--wait", "--timeout", "30"]);
