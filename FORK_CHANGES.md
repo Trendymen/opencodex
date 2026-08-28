@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.34.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.34.0) |
 | 官方 Tag commit | `80fff9a7f47332a4445df2b26ea175053fa55b0b` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `791cce539bee36a175cf270c62d1dfdd8150b21a` |
-| Fork 包版本 | `2.34.0-ben.5` |
-| 本轮派生 Tag | `v2.34.0-ben.5`，在本文档末尾提交完成后创建 |
+| 本轮实现 HEAD | `612a8bec95234d8b96fcd7a253004101ce4ad4bf` |
+| Fork 包版本 | `2.34.0-ben.6` |
+| 本轮派生 Tag | `v2.34.0-ben.6`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.34.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 95 个文件，新增 7,721 行，删除 160 行 |
+| 已提交修改面 | 103 个文件，新增 8,698 行，删除 178 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 当前实现栈中与能力直接相关的提交：
@@ -52,6 +52,8 @@
 - `49763c34c`：本地安装默认开启 macOS provider debug。
 - `ffdb37774`：修复 install-local 平台用例并推进 `ben.2`。
 - `727cb58ec`：智谱 GLM 复杂工具 schema lowering；`042af6dd9`：保留 provider 转换原始字段。
+- `1bf175bf2`：严格密文子任务的路由恢复修复。
+- `ff0325abe`：原生 Responses 入站摘要落盘。
 
 `93ccabdaf` 是上一版维护文档提交，`06b2e67d1` 与各轮末尾文档提交均不属于运行时
 能力。`ben.2` 修订新增 `ffdb37774`：install-local 平台用例的显式平台修复和版本推进。
@@ -68,6 +70,11 @@
 版本推进、安装器依赖内置）再次压缩为单一 commit `791cce539`，内容与
 `ben.4` 栈逐字节等价（仅 package.json 版本号推进为 ben.5），并同步更新
 本文档基线。
+`ben.6` 修订新增 `1bf175bf2`（严格匹配的 backend ciphertext 子任务在最终路由
+确定后、派发给非官方转发 Provider 前也触发一次明文恢复，恢复失败保持
+fail-closed）与 `ff0325abe`（debug 开启时按 allowlisted 事件结构把原生
+Responses 入站摘要有界落盘到 `provider-debug.jsonl`），并推进包版本为
+`2.34.0-ben.6`。
 
 ## 当前运行时差异
 
@@ -162,13 +169,17 @@
 - **行为：** debug 开启时记录 Provider、模型、endpoint shape、工具/schema 数量、
   input 尾部 role、bytes 与兼容动作，不记录 request body、key 或工具参数。日志有界
   持久化到 `provider-debug.jsonl`；Kimi schema catalog 使用独立的文件、目录、数量、
-  ownership 和权限预算。
+  ownership 和权限预算。debug 同时开启时，原生 Responses 入站方向按白名单事件
+  类型聚合脱敏摘要（event counts、文本字节、有界 timeline、安全 context 值、
+  不透明 threadIdTag 与 httpStatus），经 terminal repair 的 raw tap 观测原始上游
+  字节，一次性落盘到 `provider-debug.jsonl`；观测失败不影响 relay 本身。
 - **代码：** `src/fork/outbound-debug.ts`、`src/fork/debug-persistence.ts`、
-  `src/fork/glm-kimi-compat.ts` 的诊断部分。
+  `src/fork/glm-kimi-compat.ts` 的诊断部分，以及 `src/fork/inbound-response-debug.ts`
+  与 `src/server/responses-terminal-repair.ts` 的 raw tap 接线。
 - **测试：** `tests/fork-debug-persistence.test.ts`、
-  `tests/fork-kimi-schema-compiler.test.ts`。
+  `tests/fork-kimi-schema-compiler.test.ts`、`tests/fork-inbound-response-debug.test.ts`。
 - **官方对比：** 官方有 `debugProviderDiagnostic` 和内存 ring buffer，但没有 Fork 的
-  durable log 与 outbound shape 摘要。
+  durable log、outbound shape 摘要或入站结构化摘要落盘。
 
 ### 第三方 reasoning summary 与 GPT continuation 清理
 
@@ -229,7 +240,10 @@
   transient 5xx 策略直发；只有重试真实耗尽、且严格匹配 canonical backend-
   ciphertext `NEW_TASK` envelope 时，才恢复明文，并对同一已确定 Provider、模型、
   account、tier 和 options 重放一次。Slow 5xx、abort、直接成功、非 transient、非原生
-  direct/combo 均不触发。恢复重放不再进入其他 OAuth/429/account/opaque/combo 重试。
+  direct/combo 均不触发。严格匹配的 backend ciphertext 子任务即使不属于 routed
+  unreadable 集合，也会在最终路由确定后、派发给非官方转发 Provider 前触发同一
+  恢复路径；恢复失败时保持 fail-closed。恢复重放不再进入其他
+  OAuth/429/account/opaque/combo 重试。
 - **隐私边界：** 严格 envelope 只接受精确 header/author/recipient/task、两段 content
   与一个完整非 Fernet ciphertext。直接成功和恢复后的 body 都不得进入 continuation
   state，避免 ciphertext/plaintext 写入 `responses-state.json`。
@@ -237,9 +251,8 @@
   `src/server/responses/agent-task-recovery.ts`、
   `src/server/responses/encrypted-payload.ts`、`src/server/responses/core.ts`、
   `src/usage/log.ts`，以及 GUI/i18n/双语配置文档接线。
-- **测试与审查：** focused 98 pass、完整套件 15,193 pass / 12 skip / 0 fail，
-  typecheck、GUI lint/build、privacy、docs build 通过；Spec/Quality 复审 PASS；提交为
-  `aea2ff119`。
+- **测试与审查：** 提交为 `aea2ff119`；`ben.6` 修订补充
+  `tests/agent-task-recovery-routed-backend.test.ts`（提交 `1bf175bf2`）。
 - **已知缺口：** 尚未使用当前真实 minted ChatGPT backend ciphertext 与 live recovery
   SSE 做隔离验收；当前自动化使用合成 ciphertext、mock fetch/SSE 与 fake JWT。
 
