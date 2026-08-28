@@ -1,356 +1,450 @@
-# Trendymen fork changes
+# Trendymen Fork 修改清单
 
-This document is the maintainer source of truth for the committed differences
-between [`Trendymen/opencodex`](https://github.com/Trendymen/opencodex) and the
-latest verified stable release of
-[`lidge-jun/opencodex`](https://github.com/lidge-jun/opencodex).
+本文档是 [`Trendymen/opencodex`](https://github.com/Trendymen/opencodex)
+相对 [`lidge-jun/opencodex`](https://github.com/lidge-jun/opencodex)
+最新稳定版的维护真源。
 
-It describes capabilities that are present in the current fork, not proposals
-from old Specs, Plans, devlogs, mutable installed packages, or abandoned
-experiments. Update it during every stable-release rebase and whenever a fork
-capability changes. After the rebased implementation is committed, refresh this
-document from that exact implementation SHA, run the final required validation
-with the refreshed document present, and then make the document the terminal
-commit before the validated branch is pushed.
+这里记录的是当前 Fork 已提交代码实际提供的能力，而不是旧 Spec、Plan、devlog、
+可变安装包或已放弃实验中的设想。每次稳定版 rebase，以及任何新增、删除、替换或
+实质改变 Fork 能力的普通提交，都必须更新本文档。文档内容统一使用简体中文；代码
+符号、文件路径、命令、Provider/模型标识和版本号保持原样，避免技术含义漂移。
 
-## Status model
+稳定版 rebase 时，先完成并提交实现，随后从精确的实现 SHA 更新本文档，在文档已
+更新的状态下执行最终完整验证，最后单独提交本文档。该文档提交是派生版本 Tag 指向
+的末尾提交。
 
-| Status | Meaning | Required rebase action |
+## 状态定义
+
+| 状态 | 含义 | rebase 时的要求 |
 | --- | --- | --- |
-| **Fork-only — keep** | The stable upstream tag does not provide the capability. | Preserve the behavior and its tests. Keep high-churn upstream wiring minimal. |
-| **Partially covered — keep delta** | Upstream provides the base mechanism but not the complete fork behavior. | Re-evaluate the boundary and retain only the unprovided behavior. |
-| **Upstream-covered — removed** | Upstream now provides an equivalent or better behavior and the local patch has been removed. | Keep the historical row and record the upstream evidence. |
-| **Replaced/removed** | A local implementation was superseded, disproved, or intentionally removed. | Do not reintroduce it during conflict resolution. |
-| **Known gap** | The intended fork behavior is incomplete or its acceptance evidence is missing. | Do not report the capability as fully closed; fix or re-verify it explicitly. |
+| **Fork 独有——保留** | 官方稳定 Tag 尚未提供该能力。 | 保留行为与测试，并尽量缩小官方高频文件中的接线。 |
+| **官方部分覆盖——保留差异** | 官方已有基础机制，但没有覆盖完整 Fork 行为。 | 重新核对边界，只保留官方未覆盖的差异。 |
+| **官方完整覆盖——已移除** | 官方已有等价或更优实现，本地补丁已经删除。 | 保留历史记录，并附官方源码、测试或提交证据。 |
+| **Fork 内部替换/移除** | 本地实现已被新实现替代、被证伪或主动删除。 | 冲突处理时不得恢复旧方向。 |
+| **已知缺口** | 目标行为仍不完整，或缺少所需验收证据。 | 不得宣称完全闭环；必须单独修复或复验。 |
 
-An upstream implementation counts as coverage only when current source and
-tests establish equivalent behavior. Similar names, old design documents, or a
-single successful HTTP response are not sufficient.
+只有当前官方源码与测试能够证明行为等价或更优时，才算“官方覆盖”。名称相似、旧
+文档描述或单次 HTTP 200 都不能作为删除 Fork 能力的依据。
 
-## Current audited baseline
+## 当前审计基线
 
-| Item | Value |
+| 项目 | 当前值 |
 | --- | --- |
-| Audit date | 2026-08-28 |
-| Latest stable upstream Release | [`v2.34.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.34.0) |
-| Upstream Tag commit | `80fff9a7f47332a4445df2b26ea175053fa55b0b` |
-| Upstream default branch at audit | `upstream/main` at the same commit; the Tag is reachable from `main` |
-| Audited fork implementation HEAD | `9703c79e47f9f3a29b83a16f9575e7925951e3be` |
-| Audited implementation commits above the Tag | `d741f7bd6` (runtime compatibility), `9703c79e4` (local installation and maintenance gates) |
-| Committed patch surface | 58 files, 5,370 insertions, 99 deletions |
-| Release marker | `origin/upstream-release` points to the upstream Tag commit |
+| 审计日期 | 2026-08-28 |
+| 最新官方稳定 Release | [`v2.34.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.34.0) |
+| 官方 Tag commit | `80fff9a7f47332a4445df2b26ea175053fa55b0b` |
+| 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
+| 本轮实现 HEAD | `49763c34caf76f6d94efbddff518c635239de3b0` |
+| Fork 包版本 | `2.34.0-ben.1` |
+| 本轮派生 Tag | `v2.34.0-ben.1`，在本文档末尾提交完成后创建 |
+| 同步分支 | `sync/v2.34.0`，最终必须与派生 Tag 指向同一 commit |
+| 已提交修改面 | 91 个文件，新增 7,284 行，删除 149 行 |
+| 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
-The audited fork HEAD is the implementation parent of the commit that first
-adds this document. Future updates should record the implementation HEAD being
-audited rather than trying to make the document refer to its own commit SHA.
+当前实现栈中与能力直接相关的提交：
 
-## Active runtime differences
+- `d741f7bd6`：第三方 Responses 与 Provider 兼容层；
+- `9703c79e4`：本地安装和维护门禁；
+- `6ca2cbe81`：本地最小修改面规则；
+- `c9446e0b5`：智谱 Codex 模型发现；
+- `aea2ff119`：原生加密子任务恢复接力；
+- `5789a619f`：`ben` Fork 修订版本策略；
+- `49763c34c`：本地安装默认开启 macOS provider debug。
 
-### Volcengine Agent Plan GLM/Kimi compatibility
+`93ccabdaf` 是上一版维护文档提交，不属于运行时能力。本文档的新提交必须以
+`49763c34c` 为父提交；后续审计应记录被审计的实现 HEAD，而不是让文档引用自己的
+commit SHA。
 
-- **Status:** Fork-only — keep.
-- **Fork behavior:** Exact-gated compatibility for `openai-responses` at
-  `https://ark.cn-beijing.volces.com/api/plan/v3`. GLM-5.3 and Kimi-K3 receive
-  a trailing user turn when Ark rejects assistant prefill. Kimi-K3 function
-  schemas lower `$defs`, `$ref`, `oneOf`, `allOf`, and root `anyOf` under bounded
-  depth/node budgets while preserving nested `anyOf`, tool names, descriptions,
-  visible properties, and the original App-side schema.
-- **Code:** `src/fork/glm-kimi-compat.ts`, with minimal lifecycle wiring in
-  `src/adapters/openai-responses.ts` and Ark snapshot-repair selection in
-  `src/server/responses/core.ts`.
-- **Evidence:** `tests/fork-glm-kimi-compat.test.ts` and
-  `tests/fork-kimi-schema-compiler.test.ts`, including a synthetic 39-entry
-  catalog that matches the observed tool-count boundary, bounded fallback,
-  persistence limits, and POSIX modes. An isolated direct Responses request
-  with the observed 39-schema catalog succeeded during this audit, but that
-  output is not an immutable repository fixture and is not a Codex App replay;
-  treat it as a historical observation rather than committed regression proof.
-- **Upstream comparison:** `v2.34.0` has provider schema normalization, but no
-  exact Ark/Kimi compiler, prefill repair, or schema-catalog diagnostics.
+## 当前运行时差异
 
-### Native Responses message-phase inference
+### 火山方舟 Agent Plan GLM/Kimi 兼容
 
-- **Status:** Partially covered — keep delta.
-- **Fork behavior:** Provider opt-in through
-  `inferResponsesMessagePhaseModels`; hard exclusion for GPT/OpenAI model IDs
-  and OpenAI-operated destinations; matching SSE and non-streaming JSON
-  semantics; a bounded barrier distinguishes commentary before later work from
-  the final answer and preserves explicit upstream phases.
-- **Code:** `src/fork/responses-message-phase.ts` plus configuration,
-  management API, eager-relay, SSE rewrite, and Responses-core wiring.
-- **Evidence:** `tests/responses-message-phase-config.test.ts`,
-  `tests/responses-message-phase-passthrough.test.ts`, and
-  `tests/responses-message-phase-rewrite.test.ts`.
-- **Upstream comparison:** Upstream already infers phases for bridged adapter
-  events in `src/bridge.ts`, but does not provide configurable inference for
-  native Responses passthrough. Do not remove the fork state machine merely
-  because the bridge has a similarly named phase path.
+- **状态：** Fork 独有——保留。
+- **行为：** 只对 `openai-responses` 且 base URL 精确为
+  `https://ark.cn-beijing.volces.com/api/plan/v3` 的请求启用。GLM-5.3 和
+  Kimi-K3 遇到 Ark 拒绝 assistant prefill 时追加尾部 user turn。Kimi-K3 的
+  function schema 在深度/节点预算内降级 `$defs`、`$ref`、`oneOf`、`allOf` 和
+  根级 `anyOf`；保留嵌套 `anyOf`、工具名称、描述、可见 properties 和 App 原始
+  schema。
+- **代码：** `src/fork/glm-kimi-compat.ts`；最小接线位于
+  `src/adapters/openai-responses.ts` 和 `src/server/responses/core.ts`。
+- **测试：** `tests/fork-glm-kimi-compat.test.ts`、
+  `tests/fork-kimi-schema-compiler.test.ts`。39 工具测试是与已观察数量一致的合成
+  目录，不等同于真实 Codex App fixture。
+- **官方对比：** `v2.34.0` 有通用 Provider schema 处理，但没有精确 Ark/Kimi
+  compiler、prefill 修复或 Kimi schema catalog 诊断。
 
-### Nested code-mode tool repair
+### 原生 Responses message phase 推断
 
-- **Status:** Partially covered — keep delta.
-- **Fork behavior:** Converts model-emitted top-level `functions.exec` or
-  `web__run` calls into the one declared `exec` custom tool only when the
-  current turn's structured tool catalog and lowering facts authorize it.
-  Fragmented adapter events and passthrough SSE are buffered atomically;
-  malformed, ambiguous, duplicated, over-budget, or conflicting calls fall
-  through to the existing undeclared-tool guard. Continuation cache state is
-  committed only after the client receives a valid terminal result.
-- **Code:** `src/responses/nested-exec-call-repair.ts`,
-  `src/responses/nested-exec-adapter-events.ts`,
-  `src/server/responses-nested-exec-call-repair.ts`, and
-  `src/chat/nested-exec-eligibility.ts`, with bounded wiring in
-  `src/server/responses/core.ts`.
-- **Evidence:** `tests/nested-exec-eligibility.test.ts`,
-  `tests/nested-exec-repair-context.test.ts`, and
-  `tests/nested-exec-repair.test.ts`.
-- **Upstream comparison:** Upstream commit `cb9bb9b7634640f18568207322d386a059f6c9ac`
-  already bridges bare `exec_command` / `apply_patch` helpers through unified
-  `exec` in `src/responses/code-mode-helper-compat.ts` and
-  `src/server/responses-custom-tool-repair.ts`, with coverage in
-  `tests/responses-custom-tool-repair.test.ts`. The remaining fork delta is the
-  `functions.exec` / `web__run` aliases, stricter current-turn authorization,
-  atomic adapter/SSE buffering, and coordinated continuation-cache commitment.
+- **状态：** 官方部分覆盖——保留差异。
+- **行为：** Provider 通过 `inferResponsesMessagePhaseModels` 显式选择；模型 ID
+  含 GPT/OpenAI 或目标由 OpenAI 运营时硬排除。SSE 和非流式 JSON 使用一致语义；
+  有界 barrier 区分后续还有工作时的 `commentary` 与最终 `final_answer`，并尊重
+  上游已有 phase。
+- **代码：** `src/fork/responses-message-phase.ts`，以及 config、management API、
+  eager relay、SSE rewrite 和 Responses core 的窄接线。
+- **测试：** `tests/responses-message-phase-config.test.ts`、
+  `tests/responses-message-phase-passthrough.test.ts`、
+  `tests/responses-message-phase-rewrite.test.ts`。
+- **官方对比：** 官方 bridge 已对 adapter event 做 phase 推断，但原生 Responses
+  passthrough 没有可配置的 phase inference；不能因名称相似删除 Fork 状态机。
 
-### Ark quota presentation in Codex Desktop
+### Nested code-mode 工具修复
 
-- **Status:** Fork-only — keep, with a known gap.
-- **Fork behavior:** A recognized permanent Ark usage-quota 429 becomes a
-  non-retryable HTTP 400 `invalid_request_error` with code
-  `volcengine_usage_quota_exhausted`, preserving Ark's complete message and
-  removing `Retry-After`. This prevents Codex Desktop's generic retry-limit or
-  ChatGPT subscription-quota UI from replacing the provider's reset time.
-- **Code:** `src/fork/ark-quota-display.ts` and the non-2xx passthrough boundary
-  in `src/server/responses/passthrough-error.ts` / `src/server/responses/core.ts`.
-- **Evidence:** `tests/fork-latest-compat.test.ts` and
-  `tests/retry-after-429.test.ts` cover the observed five-hour quota form.
-- **Known gap:** Ark now also emits `weekly usage quota`. The current matcher
-  accepts an optional numeric `N-hour` window but not `weekly`, so a real weekly
-  quota response remains HTTP 429 and Codex displays `exceeded retry limit`.
-  This capability must not be marked fully closed until that form is covered
-  and re-verified.
-- **Upstream comparison:** Upstream provides the generic passthrough-error and
-  Retry-After pipeline, but no Ark-specific client presentation.
+- **状态：** 官方部分覆盖——保留差异。
+- **行为：** 只有当前 turn 的结构化工具目录和 lowering 事实授权时，才把模型输出的
+  顶层 `functions.exec` / `web__run` 转成唯一声明的 `exec` custom tool。
+  Fragmented adapter event 和 passthrough SSE 原子缓冲；畸形、歧义、重复、超预算或
+  冲突调用进入现有 undeclared-tool guard。Continuation cache 只在客户端收到有效
+  terminal 后提交。
+- **代码：** `src/responses/nested-exec-call-repair.ts`、
+  `src/responses/nested-exec-adapter-events.ts`、
+  `src/server/responses-nested-exec-call-repair.ts`、
+  `src/chat/nested-exec-eligibility.ts`，以及 `src/server/responses/core.ts` 的窄接线。
+- **测试：** `tests/nested-exec-eligibility.test.ts`、
+  `tests/nested-exec-repair-context.test.ts`、`tests/nested-exec-repair.test.ts`。
+- **官方对比：** 官方提交 `cb9bb9b7634640f18568207322d386a059f6c9ac` 已通过
+  `src/responses/code-mode-helper-compat.ts` 和
+  `src/server/responses-custom-tool-repair.ts` 把裸 `exec_command` / `apply_patch`
+  接入统一 `exec`。Fork 只保留 `functions.exec` / `web__run`、更严格授权、原子事件
+  barrier 和 cache terminal 协调。
 
-### Routed custom-tool output normalization
+### Ark quota 在 Codex Desktop 中的展示
 
-- **Status:** Partially covered — keep delta.
-- **Fork behavior:** When a routed `custom_tool_call_output` is lowered to
-  `function_call_output`, its output is guaranteed to be a string: strings are
-  preserved, text/refusal parts are joined in order, and opaque values fall
-  back to JSON serialization.
-- **Code:** `src/fork/custom-tool-output.ts` and
-  `src/responses/custom-tool-compat.ts`.
-- **Evidence:** `tests/custom-tool-compat.test.ts` and
-  `tests/fork-latest-compat.test.ts`.
-- **Upstream comparison:** Upstream changes the item type but can leave Codex
-  content-part arrays on the string-only function-output wire contract.
+- **状态：** Fork 独有——保留；存在已知缺口。
+- **行为：** 识别到永久 Ark usage quota 429 时，改为不可重试的 HTTP 400
+  `invalid_request_error`，code 为 `volcengine_usage_quota_exhausted`；完整保留 Ark
+  原文并删除 `Retry-After`，避免 Codex Desktop 的通用 retry-limit 或 ChatGPT
+  订阅额度组件覆盖 Ark reset 时间。
+- **代码：** `src/fork/ark-quota-display.ts`，以及
+  `src/server/responses/passthrough-error.ts` / `src/server/responses/core.ts` 的非 2xx
+  边界。
+- **测试：** `tests/fork-latest-compat.test.ts`、`tests/retry-after-429.test.ts` 覆盖
+  已观察的 five-hour 形式。
+- **已知缺口：** Ark 还会返回 `weekly usage quota`。当前 matcher 只接受可选的数字
+  `N-hour` 窗口，因此 weekly 仍保持 429，Codex 会显示 `exceeded retry limit`。
+- **官方对比：** 官方有通用 passthrough error / Retry-After pipeline，但没有 Ark
+  专用客户端展示。
 
-### Provider diagnostics and bounded persistence
+### Routed custom tool output 字符串化
 
-- **Status:** Partially covered — keep delta.
-- **Fork behavior:** Debug-gated outbound-shape diagnostics record provider,
-  model, endpoint shape, tool/schema counts, input-tail roles, byte counts, and
-  compatibility actions without logging request bodies, keys, or tool
-  arguments. Debug lines persist to a bounded `provider-debug.jsonl`; Kimi
-  schema catalogs are stored separately with file, directory, count, ownership,
-  and permission limits.
-- **Code:** `src/fork/outbound-debug.ts`, `src/fork/debug-persistence.ts`, and
-  the diagnostic portions of `src/fork/glm-kimi-compat.ts`.
-- **Evidence:** `tests/fork-debug-persistence.test.ts` and
-  `tests/fork-kimi-schema-compiler.test.ts`.
-- **Upstream comparison:** Upstream provides `debugProviderDiagnostic` and an
-  in-memory ring buffer, but not the fork's durable log or outbound request-shape
-  summary.
+- **状态：** 官方部分覆盖——保留差异。
+- **行为：** `custom_tool_call_output` 降级成 `function_call_output` 时，确保 output
+  是字符串：字符串原样保留，text/refusal 按顺序换行拼接，其他结构回退为 JSON。
+- **代码：** `src/fork/custom-tool-output.ts`、
+  `src/responses/custom-tool-compat.ts`。
+- **测试：** `tests/custom-tool-compat.test.ts`、`tests/fork-latest-compat.test.ts`。
+- **官方对比：** 官方已改 item type，但可能把 Codex content-part 数组继续送入
+  string-only function output wire contract。
 
-### Third-party reasoning summary and GPT continuation sanitation
+### Provider diagnostics 与有界持久化
 
-- **Status:** Partially covered — keep delta.
-- **Fork behavior:** DeepSeek terminal reasoning retains opaque/encrypted state
-  and raw content while adding the summary channel needed by Codex. When the
-  same history later targets native OpenAI GPT, third-party opaque tokens backed
-  by raw `reasoning_text` are removed while genuine OpenAI blobs remain.
-- **Code:** `src/server/responses-reasoning-summary-rewrite.ts` and the
-  reasoning-input sanitizer in `src/adapters/openai-responses.ts`.
-- **Evidence:** `tests/deepseek-reasoning-replay.test.ts`,
-  `tests/responses-reasoning-summary-passthrough.test.ts`, and
-  `tests/responses-reasoning-summary-rewrite.test.ts`.
-- **Upstream comparison:** Upstream already rewrites ordinary reasoning text to
-  summary events and sanitizes several replay forms. The fork delta is opaque
-  terminal preservation and cross-provider raw-backed blob removal, not the
-  whole reasoning pipeline.
+- **状态：** 官方部分覆盖——保留差异。
+- **行为：** debug 开启时记录 Provider、模型、endpoint shape、工具/schema 数量、
+  input 尾部 role、bytes 与兼容动作，不记录 request body、key 或工具参数。日志有界
+  持久化到 `provider-debug.jsonl`；Kimi schema catalog 使用独立的文件、目录、数量、
+  ownership 和权限预算。
+- **代码：** `src/fork/outbound-debug.ts`、`src/fork/debug-persistence.ts`、
+  `src/fork/glm-kimi-compat.ts` 的诊断部分。
+- **测试：** `tests/fork-debug-persistence.test.ts`、
+  `tests/fork-kimi-schema-compiler.test.ts`。
+- **官方对比：** 官方有 `debugProviderDiagnostic` 和内存 ring buffer，但没有 Fork 的
+  durable log 与 outbound shape 摘要。
 
-### SSE block-rewrite flushing
+### 第三方 reasoning summary 与 GPT continuation 清理
 
-- **Status:** Fork-only — keep as internal infrastructure.
-- **Fork behavior:** `SseBlockRewrite.flush` propagates retained blocks through
-  later rewrite stages on clean EOF in the pull relay and before an eager
-  relay's synthetic failure tail, but only for rewrites that implement the
-  optional method. The current message-phase barrier implements `flush`.
-  Ordinary pull-relay reader errors dispose without flushing, and the current
-  nested-exec barrier has `dispose` but no `flush`; its retained state is
-  rejected and released on teardown rather than emitted.
-- **Code:** `src/server/sse-payload-rewrite.ts` and
-  `src/server/relay-eager.ts`.
-- **Evidence:** `tests/sse-payload-rewrite.test.ts` and
-  `tests/relay-eager.test.ts` cover clean EOF, composed flush propagation, and
-  eager failure-tail behavior. Reader-error and nested-exec teardown are
-  boundaries, not flush guarantees.
-- **Upstream comparison:** The stable tag has block rewrites but no flush
-  contract or composed flush propagation.
+- **状态：** 官方部分覆盖——保留差异。
+- **行为：** DeepSeek terminal reasoning 在补 summary channel 的同时保留 opaque/
+  encrypted state 与 raw content。同一历史随后转向原生 OpenAI GPT 时，删除由第三方
+  raw `reasoning_text` 支撑的 opaque token，保留真正的 OpenAI blob。
+- **代码：** `src/server/responses-reasoning-summary-rewrite.ts` 和
+  `src/adapters/openai-responses.ts` 中的 reasoning input sanitizer。
+- **测试：** `tests/deepseek-reasoning-replay.test.ts`、
+  `tests/responses-reasoning-summary-passthrough.test.ts`、
+  `tests/responses-reasoning-summary-rewrite.test.ts`。
+- **官方对比：** 官方已有普通 reasoning text → summary 与若干 replay 清理；Fork
+  差异仅是 opaque terminal 保留和跨 Provider raw-backed blob 删除。
 
-### Standalone web-search capability injection
+### SSE block rewrite flush
 
-- **Status:** Fork-only — keep.
-- **Fork behavior:** Generated Codex provider tables include
-  `supports_standalone_web_search = true`, allowing Codex's client-owned
-  `exec`/`web__run` path when `[features].standalone_web_search` is enabled.
-- **Code:** `src/codex/inject.ts`.
-- **Evidence:** An isolated configuration exposed the standalone surface during
-  development, but the observation is not retained as immutable evidence tied
-  to this audit HEAD. The current committed suite lacks a focused assertion for
-  the new provider-table line; treat live acceptance as unverified for this
-  audit and add a focused assertion when this code is next changed.
-- **Upstream comparison:** `v2.34.0` does not contain the capability key.
+- **状态：** Fork 独有——作为内部基础设施保留。
+- **行为：** pull relay 正常 EOF，以及 eager relay 生成 synthetic failure tail 前，
+  对实现了可选 `flush` 的 rewrite 继续经过后续 stage 输出 retained block。当前
+  message phase barrier 实现 `flush`。普通 pull reader error 只 dispose；nested-exec
+  barrier 当前只有 `dispose`，teardown 时 reject/release retained state，不承诺 flush。
+- **代码：** `src/server/sse-payload-rewrite.ts`、`src/server/relay-eager.ts`。
+- **测试：** `tests/sse-payload-rewrite.test.ts`、`tests/relay-eager.test.ts`。
+- **官方对比：** 官方稳定 Tag 没有 block rewrite flush contract 或 compose propagation。
 
-## Active maintenance, packaging, and test differences
+### Standalone web search 能力注入
 
-### Local source-package installation
+- **状态：** Fork 独有——保留。
+- **行为：** 生成的 Codex Provider table 写入
+  `supports_standalone_web_search = true`；当
+  `[features].standalone_web_search` 开启时，允许 Codex 客户端自己的
+  `exec` / `web__run` 路径。
+- **代码：** `src/codex/inject.ts`。
+- **证据边界：** 开发时在隔离配置观察过该 surface，但没有绑定当前实现 SHA 的不可变
+  证据；新增行也缺少专门提交内断言，后续修改该逻辑时必须补齐。
+- **官方对比：** `v2.34.0` 不含该 capability key。
 
-- **Status:** Fork-only — keep separate from runtime compatibility.
-- **Fork behavior:** `bun run install:local` builds the GUI, creates and
-  validates a repository-local regular `.tgz` through `npm pack --json`, stops
-  the existing installation safely, replaces the global package, and restores
-  the prior service mode. Unknown service state and a still-running
-  non-Scheduler service fail closed.
-- **Code:** `scripts/install-local.ts`, the `install:local` package script,
-  fork package version, and root-local package ignore rule.
-- **Evidence:** `tests/install-scripts.test.ts` pins ordering, package-path
-  validation, and service-state decisions. Treat these as unit/static contract
-  evidence; a real global replacement and background-service restart remains a
-  separate acceptance layer whenever installer behavior changes.
-- **Upstream comparison:** The stable tag and current upstream development
-  branch have no equivalent local source installer.
+### 智谱 BigModel Codex 模型发现
 
-### Default test runner and load-sensitive isolation
+- **状态：** Fork 独有——保留。
+- **行为：** 只在 Provider 为 `zhipu-bigmodel-codex`、adapter 为
+  `openai-responses`、base URL 精确为 `https://open.bigmodel.cn/api/v1`（允许末尾
+  `/`）时，把大陆官方 Codex `{ models: [{ slug }] }` 映射成内部 `id`。其他 Provider
+  继续使用默认 `data[].id`。没有人为 64 条限制，仍受全局 2,000 条安全上限保护。
+- **代码：** `src/providers/model-discovery.ts`、`src/providers/registry.ts`。
+- **测试：** `tests/zhipu-bigmodel-codex-provider.test.ts`。定向/registry 测试、typecheck、
+  完整套件与真实 discovery/Responses 回放均通过；提交为 `c9446e0b5`。
+- **官方对比：** 官方 `v2.34.0` 没有该精确目录 envelope 与 endpoint gate。
 
-- **Status:** Partially covered — keep only the remaining delta.
-- **Fork behavior still present:** `tests/server-auth.test.ts` runs in the
-  existing one-worker serial lane; three WebSocket watchdogs use a test-only
-  three-second bound. Launcher/update tests avoid environment-specific runtime
-  shims and unsupported PATH interception.
-- **Code:** `scripts/test.ts`, `tests/test-runner.test.ts`,
-  `tests/server-auth.test.ts`, `tests/shutdown-launcher.test.ts`, and
-  `tests/update-stop-first.test.ts`.
-- **Upstream comparison:** `v2.34.0` already owns the default isolated
-  `--parallel=4` main lane, machine lock, and declarative serial lanes. Those
-  base capabilities are not fork-owned. The remaining active runner delta is
-  the `server-auth` serial membership and test-only host-stability changes.
+### 原生加密子任务恢复接力
 
-### Prepush and GitHub CI
+- **状态：** Fork 独有——保留；真实 ciphertext 验收仍有缺口。
+- **行为：** 受同一个 `agentTaskRecovery.enabled` 开关控制。原生目标先按现有
+  transient 5xx 策略直发；只有重试真实耗尽、且严格匹配 canonical backend-
+  ciphertext `NEW_TASK` envelope 时，才恢复明文，并对同一已确定 Provider、模型、
+  account、tier 和 options 重放一次。Slow 5xx、abort、直接成功、非 transient、非原生
+  direct/combo 均不触发。恢复重放不再进入其他 OAuth/429/account/opaque/combo 重试。
+- **隐私边界：** 严格 envelope 只接受精确 header/author/recipient/task、两段 content
+  与一个完整非 Fernet ciphertext。直接成功和恢复后的 body 都不得进入 continuation
+  state，避免 ciphertext/plaintext 写入 `responses-state.json`。
+- **代码：** `src/lib/upstream-retry.ts`、
+  `src/server/responses/agent-task-recovery.ts`、
+  `src/server/responses/encrypted-payload.ts`、`src/server/responses/core.ts`、
+  `src/usage/log.ts`，以及 GUI/i18n/双语配置文档接线。
+- **测试与审查：** focused 98 pass、完整套件 15,193 pass / 12 skip / 0 fail，
+  typecheck、GUI lint/build、privacy、docs build 通过；Spec/Quality 复审 PASS；提交为
+  `aea2ff119`。
+- **已知缺口：** 尚未使用当前真实 minted ChatGPT backend ciphertext 与 live recovery
+  SSE 做隔离验收；当前自动化使用合成 ciphertext、mock fetch/SSE 与 fake JWT。
 
-- **Status:** Upstream-covered — no active fork delta.
-- **Evidence:** The `prepush` package script matches `v2.34.0`, and `.github/`
-  has no committed diff from the Tag. Do not attribute the upstream prepush or
-  cross-platform workflows to this fork.
+## 当前维护、安装与测试差异
 
-## Replaced, removed, or disproved fork directions
+### 本地源码包安装
 
-These entries are intentionally retained so a later conflict resolution does
-not resurrect them.
+- **状态：** Fork 独有——与运行时兼容层分开保留。
+- **行为：** `bun run install:local` 构建 GUI，通过 `npm pack --json` 生成并校验仓库
+  根目录下唯一的 regular `.tgz`，安全停止现有安装、替换全局包，并恢复原服务模式。
+  服务状态未知或非 Scheduler 服务停止后仍运行时 fail closed。
+- **代码：** `scripts/install-local.ts`、`install:local` package script、Fork 包版本和
+  根目录包产物 ignore 规则。
+- **测试：** `tests/install-scripts.test.ts` 固定顺序、包路径与服务状态决策。这些是
+  unit/static contract；安装器行为变化后仍需独立做真实全局替换和服务恢复验收。
+- **官方对比：** 官方稳定 Tag 与当前 upstream 开发分支没有同等本地源码安装器。
 
-| Direction | Status | Current decision |
+### install-local 默认开启 macOS provider debug
+
+- **状态：** Fork 独有——仅限本地安装脚本。
+- **行为：** 本地包替换成功后，已有 macOS launchd 服务先 repair，再使用 `plutil`
+  结构化写入 `EnvironmentVariables.OCX_DEBUG=1`，lint 后 unload/load。`--no-restart`
+  只更新磁盘 plist；无服务的 Darwin 前台 `ocx start` 子进程继承 `OCX_DEBUG=1`；
+  非 Darwin 保持原环境并跳过 launchd。
+- **安全边界：** 同目录 UUID + `wx` 独占临时文件、0600、临时文件 patch/lint 成功后
+  才 atomic rename。整数、布尔或空白字符串都会规范化，只有 string 且严格为 `1`
+  才跳过。Patch、校验或 rename 失败时保留原 plist 并清理临时文件。Launchctl 使用
+  现有失败判定，同时检查 exit 0 但 stderr 为 `Load failed` 的情况。
+- **代码与测试：** 只修改 `scripts/install-local.ts`，新增
+  `tests/install-local.test.ts`；专项 14 pass，连同既有安装测试共 31 pass；提交为
+  `49763c34c`。
+- **已知边界：** 独立执行 `ocx service repair/install` 或其他更新路径仍可能由未修改的
+  `src/service.ts` 重写掉 `OCX_DEBUG=1`；本能力只保证 `install-local` 流程补回并 reload。
+
+### `ben` Fork 修订版本策略
+
+- **状态：** Fork 独有——保留。
+- **包版本：** 官方稳定版 `X.Y.Z` 对应 Fork 包版本 `X.Y.Z-ben.N`。当前为
+  `2.34.0-ben.1`。`N` 从 1 开始且必须是安全整数；`ben.0`、前导零、超安全整数或其他
+  suffix 不属于该策略。
+- **更新语义：** 官方同基线稳定版与当前 Fork 等价，不允许显式 `ocx update` 用同基线
+  官方包覆盖 Fork；registry target 无法解析时，`ben` build 在任何 cache/stop/install
+  副作用前 fail closed。更高官方稳定版仍判定为更新。普通 stable/preview 行为不变。
+- **Tag 语义：** Git Tag 使用 `vX.Y.Z-ben.N`。必须存在对应官方 `vX.Y.Z` Tag；Fork
+  基线不得落后于更高官方稳定版；已有同名 Tag 只有指向当前 commit 时才合法；已有更高
+  `ben.N` 时禁止回退。畸形 Tag 不参与 revision 比较。
+- **代码：** `src/fork/version-policy.mjs`、`src/fork/version-policy.d.mts`；
+  `src/update/notify.ts`、`src/update/index.ts` 和 `bin/ocx.mjs` 只保留窄接线。
+- **测试：** 新增 `tests/fork-version-policy.test.ts`；
+  `tests/release-version-line.test.ts` 只增加经用户批准的最小门禁调用。Node/Bun 策略、
+  package-shaped npm launcher、包清单与版本传播均验证通过；实现提交为 `5789a619f`。
+- **前端边界：** 按用户要求不修改 `gui/src/App.tsx` 或 CSS。GUI 继续通过现有链路显示
+  真实版本，视觉缩短仅来自实际包版本从 `2.34.1-trendymen.1` 改为
+  `2.34.0-ben.1`。
+
+### 默认测试 runner 与负载敏感隔离
+
+- **状态：** 官方部分覆盖——只保留剩余差异。
+- **Fork 剩余行为：** `tests/server-auth.test.ts` 位于现有 one-worker serial lane；三个
+  WebSocket watchdog 使用 test-only 三秒预算；launcher/update 测试规避环境 runtime
+  shim 与不支持的 PATH interception。
+- **代码：** `scripts/test.ts`、`tests/test-runner.test.ts`、
+  `tests/server-auth.test.ts`、`tests/shutdown-launcher.test.ts`、
+  `tests/update-stop-first.test.ts`。
+- **官方对比：** `v2.34.0` 已拥有默认 `--isolate --parallel=4` 主 lane、机器锁和声明式
+  serial lane。Fork 当前只拥有 `server-auth` membership 与 test-only host 稳定性差异。
+
+### 本地最小修改面规则
+
+- **状态：** Fork 独有——保留。
+- **文件：** `AGENTS.local.md`。
+- **规则：** 新能力默认使用新的职责明确测试文件；修改既有测试需要用户明确批准。
+  所有实现必须优先新增窄模块或使用扩展点，避免扩散到官方高频文件；审查必须单独检查
+  相对官方的修改面。本文件不进入 npm package。
+
+### Prepush 与 GitHub CI
+
+- **状态：** 官方完整覆盖——当前无 Fork 差异。
+- **证据：** `prepush` package script 与 `v2.34.0` 一致，`.github/` 相对官方 Tag 无
+  committed diff。不得把官方 prepush 或跨平台 workflow 归为 Fork 能力。
+
+## 已替换、已移除或已证伪方向
+
+保留下表是为了避免未来冲突处理复活错误实现。
+
+| 旧方向 | 状态 | 当前决策 |
 | --- | --- | --- |
-| Dynamic `scripts/fork-test-runner.ts` with local-only worker groups and quarantine lists | Upstream-covered / removed | Upstream's stable runner now owns bounded isolation and serial lanes. The custom runner is absent; retain only the explicit `server-auth` lane delta. |
-| Kimi tool-name exclusion and automation-specific schema lowering | Replaced/removed | Replaced by the exact-gated generic function-schema compiler. Do not restore tool allowlists or filter the 39-tool App catalog. |
-| `src/server/responses-message-phase-rewrite.ts` | Replaced/removed | The implementation moved into `src/fork/responses-message-phase.ts`; the old path is not an active capability or an upstream removal. |
-| Kimi-triggered `normalizeResponsesToolResultAdjacency` | Disproved/removed | Parallel `call A, call B, output A, output B` is valid. Kimi must not activate adjacency normalization; the current code gates it only on `requiresAdjacentResponsesToolResults`. |
-| Codex `usage_limit_reached` plus promo-header quota rendering | Disproved/removed | It invokes the global ChatGPT quota component and can replace Ark's reset time. Keep the provider-specific client-error representation instead. |
-| Fork-specific MiniMax fixed-port test workaround | Removed as unnecessary | The final maintenance commit does not carry the MiniMax test patch. Do not re-add it unless a fork-caused failure is independently reproduced against the same upstream baseline. |
+| 动态 `scripts/fork-test-runner.ts`、local-only worker group 和 quarantine list | 官方覆盖/已移除 | 官方稳定 runner 已负责有界隔离和 serial lane；只保留 `server-auth` membership 差异。 |
+| 按工具名过滤 Kimi 工具与 automation-specific schema lowering | Fork 内部替换/移除 | 已被精确 gate 的通用 function schema compiler 替代；不得恢复 allowlist 或过滤 39 工具目录。 |
+| `src/server/responses-message-phase-rewrite.ts` | Fork 内部替换/移除 | 实现已迁移到 `src/fork/responses-message-phase.ts`，旧路径不是活跃能力。 |
+| Kimi 自动触发 `normalizeResponsesToolResultAdjacency` | 已证伪/移除 | 并行 `call A, call B, output A, output B` 合法；Kimi 不得启用该 normalization。 |
+| `usage_limit_reached` + promo header quota 展示 | 已证伪/移除 | 会触发全局 ChatGPT quota UI 并覆盖 Ark reset；保留 Provider 专用 client error。 |
+| Fork MiniMax fixed-port 测试 workaround | 不必要/已移除 | 最终维护提交不含该补丁；没有同基线 fork 失败证据时不得重加。 |
 
-## Current known gaps and verification boundaries
+## 当前已知缺口与验证边界
 
-1. **Weekly Ark quota display:** the matcher does not yet recognize `weekly
-   usage quota`; this is a confirmed live gap.
-2. **Standalone web-search injection:** real configuration behavior was
-   observed, but the exact injected line lacks focused committed test coverage.
-3. **Local installer acceptance:** static/unit coverage does not replace a real
-   package replacement plus restoration of the pre-existing service mode.
-4. **External provider acceptance:** focused tests and HTTP success are separate
-   from a real Codex App replay. Record provider/model, client terminal state,
-   and redacted outbound evidence for K3, nested-exec, phase inference, and
-   DeepSeek reasoning after relevant changes.
-5. **Concurrent worktree state:** compute this inventory from committed SHAs.
-   Never include unrelated uncommitted files merely because they were present
-   while the rebase document was updated.
+1. **Ark weekly quota：** matcher 尚未识别 `weekly usage quota`，这是已确认 live 缺口。
+2. **Standalone web search：** 缺少绑定当前实现 SHA 的专门断言和不可变真实验收证据。
+3. **原生加密恢复：** 缺少真实 minted backend ciphertext + live recovery SSE 验收。
+4. **Provider debug：** 独立 `ocx service repair/install` 仍可能覆盖 install-local 写入的
+   `OCX_DEBUG=1`。
+5. **安装器：** unit/static 通过不替代真实全局 package replacement 与服务模式恢复。
+6. **Windows：** package-shaped npm launcher 的 unresolved target 子进程测试在 Windows
+   跳过，依赖 CI 覆盖。
+7. **外部 Provider：** focused test 和 HTTP success 与真实 Codex App terminal 分层记录；
+   相关能力变化后必须记录 Provider/模型、客户端终态与脱敏 outbound shape。
+8. **并行工作区：** 本清单只按 committed SHA 计算，绝不因工作区中恰好存在其他任务
+   文件而把它们混入提交或能力清单。
 
-## Required update on every stable-release rebase
+## Fork 版本、Tag 与 GitHub Release 规则
 
-1. Query GitHub Releases and accept only a non-draft, non-prerelease stable
-   Release. Verify its Tag commit is reachable from upstream `main`.
-2. Require a clean worktree/index with no in-progress Git operation. Record the
-   exact local/remote `main`, `upstream-release`, and local/remote `sync/<tag>`
-   SHAs. If a remote candidate exists, fetch and preserve it: create a missing
-   local candidate from that exact remote SHA, continue only when local and
-   remote candidates are identical and their origin is understood, and stop on
-   remote-only commits, divergence, or ambiguous provenance. Only when no
-   remote candidate exists may a new candidate be created from recorded
-   `main`. Perform the rebase on `sync/<tag>` itself; do not move `main` during
-   rebase or validate a detached commit.
-3. Re-evaluate every active row against the new Tag's source and tests:
-   - equivalent or better upstream behavior: remove the fork patch, mark
-     **Upstream-covered — removed**, and cite the upstream file/test/commit;
-   - partial coverage: shrink the fork boundary and document the remaining
-     behavioral delta;
-   - no coverage: retain the fork behavior and its focused tests.
-4. Complete and commit all implementation/conflict fixes on the candidate.
-   Preliminary focused checks may run while the implementation is changing,
-   but they do not replace the final validation below.
-5. Capture the candidate `IMPLEMENTATION_HEAD`. Regenerate the baseline,
-   patch commits, shortstat, statuses, removed/replaced decisions, known gaps,
-   and acceptance boundaries from that exact SHA. Do not turn a stale prior
-   PASS into evidence for the rebased implementation.
-6. With the refreshed document present, run final validation proportionate to
-   the changed surface. Shared runtime, adapters, server, scripts, or runner
-   changes require the repository's full prepush gate; documentation-only
-   updates require at least link/path review, privacy scanning, and a real diff
-   check. If validation causes an implementation change, commit it and repeat
-   steps 5–6 with the new implementation SHA.
-7. Commit only this document as the terminal documentation commit. Verify that
-   its parent is exactly `IMPLEMENTATION_HEAD` and that no implementation file
-   is part of the documentation commit. Before committing, verify the staged
-   name list contains only this file and run the staged diff check; after
-   committing, run `git diff --check HEAD^ HEAD`. Any later implementation
-   change must repeat steps 4–7.
-8. Promote the terminal candidate SHA to remote `main` and `sync/<tag>`, and the
-   unmodified official Tag SHA to remote `upstream-release`, in one atomic push
-   with explicit source/destination refspecs and explicit expected-SHA
-   `--force-with-lease` values captured in step 2. If any lease drifts or atomic
-   push is unavailable, fail closed; never fall back to ordinary force push or
-   partially update the three refs.
-9. After the atomic push succeeds, align local `main` and `upstream-release` to
-   the pushed SHAs without changing the checked-out validated candidate.
+1. 官方稳定 `vX.Y.Z` 第一次完成派生 rebase 时，包版本设为 `X.Y.Z-ben.1`，创建带
+   `v` 的 Git Tag `vX.Y.Z-ben.1`。
+2. 同一同步任务重复执行必须幂等；不得因 heartbeat 重跑自动生成 `ben.2`。
+3. `ben.2`、`ben.3` 等只在用户明确要求同一官方基线再做一次 Fork 修订时创建；每次
+   revision 都必须更新包版本、本文档、Tag 与 Release。
+4. `main`、`sync/vX.Y.Z` 和最新 `vX.Y.Z-ben.N` 的 peeled commit 必须完全一致。
+   `upstream-release` 始终指向未经修改的官方 `vX.Y.Z` commit。
+5. Fork Tag 不可改写。远端 Tag 不存在时才创建；已存在时必须验证 Tag object/peeled
+   commit 与本地一致，否则 fail closed，禁止 force tag。
+6. 每个 Fork Tag 都必须在 `Trendymen/opencodex` 创建同名 GitHub Release。`ben.N`
+   在本 Fork 中表示正式修订，不是 beta；Release 必须公开，即 `isDraft=false`、
+   `isPrerelease=false`。
+7. Release 标题必须与 Tag 完全一致；Release Notes 使用简体中文，至少包括官方基线、
+   Fork 修改点、验证结果、已知缺口与 commit。已有 Release 也必须核对 `tagName`、`name`、
+   `body`、`isDraft` 和 `isPrerelease`；元数据不合格时只幂等修正 Release，不移动 Tag、
+   不递增 revision。GitHub 自动生成的 source archive 即可；默认不上传 npm 包或额外
+   二进制资产。
+8. 不发布 npm。官方仓库的 `scripts/release.ts` / release workflow 不是 Fork Tag 的
+   执行入口。
+9. Tag 已推送但 GitHub Release 尚未创建或元数据不合格时，任务仍视为未完成。后续重试
+   只补建/修正/核对 Release，不递增 `ben.N`，也不移动已存在 Tag。
 
-The same inventory must also be updated when a normal fork feature commit adds,
-removes, replaces, or materially changes one of the capabilities above; the
-stable-release rebase is the mandatory full re-audit point.
+## 没有新官方版本时的幂等收敛
 
-## Audit commands
+Heartbeat 在输出“无需同步”前，必须从已提交的 `FORK_CHANGES.md` 与 `package.json`
+推导当前预期 Fork 版本和 Tag，并核对末尾文档提交、本地/远端引用、annotated Tag 与
+GitHub Release。官方 `upstream-release` 已经是最新版本，并不代表本次 Fork 派生流程
+已经完成。
 
-The following commands are the minimum reproducible inventory; adapt remote
-names only when the repository configuration actually differs.
+1. 若实现、最终验证或末尾文档提交尚未完成，则保留当前 `ben.N`，只恢复剩余收尾步骤；
+   不重新 rebase，也不递增 revision。工作树不干净、提交来源不明或证据不足时 fail
+   closed，明确登记未完成状态。
+2. 若末尾文档提交已经完成但 Fork Tag 缺失，则先验证 package/document 版本一致、文档
+   commit 的父提交是记录的 `IMPLEMENTATION_HEAD`、提交只含本文档，并核对本地/远端
+   `main`、sync 和 `upstream-release` 的 expected SHA；随后创建当前版本的 annotated
+   Tag，并使用同一套 atomic push 与显式 branch lease 收敛引用。Tag refspec 不使用
+   force 或 lease。不得启动新 rebase 或生成 `ben.(N+1)`。
+3. 若 Tag 已存在但 Release 缺失或元数据不合格，则只创建或修正同名 Release；必须确认
+   `isDraft=false`、`isPrerelease=false`、标题等于 Tag，且中文 Notes 含官方基线、Fork
+   修改点、验证结果、已知缺口与 commit。
+4. 只有上述状态全部满足，且没有更新的官方稳定 Release，才允许记录“无需同步”。
+
+## 每次稳定版 rebase 的强制流程
+
+1. 查询 GitHub Releases，只接受非 draft、非 prerelease 的官方稳定 Release；确认 Tag
+   commit 可从 upstream `main` 到达。
+2. 要求工作树、索引干净且没有进行中的 Git 操作。记录本地/远端 `main`、
+   `upstream-release`、`sync/vX.Y.Z` 和目标 Fork Tag 的现有 SHA。
+3. 保护已有候选历史：远端 sync 存在时必须 fetch 并保留；本地缺失时从远端 SHA
+   创建，本地存在时必须与远端一致且来源明确。远端独有、分叉或来源不明时停止。
+4. 在 `sync/vX.Y.Z` 上执行等价于
+   `git rebase --onto <new-tag-sha> <old-upstream-release-sha> sync/vX.Y.Z`；rebase
+   阶段不得移动 `main`，不得在 detached HEAD 上验证。
+5. 逐项对照本文档与新官方源码/测试：完整覆盖则删除本地补丁并保留历史记录；部分覆盖
+   只移除被替代部分；未覆盖则保留能力与 focused test。语义不明或需要放弃能力时请求
+   用户决策。
+6. 决定 Fork revision：新官方基线默认 `ben.1`；同基线已有 Release 时，只有用户明确
+   要求新修订才递增。同步设置 `package.json` 并运行 Fork version/tag gate。
+7. 完成并提交全部 rebase、冲突与实现修复。实现仍变化时可先跑定向测试，但不替代最终
+   完整验证。
+8. 捕获 `IMPLEMENTATION_HEAD`，按该 SHA 更新本文档中的官方版本、实现 commit、shortstat、
+   能力状态、覆盖证据、已移除实现、已知缺口、Fork 版本与目标 Tag。文档必须为中文。
+9. 在本文档已更新的状态下执行最终验证：相关定向测试、typecheck、privacy scan；共享
+   runtime、adapter、server、script 或 runner 改动必须运行一次 `bun run prepush`。
+   若验证促成实现修改，提交后回到第 8 步并重新生成文档、重跑完整门禁。
+10. 只暂存 `FORK_CHANGES.md`，核对 staged name list 与 staged diff check，再创建末尾
+    documentation commit。使用第 8 步提前捕获且之后不得重赋值的
+    `IMPLEMENTATION_HEAD`，机械确认 `HEAD^` 与它完全一致，且提交只含本文档；运行
+    `git diff --check HEAD^ HEAD`。任何后续实现改动都必须重做第 7–10 步。
+11. 创建或核对 annotated Fork Tag `vX.Y.Z-ben.N`，使其 peeled commit 指向末尾文档
+    commit。必须用 `git cat-file -t` 证明本地 ref 指向 Tag object，而不是 lightweight
+    Tag；远端已存在时同时核对 raw Tag object OID 与 peeled commit。用一次 atomic push
+    同步三个 branch 与完整本地 Tag ref：branch 目标使用显式 expected-SHA
+    `--force-with-lease`，Tag refspec 使用 `refs/tags/<tag>:refs/tags/<tag>`，不加 `+`、
+    不使用 force 或 lease。任一 branch lease 漂移、远端 Tag 已存在但不一致、atomic
+    不支持或推送失败都 fail closed，不拆成可能部分成功的多次 push。
+12. 远端 atomic push 成功后、调用 GitHub Release API 前，使用之前捕获的本地旧 OID
+    作为 compare-and-swap 条件，在一个 `git update-ref --stdin` transaction 中把本地
+    `main` 对齐末尾文档 commit、把本地 `upstream-release` 对齐官方 Tag commit；不得
+    切换或移动已验证的当前 sync branch。随后刷新/核对 remote-tracking refs。即使后续
+    Release 创建失败，本地/远端 branch 状态也必须保持已收敛。
+13. Git 引用与本地 branch 收敛后，创建或核对同名 GitHub Release。必须查询并验证 `tagName`、
+    `name`、`body`、`isDraft=false`、`isPrerelease=false` 和 URL；元数据不合格时只做
+    幂等 Release 修正。创建或修正失败时保留已经推送的不可变 Tag，任务标记未完成，
+    下次重试只处理 Release。
+14. 最终确认本地/远端 `main`、sync branch 和 Fork Tag peeled commit 一致，
+    `upstream-release` 等于官方 Tag SHA，GitHub Release 指向该 Fork Tag。
+
+## 最小可复现审计命令
+
+以下命令是基础清单；只有实际 remote 名称不同才允许调整。
 
 ```bash
 gh api repos/lidge-jun/opencodex/releases/latest
 git fetch --all --prune --tags
-git rev-parse refs/tags/<tag>^{}
-git merge-base --is-ancestor refs/tags/<tag>^{} upstream/main
-# Run the remaining commands after the terminal documentation commit.
-IMPLEMENTATION_HEAD=$(git rev-parse HEAD^)
+git rev-parse refs/tags/<official-tag>^{}
+git merge-base --is-ancestor refs/tags/<official-tag>^{} upstream/main
+
+# 在创建末尾文档提交之前捕获；后续不得从 HEAD^ 反推或覆盖该变量。
+IMPLEMENTATION_HEAD=$(git rev-parse HEAD)
+# 更新、验证并提交 FORK_CHANGES.md 后运行。
+test "$(git rev-parse HEAD^)" = "$IMPLEMENTATION_HEAD"
 test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = "FORK_CHANGES.md"
-git log --reverse --oneline <tag>..$IMPLEMENTATION_HEAD
-git diff --name-status <tag>...$IMPLEMENTATION_HEAD
-git diff --shortstat <tag>...$IMPLEMENTATION_HEAD
-git diff --check <tag>...$IMPLEMENTATION_HEAD
+git log --reverse --oneline <official-tag>..$IMPLEMENTATION_HEAD
+git diff --name-status <official-tag>...$IMPLEMENTATION_HEAD
+git diff --shortstat <official-tag>...$IMPLEMENTATION_HEAD
+git diff --check <official-tag>...$IMPLEMENTATION_HEAD
 git diff --check HEAD^ HEAD
+
+# Fork Tag 与 Release。
+test "$(git cat-file -t refs/tags/<fork-tag>)" = "tag"
+git rev-parse refs/tags/<fork-tag>
+git rev-parse refs/tags/<fork-tag>^{}
+git ls-remote origin refs/tags/<fork-tag> refs/tags/<fork-tag>^{}
+git rev-parse refs/heads/main
+git rev-parse refs/heads/sync/<official-version>
+gh release view <fork-tag> --repo Trendymen/opencodex \
+  --json tagName,name,body,isDraft,isPrerelease,url
 ```
