@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.34.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.34.0) |
 | 官方 Tag commit | `80fff9a7f47332a4445df2b26ea175053fa55b0b` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `49763c34caf76f6d94efbddff518c635239de3b0` |
-| Fork 包版本 | `2.34.0-ben.1` |
-| 本轮派生 Tag | `v2.34.0-ben.1`，在本文档末尾提交完成后创建 |
+| 本轮实现 HEAD | `ffdb37774bca4ca507b00ff47806dc27f75c6588` |
+| Fork 包版本 | `2.34.0-ben.2` |
+| 本轮派生 Tag | `v2.34.0-ben.2`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.34.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 91 个文件，新增 7,284 行，删除 149 行 |
+| 已提交修改面 | 91 个文件，新增 7,378 行，删除 149 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 当前实现栈中与能力直接相关的提交：
@@ -50,9 +50,11 @@
 - `aea2ff119`：原生加密子任务恢复接力；
 - `5789a619f`：`ben` Fork 修订版本策略；
 - `49763c34c`：本地安装默认开启 macOS provider debug。
+- `ffdb37774`：修复 install-local 平台用例并推进 `ben.2`。
 
-`93ccabdaf` 是上一版维护文档提交，不属于运行时能力。本文档的新提交必须以
-`49763c34c` 为父提交；后续审计应记录被审计的实现 HEAD，而不是让文档引用自己的
+`93ccabdaf` 是上一版维护文档提交，`06b2e67d1` 是 `ben.1` 的末尾维护文档提交，
+两者都不属于运行时能力。`ben.2` 修订新增 `ffdb37774`：install-local 平台用例的
+显式平台修复和版本推进。后续审计应记录被审计的实现 HEAD，而不是让文档引用自己的
 commit SHA。
 
 ## 当前运行时差异
@@ -249,6 +251,8 @@ commit SHA。
 - **代码与测试：** 只修改 `scripts/install-local.ts`，新增
   `tests/install-local.test.ts`；专项 14 pass，连同既有安装测试共 31 pass；提交为
   `49763c34c`。
+- **跨平台修正：** `ffdb37774` 把 restart 环境用例改为显式 `darwin`，与实现的显式
+  platform 分支语义一致；Linux CI 对应失败已闭环，实现行为未改。
 - **已知边界：** 独立执行 `ocx service repair/install` 或其他更新路径仍可能由未修改的
   `src/service.ts` 重写掉 `OCX_DEBUG=1`；本能力只保证 `install-local` 流程补回并 reload。
 
@@ -256,8 +260,8 @@ commit SHA。
 
 - **状态：** Fork 独有——保留。
 - **包版本：** 官方稳定版 `X.Y.Z` 对应 Fork 包版本 `X.Y.Z-ben.N`。当前为
-  `2.34.0-ben.1`。`N` 从 1 开始且必须是安全整数；`ben.0`、前导零、超安全整数或其他
-  suffix 不属于该策略。
+  `2.34.0-ben.2`（`ben.1` Tag 保留为历史不可变修订）。`N` 从 1 开始且必须是安全整数；
+  `ben.0`、前导零、超安全整数或其他 suffix 不属于该策略。
 - **更新语义：** 官方同基线稳定版与当前 Fork 等价，不允许显式 `ocx update` 用同基线
   官方包覆盖 Fork；registry target 无法解析时，`ben` build 在任何 cache/stop/install
   副作用前 fail closed。更高官方稳定版仍判定为更新。普通 stable/preview 行为不变。
@@ -270,8 +274,7 @@ commit SHA。
   `tests/release-version-line.test.ts` 只增加经用户批准的最小门禁调用。Node/Bun 策略、
   package-shaped npm launcher、包清单与版本传播均验证通过；实现提交为 `5789a619f`。
 - **前端边界：** 按用户要求不修改 `gui/src/App.tsx` 或 CSS。GUI 继续通过现有链路显示
-  真实版本，视觉缩短仅来自实际包版本从 `2.34.1-trendymen.1` 改为
-  `2.34.0-ben.1`。
+  真实版本，视觉缩短仅来自实际包版本从 `2.34.1-trendymen.1` 改为 `ben` 系列。
 
 ### 默认测试 runner 与负载敏感隔离
 
