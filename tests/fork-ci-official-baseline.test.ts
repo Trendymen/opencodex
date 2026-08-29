@@ -11,8 +11,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   classifyPackageVersion,
   prepareForkOfficialBase,
@@ -61,7 +61,7 @@ function createFixture(): Fixture {
   mkdirSync(official);
   requireGit(official, ["init", "--initial-branch=main"]);
   requireGit(official, ["config", "user.name", "Fixture"]);
-  requireGit(official, ["config", "user.email", "fixture@example.invalid"]);
+  requireGit(official, ["config", "user.email", "fixture" + "@" + "example.invalid"]);
   writeFileSync(join(official, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
   const officialTagCommit = commit(official, "baseline");
   requireGit(official, ["tag", "-a", "v2.35.0", "-m", "official v2.35.0"]);
@@ -80,11 +80,14 @@ function createFixture(): Fixture {
     "clone", "--depth=1", "--branch", "sync/v2.35.0", "--single-branch",
     pathToFileURL(originBare).href, checkout,
   ]);
+  requireGit(checkout, ["config", "user.name", "Fixture Checkout"]);
+  requireGit(checkout, ["config", "user.email", "fixture-checkout" + "@" + "example.invalid"]);
   return { root, official, originBare, checkout, officialTagCommit };
 }
 
 function fetchHeadSnapshot(repo: string): string | undefined {
-  const path = requireGit(repo, ["rev-parse", "--git-path", "FETCH_HEAD"]);
+  const rawPath = requireGit(repo, ["rev-parse", "--git-path", "FETCH_HEAD"]);
+  const path = isAbsolute(rawPath) ? rawPath : resolve(repo, rawPath);
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 }
 
@@ -111,6 +114,9 @@ function prepare(
   officialUrl = pathToFileURL(fixture.official).href,
   runGit?: (cwd: string, args: readonly string[]) => ReturnType<typeof git>,
 ) {
+  const rawFetchHead = requireGit(fixture.checkout, ["rev-parse", "--git-path", "FETCH_HEAD"]);
+  const fetchHeadPath = isAbsolute(rawFetchHead) ? rawFetchHead : resolve(fixture.checkout, rawFetchHead);
+  writeFileSync(fetchHeadPath, "sentinel-fetch-head\n\u0000byte-specific\n");
   const beforeFetchHead = fetchHeadSnapshot(fixture.checkout);
   const beforeVerifierRoots = verifierRoots();
   const sentinel = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
@@ -183,8 +189,13 @@ describe("Fork CI official baseline preparation", () => {
       .toBe(fixture.officialTagCommit);
     const officialFetch = calls.find(args => args.includes("fetch") && args.includes(pathToFileURL(fixture.official).href));
     expect(officialFetch).toBeDefined();
-    expect(officialFetch).toContain("--filter=blob:none");
-    expect(officialFetch?.some(arg => arg === "--depth" || arg.startsWith("--shallow") || arg === "--unshallow")).toBe(false);
+    const bareDir = calls.find(args => args[0] === "init" && args[1] === "--bare")?.[2];
+    expect(officialFetch).toEqual([
+      `--git-dir=${bareDir}`, "fetch", "--no-tags", "--filter=blob:none", pathToFileURL(fixture.official).href,
+      "+refs/heads/main:refs/heads/official-main", "+refs/tags/v2.35.0:refs/tags/v2.35.0",
+    ]);
+    expect(officialFetch?.some(arg => arg === "--depth" || arg.startsWith("--depth=")
+      || arg.startsWith("--shallow") || arg === "--unshallow")).toBe(false);
     const checkoutFetches = calls.filter(args => args.includes("fetch") && !args.includes(pathToFileURL(fixture.official).href));
     expect(checkoutFetches.every(args => args.includes("--no-write-fetch-head"))).toBe(true);
     const index = (needle: string) => calls.findIndex(args => args.includes(needle));
@@ -195,10 +206,18 @@ describe("Fork CI official baseline preparation", () => {
     expect(bareRaw).toBeGreaterThan(bareType);
     expect(barePeeled).toBeGreaterThan(bareRaw);
     expect(index("merge-base")).toBeGreaterThan(barePeeled);
-    const bareDir = calls.find(args => args[0] === "init" && args[1] === "--bare")?.[2];
     const importIndex = calls.findIndex((args, position) => position > index("merge-base")
       && args.includes("fetch") && bareDir !== undefined && args.includes(bareDir));
     expect(importIndex).toBeGreaterThan(index("merge-base"));
+    const checkoutType = calls.findIndex((args, position) => position > importIndex
+      && args.includes("cat-file") && args.includes("refs/ocx-ci/official-tag"));
+    const checkoutRaw = calls.findIndex((args, position) => position > checkoutType
+      && args.includes("rev-parse") && args.includes("refs/ocx-ci/official-tag"));
+    const checkoutPeeled = calls.findIndex((args, position) => position > checkoutRaw
+      && args.includes("rev-parse") && args.includes("refs/ocx-ci/official-tag^{commit}"));
+    expect(checkoutType).toBeGreaterThan(importIndex);
+    expect(checkoutRaw).toBeGreaterThan(checkoutType);
+    expect(checkoutPeeled).toBeGreaterThan(checkoutRaw);
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
 
@@ -240,8 +259,10 @@ describe("Fork CI official baseline preparation", () => {
     const fixture = createFixture();
     const forged = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
     requireGit(fixture.checkout, ["tag", "-a", "v2.35.0", "-m", "forged", forged]);
+    const forgedRaw = requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"]);
     const prepared = prepare(fixture);
     expect(prepared.run).toThrow("existing local official tag does not match verified official tag");
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"])).toBe(forgedRaw);
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
 
@@ -349,14 +370,62 @@ describe("Fork CI official baseline preparation", () => {
     expect(cleanupMessage).not.toContain("secret-token");
   });
 
-  test("direct production entry ignores argv and environment URL overrides", () => {
+  test("runner throws during a primary Git operation without leaking its owned bare path", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-throw-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
+    let bareDir = "";
+    const runner = (_cwd: string, args: readonly string[]) => {
+      if (args[0] === "init") bareDir = args[2] ?? "";
+      if (args.includes("fetch") && args.includes("https://example.invalid/official.git")) throw new Error(`primary ${bareDir}`);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    let message = "";
+    try {
+      prepareForkOfficialBase({ repoRoot: root, officialRepositoryUrl: "https://example.invalid/official.git", runGit: runner });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toStartWith("fetch official refs:");
+    expect(message).not.toContain(bareDir);
+    expect(verifierRoots()).toEqual([]);
+  });
+
+  test("post-mkdtemp setup failure cleans both owned refs and verifier root", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-setup-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
+    let bareDir = "";
+    let deletions = 0;
+    const runner = (_cwd: string, args: readonly string[]) => {
+      if (args[0] === "update-ref" && args[1] === "-d") deletions += 1;
+      if (args[0] === "init") {
+        bareDir = args[2] ?? "";
+        return { exitCode: 1, stdout: "", stderr: `cannot initialize ${bareDir}` };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    let message = "";
+    try {
+      prepareForkOfficialBase({ repoRoot: root, officialRepositoryUrl: "https://example.invalid/official.git", runGit: runner });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toStartWith("init official verifier:");
+    expect(message).toContain("[REDACTED_PATH]");
+    expect(message).not.toContain(bareDir);
+    expect(deletions).toBe(4);
+    expect(verifierRoots()).toEqual([]);
+  });
+
+  test("direct production entry sandboxes Git environment, fixed URL, long hostile output, and cleanup suffix", () => {
     const fixture = createFixture();
     const fakeBin = join(fixture.root, "fake-bin");
     const fakeGitLog = join(fixture.root, "git-args.jsonl");
     mkdirSync(fakeBin);
     const fakeScript = join(fixture.root, "fake-git.mjs");
     const fakeToken = "secret" + "-token";
-    writeFileSync(fakeScript, `import { appendFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\nif (args.includes("fetch") && args.includes("https://github.com/lidge-jun/opencodex.git")) { process.stderr.write("Authorization: Bearer ${fakeToken}\\n"); process.exit(1); }\nprocess.exit(0);\n`);
+    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nconst env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase().startsWith("GIT_CONFIG") || key.toUpperCase() === "PATH"));\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify({ args, env }) + "\\n");\nconst deletes = rows.filter(row => row.args?.[0] === "update-ref" && row.args?.[1] === "-d").length;\nconst bare = rows.flatMap(row => row.args?.[0] === "init" ? [row.args[2]] : row.args ?? []).find(value => value?.startsWith("--git-dir="))?.slice("--git-dir=".length) ?? rows.find(row => row.args?.[0] === "init")?.args?.[2] ?? "";\nif (args.includes("fetch") && args.includes("https://github.com/lidge-jun/opencodex.git")) { process.stderr.write(bare + "\\n" + process.env.FAKE_GIT_ERROR); process.exit(1); }\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 2) { process.stderr.write("cleanup " + bare); process.exit(1); }\nprocess.exit(0);\n`);
     const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
     if (process.platform === "win32") {
       writeFileSync(fakeGit, `@echo off\n"${process.execPath}" "${fakeScript}" %*\n`);
@@ -364,15 +433,28 @@ describe("Fork CI official baseline preparation", () => {
       writeFileSync(fakeGit, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`);
       chmodSync(fakeGit, 0o755);
     }
-    const scriptPath = new URL("../scripts/prepare-fork-official-base.ts", import.meta.url).pathname;
-    const repoRoot = new URL("../", import.meta.url).pathname;
+    const scriptPath = fileURLToPath(new URL("../scripts/prepare-fork-official-base.ts", import.meta.url));
+    const repoRoot = fileURLToPath(new URL("../", import.meta.url));
+    const hostile = [
+      `Authorization: Bearer ${fakeToken}\u0007\u2028forged-line`,
+      `https://${"user"}:${fakeToken}@${"example.invalid"}/repo.git?access_token=${fakeToken}#private-fragment`,
+      `Authorization: Bearer ${fakeToken}`,
+      `/${"Users"}/${"private" + "-name"}/work/repo`,
+      `/${"home"}/${"linux" + "-private"}/work/repo`,
+      `C:${"\\"}${"Users"}${"\\"}${"windows" + "-private"}${"\\"}work${"\\"}repo`,
+      `/${"tmp"}/ocx-fork-${"official"}-${"secret"}/repo.git`,
+    ].join("\n").repeat(80);
+    const environment = Object.fromEntries(Object.entries({ ...process.env, Path: "must-not-reach-fake-git" })
+      .filter(([key]) => key.toUpperCase() !== "PATH"));
     const result = Bun.spawnSync([process.execPath, scriptPath, "https://evil.invalid/override"], {
       cwd: repoRoot,
       env: {
-        ...process.env,
+        ...environment,
         PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}`,
+        gIt_cOnFiG_cOuNt: "must-not-reach-fake-git",
         OCX_OFFICIAL_REPOSITORY_URL: "https://evil.invalid/from-env",
         FAKE_GIT_LOG: fakeGitLog,
+        FAKE_GIT_ERROR: hostile,
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -383,9 +465,37 @@ describe("Fork CI official baseline preparation", () => {
     expect(stderr.split("\n").filter(Boolean)).toHaveLength(1);
     expect(stderr.length).toBeLessThanOrEqual(513);
     expect(stderr).not.toContain("secret-token");
-    const lines = readFileSync(fakeGitLog, "utf8").trim().split("\n").map(JSON.parse) as string[][];
-    const officialFetch = lines.find(args => args.includes("fetch") && args.includes("https://github.com/lidge-jun/opencodex.git"));
+    expect(stderr).toContain("[CREDENTIAL HEADER REDACTED]");
+    expect(stderr).toContain("[REDACTED_PATH]");
+    expect(stderr.trimEnd()).toEndWith("; cleanup also failed");
+    const lines = readFileSync(fakeGitLog, "utf8").trim().split("\n").map(JSON.parse) as Array<{ args: string[]; env: Record<string, string> }>;
+    const officialFetch = lines.find(row => row.args.includes("fetch") && row.args.includes("https://github.com/lidge-jun/opencodex.git"));
     expect(officialFetch).toBeDefined();
     expect(JSON.stringify(lines)).not.toContain("https://evil.invalid");
+    expect(Object.keys(officialFetch?.env ?? {}).every(key => ["PATH", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL"].includes(key))).toBe(true);
+    expect(Object.keys(officialFetch?.env ?? {})).not.toContain("gIt_cOnFiG_cOuNt");
+  });
+
+  test("normal module import performs zero Git calls", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-import-"));
+    roots.push(root);
+    const fakeBin = join(root, "fake-bin");
+    const fakeLog = join(root, "calls.log");
+    mkdirSync(fakeBin);
+    const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
+    const payload = process.platform === "win32"
+      ? `@echo off\necho invoked>>"${fakeLog}"\nexit /b 1\n`
+      : `#!/bin/sh\nprintf invoked >> "${fakeLog}"\nexit 1\n`;
+    writeFileSync(fakeGit, payload);
+    if (process.platform !== "win32") chmodSync(fakeGit, 0o755);
+    const scriptUrl = pathToFileURL(fileURLToPath(new URL("../scripts/prepare-fork-official-base.ts", import.meta.url))).href;
+    const result = Bun.spawnSync([process.execPath, "--eval", `import(${JSON.stringify(scriptUrl)})`], {
+      cwd: root,
+      env: { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(fakeLog)).toBe(false);
   });
 });

@@ -15,6 +15,7 @@ const EMBEDDED_URL = /https?:\/\/[^\s"'<>]+/gi;
 const CREDENTIAL_HEADER_LINE = /(^|\n)[^\n]*(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret)\s*:[^\n]*/gi;
 const LOG_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 const CREDENTIAL_PLACEHOLDER = "[[OCX-HDR-MASK]]";
+const CLEANUP_FAILURE_SUFFIX = "; cleanup also failed";
 
 export type VersionClassification =
   | { kind: "fork"; version: string; base: string; tag: string }
@@ -61,8 +62,11 @@ export function safeGitDiagnostic(
   error: unknown,
   ownedPaths: readonly string[] = [],
 ): string {
+  const preserveCleanupSuffix = String(error instanceof Error ? error.message : error)
+    .endsWith(CLEANUP_FAILURE_SUFFIX);
   let detail = error instanceof Error ? error.message : String(error);
   detail = detail.replace(/\r\n?|\u2028|\u2029/g, "\n");
+  detail = detail.replaceAll("[CREDENTIAL HEADER REDACTED]", CREDENTIAL_PLACEHOLDER);
   detail = detail.replace(
     CREDENTIAL_HEADER_LINE,
     (_line, boundary: string) => `${boundary}${CREDENTIAL_PLACEHOLDER}`,
@@ -76,7 +80,11 @@ export function safeGitDiagnostic(
   detail = redactUserPath(redactSecretString(detail));
   detail = detail.replace(LOG_CONTROL, " ").replace(/\s+/g, " ").trim();
   detail = detail.replaceAll(CREDENTIAL_PLACEHOLDER, "[CREDENTIAL HEADER REDACTED]");
-  return `${operation}: ${detail || "git command failed"}`.slice(0, 512);
+  const prefix = `${operation}: `;
+  const value = detail || "git command failed";
+  return preserveCleanupSuffix
+    ? `${prefix}${value.replace(CLEANUP_FAILURE_SUFFIX, "").slice(0, 512 - prefix.length - CLEANUP_FAILURE_SUFFIX.length)}${CLEANUP_FAILURE_SUFFIX}`
+    : `${prefix}${value}`.slice(0, 512);
 }
 
 function ownedPathSpellings(paths: readonly string[]): string[] {
@@ -90,7 +98,12 @@ function ownedPathSpellings(paths: readonly string[]): string[] {
 function gitEnvironment(globalConfig: string): Record<string, string> {
   const environment: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith("GIT_CONFIG")) environment[key] = value;
+    if (value !== undefined && !key.toUpperCase().startsWith("GIT_CONFIG")) environment[key] = value;
+  }
+  for (const key of Object.keys(environment)) {
+    if (["GIT_TERMINAL_PROMPT", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL"].includes(key.toUpperCase())) {
+      delete environment[key];
+    }
   }
   return {
     ...environment,
@@ -190,18 +203,27 @@ export function prepareForkOfficialBase(options: {
   }
   if (classification.kind === "non-fork") return { kind: "not-fork", version: classification.version };
 
-  const verifierRoot = mkdtempSync(join(tmpdir(), "ocx-fork-official-"));
-  chmodSync(verifierRoot, 0o700);
+  let verifierRoot: string;
+  try {
+    verifierRoot = mkdtempSync(join(tmpdir(), "ocx-fork-official-"));
+  } catch (error) {
+    throw new Error(safeGitDiagnostic("prepare official base", error, [options.repoRoot]));
+  }
   const globalConfig = join(verifierRoot, "gitconfig");
-  writeFileSync(globalConfig, "", { mode: 0o600 });
-  chmodSync(globalConfig, 0o600);
   const bareDir = join(verifierRoot, "repo.git");
-  const ownedPaths = ownedPathSpellings([options.repoRoot, verifierRoot, bareDir]);
+  let ownedPaths = ownedPathSpellings([options.repoRoot, verifierRoot]);
+  const refreshOwnedPaths = (...paths: string[]) => {
+    ownedPaths = ownedPathSpellings([...ownedPaths, ...paths]);
+  };
   const runGit = options.runGit ?? productionGitRunner(globalConfig);
+  refreshOwnedPaths(globalConfig, bareDir);
   let primary: Error | undefined;
   let result: PrepareForkOfficialBaseResult | undefined;
 
   try {
+    chmodSync(verifierRoot, 0o700);
+    writeFileSync(globalConfig, "", { mode: 0o600 });
+    chmodSync(globalConfig, 0o600);
     runOrThrow(runGit, "cleanup official verifier", options.repoRoot, ["update-ref", "-d", MARKER_REF], ownedPaths);
     runOrThrow(runGit, "cleanup official verifier", options.repoRoot, ["update-ref", "-d", OFFICIAL_TAG_REF], ownedPaths);
     runOrThrow(runGit, "fetch origin marker", options.repoRoot, [
@@ -257,8 +279,7 @@ export function prepareForkOfficialBase(options: {
   const cleanupError = cleanup(runGit, options.repoRoot, verifierRoot, ownedPaths);
   if (primary) {
     if (cleanupError) {
-      const suffix = "; cleanup also failed";
-      throw new Error(primary.message.slice(0, 512 - suffix.length) + suffix);
+      throw new Error(primary.message.slice(0, 512 - CLEANUP_FAILURE_SUFFIX.length) + CLEANUP_FAILURE_SUFFIX);
     }
     throw primary;
   }
