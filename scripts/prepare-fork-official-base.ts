@@ -169,17 +169,19 @@ function readExistingTag(
 }
 
 function cleanup(
-  runGit: GitRunner,
+  runGit: GitRunner | undefined,
   repoRoot: string,
   verifierRoot: string,
   ownedPaths: readonly string[],
 ): Error | undefined {
   let error: Error | undefined;
-  for (const ref of [MARKER_REF, OFFICIAL_TAG_REF]) {
-    try {
-      runOrThrow(runGit, "cleanup official verifier", repoRoot, ["update-ref", "-d", ref], ownedPaths);
-    } catch (caught) {
-      error ??= caught instanceof Error ? caught : new Error(String(caught));
+  if (runGit) {
+    for (const ref of [MARKER_REF, OFFICIAL_TAG_REF]) {
+      try {
+        runOrThrow(runGit, "cleanup official verifier", repoRoot, ["update-ref", "-d", ref], ownedPaths);
+      } catch (caught) {
+        error ??= caught instanceof Error ? caught : new Error(String(caught));
+      }
     }
   }
   try {
@@ -194,6 +196,7 @@ export function prepareForkOfficialBase(options: {
   repoRoot: string;
   officialRepositoryUrl: string;
   runGit?: GitRunner;
+  filesystem?: Pick<typeof import("node:fs"), "chmodSync" | "writeFileSync">;
 }): PrepareForkOfficialBaseResult {
   let classification: VersionClassification;
   try {
@@ -209,21 +212,25 @@ export function prepareForkOfficialBase(options: {
   } catch (error) {
     throw new Error(safeGitDiagnostic("prepare official base", error, [options.repoRoot]));
   }
-  const globalConfig = join(verifierRoot, "gitconfig");
-  const bareDir = join(verifierRoot, "repo.git");
+  const filesystem = options.filesystem ?? { chmodSync, writeFileSync };
+  let globalConfig = "";
+  let bareDir = "";
   let ownedPaths = ownedPathSpellings([options.repoRoot, verifierRoot]);
   const refreshOwnedPaths = (...paths: string[]) => {
     ownedPaths = ownedPathSpellings([...ownedPaths, ...paths]);
   };
-  const runGit = options.runGit ?? productionGitRunner(globalConfig);
-  refreshOwnedPaths(globalConfig, bareDir);
+  let runGit: GitRunner | undefined = options.runGit;
   let primary: Error | undefined;
   let result: PrepareForkOfficialBaseResult | undefined;
 
   try {
-    chmodSync(verifierRoot, 0o700);
-    writeFileSync(globalConfig, "", { mode: 0o600 });
-    chmodSync(globalConfig, 0o600);
+    filesystem.chmodSync(verifierRoot, 0o700);
+    globalConfig = join(verifierRoot, "gitconfig");
+    bareDir = join(verifierRoot, "repo.git");
+    refreshOwnedPaths(globalConfig, bareDir);
+    filesystem.writeFileSync(globalConfig, "", { mode: 0o600 });
+    filesystem.chmodSync(globalConfig, 0o600);
+    runGit ??= productionGitRunner(globalConfig);
     runOrThrow(runGit, "cleanup official verifier", options.repoRoot, ["update-ref", "-d", MARKER_REF], ownedPaths);
     runOrThrow(runGit, "cleanup official verifier", options.repoRoot, ["update-ref", "-d", OFFICIAL_TAG_REF], ownedPaths);
     runOrThrow(runGit, "fetch origin marker", options.repoRoot, [
@@ -231,6 +238,7 @@ export function prepareForkOfficialBase(options: {
       "+refs/heads/upstream-release:" + MARKER_REF,
     ], ownedPaths);
     runOrThrow(runGit, "init official verifier", options.repoRoot, ["init", "--bare", bareDir], ownedPaths);
+    refreshOwnedPaths(bareDir);
     runOrThrow(runGit, "fetch official refs", options.repoRoot, [
       `--git-dir=${bareDir}`, "fetch", "--no-tags", "--filter=blob:none", options.officialRepositoryUrl,
       "+refs/heads/main:refs/heads/official-main",
@@ -273,7 +281,7 @@ export function prepareForkOfficialBase(options: {
     }
     result = { kind: "prepared", version: classification.version, tag: classification.tag, rawTagOid, peeledCommit };
   } catch (error) {
-    primary = error instanceof Error ? error : new Error(String(error));
+    primary = new Error(safeGitDiagnostic("prepare official base", error, ownedPaths));
   }
 
   const cleanupError = cleanup(runGit, options.repoRoot, verifierRoot, ownedPaths);

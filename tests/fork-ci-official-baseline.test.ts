@@ -22,6 +22,12 @@ import {
 const decoder = new TextDecoder();
 const roots: string[] = [];
 
+function fakeGitEnvironment(fakeBin: string, values: Record<string, string> = {}): Record<string, string> {
+  const withoutPathAliases = Object.fromEntries(Object.entries({ ...process.env, ...values, Path: "discarded-path-alias" })
+    .filter(([key]) => key.toUpperCase() !== "PATH")) as Record<string, string>;
+  return { ...withoutPathAliases, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}` };
+}
+
 function git(cwd: string, args: readonly string[]) {
   const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
   return {
@@ -338,7 +344,7 @@ describe("Fork CI official baseline preparation", () => {
     } catch (error) {
       primaryMessage = error instanceof Error ? error.message : String(error);
     }
-    expect(primaryMessage).toBe("fetch origin marker: marker failure; cleanup also failed");
+    expect(primaryMessage).toBe("prepare official base: fetch origin marker: marker failure; cleanup also failed");
 
     let cleanupOnlyDeletes = 0;
     const cleanupOnlyRunner = (_cwd: string, args: readonly string[]) => {
@@ -386,7 +392,7 @@ describe("Fork CI official baseline preparation", () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    expect(message).toStartWith("fetch official refs:");
+    expect(message).toStartWith("prepare official base: fetch official refs:");
     expect(message).not.toContain(bareDir);
     expect(verifierRoots()).toEqual([]);
   });
@@ -411,10 +417,44 @@ describe("Fork CI official baseline preparation", () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    expect(message).toStartWith("init official verifier:");
+    expect(message).toStartWith("prepare official base: init official verifier:");
     expect(message).toContain("[REDACTED_PATH]");
     expect(message).not.toContain(bareDir);
     expect(deletions).toBe(4);
+    expect(verifierRoots()).toEqual([]);
+  });
+
+  test("raw chmod setup failure folds the verifier path and still invokes supplied cleanup runner", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-fs-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
+    let verifierRoot = "";
+    let deletions = 0;
+    const runner = (_cwd: string, args: readonly string[]) => {
+      if (args[0] === "update-ref" && args[1] === "-d") deletions += 1;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    let message = "";
+    try {
+      prepareForkOfficialBase({
+        repoRoot: root,
+        officialRepositoryUrl: "https://example.invalid/official.git",
+        runGit: runner,
+        filesystem: {
+          chmodSync(path) {
+            verifierRoot = String(path);
+            throw new Error(`cannot chmod ${verifierRoot}`);
+          },
+          writeFileSync,
+        },
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toStartWith("prepare official base:");
+    expect(message).toContain("[REDACTED_PATH]");
+    expect(message).not.toContain(verifierRoot);
+    expect(deletions).toBe(2);
     expect(verifierRoots()).toEqual([]);
   });
 
@@ -442,20 +482,18 @@ describe("Fork CI official baseline preparation", () => {
       `/${"Users"}/${"private" + "-name"}/work/repo`,
       `/${"home"}/${"linux" + "-private"}/work/repo`,
       `C:${"\\"}${"Users"}${"\\"}${"windows" + "-private"}${"\\"}work${"\\"}repo`,
+      `/${"private"}/var/folders/xy/ocx-fork-${"official"}-${"secret"}/repo.git`,
       `/${"tmp"}/ocx-fork-${"official"}-${"secret"}/repo.git`,
+      `D:${"\\"}Temp${"\\"}ocx-fork-${"official"}-${"secret"}${"\\"}repo.git`,
     ].join("\n").repeat(80);
-    const environment = Object.fromEntries(Object.entries({ ...process.env, Path: "must-not-reach-fake-git" })
-      .filter(([key]) => key.toUpperCase() !== "PATH"));
     const result = Bun.spawnSync([process.execPath, scriptPath, "https://evil.invalid/override"], {
       cwd: repoRoot,
-      env: {
-        ...environment,
-        PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}`,
+      env: fakeGitEnvironment(fakeBin, {
         gIt_cOnFiG_cOuNt: "must-not-reach-fake-git",
         OCX_OFFICIAL_REPOSITORY_URL: "https://evil.invalid/from-env",
         FAKE_GIT_LOG: fakeGitLog,
         FAKE_GIT_ERROR: hostile,
-      },
+      }),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -464,16 +502,20 @@ describe("Fork CI official baseline preparation", () => {
     expect(decoder.decode(result.stdout)).toBe("");
     expect(stderr.split("\n").filter(Boolean)).toHaveLength(1);
     expect(stderr.length).toBeLessThanOrEqual(513);
-    expect(stderr).not.toContain("secret-token");
+    for (const leaked of ["user", "secret-token", "private-name", "linux-private", "windows-private", "ocx-fork-official-secret", "?access_token", "#private-fragment", "\u0007", "\u2028"]) {
+      expect(stderr).not.toContain(leaked);
+    }
     expect(stderr).toContain("[CREDENTIAL HEADER REDACTED]");
     expect(stderr).toContain("[REDACTED_PATH]");
     expect(stderr.trimEnd()).toEndWith("; cleanup also failed");
     const lines = readFileSync(fakeGitLog, "utf8").trim().split("\n").map(JSON.parse) as Array<{ args: string[]; env: Record<string, string> }>;
     const officialFetch = lines.find(row => row.args.includes("fetch") && row.args.includes("https://github.com/lidge-jun/opencodex.git"));
+    const generatedBareDir = lines.find(row => row.args[0] === "init")?.args[2] ?? "";
     expect(officialFetch).toBeDefined();
     expect(JSON.stringify(lines)).not.toContain("https://evil.invalid");
     expect(Object.keys(officialFetch?.env ?? {}).every(key => ["PATH", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL"].includes(key))).toBe(true);
     expect(Object.keys(officialFetch?.env ?? {})).not.toContain("gIt_cOnFiG_cOuNt");
+    expect(stderr).not.toContain(generatedBareDir);
   });
 
   test("normal module import performs zero Git calls", () => {
@@ -491,11 +533,44 @@ describe("Fork CI official baseline preparation", () => {
     const scriptUrl = pathToFileURL(fileURLToPath(new URL("../scripts/prepare-fork-official-base.ts", import.meta.url))).href;
     const result = Bun.spawnSync([process.execPath, "--eval", `import(${JSON.stringify(scriptUrl)})`], {
       cwd: root,
-      env: { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}` },
+      env: fakeGitEnvironment(fakeBin),
       stdout: "pipe",
       stderr: "pipe",
     });
     expect(result.exitCode).toBe(0);
-    expect(existsSync(fakeLog)).toBe(false);
+    expect(existsSync(fakeLog)).toBe(false, decoder.decode(result.stderr));
+  });
+
+  test("direct production entry redacts the generated bare path on a cleanup-only failure", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-cli-cleanup-"));
+    roots.push(root);
+    const fakeBin = join(root, "fake-bin");
+    const fakeLog = join(root, "calls.jsonl");
+    mkdirSync(fakeBin);
+    const fakeScript = join(root, "fake-git.mjs");
+    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\nconst bare = rows.find(row => row[0] === "init")?.[2] ?? "";\nconst deletes = rows.filter(row => row[0] === "update-ref" && row[1] === "-d").length;\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 2) { process.stderr.write("cleanup " + bare); process.exit(1); }\nif (args.includes("cat-file")) { process.stdout.write("tag\\n"); process.exit(0); }\nif (args.includes("rev-parse")) { if (args.includes("refs/tags/v2.35.0") && !args.some(value => value.startsWith("--git-dir="))) process.exit(1); process.stdout.write(args.some(value => value.includes("^{commit}")) ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n"); process.exit(0); }\nprocess.exit(0);\n`);
+    const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
+    if (process.platform === "win32") writeFileSync(fakeGit, `@echo off\n"${process.execPath}" "${fakeScript}" %*\n`);
+    else {
+      writeFileSync(fakeGit, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`);
+      chmodSync(fakeGit, 0o755);
+    }
+    const scriptPath = fileURLToPath(new URL("../scripts/prepare-fork-official-base.ts", import.meta.url));
+    const repoRoot = fileURLToPath(new URL("../", import.meta.url));
+    const result = Bun.spawnSync([process.execPath, scriptPath], {
+      cwd: repoRoot,
+      env: fakeGitEnvironment(fakeBin, { FAKE_GIT_LOG: fakeLog }),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = decoder.decode(result.stderr);
+    const rows = readFileSync(fakeLog, "utf8").trim().split("\n").map(JSON.parse) as string[][];
+    const bareDir = rows.find(row => row[0] === "init")?.[2] ?? "";
+    expect(result.exitCode).not.toBe(0);
+    expect(decoder.decode(result.stdout)).toBe("");
+    expect(stderr.split("\n").filter(Boolean)).toHaveLength(1);
+    expect(stderr.length).toBeLessThanOrEqual(513);
+    expect(stderr).toContain("[REDACTED_PATH]");
+    expect(stderr).not.toContain(bareDir);
   });
 });
