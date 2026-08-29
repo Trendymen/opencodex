@@ -90,7 +90,7 @@ function compactWhitespace(value: string): string {
 describe("Fork maintenance truth", () => {
   test("records the exact ben.2 package and rebase-overlap truth", () => {
     const version = JSON.parse(packageText).version;
-    expect(version).toBe("2.35.0-ben.2");
+    expect(version).toBe("2.35.0-ben.3");
     expect(changes).toContain("| Fork 包版本 | `2.35.0-ben.2` |");
     expect(changes).toContain("| 本轮派生 Tag | `v2.35.0-ben.2`");
     expect(changes).toContain("16 paths");
