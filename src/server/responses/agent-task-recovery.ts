@@ -3,7 +3,12 @@ import { decodeJwtPayload, extractAccountId } from "../../oauth/chatgpt";
 import type { OcxConfig } from "../../types";
 import { readBoundedResponseBody } from "../../lib/bounded-body";
 import { isApiAuthRequired, isProxyAdmissionSecret } from "../auth-cors";
-import { structurallyValidFernetTokens } from "./encrypted-payload";
+import {
+  backendTaskCiphertextRuns,
+  hasStrictBackendEncryptedAgentTask,
+  isBackendTaskCiphertext,
+  structurallyValidFernetTokens,
+} from "./encrypted-payload";
 import {
   discardCachedAgentTaskRecovery,
   resetAgentTaskRecoveryCache,
@@ -96,6 +101,7 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
   let ciphertext = "";
   let encryptedPartCount = 0;
   let ciphertextCount = 0;
+  const strictBackendCiphertext = hasStrictBackendEncryptedAgentTask(input);
 
   for (let index = 0; index < content.length; index += 1) {
     const part = content[index] as { type?: unknown; text?: unknown; encrypted_content?: unknown } | null;
@@ -119,10 +125,20 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
     }
     if (part.type !== "encrypted_content" || typeof part.encrypted_content !== "string") continue;
     encryptedPartCount += 1;
-    for (const token of structurallyValidFernetTokens(part.encrypted_content)) {
+    const fernetTokens = structurallyValidFernetTokens(part.encrypted_content);
+    for (const token of fernetTokens) {
       ciphertextCount += 1;
       encryptedIndex = index;
       ciphertext = token;
+    }
+    if (
+      strictBackendCiphertext
+      && fernetTokens.length === 0
+      && isBackendTaskCiphertext(part.encrypted_content)
+    ) {
+      ciphertextCount += 1;
+      encryptedIndex = index;
+      ciphertext = part.encrypted_content;
     }
   }
 
@@ -173,6 +189,7 @@ function validateAssignment(assignment: unknown, envelope: AgentEnvelope): strin
   if (payload === null || payload.trim().length === 0) return null;
   if (Buffer.byteLength(payload) > MAX_ASSIGNMENT_BYTES) return null;
   if (structurallyValidFernetTokens(payload).length > 0) return null;
+  if (backendTaskCiphertextRuns(payload).length > 0) return null;
   return payload;
 }
 
