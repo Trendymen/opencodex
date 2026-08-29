@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.35.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.35.0) |
 | 官方 Tag commit | `fc4de772b58c13f7b16b5029b1e981d612a5db06` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `788bfd9586ccac9229c8daa5147eadbfcf99a3dc` |
+| 本轮实现 HEAD | `5687af1c5f8d2042c0fedb2268c0beaaf313aad1` |
 | Fork 包版本 | `2.35.0-ben.2` |
 | 本轮派生 Tag | `v2.35.0-ben.2`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.35.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 112 个文件，新增 15,791 行，删除 174 行 |
+| 已提交修改面 | 112 个文件，新增 15,846 行，删除 174 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 本轮相对 `v2.35.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
@@ -567,19 +567,24 @@ GitHub Release。官方 `upstream-release` 已经是最新版本，并不代表�
    Tag，并使用同一套 atomic push 与显式 branch lease 收敛引用。Tag refspec 不使用
    force 或 lease。不得启动新 rebase 或生成 `ben.(N+1)`。
 
-<!-- official-atomic-refset:start -->
 在任何幂等收敛 push 前，必须完成 fixed-upstream type/raw/peeled/ancestry 验证；origin
 official Tag absent-or-exact preflight 必须确认当前 `refs/tags/vX.Y.Z` 不是缺失就是与固定
 官方 raw/peeled/type 完全一致，existing mismatch 阻塞。pre absent/exact，post exact：若预检
 缺失，必须只把已验证的官方 raw ref 纳入本次原子 push 后补齐；若预检 exact，不得重建。
 
-`git push --atomic origin` 的同一完整 refset 必须包含带 lease 的 `refs/heads/main`、
-`refs/heads/sync/vX.Y.Z`、`refs/heads/upstream-release`，以及两个不带 `+` 的 Tag refspec：
-`refs/tags/vX.Y.Z:refs/tags/vX.Y.Z` 与
-`refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N`。两个 Tag refspec 均不使用 force 或 lease；
+`git push --atomic origin` 必须使用下列唯一完整 refset：
+
+<!-- official-atomic-refset:start -->
+branch|main|leased|candidate-commit:refs/heads/main
+branch|sync|leased|candidate-commit:refs/heads/sync/vX.Y.Z
+branch|marker|leased|official-peeled:refs/heads/upstream-release
+tag|official|no-force-no-lease|refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
+tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
+<!-- official-atomic-refset:end -->
+
+三个 branch 使用各自 exact lease；两个 Tag refspec 均不使用 force 或 lease，且均不加 `+`；
 禁止 force、删除、重建或移动任一 official/Fork Tag。确定失败时停止；uncertain 只允许以相同完整
 refset 重试，且必须重新读取 branch lease 与两个 Tag 的 raw/peeled/type。
-<!-- official-atomic-refset:end -->
 
 3. 若 Tag 已存在但 Release 缺失或元数据不合格，则只创建或修正同名 Release；必须确认
    `isDraft=false`、`isPrerelease=false`、标题等于 Tag，且中文 Notes 含官方基线、Fork
@@ -620,20 +625,25 @@ refset 重试，且必须重新读取 branch lease 与两个 Tag 的 raw/peeled/
     expected-SHA `--force-with-lease`。任一 branch lease 漂移、远端 Tag 已存在但不一致、
     atomic 不支持或推送失败都 fail closed，不拆成可能部分成功的多次 push。
 
-<!-- official-atomic-refset:start -->
 在 stable rebase 发布前，必须完成 fixed-upstream type/raw/peeled/ancestry 验证；origin
 official Tag absent-or-exact preflight 必须读取 `refs/tags/vX.Y.Z` 的 type、raw OID 与
 peeled commit，existing mismatch 阻塞。pre absent/exact，post exact：缺失时仅可将固定官方
 验证后的 raw ref 放入本次 atomic refset，已存在且 exact 时保持不变。
 
-`git push --atomic origin` 的相同完整 refset 必须同时包含带 lease 的 `refs/heads/main`、
-`refs/heads/sync/vX.Y.Z`、`refs/heads/upstream-release`，以及
-`refs/tags/vX.Y.Z:refs/tags/vX.Y.Z` 与
-`refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N`。两个 Tag refspec 均不使用 force 或 lease，
-并且均不加 `+`；禁止 force、删除、重建或移动任一 official/Fork Tag。确定失败即停止；
+`git push --atomic origin` 必须使用下列唯一完整 refset：
+
+<!-- official-atomic-refset:start -->
+branch|main|leased|candidate-commit:refs/heads/main
+branch|sync|leased|candidate-commit:refs/heads/sync/vX.Y.Z
+branch|marker|leased|official-peeled:refs/heads/upstream-release
+tag|official|no-force-no-lease|refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
+tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
+<!-- official-atomic-refset:end -->
+
+三个 branch 使用各自 exact lease；两个 Tag refspec 均不使用 force 或 lease，并且均不加 `+`；
+禁止 force、删除、重建或移动任一 official/Fork Tag。确定失败即停止；
 uncertain 只允许以相同完整 refset 重试，并且先重新证明所有 branch leases 和两个 Tag 的
 type/raw/peeled。
-<!-- official-atomic-refset:end -->
 12. 远端 atomic push 成功后、调用 GitHub Release API 前，使用之前捕获的本地旧 OID
     作为 compare-and-swap 条件，在一个 `git update-ref --stdin` transaction 中把本地
     `main` 对齐末尾文档 commit、把本地 `upstream-release` 对齐官方 Tag commit；不得
