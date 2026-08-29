@@ -646,23 +646,31 @@ describe("Fork CI official baseline preparation", () => {
     const normalized = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
 
     expect(ci.permissions).toEqual({ contents: "read" });
-    for (const jobName of ["test", "platform-macos", "platform-windows"]) {
+    const prepareSteps = Object.entries(ci.jobs ?? {}).flatMap(([jobName, job]) =>
+      (job?.steps ?? [])
+        .filter(step => step.run === prepareRun)
+        .map(step => ({ jobName, step })),
+    );
+    const targetJobs = ["test", "platform-macos", "platform-windows"];
+    expect(prepareSteps.map(({ jobName }) => jobName).sort()).toEqual([...targetJobs].sort());
+    for (const jobName of targetJobs) {
       const steps = ci.jobs?.[jobName]?.steps ?? [];
-      const matching = steps.filter(step => step.name === prepareName && step.run === prepareRun);
+      const matching = prepareSteps.filter(step => step.jobName === jobName);
       expect(matching).toHaveLength(1);
-      const prepareIndex = steps.indexOf(matching[0]!);
+      expect(matching[0]?.step.name).toBe(prepareName);
+      const prepareIndex = steps.indexOf(matching[0]!.step);
       const setupIndex = steps.findIndex(step => step.name === "Setup project Bun");
       const installIndex = steps.findIndex(step => step.name === "Install dependencies");
       const testIndex = steps.findIndex(step => /^Test\b/.test(step.name ?? ""));
+      expect(setupIndex).toBeGreaterThanOrEqual(0);
+      expect(installIndex).toBeGreaterThanOrEqual(0);
+      expect(testIndex).toBeGreaterThanOrEqual(0);
       expect(prepareIndex).toBeGreaterThan(setupIndex);
+      expect(prepareIndex).toBe(setupIndex + 1);
       expect(prepareIndex).toBeLessThan(installIndex);
       expect(prepareIndex).toBeLessThan(testIndex);
     }
 
-    for (const jobName of ["storage-policy", "api-usage", "gates", "keyring-smoke", "npm-global-smoke"]) {
-      const steps = ci.jobs?.[jobName]?.steps ?? [];
-      expect(steps.some(step => step.run === prepareRun)).toBe(false);
-    }
     expect(await Bun.file(new URL("../.github/actions/setup-project-bun/action.yml", import.meta.url)).text())
       .not.toContain(prepareRun);
 
@@ -690,10 +698,6 @@ describe("Fork CI official baseline preparation", () => {
     );
     expect(windows.name).toBe("windows ${{ matrix.shard }}/4");
 
-    // With the exact expression above and this default, Task 6's normal
-    // dispatch (which omits run_windows) yields the pre-matrix job-level
-    // platform-windows skip. Its external allowlist must reject expanded
-    // windows 1/4 through windows 4/4 records; aggregate `ci` is additional
-    // evidence only, never a substitute for that allowlist.
+    // Task 6 owns executable release-result allowlist enforcement.
   });
 });
