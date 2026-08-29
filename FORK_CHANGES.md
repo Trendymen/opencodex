@@ -34,9 +34,9 @@
 | 最新官方稳定 Release | [`v2.35.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.35.0) |
 | 官方 Tag commit | `fc4de772b58c13f7b16b5029b1e981d612a5db06` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `5687af1c5f8d2042c0fedb2268c0beaaf313aad1` |
-| Fork 包版本 | `2.35.0-ben.2` |
-| 本轮派生 Tag | `v2.35.0-ben.2`，在本文档末尾提交完成后创建 |
+| 本轮实现 HEAD | `fba9eadce2535cae6e76efee02695e9050262829` |
+| Fork 包版本 | `2.35.0-ben.3` |
+| 本轮派生 Tag | `v2.35.0-ben.3`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.35.0`，最终必须与派生 Tag 指向同一 commit |
 | 已提交修改面 | 112 个文件，新增 15,846 行，删除 174 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
@@ -106,6 +106,48 @@ GitHub Release：未发生。新的 S2R candidate 与其后的所有外部门禁
 | Final main Cross-platform CI | `pending external gate` |
 | GitHub Release | `pending external gate` |
 <!-- ben2-external-gates:end -->
+
+## v2.35.0-ben.3 全量历史压缩与发布边界
+
+本修订只重组已提交的 Fork 历史，不改变 ben.2 已有运行时、兼容层、测试或 CI 内容。
+不可变源 Tag `v2.35.0-ben.2` 的 peeled commit 为
+`42282c405dc4c3dcb4f1e2877b89ac6ab49eeaba`，tree 为
+`8499fcec058d61a42a4fa382118e4c7f92bbff58`，其相对官方 `v2.35.0` 的 39 个线性
+Fork commits 被重建为恰好 5 个语义提交。
+
+C1 汇总运行时、CLI、GUI 与文档站；C2 汇总 Fork 回归与兼容覆盖；C3 汇总 CI、发布与
+审计基础设施。C3 的 112 个共享路径逐 blob 等于 ben.2 tree，另外仅增加本轮受跟踪的
+`docs/superpowers/specs/2026-08-29-v2350-ben3-squash-design.md` 和
+`docs/superpowers/plans/2026-08-29-v2350-ben3-squash.md` 两份设计文档，因此相对官方
+共有 114 个路径。C4 只将包版本推进到 `2.35.0-ben.3`，并只更新维护真源测试中的版本
+期望；本 C5 记录发布边界和可解析审计契约。
+
+ben.2 Tag 和其历史保持不可变，不移动、不删除、不重建。新的 annotated
+`v2.35.0-ben.3` Tag、candidate Cross-platform CI、五成员 atomic promotion、最终 main
+Cross-platform CI 和 GitHub Release 都是后续外部流程，尚未发生；不得将本地重写或局部
+测试误称为这些外部门禁已完成。
+
+<!-- ben3-squash:start -->
+source_tag=v2.35.0-ben.2
+source_peeled=42282c405dc4c3dcb4f1e2877b89ac6ab49eeaba
+source_tree=8499fcec058d61a42a4fa382118e4c7f92bbff58
+source_commit_count=39
+squashed_commit_count=5
+c1=4d91209a587a7dbc970cd179a14ce7cf21ec1642
+c2=7a35c99ec2529aac4fd011733b1617164248023b
+c3=b67df10538bd77556c72d12c3ea6167175049a79
+c3_shared_tree=8499fcec058d61a42a4fa382118e4c7f92bbff58
+c3_shared_path_count=112
+c3_new_document_paths=docs/superpowers/plans/2026-08-29-v2350-ben3-squash.md,docs/superpowers/specs/2026-08-29-v2350-ben3-squash-design.md
+c3_total_delta_path_count=114
+c4=fba9eadce2535cae6e76efee02695e9050262829
+ben2_history=immutable
+ben3_annotated_tag=pending external gate
+candidate_cross_platform_ci=pending external gate
+atomic_promotion=pending external gate
+final_main_cross_platform_ci=pending external gate
+github_release=pending external gate
+<!-- ben3-squash:end -->
 
 当前实现栈中与能力直接相关的提交：
 
