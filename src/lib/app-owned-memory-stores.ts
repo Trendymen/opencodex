@@ -6,7 +6,6 @@ import {
   type RetainedStoreSnapshot,
 } from "./app-owned-memory";
 import { registerStateSweepAfterTick } from "./state-store-sweeper";
-import { debugBufferMetrics, evictOldestDebugEntryForBudget } from "./debug-log-buffer";
 import { injectionBufferMetrics, evictOldestInjectionEntryForBudget } from "./injection-debug-log";
 import { crashRingMetrics, evictOldestCrashTraceForBudget } from "./crash-guard";
 import { claudeInboundDebugMetrics, evictOldestClaudeInboundForBudget } from "../claude/inbound-debug";
@@ -73,10 +72,6 @@ function usageSnapshotRetainedStoreSnapshot(): RetainedStoreSnapshot {
   };
 }
 
-function providerDebugSnapshot(): RetainedStoreSnapshot {
-  return ringSnapshot(debugBufferMetrics());
-}
-
 function injectionDebugSnapshot(): RetainedStoreSnapshot {
   return ringSnapshot(injectionBufferMetrics());
 }
@@ -95,12 +90,6 @@ export const APP_OWNED_RETAINED_STORE_REGISTRATIONS = [
     category: "logs",
     snapshot: requestLogRetainedStoreSnapshot,
     evictOldest: evictOldestRequestLogForBudget,
-  },
-  {
-    id: "provider_debug",
-    category: "logs",
-    snapshot: providerDebugSnapshot,
-    evictOldest: evictOldestDebugEntryForBudget,
   },
   {
     id: "injection_debug",

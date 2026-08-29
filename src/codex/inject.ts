@@ -226,6 +226,7 @@ export function buildProviderTableBlock(
     `base_url = "http://${host}:${port}/v1"`,
     'wire_api = "responses"',
     "requires_openai_auth = true",
+    "supports_standalone_web_search = true",
   ];
   if (includeApiAuthHeader) {
     // codex-cli 0.146+ contract (#2073): env_key sends Authorization: Bearer $VAR and
