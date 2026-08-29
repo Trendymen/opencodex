@@ -28,7 +28,7 @@ const EXPECTED_AUTO_MERGES = EXPECTED_OVERLAPS.filter(path => path !== "package.
 
 function machineBlock(source: string, name: string): string {
   const match = source.match(new RegExp(
-    `<!-- ${name}:start -->\n([\s\S]*?)\n<!-- ${name}:end -->`,
+    `<!-- ${name}:start -->\n([\\s\\S]*?)\n<!-- ${name}:end -->`,
   ));
   expect(match, `missing ${name} machine block`).not.toBeNull();
   return match![1]!;
