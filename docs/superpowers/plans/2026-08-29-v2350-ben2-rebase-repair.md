@@ -10,7 +10,114 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-29-v2350-ben2-rebase-repair-design.md`
 
-## S1 Successor Repair Override（当前唯一执行入口）
+## S2R Official-Tag Preservation Successor（当前唯一执行入口）
+
+后文S1 Repair与原Tasks 1–7只保留为执行审计记录，本节完整覆盖其中仍写着
+“origin official Tag必须缺失/no-mirror”的旧规则和命令，不得再执行那些旧分支。
+
+当前remote sync为已成功candidate
+`5548eb2a0d71d84bee03a4fa8424750bfdc78b85`，其workflow_dispatch run
+`33236921544` 已通过严格controller验证；但该run不能证明其后的Spec/Plan/contract提交。
+远端main仍为ben.1 `98b14f722...`，marker仍为`fc4de772...`；本地/远端ben.2 Tag、
+promotion、final CI与Release均未发生。origin已有与固定官方仓库完全一致的lightweight
+`v2.34.0`（raw=peeled=`80fff9a7f...`），缺少`v2.35.0`。
+
+### S2R-1：文档门禁
+
+1. Spec修订必须记录完整链：`d555/33234936660`失败、`d252/33236405510`失败、
+   `5548/33236921544`成功但不可复用于新descendant、官方Tag保留规则纠正，以及ben.2
+   Tag/promotion/final CI/Release未发生；单独提交并通过原`SPEC_DOCUMENT` reviewer。
+2. 本Plan修订必须把official Tag absent/exact、atomic promotion与恢复状态写成可执行命令；
+   单独提交并通过原`PLAN_DOCUMENT` reviewer。
+
+### S2R-2：最窄contract/truth实现
+
+**Files:**
+- Modify: `tests/fork-maintenance-truth.test.ts`
+- Modify after RED: `FORK_CHANGES.md`
+- Update temporarily: `.tmp/v2.35.0-ben.2-ci-controller.mjs`
+- Preserve/update temporarily: `.tmp/v2.35.0-ben.2-state.json`
+- Do not modify: runtime、workflow、`scripts/prepare-fork-official-base.ts`、`package.json`
+
+1. 先amend现有maintenance truth test并运行RED，机械要求：
+   - 三candidate predecessor chain与三个run ID/结果；
+   - `5548`成功证据不能证明新descendant；
+   - Fork origin对每个已rebase基线保留official Tag；`v2.34.0`保持exact
+     `80fff9a7f...`，`v2.35.0`在promotion时保留exact `fc4de772...`；
+   - ben.2 Tag/promotion/final CI/Release仍未发生；新S2R candidate及later gates pending。
+2. 更新`FORK_CHANGES.md`使contract GREEN；保留16-overlap/112-path和所有旧证据，记录规则
+   纠正与新的implementation HEAD/shortstat。先提交test-only implementation，最后再提交
+   docs-only truth snapshot；不得改package。
+3. focused只运行`bun test tests/fork-maintenance-truth.test.ts`、`bun run typecheck`、
+   `bun run privacy:scan`和`git diff --check`；candidate远端CI承担全套验证，不重复本地prepush。
+
+### S2R-3：修订可恢复controller
+
+1. Controller读取固定官方仓库与origin的`v2.34.0`/`v2.35.0` raw/peeled：
+   - official与origin `v2.34.0`都必须type=`commit`且raw=peeled=`80fff9a7f...`；
+   - fixed-official `v2.35.0`必须type=`commit`且raw=peeled=`fc4de772...`；
+   - promotion前origin `v2.35.0`只允许absent或exact；promotion后只允许exact；
+   - 任何多行、unsupported type或mismatch均fail closed，不删除、不force、不移动。
+2. `supersede-candidate`必须允许origin `v2.35.0`为absent或exact，继续严格要求ben.2 absent、
+   fresh remote sync exact predecessor与new SHA descendant，并把`5548`run完整移入history。
+3. self-test新增official v2.35 absent、present-exact、present-mismatch，以及v2.34 mismatch；
+   `bun .tmp/v2.35.0-ben.2-ci-controller.mjs self-test`必须通过，state/controller继续保持
+   `0600`/`0700`。
+
+### S2R-4：新candidate与CI
+
+1. 新docs-only snapshot必须是`5548eb2a0` descendant，worktree clean，remote sync fresh-read
+   exact `5548eb2a0`；ben.2 Tag不存在；origin v2.34 exact、v2.35 absent或exact。
+2. 执行`supersede-candidate 5548eb2a0... NEW_CANDIDATE`，然后以
+   `--force-with-lease=refs/heads/sync/v2.35.0:5548eb2a0...`仅fast-forward sync。
+3. `snapshot candidate`→`intent candidate`→一次workflow_dispatch→`bind candidate`→持久
+   watcher→`verify candidate`。仍要求17个named success jobs、唯一literal Windows job-level
+   skip、零展开Windows shards。失败保留immutable history并走successor；成功后才可建Tag。
+4. 按用户指定顺序，candidate CI成功后复用原Spec/Quality reviewer做一次并行re-review；
+   无Critical/Important才进入promotion，不增加额外review轮。
+
+### S2R-5：冻结Tags并原子promotion
+
+1. Fresh-run `bun scripts/prepare-fork-official-base.ts`，从固定官方仓库重验证并确保本地
+   `refs/tags/v2.35.0`为exact lightweight `fc4de772...`。独立fresh-read确认origin
+   `v2.34.0`仍exact `80fff9a7f...`，origin `v2.35.0`为absent或exact。
+2. 创建一次annotated `v2.35.0-ben.2`；message必须记录完整三candidate predecessor chain、
+   新S2R candidate/run、官方Tag保留纠正、local/review成功，并把promotion/final CI/Release
+   标为pending。冻结Fork Tag raw OID，不得重建或移动。
+3. `snapshot final push main "$CANDIDATE"`与`intent final`必须先落盘。使用一次atomic push，
+   两个Tag refspec都不加force/lease：
+
+```bash
+git push --atomic origin \
+  --force-with-lease=refs/heads/main:$REMOTE_MAIN_OLD \
+  --force-with-lease=refs/heads/sync/v2.35.0:$CANDIDATE \
+  --force-with-lease=refs/heads/upstream-release:$REMOTE_MARKER_OLD \
+  "$CANDIDATE":refs/heads/main \
+  "$CANDIDATE":refs/heads/sync/v2.35.0 \
+  "$REMOTE_MARKER_OLD":refs/heads/upstream-release \
+  refs/tags/v2.35.0:refs/tags/v2.35.0 \
+  refs/tags/v2.35.0-ben.2:refs/tags/v2.35.0-ben.2
+```
+
+4. 完整pre-state A：branches pre、v2.35 absent、ben.2 absent；完整pre-state B：branches pre、
+   v2.35 exact、ben.2 absent；完整post-state：branches promoted、v2.35 exact、ben.2 raw/peeled
+   exact。所有状态还要求v2.34 exact。Reported success只接受post；确定失败停止；真正uncertain
+   只在pre A/B允许以相同Tag raw OID、相同显式refset与fresh branch leases重试一次。
+5. Remote post后按旧OID transaction对齐local main/marker，`--no-tags`刷新三branch tracking
+   refs；persist promotion state时同时记录v2.34/v2.35/Fork Tag raw/peeled。
+
+### S2R-6：Final CI与Release
+
+1. `bind final`只绑定唯一push/main/exact candidate新run，watch至terminal后`verify final`；
+   不复用candidate run。
+2. Final CI成功后，Release Notes必须区分`d555`失败、`d252`失败、`5548`成功但stale、
+   新S2R candidate/final run，并记录v2.34/v2.35官方Tag exact保留和Fork Tag raw/peeled。
+3. 创建/修正公开稳定`v2.35.0-ben.2` Release，要求assets=[]；最终fresh-read要求
+   main/sync/candidate一致、marker=`fc4de772...`、origin v2.34=`80fff9a7f...`、origin
+   v2.35=`fc4de772...`、Fork Tag annotated且peeled=candidate。全部terminal后才删除临时
+   controller/state/notes。
+
+## S1 Successor Repair Override（历史执行记录；不得再作为入口）
 
 本Plan原 Tasks 1–5与首轮Task 6已经执行。首个docs-only candidate
 `d5558096bb229b5fbf5607a6468c2871b2b1213e` 已推送到
@@ -110,7 +217,11 @@ Notes除replacement candidate/final run外，还必须记录首个失败candidat
 
 - 官方基线固定为 `v2.35.0` / `fc4de772b58c13f7b16b5029b1e981d612a5db06`；现有 `v2.35.0-ben.1` / `98b14f722097abce9107c76ff0eba5f4e60c2e0f` 不移动、不删除、不覆盖。
 - 新版本固定为 `2.35.0-ben.2`，新 Tag 固定为 `v2.35.0-ben.2`；同名 Tag 一旦创建不得重建或移动。
-- 不向 `Trendymen/opencodex` origin 推送官方 `v2.35.0` Tag；CI 只能生成每轮重新验证的 runner-local Tag proof。
+- Fork origin必须保留每个已rebase官方基线的同名Tag：`v2.34.0` exact lightweight
+  `80fff9a7f...`保持不变，`v2.35.0`以固定官方仓库验证的exact lightweight
+  `fc4de772...`在本轮atomic promotion中补齐；任何existing mismatch均fail closed，禁止
+  force、删除、重建或移动。CI仍必须每轮从固定官方URL独立重新验证，不能把origin当作
+  provenance来源。
 - 不弱化 `forkVersionTagError()`、空 Tag 集合保护、release-line、exact-SHA、branch lease、atomic push 或 CI-success 门禁。
 - 不发布 npm、不替换开发机/持久环境的全局 OpenCodex、不操作 launchd/10100/用户配置。仅允许现有 disposable GitHub-hosted `npm-global-smoke` 执行隔离 `npm install -g`。
 - Runtime 保留官方 v2.35 `WeakMap<OcxParsedRequest, string>` 隐私模型，不把 conversation scope 写进请求 body 或公共 request fields。
@@ -2043,7 +2154,10 @@ arbitrary predecessor, or rewrite published failed-candidate history.
 
 ---
 
-### Task 7: Promote, Verify Final CI, and Publish v2.35.0-ben.2
+### Historical Task 7: Promote, Verify Final CI, and Publish v2.35.0-ben.2
+
+> **Superseded:** 本节保留为原S1审计记录，不得执行。当前发布只执行文首S2R-5/S2R-6；
+> 尤其不得再应用本节的origin official Tag absence/no-mirror条件。
 
 **Files:**
 - Reuse: `.tmp/v2.35.0-ben.2-ci-controller.mjs`
@@ -2319,13 +2433,15 @@ stays in conversation/external evidence only and never mutates Tag/FORK_CHANGES.
 | Approved Spec goal | Plan coverage | Terminal evidence |
 | --- | --- | --- |
 | G1: preserve turn-termination object identity | Task 1 | Dedicated routed recovery × Kiro behavioral regression, canonical replacement invariant, focused tests, typecheck, reviewers. |
-| G2: establish CI-only official baseline proof | Tasks 2–3, then Tasks 6–7 | Classifier/Git/redaction fixtures, parsed workflow contract, local full gates, origin-only candidate and final Cross-platform runs. |
-| G3: repair the maintenance source of truth | Tasks 4–5 | Six exact whitespace removals, maintenance-truth RED/GREEN, corrected v2.35 overlap/evidence/current version, docs-only snapshot. |
-| G4: publish immutable ben.2 | Tasks 5–7 | `2.35.0-ben.2`, exact candidate CI, frozen annotated Tag, leased atomic promotion, independent final main CI, verified public Release. |
+| G2: independently prove and preserve official baseline Tags | Historical Tasks 2–3 plus S2R-3/S2R-5 | Fixed-official classifier/Git/redaction evidence; origin v2.34 exact retained; v2.35 absent-or-exact preflight and exact post-state in the atomic refset. |
+| G3: repair the maintenance source of truth | Historical Tasks 4–5 plus S2R-2 | Six exact whitespace removals, current-chain maintenance-truth RED/GREEN, corrected v2.35 overlap/evidence/current version, docs-only snapshot. |
+| G4: publish immutable ben.2 | S2R-4 through S2R-6 | `2.35.0-ben.2`, new exact candidate CI, one post-CI review gate, frozen annotated Tag, leased atomic promotion including verified official v2.35, independent final main CI, verified public Release. |
 
 The Spec's non-goals and safety boundaries are carried by Global Constraints and by the Task 2/3
-security reviews: no official Tag mirror, npm publish, persistent/global developer install,
-service/config mutation, public request-field scope, or opportunistic provider fixes. Every G1–G4
+security reviews: fixed official URL remains the provenance source; origin v2.34/v2.35 must match
+that source's type/raw/peeled exactly; mismatch, force, move or reconstruction is forbidden. npm
+publish, persistent/global developer install, service/config mutation, public request-field scope,
+or opportunistic provider fixes remain out of scope. Every G1–G4
 goal has an implementation Task, a review gate, and terminal evidence; there is no uncovered Spec
 goal or extra product behavior in this Plan.
 
@@ -2333,16 +2449,18 @@ goal or extra product behavior in this Plan.
 
 ## Plan Completion Checklist
 
-- [ ] Approved Spec and Approved Plan are committed before implementation.
+- [ ] Approved S2R Spec and Approved S2R Plan are committed before contract implementation.
 - [ ] Tasks 1–5 each have RED/GREEN evidence and scoped commits.
 - [ ] Task-level review gates pass; original reviewers close all prior findings.
 - [ ] Final documentation commit contains only `FORK_CHANGES.md` and has parent=`IMPLEMENTATION_HEAD`.
 - [ ] Official-relative path set is exactly 112.
 - [ ] Untracked CI controller syntax/self-tests pass; mode-0600 state survives re-entry and records exact run attempts/Tag/promotion/Release evidence.
-- [ ] Candidate workflow_dispatch is uniquely bound; every named shipping job/matrix passes, only job-level `platform-windows` is skipped, and no Windows suite shard expands before Tag creation.
-- [ ] Atomic promotion uses exact leases and frozen Tag raw OID.
+- [ ] New S2R candidate is a recorded descendant of `5548eb2a0`; workflow_dispatch is uniquely bound; every named shipping job/matrix passes, only job-level `platform-windows` is skipped, and no Windows suite shard expands before Tag creation.
+- [ ] Candidate CI succeeds before the single parallel Spec/Quality re-review; no Critical/Important finding remains before Tag creation.
+- [ ] Promotion preflight proves origin `v2.34.0` exact `80fff9a7f...`; origin `v2.35.0` is absent or exact `fc4de772...`; any mismatch stops without force/move/reconstruction.
+- [ ] Atomic promotion uses exact branch leases, frozen Fork Tag raw OID, and one explicit refset containing main, sync, marker, official `v2.35.0`, and Fork `v2.35.0-ben.2`.
 - [ ] Final main-push CI is uniquely bound and successful before GitHub Release.
 - [ ] GitHub Release is public, stable, same-name, source-archive-only and metadata-verified.
-- [ ] Origin official Tag absence is re-proved before candidate push, atomic promotion and Release, then post-verified; no official Tag is mirrored.
+- [ ] Promotion/Release post-state proves origin `v2.34.0` remains exact `80fff9a7f...` and origin `v2.35.0` is exact `fc4de772...`, with both independently revalidated from the fixed official URL.
 - [ ] No npm publish or developer/self-hosted global install/service mutation occurs.
 - [ ] Final refs, Tag, Release, worktree and all background sessions are terminal and reconciled.
