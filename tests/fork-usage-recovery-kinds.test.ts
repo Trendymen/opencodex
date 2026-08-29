@@ -138,7 +138,7 @@ afterEach(() => {
     expect(readUsageEntries()[0]?.attempts?.[0]?.recoveryKinds).toEqual(["agent-task-recovery"]);
   });
 
-  
+
 
   test("keeps the GUI recovery-kind map exhaustive with the persisted backend union", () => {
     const backendSource = readFileSync(join(import.meta.dir, "../src/usage/log.ts"), "utf8");

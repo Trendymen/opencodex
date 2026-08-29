@@ -163,7 +163,7 @@ test("emits a block rewrite's retained tail on clean EOF", async () => {
     expect(composeSseBlockRewrites(retained, suffix).flush?.()).toEqual(['data: {"type":"flushed"}']);
   });
 
-  
+
 
 test("passes a flushed block through later rewrite stages", () => {
     const retained = Object.assign(
@@ -175,5 +175,5 @@ test("passes a flushed block through later rewrite stages", () => {
     expect(composeSseBlockRewrites(retained, suffix).flush?.()).toEqual(['data: {"type":"flushed"}']);
   });
 
-  
+
 });

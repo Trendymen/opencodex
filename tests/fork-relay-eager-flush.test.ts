@@ -209,7 +209,7 @@ test("flushes retained block-rewrite output at EOF", async () => {
     expect(await reading).toContain('data: {"type":"flush"}');
   });
 
-  
+
 
 test("flushes held block-rewrite output before its synthetic failed tail", async () => {
     const { hooks } = makeHooks();
@@ -227,5 +227,5 @@ test("flushes held block-rewrite output before its synthetic failed tail", async
     expect(output.indexOf('"type":"flush"')).toBeLessThan(output.indexOf('"type":"response.failed"'));
   });
 
-  
+
 });

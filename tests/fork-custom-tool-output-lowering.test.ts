@@ -14,7 +14,7 @@ function convertedInputDescription(name: string): string | undefined {
 }
 
 describe("fork custom tool output lowering", () => {
-  
+
   test("lowers custom output content parts to the function_call_output string wire", () => {
     const rewritten = rewriteRoutedCustomToolsForUpstream({
       tools: [{ type: "custom", name: "exec", description: "Run", format: { type: "text" } }],
