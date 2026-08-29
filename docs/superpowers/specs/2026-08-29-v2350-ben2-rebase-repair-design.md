@@ -37,6 +37,27 @@ Important finding，并将最终结果发布为不可变 Fork 修订 `v2.35.0-be
   对比；
 - 官方相对 Fork patch 中有六处尾随空格，均位于 Fork 专用测试文件。
 
+## 当前修复状态（S1 successor repair）
+
+原始 Tasks 1–5 已完成并形成首个 docs-only candidate
+`d5558096bb229b5fbf5607a6468c2871b2b1213e`；该 SHA 已在精确 lease 下推送到
+`origin/sync/v2.35.0`。绑定的 candidate workflow run `33234936660` 在 Linux 四个 test
+shard 与 macOS 的 `Prepare verified Fork official base` 步骤确定失败，原因是脚本要求
+official ref type=`tag`，而固定官方远端 `refs/tags/v2.35.0` 的实际 object type 是
+`commit`（lightweight），raw/peeled 均为 `fc4de772...`。该 run 已作为 terminal
+`run_conclusion_failure` 写入 mode-0600 controller state。
+
+失败发生后，远端 `main` 仍为不可变 ben.1，`upstream-release` 仍为 `fc4de772...`；本地/
+远端 `v2.35.0-ben.2` Tag、atomic promotion、final main CI 与 GitHub Release均未发生。
+当前从状态表 **S1** 恢复，不回到 S0，也不 amend/rebase/删除已推送的 `d5558096b`。
+
+本次修订后的 Spec 与 Plan 必须先通过各自文档 reviewer并作为 `d5558096b` 的 descendant
+提交，随后才允许实现 lightweight-ref repair。Repair-only实现范围是：修改现有
+`scripts/prepare-fork-official-base.ts`、现有 `tests/fork-ci-official-baseline.test.ts` 和
+维护真源契约/文档；不得重复 runtime rebind、whitespace cleanup、package ben.2 bump或原始
+maintenance-test red phase。最终 overall official-relative路径集仍必须是原已批准的112，
+本次 repair iteration 只允许修改已在该集合中的路径以及本 Spec/Plan两个既有路径。
+
 ## 目标
 
 ### G1：恢复 turn-termination 对象身份契约
@@ -158,7 +179,7 @@ repository 内验证：
 2. 在临时 bare repo 中从固定官方仓库 fetch 完整 commit graph 的 `refs/heads/main` 和
    精确 `refs/tags/vX.Y.Z`；使用 `--filter=blob:none`，但不使用 `--depth`、
    `--shallow-since` 或 checkout 继承的 shallow boundary；
-3. 官方验证通过后，从该 bare repo 把 verified raw Tag object fetch 到 checkout 的
+3. 官方验证通过后，从该 bare repo 把 verified raw official ref object fetch 到 checkout 的
    `refs/ocx-ci/official-tag`。
 
 为兼容会保留 `.git` 的 self-hosted runner，脚本先删除自己拥有的精确 checkout 临时
@@ -172,22 +193,29 @@ best-effort 删除 `refs/ocx-ci/*` 和 bare repo。进程强杀/runner终止无�
 
 在创建本地官方 Tag 前必须按顺序验证：
 
-1. bare repo 中官方临时 Tag ref 的 object type 是 `tag`，拒绝 lightweight Tag；
-2. bare repo 中 Tag peeled commit 是完整官方 main commit graph 的 ancestor；
-3. 导入 checkout 后的 Tag peeled commit 等于临时 `upstream-release` marker commit；
-4. 本地若已有 `refs/tags/vX.Y.Z`，其 raw Tag object OID 与 peeled commit 都必须与
-   官方临时 Tag 一致；冲突时 fail closed。
+1. bare repo 中官方临时 Tag ref 的 object type 只能是 `tag`（annotated）或 `commit`
+   （lightweight）；其他 object type 一律拒绝。官方 `v2.35.0` 的固定远端事实是
+   lightweight ref，`raw OID == peeled commit == fc4de772b...`；不得把“必须 annotated”
+   当作 provenance 条件；
+2. bare repo 中读取 raw official-ref OID 与 `^{commit}` peeled commit；若 type 为 `commit`，
+   两者必须相等；若 type 为 `tag`，保留 tag-object raw OID并验证 peeled commit；
+3. peeled commit 必须是完整官方 main commit graph 的 ancestor；
+4. 导入 checkout 后的 ref type、raw OID、peeled commit 必须逐项等于 bare evidence，且
+   peeled commit 等于临时 `upstream-release` marker commit；
+5. 本地若已有 `refs/tags/vX.Y.Z`，其 type、raw OID 与 peeled commit 都必须与官方临时
+   ref 一致；冲突时 fail closed。
 
 全部通过后：
 
 - 本地没有官方 Tag时，以 compare-and-swap `update-ref` 创建
-  `refs/tags/vX.Y.Z`，值为官方 raw Tag object；
+  `refs/tags/vX.Y.Z`，值为官方 raw ref OID（lightweight 时即 commit OID，annotated 时为
+  tag-object OID）；
 - 已有且一致时保持不变；
 - 删除脚本拥有的 `refs/ocx-ci/*` 临时 refs和临时 bare repo；
 - 不执行任何 push，不修改 remote URL，不打印 raw Git stderr、remote URL 或其中可能存在
   的凭据，不修改工作树文件。
 
-网络失败、remote/ref 缺失、Git 命令失败、非 annotated Tag、marker mismatch、ancestry
+网络失败、remote/ref 缺失、Git 命令失败、unsupported object type、marker mismatch、ancestry
 失败、本地同名 Tag 冲突均给出不含凭据的可操作错误，并以非零退出。
 
 ### 测试隔离
@@ -202,7 +230,9 @@ best-effort 删除 `refs/ocx-ci/*` 和 bare repo。进程强杀/runner终止无�
   channel 也不进入无操作 allowlist；
 - marker 与官方 Tag peeled commit 不同；
 - 官方 Tag 不可从 official main 到达；
-- 官方 ref 是 lightweight Tag；
+- 官方 ref 是 observed lightweight Tag时成功，raw/peeled/marker 三者相等；
+- 独立 annotated official Tag fixture同样成功，并保留不同的raw Tag object与peeled commit；
+- 官方 ref 指向 blob/tree等非 commit-ish object时拒绝；
 - 本地已存在一致官方 Tag；
 - 本地已有同名伪造 Tag；
 - origin marker、官方 Tag、官方 main 或 fetch 失败；
@@ -265,17 +295,20 @@ workflow 静态 contract 与 credential-bearing failure redaction 测试。
 
 ### 包版本与实现提交
 
-实现完成后把 `package.json` 从 `2.35.0-ben.1` 推进到 `2.35.0-ben.2`；不修改官方
-dependency、script 或 package metadata，除非是本 Spec 明确新增的 CI baseline script
-入口且该入口无需 package script。
+原始实现已经把 `package.json` 从 `2.35.0-ben.1` 推进到 `2.35.0-ben.2`，并保留官方
+dependency、script 与 package metadata。本次 S1 repair不得再次修改 package版本或
+package metadata；只修复既有CI baseline script/test和维护真源契约。
 
-Spec 与 Plan 均为公开、tracked 的前置文档，使用以下固定路径并在任何实现前分别提交：
+原始 Spec 与 Plan 均为公开、tracked 的前置文档，使用以下固定路径，并已在原始实现前分别
+提交：
 
 - `docs/superpowers/specs/2026-08-29-v2350-ben2-rebase-repair-design.md`；
 - `docs/superpowers/plans/2026-08-29-v2350-ben2-rebase-repair.md`。
 
-它们必须各自通过仓库的文档 reviewer gate；不得留为 untracked 文件，也不得塞进末尾
-`FORK_CHANGES.md` commit。之后的提交按独立职责分组：
+本次 S1 repair 对这两个文档的修订同样必须各自通过仓库文档 reviewer gate，并在
+lightweight实现修复前作为已推送失败candidate的descendant提交；这不追溯声称修订文档
+早于已经完成的历史实现。文档不得留为 untracked，也不得塞进末尾 `FORK_CHANGES.md`
+commit。原始提交已按独立职责分组完成：
 
 1. runtime scope 修复与新组合测试；
 2. CI official-base 准备脚本、专用测试和 workflow 接线；
@@ -283,11 +316,14 @@ Spec 与 Plan 均为公开、tracked 的前置文档，使用以下固定路径�
 4. `package.json` ben.2 版本推进与 tracked
    `tests/fork-maintenance-truth.test.ts` red contract。
 
-每个提交使用中文 subject。不得把 `FORK_CHANGES.md` 混入实现提交。
-第 4 个实现提交在 `IMPLEMENTATION_HEAD` 上预期因旧 `FORK_CHANGES.md` 而保持红色；这是
-文档 TDD 的明确 red phase。随后更新但尚未提交的 `FORK_CHANGES.md` 必须使该测试转绿，
-再运行最终本地门禁和 reviewer re-review，最后只提交 `FORK_CHANGES.md`。这样 tagged
-documentation commit 绿，而 final commit 仍满足 docs-only 约束。
+每个提交使用中文 subject。不得把 `FORK_CHANGES.md` 混入实现提交。本次 repair 不重复
+上述四组历史提交，只追加 official-ref脚本/专用测试与maintenance contract修复提交。
+历史第4个实现提交与原始maintenance-test red phase已经完成。本次 S1 repair修改现有
+`tests/fork-maintenance-truth.test.ts`，使它针对旧 `FORK_CHANGES.md` 因缺少 failed
+candidate/run、lightweight纠正、无Tag/promotion/Release事实和replacement-pending边界而先
+红；随后更新但尚未提交的 `FORK_CHANGES.md` 使其转绿。捕获新的repair
+`IMPLEMENTATION_HEAD`、运行最终门禁和re-review后，再追加一个只含 `FORK_CHANGES.md`
+的replacement docs-only commit。
 
 ### `FORK_CHANGES.md` 修复
 
@@ -303,9 +339,11 @@ documentation commit 绿，而 final commit 仍满足 docs-only 约束。
 - 所有活跃“官方对比”改为 `v2.35.0`。官方 path/blob 从 v2.34 到 v2.35 未变时明确
   记录，而不是继续引用旧基线；
 - 区分 local prepush 与显式 GUI/其他 changed-path gate；在末尾文档 commit 中把尚未发生的
-  candidate workflow_dispatch CI、Tag promotion、final main CI 和 GitHub Release 明确标记
-  为 `pending external gate`，不得预写成功、run ID 或 Release URL，也不得把 skipped
-  conditional job 写成 passed；
+  replacement candidate workflow_dispatch CI、Tag promotion、final main CI 和 GitHub Release
+  明确标记为 `pending external gate`，不得预写 replacement/final成功或Release URL，也不得
+  把 skipped conditional job 写成 passed；同时准确记录已经完成且失败的首个 candidate
+  `d5558096b` / run `33234936660`、disproved annotated-only assumption、observed lightweight
+  official ref 和 Tag/promotion/Release未发生。已知失败证据不是 pending，也不能被删除；
 - 记录 `e10b2ee28`/ben.1 的历史 shortstat 和 ben.2 新实现 HEAD/shortstat，避免把最终
   docs-only delta当成 runtime 扩散；
 - 记录官方 Tag 是经过每轮重新验证的 runner-local、non-origin proof；在 retained
@@ -316,11 +354,14 @@ documentation commit 绿，而 final commit 仍满足 docs-only 约束。
 完成文档后只暂存 `FORK_CHANGES.md`，运行 staged name list、staged diff check，创建单独
 末尾文档 commit，并机械验证其父提交等于提前捕获的 `IMPLEMENTATION_HEAD`。
 
-该末尾 commit 是不可变的 **pre-promotion code-state snapshot**：它只记录 commit 前已经
-完成的本地门禁、文档门禁与原 reviewer re-review；candidate/final CI、Tag、remote refs 和
-Release 在文档中保持 pending。后置证据按“发生时已经可知”的边界分层：
+replacement末尾 commit 是不可变的 **pre-promotion code-state snapshot**：它记录commit前
+所有已知事实，包括本地门禁、文档门禁、review、失败candidate `d5558096b` / run
+`33234936660`、disproved annotated-only assumption、observed lightweight official ref，以及
+Tag/promotion/Release均未发生。只有replacement candidate/final CI、Tag、remote promotion
+和Release保持pending。后置证据按“发生时已经可知”的边界分层：
 
-- `FORK_CHANGES.md`：完成的本地/review证据；全部外部门禁 pending；
+- `FORK_CHANGES.md`：完成的本地/review证据、首个candidate失败证据与修复归因；只有
+  replacement candidate及其后续外部门禁pending；
 - candidate CI 绿后创建的 annotated Tag message：写入 candidate
   `workflow_dispatch/sync` run identity、local/review证据，并明确 promotion、final main CI
   与 Release 仍 pending；
@@ -341,11 +382,11 @@ Release 在文档中保持 pending。后置证据按“发生时已经可知”�
 
 - runtime：新的 recovery × Kiro 组合测试先红，scope 修复后绿；
 - CI：origin-only fixture 先证明现有 gate 缺官方 Tag，再实现 prepare script 使之通过；
-- 文档/版本：新增 tracked `tests/fork-maintenance-truth.test.ts`，识别当前版本、明确命名的
-  16-path overlap、官方/Fork 归属、active v2.35 comparisons、ben.2，以及 candidate/final
-  CI/Tag/Release 在 tagged 文档中仍是 pending external gates；不得用一次性未记录命令
-  代替该 contract。该测试与 package version 同 commit进入 red phase，在 staged
-  `FORK_CHANGES.md` 后转绿。
+- 文档/版本：原始 tracked `tests/fork-maintenance-truth.test.ts` 与package ben.2 red phase已
+  完成。本次 S1 repair只amend该现有测试，不改 `package.json`；新增断言必须机械锁定失败
+  candidate `d5558096b` / run `33234936660`、lightweight纠正、ben.2 Tag/promotion/Release未
+  发生，以及只有replacement/later gates为pending。修订测试先对旧 `FORK_CHANGES.md` 变红，
+  在replacement snapshot内容下转绿；不得用一次性未记录命令替代contract。
 
 实现阶段运行最小 focused tests 和 `bun run typecheck`。Workflow/script 改动还运行现有
 CI workflow tests、Fork version policy/release-line tests，并检查跨平台 argv/path 语义。
@@ -370,11 +411,17 @@ workflow 安全 named-risk check。任何 Critical/Important finding 阻塞候�
 
 ### 1. 远端候选验证
 
-最终 documentation commit 完成、本地门禁和 re-review 通过后：
+对首个candidate的步骤已经执行到S1并失败。Lightweight-ref repair完成、新的最终
+documentation commit、本地门禁和 re-review通过后，replacement candidate必须是
+`d5558096bb229b5fbf5607a6468c2871b2b1213e` 的 descendant，并以 fresh-read仍等于该SHA的
+`origin/sync/v2.35.0` 作为 exact lease fast-forward。若 fresh read是一个明确记录在
+controller successor history中的 later descendant，可用该later SHA；任何无记录的remote
+SHA或非descendant都停止。随后：
 
 1. 捕获本地/远端 `main`、`sync/v2.35.0`、`upstream-release`、目标 Tag 的 raw/peeled
-   SHA；初次进入候选阶段时本地/远端 ben.2 Tag 都必须不存在；
-2. 仅将 final documentation commit 以显式 expected-SHA lease 推送到
+   SHA；恢复进入replacement candidate时本地/远端 ben.2 Tag仍必须不存在，controller
+   state必须保留首个失败run evidence；
+2. 仅将 replacement final documentation commit 以上述失败candidate expected-SHA lease推送到
    `origin/sync/v2.35.0`；不移动 `main`、不创建/推送 Tag、不创建 Release；
 3. 使用现有 `workflow_dispatch`，以 `ref=sync/v2.35.0` 启动 Cross-platform CI；
 4. 在 dispatch 前记录 UTC 时间边界和 workflow id；固定唯一满足以下全部条件的 run：
@@ -443,7 +490,9 @@ Final CI 绿后才创建公开 GitHub Release：
 
 - `tagName` 和标题均为 `v2.35.0-ben.2`；
 - `isDraft=false`、`isPrerelease=false`；
-- 中文 Notes 包含官方基线、四类修复、candidate/final CI、验证、已知缺口和 commit；
+- 中文 Notes 包含官方基线、四类修复、首个失败candidate `d5558096b` / run
+  `33234936660` 与 lightweight-ref纠正、replacement candidate/final CI、验证、已知缺口和
+  commit；
 - 只使用 GitHub source archives，不发布 npm、不上传额外资产。
 
 创建后查询并后验验证 Release metadata、远端 Tag raw/peeled、`main`、sync、
@@ -468,7 +517,7 @@ Release，不生成 ben.3。
 | 状态 | 允许动作 | 禁止/恢复规则 |
 | --- | --- | --- |
 | S0 初始 | 本地门禁、review、推首个 sync candidate | 本地/远端 ben.2 Tag 必须不存在。 |
-| S1 candidate 已远端化 | dispatch并绑定唯一 candidate run | 失败修复只追加 descendant commits；不重写远端历史。 |
+| S1 candidate 已远端化（当前） | 首个run失败；修订文档、追加repair与replacement candidate | 失败修复只追加 descendant commits；保留run `33234936660`证据，不重写远端历史。 |
 | S2 candidate CI 绿 | 创建一次本地 annotated Tag | 创建后 candidate冻结，Tag raw OID冻结。 |
 | S3 promotion push 中/结果不明 | fresh读取完整远端 refs | 只接受完整 pre/post state；mixed state停止。 |
 | S4 远端 promotion 完整 | 补本地 transaction，等待 final main CI | 不再 push或重建 Tag。 |
@@ -479,15 +528,15 @@ Release，不生成 ben.3。
 
 | 文件 | 必要性 |
 | --- | --- |
-| `docs/superpowers/specs/2026-08-29-v2350-ben2-rebase-repair-design.md` | 已批准设计；在实现前单独 tracked commit。 |
-| `docs/superpowers/plans/2026-08-29-v2350-ben2-rebase-repair.md` | 已批准执行计划；在实现前单独 tracked commit。 |
+| `docs/superpowers/specs/2026-08-29-v2350-ben2-rebase-repair-design.md` | 原始设计与S1 repair修订；修订版必须在lightweight修复前单独tracked commit。 |
+| `docs/superpowers/plans/2026-08-29-v2350-ben2-rebase-repair.md` | 原始计划与S1 successor修订；修订版必须在repair实现前单独tracked commit。 |
 | `src/server/responses/core.ts` | 在两个 post-bind parsed replacement 后恢复官方 v2.35 turn-termination identity invariant；只保留局部接线。 |
 | `tests/fork-agent-task-recovery-kiro-turn-termination.test.ts` | 独立覆盖 recovery 与 Kiro local-terminal 的组合回归。 |
 | `scripts/prepare-fork-official-base.ts` | 集中、可测试地准备 CI-only 官方 Tag 证明。 |
-| `tests/fork-ci-official-baseline.test.ts` | 独立覆盖 origin-only、reserved version、mismatch、完整 ancestry、Tag object、workflow placement、credential redaction 与 fail-closed 行为。 |
-| `tests/fork-maintenance-truth.test.ts` | 锁定 package/FORK_CHANGES current version、16-path overlap、v2.35 active comparison、ben.2 与后置外部门禁 pending 边界；和 version 同 commit进入red phase。 |
+| `tests/fork-ci-official-baseline.test.ts` | 独立覆盖 origin-only、reserved version、mismatch、完整 ancestry、official ref kind（lightweight/annotated/unsupported）、workflow placement、credential redaction 与 fail-closed 行为。 |
+| `tests/fork-maintenance-truth.test.ts` | 历史上已与version同commit完成原始red phase；S1中amend现有contract，锁定failed candidate/run、lightweight纠正、无Tag/promotion/Release及replacement pending边界，不改package。 |
 | `.github/workflows/ci.yml` | 让三类完整 suite 在测试前执行官方基线准备；安全边界需显式审查。 |
-| `package.json` | 推进不可变 Fork revision 到 `2.35.0-ben.2`。 |
+| `package.json` | 已历史推进到 `2.35.0-ben.2`；S1 repair不得再修改。 |
 | `FORK_CHANGES.md` | 修正 v2.35 维护真源并作为 Tag 指向的末尾文档提交。 |
 | `tests/fork-custom-tool-output-lowering.test.ts` | 仅删除 1 处尾随空格。 |
 | `tests/fork-relay-eager-flush.test.ts` | 仅删除 2 处尾随空格。 |
@@ -511,8 +560,9 @@ ben.2 预期 official-relative path count 为 112。`core.ts`、`package.json`�
 
 1. 新组合测试在旧实现上失败，在修复后通过；Kiro 第二轮零 upstream send、零 usage；
 2. routed组合行为测试与 canonical native replacement 静态 invariant均先红后绿；
-3. origin-only fixture 能准备官方 Tag；reserved malformed、mismatch、伪造、浅历史和
-   缺失场景按定义 fail closed；
+3. origin-only fixture 对 observed lightweight 与独立 annotated official Tag 都能准备精确
+   本地 ref；reserved malformed、mismatch、伪造、unsupported object、浅历史和缺失场景
+   按定义 fail closed；
 4. CI production path只访问固定官方 URL和 origin marker，不接收用户可控 remote，
    credential-bearing失败输出通过专门redaction测试；
 5. 本地 `release-version-line` 在有/无预置官方 Tag的受控 fixture中都执行真实检查，不能
@@ -520,19 +570,22 @@ ben.2 预期 official-relative path count 为 112。`core.ts`、`package.json`�
 6. workflow静态测试证明精确job/step/order/permission，强制workflow_dispatch运行
    npm-global ubuntu/windows/macos，并固定 run_windows default false、Windows job-level
    candidate skip 与外部 verifier allowlist contract；
-7. Cross-platform candidate workflow_dispatch 以 event/branch/time/run-id/sha唯一绑定，
-   所有列名的发布相关job/matrix成功；
+7. 已知首个candidate `d5558096b` / run `33234936660` 的失败原因与未发生Tag/promotion状态
+   被准确保留；replacement Cross-platform candidate workflow_dispatch以
+   event/branch/time/run-id/sha唯一绑定，所有列名的发布相关job/matrix成功；
 8. 原两位 reviewer 的全部 Important finding 在 re-review 中关闭，workflow 安全检查通过；
 9. 本地最终门禁、privacy 与 official-relative diff check 全绿；
 10. `FORK_CHANGES.md` 当前版本、16-path overlap、v2.35 coverage、已完成本地/review证据、
-    后置外部门禁 pending 状态和 known gaps准确；后置 run IDs/results只进入Tag/Release证据；
+    首个失败candidate/run与lightweight纠正、replacement后置外部门禁pending状态和known
+    gaps准确；replacement/final成功run IDs/results只进入Tag/Release证据；
 11. official-relative path count为112，新增/既有修改路径与本表完全一致；
 12. `v2.35.0-ben.2` 是 annotated Tag，remote raw/peeled一致，`main`/sync指向同一 commit，
    `upstream-release` 仍为官方 `fc4de772b`；Tag message只包含candidate阶段已完成证据并把
    promotion/final CI/Release标为pending；
 13. Final main CI 以 push/main/time/run-id/sha唯一绑定并成功后，才存在公开、非
     prerelease、非 draft 的同名 GitHub
-    Release；Release Notes包含candidate/final run identities与promotion ref证据；创建后
+    Release；Release Notes包含首个失败candidate及纠正、replacement candidate/final run
+    identities与promotion ref证据；创建后
     metadata后验只进入最终报告/GitHub外部状态，不要求回写Tag或tracked文档；
 14. origin 不出现官方 `v2.35.0` Tag；不发生 npm publish，不在开发机、持久环境或
     self-hosted runner执行全局安装/服务替换；只允许既有 disposable GitHub-hosted
