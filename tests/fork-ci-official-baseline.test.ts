@@ -87,7 +87,7 @@ function createFixture(): Fixture {
   requireGit(official, ["config", "user.email", "fixture" + "@" + "example.invalid"]);
   writeFileSync(join(official, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
   const officialTagCommit = commit(official, "baseline");
-  requireGit(official, ["tag", "-a", "v2.35.0", "-m", "official v2.35.0"]);
+  requireGit(official, ["tag", "v2.35.0", officialTagCommit]);
   commit(official, "main-one");
   commit(official, "main-two");
   requireGit(root, ["clone", "--bare", pathToFileURL(official).href, originBare]);
@@ -194,7 +194,7 @@ describe("Fork CI official baseline preparation", () => {
     expect(calls).toBe(0);
   });
 
-  test("imports the verified annotated official tag into an origin-only shallow checkout", () => {
+  test("imports the observed lightweight official tag into an origin-only shallow checkout", () => {
     const fixture = createFixture();
     expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe("true");
     expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
@@ -206,8 +206,10 @@ describe("Fork CI official baseline preparation", () => {
       return git(cwd, args);
     });
     const result = prepared.run();
-    expect(result).toMatchObject({ kind: "prepared", tag: "v2.35.0" });
-    expect(requireGit(fixture.checkout, ["cat-file", "-t", "refs/tags/v2.35.0"])).toBe("tag");
+    expect(result).toMatchObject({ kind: "prepared", tag: "v2.35.0", refKind: "lightweight" });
+    expect(requireGit(fixture.checkout, ["cat-file", "-t", "refs/tags/v2.35.0"])).toBe("commit");
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"]))
+      .toBe(fixture.officialTagCommit);
     expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0^{commit}"]))
       .toBe(fixture.officialTagCommit);
     const officialFetch = calls.find(args => args.includes("fetch") && args.includes(pathToFileURL(fixture.official).href));
@@ -255,13 +257,41 @@ describe("Fork CI official baseline preparation", () => {
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
 
-  test("rejects lightweight official tags and cleans its owned refs", () => {
+  test("imports an independently annotated official tag without losing its tag object", () => {
     const fixture = createFixture();
     requireGit(fixture.official, ["tag", "-d", "v2.35.0"]);
-    requireGit(fixture.official, ["tag", "v2.35.0", fixture.officialTagCommit]);
+    requireGit(fixture.official, ["tag", "-a", "v2.35.0", "-m", "official v2.35.0", fixture.officialTagCommit]);
     const prepared = prepare(fixture);
-    expect(prepared.run).toThrow("official release ref is not an annotated tag");
+    const result = prepared.run();
+    const officialRaw = requireGit(fixture.official, ["rev-parse", "refs/tags/v2.35.0"]);
+    expect(result).toEqual({
+      kind: "prepared",
+      version: "2.35.0-ben.2",
+      tag: "v2.35.0",
+      refKind: "annotated",
+      rawTagOid: officialRaw,
+      peeledCommit: fixture.officialTagCommit,
+    });
+    expect(officialRaw).not.toBe(fixture.officialTagCommit);
+    expect(requireGit(fixture.checkout, ["cat-file", "-t", "refs/tags/v2.35.0"])).toBe("tag");
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"])).toBe(officialRaw);
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0^{commit}"]))
+      .toBe(fixture.officialTagCommit);
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("rejects blob and tree official refs rather than treating them as tags", () => {
+    for (const kind of ["blob", "tree"] as const) {
+      const fixture = createFixture();
+      requireGit(fixture.official, ["tag", "-d", "v2.35.0"]);
+      const object = kind === "blob"
+        ? requireGit(fixture.official, ["hash-object", "-w", "package.json"])
+        : requireGit(fixture.official, ["write-tree"]);
+      requireGit(fixture.official, ["update-ref", "refs/tags/v2.35.0", object]);
+      const prepared = prepare(fixture);
+      expect(prepared.run).toThrow("official release ref has unsupported object type");
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    }
   });
 
   test("rejects an annotated tag whose commit is outside official main ancestry", () => {
@@ -287,6 +317,20 @@ describe("Fork CI official baseline preparation", () => {
     expect(prepared.run).toThrow("existing local official tag does not match verified official tag");
     expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"])).toBe(forgedRaw);
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("rejects a pre-existing blob or tree local ref before zero-OID publication", () => {
+    for (const kind of ["blob", "tree"] as const) {
+      const fixture = createFixture();
+      const object = kind === "blob"
+        ? requireGit(fixture.checkout, ["hash-object", "-w", "package.json"])
+        : requireGit(fixture.checkout, ["write-tree"]);
+      requireGit(fixture.checkout, ["update-ref", "refs/tags/v2.35.0", object]);
+      const prepared = prepare(fixture);
+      expect(prepared.run).toThrow("existing local official tag has unsupported object type");
+      expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"])).toBe(object);
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    }
   });
 
   test("keeps an existing identical official tag and rejects missing marker, tag, main, and fetch failures", () => {

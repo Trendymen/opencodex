@@ -94,7 +94,7 @@ describe("Fork maintenance truth", () => {
       return [match![1]!, match![2]!];
     }));
     expect(rows).toEqual({
-      "Candidate Cross-platform CI": "pending external gate",
+      "Replacement candidate Cross-platform CI": "pending external gate",
       "Atomic promotion": "pending external gate",
       "Final main Cross-platform CI": "pending external gate",
       "GitHub Release": "pending external gate",
@@ -102,6 +102,30 @@ describe("Fork maintenance truth", () => {
     expect(block).not.toMatch(/https?:\/\//);
     expect(block).not.toMatch(/\brun\s+#?\d+/i);
     expect(block).not.toMatch(/\b(?:success|passed|completed)\b/i);
+  });
+
+  test("retains the failed first candidate separately from replacement pending gates", () => {
+    const block = machineBlock(changes, "ben2-s1-repair");
+    const normalized = compactWhitespace(block);
+
+    expect(normalized).toContain("`d5558096bb229b5fbf5607a6468c2871b2b1213e`");
+    expect(normalized).toContain("`33234936660`");
+    expect(normalized).toContain("`Prepare verified Fork official base`");
+    expect(normalized).toContain("annotated-only");
+    expect(normalized).toContain("type=`commit`");
+    expect(normalized).toContain(
+      "raw=peeled=marker=`fc4de772b58c13f7b16b5029b1e981d612a5db06`",
+    );
+
+    for (const gate of [
+      "v2.35.0-ben.2 Tag",
+      "Atomic promotion",
+      "Final main Cross-platform CI",
+      "GitHub Release",
+    ]) {
+      expect(normalized).toContain(`${gate}：未发生`);
+    }
+    expect(normalized).not.toContain("pending external gate");
   });
 
   test("grounds every active official comparison in v2.35.0 evidence", () => {
