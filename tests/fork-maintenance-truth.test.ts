@@ -49,6 +49,13 @@ function section(title: string): string {
   return next === -1 ? changes.slice(start) : changes.slice(start, start + 1 + next);
 }
 
+function majorSection(title: string): string {
+  const start = changes.indexOf(`## ${title}\n`);
+  expect(start, `missing section ${title}`).toBeGreaterThanOrEqual(0);
+  const next = changes.slice(start + 1).search(/\n## /);
+  return next === -1 ? changes.slice(start) : changes.slice(start, start + 1 + next);
+}
+
 function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ");
 }
@@ -145,6 +152,31 @@ describe("Fork maintenance truth", () => {
     expect(gates).toContain("| Atomic promotion | `pending external gate` |");
     expect(gates).toContain("| Final main Cross-platform CI | `pending external gate` |");
     expect(gates).toContain("| GitHub Release | `pending external gate` |");
+  });
+
+  test("requires official and Fork Tags in each generic atomic publication refset", () => {
+    const flows = [
+      majorSection("没有新官方版本时的幂等收敛"),
+      majorSection("每次稳定版 rebase 的强制流程"),
+    ];
+
+    for (const flow of flows) {
+      const block = machineBlock(flow, "official-atomic-refset");
+      const normalized = compactWhitespace(block);
+      expect(normalized).toContain("fixed-upstream type/raw/peeled/ancestry 验证");
+      expect(normalized).toContain("origin official Tag absent-or-exact preflight");
+      expect(normalized).toContain("git push --atomic origin");
+      expect(normalized).toContain("refs/heads/main");
+      expect(normalized).toContain("refs/heads/sync/vX.Y.Z");
+      expect(normalized).toContain("refs/heads/upstream-release");
+      expect(normalized).toContain("refs/tags/vX.Y.Z:refs/tags/vX.Y.Z");
+      expect(normalized).toContain("refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N");
+      expect(normalized).toContain("两个 Tag refspec 均不使用 force 或 lease");
+      expect(normalized).toContain("existing mismatch 阻塞");
+      expect(normalized).toContain("pre absent/exact，post exact");
+      expect(normalized).toContain("uncertain 只允许以相同完整 refset 重试");
+      expect(normalized).toContain("禁止 force、删除、重建或移动");
+    }
   });
 
   test("grounds every active official comparison in v2.35.0 evidence", () => {
