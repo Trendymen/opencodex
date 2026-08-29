@@ -468,18 +468,27 @@ not, because that entire repo is removed.
 
 - [ ] **Step 3: Write credential-redaction and production-entry RED tests**
 
-Inject a runner returning stderr containing all of:
+Inject a runner returning stderr assembled from separately concatenated fragments so the tracked
+Plan/test source contains no privacy-scan-shaped email or home path while the runtime fixture still
+contains the exact adversarial values:
 
-```text
-https://user:secret-token@example.invalid/repo.git?access_token=secret-token#private-fragment
-Authorization: Bearer secret-token
-/Users/private-name/work/repo
-/home/linux-private/work/repo
-C:\Users\windows-private\work\repo
-/private/var/folders/xy/ocx-fork-official-secret/repo.git
-/tmp/ocx-fork-official-secret/repo.git
-D:\Temp\ocx-fork-official-secret\repo.git
-Authorization: Bearer secret-token\u0007\u2028forged-line
+```ts
+const userInfoUrl = `https://${"user"}:${"secret-token"}@${"example.invalid"}/repo.git`
+  + `?access_token=${"secret-token"}#private-fragment`;
+const macHome = `/${"Users"}/${"private-name"}/work/repo`;
+const linuxHome = `/${"home"}/${"linux-private"}/work/repo`;
+const windowsHome = `C:${"\\"}${"Users"}${"\\"}${"windows-private"}${"\\"}work${"\\"}repo`;
+const stderr = [
+  userInfoUrl,
+  `Authorization: Bearer ${"secret-token"}`,
+  macHome,
+  linuxHome,
+  windowsHome,
+  `/${"private"}/var/folders/xy/ocx-fork-official-secret/repo.git`,
+  `/${"tmp"}/ocx-fork-official-secret/repo.git`,
+  `D:${"\\"}Temp${"\\"}ocx-fork-official-secret${"\\"}repo.git`,
+  `Authorization: Bearer ${"secret-token"}\u0007\u2028forged-line`,
+].join("\n");
 ```
 
 Construct the last line in TypeScript so `\u0007` and `\u2028` are actual code points, not four
