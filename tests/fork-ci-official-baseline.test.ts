@@ -28,6 +28,23 @@ function fakeGitEnvironment(fakeBin: string, values: Record<string, string> = {}
   return { ...withoutPathAliases, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}` };
 }
 
+function hostileGitDiagnostic(ownedPath: string): string {
+  const fakeToken = "secret" + "-token";
+  const adversarial = [
+    `Authorization: Bearer ${fakeToken}\u0007\u2028forged-line`,
+    ownedPath,
+    `https://${"user"}:${fakeToken}@${"example.invalid"}/repo.git?access_token=${fakeToken}#private-fragment`,
+    `Authorization: Bearer ${fakeToken}`,
+    `/${"Users"}/${"private" + "-name"}/work/repo`,
+    `/${"home"}/${"linux" + "-private"}/work/repo`,
+    `C:${"\\"}${"Users"}${"\\"}${"windows" + "-private"}${"\\"}work${"\\"}repo`,
+    `/${"private"}/var/folders/xy/ocx-fork-${"official"}-${"secret"}/repo.git`,
+    `/${"tmp"}/ocx-fork-${"official"}-${"secret"}/repo.git`,
+    `D:${"\\"}Temp${"\\"}ocx-fork-${"official"}-${"secret"}${"\\"}repo.git`,
+  ];
+  return `${adversarial.join("\n")}\n${"neutral diagnostic filler ".repeat(220)}`;
+}
+
 function git(cwd: string, args: readonly string[]) {
   const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
   return {
@@ -299,19 +316,7 @@ describe("Fork CI official baseline preparation", () => {
   test("redacts hostile Git diagnostics to one bounded line", () => {
     const root = mkdtempSync(join(tmpdir(), "ocx-fork-official-secret-"));
     roots.push(root);
-    const hostilePayload = [
-      `Authorization: Bearer ${"secret" + "-token"}\u0007\u2028forged-line`,
-      join(realpathSync(root), "repo.git"),
-      `https://${"user"}:${"secret" + "-token"}@${"example.invalid"}/repo.git?access_token=${"secret" + "-token"}#private-fragment`,
-      `Authorization: Bearer ${"secret" + "-token"}`,
-      `/${"Users"}/${"private" + "-name"}/work/repo`,
-      `/${"home"}/${"linux" + "-private"}/work/repo`,
-      `C:${"\\"}${"Users"}${"\\"}${"windows" + "-private"}${"\\"}work${"\\"}repo`,
-      `/${"private"}/var/folders/xy/ocx-fork-${"official"}-${"secret"}/repo.git`,
-      `/${"tmp"}/ocx-fork-${"official"}-${"secret"}/repo.git`,
-      `D:${"\\"}Temp${"\\"}ocx-fork-${"official"}-${"secret"}${"\\"}repo.git`,
-    ].join("\n");
-    const hostile = `${hostilePayload}\n${"neutral diagnostic filler ".repeat(220)}`;
+    const hostile = hostileGitDiagnostic(join(realpathSync(root), "repo.git"));
     expect(hostile.length).toBeGreaterThan(4096);
     expect(hostile.length).toBeLessThanOrEqual(8192);
     const message = safeGitDiagnostic("fetch official refs", new Error(hostile), [
@@ -518,7 +523,6 @@ describe("Fork CI official baseline preparation", () => {
     const fakeGitLog = join(fixture.root, "git-args.jsonl");
     mkdirSync(fakeBin);
     const fakeScript = join(fixture.root, "fake-git.mjs");
-    const fakeToken = "secret" + "-token";
     writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nconst env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase().startsWith("GIT_CONFIG") || key.toUpperCase() === "PATH"));\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify({ args, env }) + "\\n");\nconst deletes = rows.filter(row => row.args?.[0] === "update-ref" && row.args?.[1] === "-d").length;\nconst bare = rows.flatMap(row => row.args?.[0] === "init" ? [row.args[2]] : row.args ?? []).find(value => value?.startsWith("--git-dir="))?.slice("--git-dir=".length) ?? rows.find(row => row.args?.[0] === "init")?.args?.[2] ?? "";\nif (args.includes("fetch") && args.includes("https://github.com/lidge-jun/opencodex.git")) { process.stderr.write(bare + "\\n" + process.env.FAKE_GIT_ERROR); process.exit(1); }\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 2) { process.stderr.write("cleanup " + bare); process.exit(1); }\nprocess.exit(0);\n`);
     const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
     if (process.platform === "win32") {
@@ -529,17 +533,9 @@ describe("Fork CI official baseline preparation", () => {
     }
     const scriptPath = fileURLToPath(new URL("../scripts/prepare-fork-official-base.ts", import.meta.url));
     const repoRoot = fileURLToPath(new URL("../", import.meta.url));
-    const hostile = [
-      `Authorization: Bearer ${fakeToken}\u0007\u2028forged-line`,
-      `https://${"user"}:${fakeToken}@${"example.invalid"}/repo.git?access_token=${fakeToken}#private-fragment`,
-      `Authorization: Bearer ${fakeToken}`,
-      `/${"Users"}/${"private" + "-name"}/work/repo`,
-      `/${"home"}/${"linux" + "-private"}/work/repo`,
-      `C:${"\\"}${"Users"}${"\\"}${"windows" + "-private"}${"\\"}work${"\\"}repo`,
-      `/${"private"}/var/folders/xy/ocx-fork-${"official"}-${"secret"}/repo.git`,
-      `/${"tmp"}/ocx-fork-${"official"}-${"secret"}/repo.git`,
-      `D:${"\\"}Temp${"\\"}ocx-fork-${"official"}-${"secret"}${"\\"}repo.git`,
-    ].join("\n").repeat(80);
+    const hostile = hostileGitDiagnostic(join(repoRoot, "repo.git"));
+    expect(hostile.length).toBeGreaterThan(4096);
+    expect(hostile.length).toBeLessThanOrEqual(8192);
     const result = Bun.spawnSync([process.execPath, scriptPath, "https://evil.invalid/override"], {
       cwd: repoRoot,
       env: fakeGitEnvironment(fakeBin, {
