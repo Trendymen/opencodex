@@ -299,7 +299,7 @@ describe("Fork CI official baseline preparation", () => {
   test("redacts hostile Git diagnostics to one bounded line", () => {
     const root = mkdtempSync(join(tmpdir(), "ocx-fork-official-secret-"));
     roots.push(root);
-    const hostile = [
+    const hostilePayload = [
       `Authorization: Bearer ${"secret" + "-token"}\u0007\u2028forged-line`,
       join(realpathSync(root), "repo.git"),
       `https://${"user"}:${"secret" + "-token"}@${"example.invalid"}/repo.git?access_token=${"secret" + "-token"}#private-fragment`,
@@ -310,7 +310,10 @@ describe("Fork CI official baseline preparation", () => {
       `/${"private"}/var/folders/xy/ocx-fork-${"official"}-${"secret"}/repo.git`,
       `/${"tmp"}/ocx-fork-${"official"}-${"secret"}/repo.git`,
       `D:${"\\"}Temp${"\\"}ocx-fork-${"official"}-${"secret"}${"\\"}repo.git`,
-    ].join("\n").repeat(80);
+    ].join("\n");
+    const hostile = `${hostilePayload}\n${"neutral diagnostic filler ".repeat(220)}`;
+    expect(hostile.length).toBeGreaterThan(4096);
+    expect(hostile.length).toBeLessThanOrEqual(8192);
     const message = safeGitDiagnostic("fetch official refs", new Error(hostile), [
       root, realpathSync(root), join(root, "repo.git"), join(realpathSync(root), "repo.git"),
     ]);
@@ -458,6 +461,57 @@ describe("Fork CI official baseline preparation", () => {
     expect(verifierRoots()).toEqual([]);
   });
 
+  test("default production runner cleans both owned refs after raw chmod failure", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-default-fs-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
+    const fakeBin = join(root, "fake-bin");
+    const fakeLog = join(root, "default-runner.jsonl");
+    mkdirSync(fakeBin);
+    const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
+    const fakeScript = join(root, "default-runner-git.mjs");
+    writeFileSync(fakeScript, `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");\n`);
+    if (process.platform === "win32") writeFileSync(fakeGit, `@echo off\n"${process.execPath}" "${fakeScript}" %*\n`);
+    else {
+      writeFileSync(fakeGit, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`);
+      chmodSync(fakeGit, 0o755);
+    }
+    const previousPath = process.env.PATH;
+    const previousLog = process.env.FAKE_GIT_LOG;
+    let verifierRoot = "";
+    let message = "";
+    try {
+      process.env.PATH = `${fakeBin}${delimiter}${previousPath ?? ""}`;
+      process.env.FAKE_GIT_LOG = fakeLog;
+      prepareForkOfficialBase({
+        repoRoot: root,
+        officialRepositoryUrl: "https://example.invalid/official.git",
+        filesystem: {
+          chmodSync(path) {
+            verifierRoot = String(path);
+            throw new Error(`raw chmod ${verifierRoot}`);
+          },
+          writeFileSync,
+        },
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousLog === undefined) delete process.env.FAKE_GIT_LOG;
+      else process.env.FAKE_GIT_LOG = previousLog;
+    }
+    const calls = readFileSync(fakeLog, "utf8").trim().split("\n").map(JSON.parse) as string[][];
+    expect(message).toContain("[REDACTED_PATH]");
+    expect(message).not.toContain(verifierRoot);
+    expect(calls).toEqual([
+      ["update-ref", "-d", "refs/ocx-ci/fork-marker"],
+      ["update-ref", "-d", "refs/ocx-ci/official-tag"],
+    ]);
+    expect(verifierRoots()).toEqual([]);
+  });
+
   test("direct production entry sandboxes Git environment, fixed URL, long hostile output, and cleanup suffix", () => {
     const fixture = createFixture();
     const fakeBin = join(fixture.root, "fake-bin");
@@ -502,7 +556,7 @@ describe("Fork CI official baseline preparation", () => {
     expect(decoder.decode(result.stdout)).toBe("");
     expect(stderr.split("\n").filter(Boolean)).toHaveLength(1);
     expect(stderr.length).toBeLessThanOrEqual(513);
-    for (const leaked of ["user", "secret-token", "private-name", "linux-private", "windows-private", "ocx-fork-official-secret", "?access_token", "#private-fragment", "\u0007", "\u2028"]) {
+    for (const leaked of ["user", "secret-token", "Authorization: Bearer", "private-name", "linux-private", "windows-private", "ocx-fork-official-secret", "?access_token", "#private-fragment", "\u0007", "\u2028"]) {
       expect(stderr).not.toContain(leaked);
     }
     expect(stderr).toContain("[CREDENTIAL HEADER REDACTED]");

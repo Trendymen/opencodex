@@ -224,13 +224,13 @@ export function prepareForkOfficialBase(options: {
   let result: PrepareForkOfficialBaseResult | undefined;
 
   try {
+    runGit ??= productionGitRunner(join(verifierRoot, "gitconfig"));
     filesystem.chmodSync(verifierRoot, 0o700);
     globalConfig = join(verifierRoot, "gitconfig");
     bareDir = join(verifierRoot, "repo.git");
     refreshOwnedPaths(globalConfig, bareDir);
     filesystem.writeFileSync(globalConfig, "", { mode: 0o600 });
     filesystem.chmodSync(globalConfig, 0o600);
-    runGit ??= productionGitRunner(globalConfig);
     runOrThrow(runGit, "cleanup official verifier", options.repoRoot, ["update-ref", "-d", MARKER_REF], ownedPaths);
     runOrThrow(runGit, "cleanup official verifier", options.repoRoot, ["update-ref", "-d", OFFICIAL_TAG_REF], ownedPaths);
     runOrThrow(runGit, "fetch origin marker", options.repoRoot, [
