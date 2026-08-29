@@ -25,6 +25,13 @@ const EXPECTED_OVERLAPS = [
 ] as const;
 
 const EXPECTED_AUTO_MERGES = EXPECTED_OVERLAPS.filter(path => path !== "package.json");
+const EXPECTED_ATOMIC_REFSET = [
+  ["branch", "main", "leased", "candidate-commit:refs/heads/main"],
+  ["branch", "sync", "leased", "candidate-commit:refs/heads/sync/vX.Y.Z"],
+  ["branch", "marker", "leased", "official-peeled:refs/heads/upstream-release"],
+  ["tag", "official", "no-force-no-lease", "refs/tags/vX.Y.Z:refs/tags/vX.Y.Z"],
+  ["tag", "fork", "no-force-no-lease", "refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N"],
+] as const;
 
 function machineBlock(source: string, name: string): string {
   const match = source.match(new RegExp(
@@ -54,6 +61,26 @@ function majorSection(title: string): string {
   expect(start, `missing section ${title}`).toBeGreaterThanOrEqual(0);
   const next = changes.slice(start + 1).search(/\n## /);
   return next === -1 ? changes.slice(start) : changes.slice(start, start + 1 + next);
+}
+
+function parseAtomicRefset(block: string): string[][] {
+  const rows = block.split("\n").filter(Boolean).map((line) => {
+    const fields = line.split("|");
+    if (fields.length !== 4 || fields.some(field => !field)) {
+      throw new Error(`invalid atomic refset row: ${line}`);
+    }
+    return fields;
+  });
+  if (rows.length !== 5) throw new Error("atomic refset must contain exactly five rows");
+  if (JSON.stringify(rows) !== JSON.stringify(EXPECTED_ATOMIC_REFSET)) {
+    throw new Error("atomic refset differs from the exact five-member contract");
+  }
+  for (const [kind, name, policy, refspec] of rows) {
+    if (kind === "branch" && policy !== "leased") throw new Error(`${name} branch is not leased`);
+    if (kind === "tag" && policy !== "no-force-no-lease") throw new Error(`${name} tag policy is invalid`);
+    if (kind === "tag" && refspec.startsWith("+")) throw new Error(`${name} tag refspec is forced`);
+  }
+  return rows;
 }
 
 function compactWhitespace(value: string): string {
@@ -154,29 +181,28 @@ describe("Fork maintenance truth", () => {
     expect(gates).toContain("| GitHub Release | `pending external gate` |");
   });
 
-  test("requires official and Fork Tags in each generic atomic publication refset", () => {
+  test("requires the exact five-member official and Fork Tag atomic refset in each generic flow", () => {
     const flows = [
       majorSection("没有新官方版本时的幂等收敛"),
       majorSection("每次稳定版 rebase 的强制流程"),
     ];
 
     for (const flow of flows) {
+      expect([...flow.matchAll(/<!-- official-atomic-refset:start -->/g)]).toHaveLength(1);
+      expect([...flow.matchAll(/<!-- official-atomic-refset:end -->/g)]).toHaveLength(1);
       const block = machineBlock(flow, "official-atomic-refset");
-      const normalized = compactWhitespace(block);
-      expect(normalized).toContain("fixed-upstream type/raw/peeled/ancestry 验证");
-      expect(normalized).toContain("origin official Tag absent-or-exact preflight");
-      expect(normalized).toContain("git push --atomic origin");
-      expect(normalized).toContain("refs/heads/main");
-      expect(normalized).toContain("refs/heads/sync/vX.Y.Z");
-      expect(normalized).toContain("refs/heads/upstream-release");
-      expect(normalized).toContain("refs/tags/vX.Y.Z:refs/tags/vX.Y.Z");
-      expect(normalized).toContain("refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N");
-      expect(normalized).toContain("两个 Tag refspec 均不使用 force 或 lease");
-      expect(normalized).toContain("existing mismatch 阻塞");
-      expect(normalized).toContain("pre absent/exact，post exact");
-      expect(normalized).toContain("uncertain 只允许以相同完整 refset 重试");
-      expect(normalized).toContain("禁止 force、删除、重建或移动");
+      expect(parseAtomicRefset(block)).toEqual(EXPECTED_ATOMIC_REFSET);
     }
+  });
+
+  test("rejects atomic refsets with an extra row, missing lease, or forced Tag", () => {
+    const valid = EXPECTED_ATOMIC_REFSET.map(row => row.join("|")).join("\n");
+    expect(() => parseAtomicRefset(`${valid}\nbranch|extra|leased|extra:refs/heads/extra`)).toThrow();
+    expect(() => parseAtomicRefset(valid.replace("branch|main|leased", "branch|main|unleased"))).toThrow();
+    expect(() => parseAtomicRefset(valid.replace(
+      "tag|official|no-force-no-lease|refs/tags/vX.Y.Z:refs/tags/vX.Y.Z",
+      "tag|official|no-force-no-lease|+refs/tags/vX.Y.Z:refs/tags/vX.Y.Z",
+    ))).toThrow();
   });
 
   test("grounds every active official comparison in v2.35.0 evidence", () => {
