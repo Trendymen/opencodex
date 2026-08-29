@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.35.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.35.0) |
 | 官方 Tag commit | `fc4de772b58c13f7b16b5029b1e981d612a5db06` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `e89c96971c64f40e7c3823bf0158ea3508f937a8` |
+| 本轮实现 HEAD | `c5395e12dc019ea6ae522b92c4ef3e5dc29db6c2` |
 | Fork 包版本 | `2.35.0-ben.2` |
 | 本轮派生 Tag | `v2.35.0-ben.2`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.35.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 112 个文件，新增 15,541 行，删除 174 行 |
+| 已提交修改面 | 112 个文件，新增 15,564 行，删除 174 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 本轮相对 `v2.35.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
@@ -80,6 +80,13 @@ v2.35.0-ben.2 Tag：未发生；Atomic promotion：未发生；Final main Cross-
 GitHub Release：未发生。修复后的 official-base verifier 接受经过完整 ancestry、import
 equality 与 marker/CAS 验证的 lightweight 或 annotated official ref；它不再把 annotated-only
 当作 provenance 条件。
+
+第二个 replacement candidate：`d252cb0e0ed67789c62d9aad5d2308aa5d04889b` 的
+Cross-platform `workflow_dispatch` run `33236405510` 已证明 official-base preparation
+在 Linux/macOS 全部通过；随后 `test 4/4` 与 macOS 在同一专用测试的四个 cleanup用例失败，
+根因是测试错误假设process-wide verifier-root namespace为空。生产cleanup没有失败；修复改为
+逐用例断言本次捕获的精确verifier root已删除。该run同样发生在ben.2 Tag、promotion、final
+main CI与Release之前，已作为completed failed-candidate evidence保留，不属于下表pending gate。
 <!-- ben2-s1-repair:end -->
 
 <!-- ben2-external-gates:start -->
