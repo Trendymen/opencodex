@@ -49,6 +49,10 @@ function section(title: string): string {
   return next === -1 ? changes.slice(start) : changes.slice(start, start + 1 + next);
 }
 
+function compactWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ");
+}
+
 describe("Fork maintenance truth", () => {
   test("records the exact ben.2 package and rebase-overlap truth", () => {
     const version = JSON.parse(packageText).version;
@@ -109,7 +113,7 @@ describe("Fork maintenance truth", () => {
       ],
       "Standalone web search 能力注入": [
         "`v2.35.0:src/codex/inject.ts`（blob `72be57878470077e9b3c434726aea329e007d79c`）",
-        "`src/codex/inject.ts`（blob `7cca45fa7f5e41328a5199a5adf5151406019220`）",
+        "当前实现的 `src/codex/inject.ts` blob 为 `7cca45fa7f5e41328a5199a5adf5151406019220`",
         "`0124c2809cb40c29603cff196e6d2182559bd48d`",
       ],
       "智谱 BigModel Codex 模型发现": [
@@ -118,7 +122,7 @@ describe("Fork maintenance truth", () => {
         "`c9446e0b5cddb90a0569d8e59913a91ae7eaa893`",
       ],
       "默认测试 runner 与负载敏感隔离": [
-        "`v2.35.0:tests/update-stop-first.test.ts`（blob `0f7fd7ff55ec23cbdea4d157df61262bd9f8cd8e`）",
+        "`v2.35.0:tests/update-stop-first.test.ts`（blob `0f7fd7ff55ec23cbdea4d157df61262bd9f8cd8e`，merge `fe063d16ef620a148ab425cfffe63a8936d00e52`）",
         "Fork PATH-precedence guard（`a1e35b13db14a1686ef0033685d7214184c37743`）",
         "`fe063d16ef620a148ab425cfffe63a8936d00e52`",
       ],
@@ -128,17 +132,17 @@ describe("Fork maintenance truth", () => {
       const active = section(title);
       expect(active).toContain("v2.35.0");
       expect(active).not.toContain("v2.34.0");
-      for (const anchor of anchors) expect(active).toContain(anchor);
+      for (const anchor of anchors) expect(compactWhitespace(active)).toContain(anchor);
     }
   });
 
   test("separates Fork strict backend recovery from official v2.35 turn termination", () => {
     const recovery = section("原生加密子任务恢复接力");
-    expect(recovery).toContain(
+    expect(compactWhitespace(recovery)).toContain(
       "`v2.35.0:src/server/responses/agent-task-recovery.ts` 的 blob `70003c116bfc2d6fb9a85dab355827fff2295acc` 与 `v2.34.0` 相同",
     );
     expect(recovery).not.toContain("官方恢复模块（`agent-task-recovery.ts`）扩展了 strict backend ciphertext 的 envelope 识别");
-    expect(recovery).toContain("Fork 行为：strict non-Fernet envelope recognition、admission、routed trigger 与 fail-closed forwarding");
+    expect(compactWhitespace(recovery)).toContain("Fork 行为：strict non-Fernet envelope recognition、admission、routed trigger 与 fail-closed forwarding");
     expect(recovery).toContain("官方 `v2.35.0` 行为：turn termination");
   });
 });
