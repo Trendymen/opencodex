@@ -94,7 +94,7 @@ describe("Fork maintenance truth", () => {
       return [match![1]!, match![2]!];
     }));
     expect(rows).toEqual({
-      "Replacement candidate Cross-platform CI": "pending external gate",
+      "S2R candidate Cross-platform CI": "pending external gate",
       "Atomic promotion": "pending external gate",
       "Final main Cross-platform CI": "pending external gate",
       "GitHub Release": "pending external gate",
@@ -104,8 +104,8 @@ describe("Fork maintenance truth", () => {
     expect(block).not.toMatch(/\b(?:success|passed|completed)\b/i);
   });
 
-  test("retains failed candidates separately from replacement pending gates", () => {
-    const block = machineBlock(changes, "ben2-s1-repair");
+  test("records the complete S2R candidate chain and preserved official Tags", () => {
+    const block = machineBlock(changes, "ben2-s2r");
     const normalized = compactWhitespace(block);
 
     expect(normalized).toContain("`d5558096bb229b5fbf5607a6468c2871b2b1213e`");
@@ -119,7 +119,17 @@ describe("Fork maintenance truth", () => {
     expect(normalized).toContain("`d252cb0e0ed67789c62d9aad5d2308aa5d04889b`");
     expect(normalized).toContain("`33236405510`");
     expect(normalized).toContain("official-base preparation 在 Linux/macOS 全部通过");
+    expect(normalized).toContain("verifier-oracle");
     expect(normalized).toContain("process-wide verifier-root namespace为空");
+    expect(normalized).toContain("`5548eb2a0d71d84bee03a4fa8424750bfdc78b85`");
+    expect(normalized).toContain("`33236921544`");
+    expect(normalized).toContain("成功但不可复用于新的 descendant");
+    expect(normalized).toContain("Fork origin 对每个已 rebase 的官方版本保留同名官方 Tag");
+    expect(normalized).toContain("`v2.34.0`");
+    expect(normalized).toContain("raw=peeled=`80fff9a7f47332a4445df2b26ea175053fa55b0b`");
+    expect(normalized).toContain("`v2.35.0`");
+    expect(normalized).toContain("raw=peeled=`fc4de772b58c13f7b16b5029b1e981d612a5db06`");
+    expect(normalized).toContain("promotion 时补齐");
 
     for (const gate of [
       "v2.35.0-ben.2 Tag",
@@ -129,7 +139,12 @@ describe("Fork maintenance truth", () => {
     ]) {
       expect(normalized).toContain(`${gate}：未发生`);
     }
-    expect(normalized).not.toContain("pending external gate");
+
+    const gates = machineBlock(changes, "ben2-external-gates");
+    expect(gates).toContain("| S2R candidate Cross-platform CI | `pending external gate` |");
+    expect(gates).toContain("| Atomic promotion | `pending external gate` |");
+    expect(gates).toContain("| Final main Cross-platform CI | `pending external gate` |");
+    expect(gates).toContain("| GitHub Release | `pending external gate` |");
   });
 
   test("grounds every active official comparison in v2.35.0 evidence", () => {
