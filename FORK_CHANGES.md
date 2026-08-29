@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.35.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.35.0) |
 | 官方 Tag commit | `fc4de772b58c13f7b16b5029b1e981d612a5db06` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `c5395e12dc019ea6ae522b92c4ef3e5dc29db6c2` |
+| 本轮实现 HEAD | `da19667020b0f501544c20a1e18bd211631a8829` |
 | Fork 包版本 | `2.35.0-ben.2` |
 | 本轮派生 Tag | `v2.35.0-ben.2`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.35.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 112 个文件，新增 15,564 行，删除 174 行 |
+| 已提交修改面 | 112 个文件，新增 15,743 行，删除 174 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 本轮相对 `v2.35.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
@@ -68,31 +68,40 @@ Auto-merge (15):
 - `tests/update-stop-first.test.ts`
 <!-- ben2-overlap:end -->
 
-<!-- ben2-s1-repair:start -->
+<!-- ben2-s2r:start -->
 首个 candidate：`d5558096bb229b5fbf5607a6468c2871b2b1213e` 已在精确 lease 下推送到
-`origin/sync/v2.35.0`。绑定的 Cross-platform `workflow_dispatch` run 为
-`33234936660`，在 `Prepare verified Fork official base` 步骤失败；失败发生于旧的
-annotated-only policy：官方 `v2.35.0` 实际为 lightweight ref，
-type=`commit`，raw=peeled=marker=`fc4de772b58c13f7b16b5029b1e981d612a5db06`。
+`origin/sync/v2.35.0`。绑定的 Cross-platform `workflow_dispatch` run `33234936660`
+在 `Prepare verified Fork official base` 步骤失败：旧的 annotated-only policy 错把固定官方
+`v2.35.0` lightweight ref 拒绝；其 type=`commit`，
+raw=peeled=marker=`fc4de772b58c13f7b16b5029b1e981d612a5db06`。
 
-该失败是已完成的外部证据，不是 replacement gate。失败时
-v2.35.0-ben.2 Tag：未发生；Atomic promotion：未发生；Final main Cross-platform CI：未发生；
-GitHub Release：未发生。修复后的 official-base verifier 接受经过完整 ancestry、import
-equality 与 marker/CAS 验证的 lightweight 或 annotated official ref；它不再把 annotated-only
-当作 provenance 条件。
-
-第二个 replacement candidate：`d252cb0e0ed67789c62d9aad5d2308aa5d04889b` 的
+第二个 candidate：`d252cb0e0ed67789c62d9aad5d2308aa5d04889b` 的
 Cross-platform `workflow_dispatch` run `33236405510` 已证明 official-base preparation
-在 Linux/macOS 全部通过；随后 `test 4/4` 与 macOS 在同一专用测试的四个 cleanup用例失败，
-根因是测试错误假设process-wide verifier-root namespace为空。生产cleanup没有失败；修复改为
-逐用例断言本次捕获的精确verifier root已删除。该run同样发生在ben.2 Tag、promotion、final
-main CI与Release之前，已作为completed failed-candidate evidence保留，不属于下表pending gate。
-<!-- ben2-s1-repair:end -->
+在 Linux/macOS 全部通过；随后 `test 4/4` 与 macOS 在同一专用测试的四个 cleanup 用例失败。
+这是 verifier-oracle 失败：测试错误假设 process-wide verifier-root namespace为空，生产 cleanup
+没有失败；修复改为逐用例断言本次捕获的精确 verifier root 已删除。
+
+第三个 candidate：`5548eb2a0d71d84bee03a4fa8424750bfdc78b85` 的
+Cross-platform `workflow_dispatch` run `33236921544` 已按严格 18-job allowlist/cardinality
+验证成功但不可复用于新的 descendant：它不能证明其后的官方 Tag 保留 contract、本文档或
+新的 S2R candidate。
+
+用户已纠正规则：Fork origin 对每个已 rebase 的官方版本保留同名官方 Tag；不再把 origin
+缺少官方 Tag 当作安全条件。`v2.34.0` 必须保持官方 lightweight 身份，
+raw=peeled=`80fff9a7f47332a4445df2b26ea175053fa55b0b`；`v2.35.0` 的固定官方 lightweight
+身份为 raw=peeled=`fc4de772b58c13f7b16b5029b1e981d612a5db06`，在 atomic promotion 时补齐。
+已存在 Tag 必须逐项 exact；任何 raw、peeled 或 type mismatch 都 fail closed，禁止 force、删除、
+重建或移动。固定官方仓库仍是 provenance 来源，origin Tag 不是替代证据。
+
+上述三个 run 分别保留为失败、失败和成功但 stale 的 predecessor evidence。当前
+v2.35.0-ben.2 Tag：未发生；Atomic promotion：未发生；Final main Cross-platform CI：未发生；
+GitHub Release：未发生。新的 S2R candidate 与其后的所有外部门禁仍 pending。
+<!-- ben2-s2r:end -->
 
 <!-- ben2-external-gates:start -->
 | Gate | Tagged snapshot state |
 | --- | --- |
-| Replacement candidate Cross-platform CI | `pending external gate` |
+| S2R candidate Cross-platform CI | `pending external gate` |
 | Atomic promotion | `pending external gate` |
 | Final main Cross-platform CI | `pending external gate` |
 | GitHub Release | `pending external gate` |
@@ -434,8 +443,11 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   官方包覆盖 Fork；registry target 无法解析时，`ben` build 在任何 cache/stop/install
   副作用前 fail closed。更高官方稳定版仍判定为更新。普通 stable/preview 行为不变。
 - **Tag 语义：** Git Tag 使用 `vX.Y.Z-ben.N`。必须存在对应官方 `vX.Y.Z` Tag；Fork
-  基线不得落后于更高官方稳定版；已有同名 Tag 只有指向当前 commit 时才合法；已有更高
-  `ben.N` 时禁止回退。畸形 Tag 不参与 revision 比较。
+  对每个已 rebase 官方基线在 origin 保留同名、与固定官方仓库 type/raw/peeled 完全一致的
+  official Tag。缺失只能在 atomic promotion 中以已验证 raw ref 补齐；已存在的任一字段
+  不一致即 fail closed，禁止 force、删除、重建或移动。Fork 基线不得落后于更高官方稳定版；
+  已有同名 Fork Tag 只有指向当前 commit 时才合法；已有更高 `ben.N` 时禁止回退。畸形 Tag
+  不参与 revision 比较。
 - **代码：** `src/fork/version-policy.mjs`、`src/fork/version-policy.d.mts`；
   `src/update/notify.ts`、`src/update/index.ts` 和 `bin/ocx.mjs` 只保留窄接线。
 - **测试：** 新增 `tests/fork-version-policy.test.ts`；
@@ -480,8 +492,9 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `origin/upstream-release` marker。官方 `v2.35.0` 的实测 ref type 为 `commit`，其
   raw/peeled/marker 均为 `fc4de772b58c13f7b16b5029b1e981d612a5db06`；因此不得再把
   annotated-only 写成 provenance 要求。这不是对官方 CI 的替代，也不把 workflow 扩展为
-  生产运行时能力。runner-local official ref proof 已重新验证；origin 上的官方 Tag
-  仍被禁止。
+  生产运行时能力。runner-local official ref proof 每轮重新验证；Fork origin 必须保留每个
+  已 rebase 基线的同名 exact official Tag，但固定官方 URL 而非 origin 始终是 provenance
+  来源。缺失 Tag 只能在 atomic promotion 补齐，existing mismatch 必须 fail closed。
 
 ## 已替换、已移除或已证伪方向
 
@@ -520,19 +533,22 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
    revision 都必须更新包版本、本文档、Tag 与 Release。
 4. `main`、`sync/vX.Y.Z` 和最新 `vX.Y.Z-ben.N` 的 peeled commit 必须完全一致。
    `upstream-release` 始终指向未经修改的官方 `vX.Y.Z` commit。
-5. Fork Tag 不可改写。远端 Tag 不存在时才创建；已存在时必须验证 Tag object/peeled
+5. 每个已经 rebase 的官方 `vX.Y.Z` Tag 都必须在 `Trendymen/opencodex` 保留同名 Tag，
+   并与固定官方仓库的 type、raw OID 和 peeled commit 逐项完全一致。promotion 前只允许
+   缺失或 exact，promotion 后必须 exact；不一致时 fail closed，禁止 force、删除、重建或移动。
+6. Fork Tag 不可改写。远端 Tag 不存在时才创建；已存在时必须验证 Tag object/peeled
    commit 与本地一致，否则 fail closed，禁止 force tag。
-6. 每个 Fork Tag 都必须在 `Trendymen/opencodex` 创建同名 GitHub Release。`ben.N`
+7. 每个 Fork Tag 都必须在 `Trendymen/opencodex` 创建同名 GitHub Release。`ben.N`
    在本 Fork 中表示正式修订，不是 beta；Release 必须公开，即 `isDraft=false`、
    `isPrerelease=false`。
-7. Release 标题必须与 Tag 完全一致；Release Notes 使用简体中文，至少包括官方基线、
+8. Release 标题必须与 Tag 完全一致；Release Notes 使用简体中文，至少包括官方基线、
    Fork 修改点、验证结果、已知缺口与 commit。已有 Release 也必须核对 `tagName`、`name`、
    `body`、`isDraft` 和 `isPrerelease`；元数据不合格时只幂等修正 Release，不移动 Tag、
    不递增 revision。GitHub 自动生成的 source archive 即可；默认不上传 npm 包或额外
    二进制资产。
-8. 不发布 npm。官方仓库的 `scripts/release.ts` / release workflow 不是 Fork Tag 的
+9. 不发布 npm。官方仓库的 `scripts/release.ts` / release workflow 不是 Fork Tag 的
    执行入口。
-9. Tag 已推送但 GitHub Release 尚未创建或元数据不合格时，任务仍视为未完成。后续重试
+10. Tag 已推送但 GitHub Release 尚未创建或元数据不合格时，任务仍视为未完成。后续重试
    只补建/修正/核对 Release，不递增 `ben.N`，也不移动已存在 Tag。
 
 ## 没有新官方版本时的幂等收敛
