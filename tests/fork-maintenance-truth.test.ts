@@ -104,7 +104,7 @@ describe("Fork maintenance truth", () => {
     expect(block).not.toMatch(/\b(?:success|passed|completed)\b/i);
   });
 
-  test("retains the failed first candidate separately from replacement pending gates", () => {
+  test("retains failed candidates separately from replacement pending gates", () => {
     const block = machineBlock(changes, "ben2-s1-repair");
     const normalized = compactWhitespace(block);
 
@@ -116,6 +116,10 @@ describe("Fork maintenance truth", () => {
     expect(normalized).toContain(
       "raw=peeled=marker=`fc4de772b58c13f7b16b5029b1e981d612a5db06`",
     );
+    expect(normalized).toContain("`d252cb0e0ed67789c62d9aad5d2308aa5d04889b`");
+    expect(normalized).toContain("`33236405510`");
+    expect(normalized).toContain("official-base preparation 已通过");
+    expect(normalized).toContain("process-wide verifier-root namespace为空");
 
     for (const gate of [
       "v2.35.0-ben.2 Tag",

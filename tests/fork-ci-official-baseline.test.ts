@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   classifyPackageVersion,
@@ -446,7 +446,7 @@ describe("Fork CI official baseline preparation", () => {
     }
     expect(message).toStartWith("prepare official base: fetch official refs:");
     expect(message).not.toContain(bareDir);
-    expect(verifierRoots()).toEqual([]);
+    expect(existsSync(dirname(bareDir))).toBe(false);
   });
 
   test("post-mkdtemp setup failure cleans both owned refs and verifier root", () => {
@@ -473,7 +473,7 @@ describe("Fork CI official baseline preparation", () => {
     expect(message).toContain("[REDACTED_PATH]");
     expect(message).not.toContain(bareDir);
     expect(deletions).toBe(4);
-    expect(verifierRoots()).toEqual([]);
+    expect(existsSync(dirname(bareDir))).toBe(false);
   });
 
   test("raw chmod setup failure folds the verifier path and still invokes supplied cleanup runner", () => {
@@ -507,7 +507,7 @@ describe("Fork CI official baseline preparation", () => {
     expect(message).toContain("[REDACTED_PATH]");
     expect(message).not.toContain(verifierRoot);
     expect(deletions).toBe(2);
-    expect(verifierRoots()).toEqual([]);
+    expect(existsSync(verifierRoot)).toBe(false);
   });
 
   test("default production runner cleans both owned refs after raw chmod failure", () => {
@@ -558,7 +558,7 @@ describe("Fork CI official baseline preparation", () => {
       ["update-ref", "-d", "refs/ocx-ci/fork-marker"],
       ["update-ref", "-d", "refs/ocx-ci/official-tag"],
     ]);
-    expect(verifierRoots()).toEqual([]);
+    expect(existsSync(verifierRoot)).toBe(false);
   });
 
   test("direct production entry sandboxes Git environment, fixed URL, long hostile output, and cleanup suffix", () => {
