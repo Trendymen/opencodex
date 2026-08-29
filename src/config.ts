@@ -500,6 +500,9 @@ const providerConfigSchema = z.object({
   responsesPath: z.string().min(1).optional(),
   statelessResponses: z.boolean().optional(),
   requiresAdjacentResponsesToolResults: z.boolean().optional(),
+  inferResponsesMessagePhaseModels: z.array(z.string().min(1))
+    .transform(normalizeNonBlankStringArray)
+    .optional(),
   fastWire: fastWireSchema.nullable().optional(),
   supportsServiceTier: z.boolean().optional(),
   modelSupportsServiceTier: z.record(z.string().min(1), z.boolean()).optional(),
@@ -1211,6 +1214,17 @@ const configSchema = z.object({
         code: "custom",
         path: ["providers", redactSecretString(name), "noStructuredOutputModels"],
         message: structuredOutputOptOutError,
+      });
+    }
+    const phaseInferenceError = nonBlankStringArrayConfigError(
+      (provider as { inferResponsesMessagePhaseModels?: unknown }).inferResponsesMessagePhaseModels,
+      "inferResponsesMessagePhaseModels",
+    );
+    if (phaseInferenceError) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["providers", redactSecretString(name), "inferResponsesMessagePhaseModels"],
+        message: phaseInferenceError,
       });
     }
     if (Object.hasOwn(provider, "codexAccountMode") && provider.codexAccountMode !== undefined) {
