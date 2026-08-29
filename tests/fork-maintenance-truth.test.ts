@@ -118,7 +118,7 @@ describe("Fork maintenance truth", () => {
     );
     expect(normalized).toContain("`d252cb0e0ed67789c62d9aad5d2308aa5d04889b`");
     expect(normalized).toContain("`33236405510`");
-    expect(normalized).toContain("official-base preparation 已通过");
+    expect(normalized).toContain("official-base preparation 在 Linux/macOS 全部通过");
     expect(normalized).toContain("process-wide verifier-root namespace为空");
 
     for (const gate of [
