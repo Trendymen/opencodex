@@ -30,16 +30,52 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 审计日期 | 2026-08-28 |
+| 审计日期 | 2026-08-29 |
 | 最新官方稳定 Release | [`v2.35.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.35.0) |
 | 官方 Tag commit | `fc4de772b58c13f7b16b5029b1e981d612a5db06` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `e10b2ee281ac712a11167842ad3b36fcefd8d9a4` |
-| Fork 包版本 | `2.35.0-ben.1` |
-| 本轮派生 Tag | `v2.35.0-ben.1`，在本文档末尾提交完成后创建 |
+| 本轮实现 HEAD | `43296ea6dc08862a73dd0a3576b32321250235a0` |
+| Fork 包版本 | `2.35.0-ben.2` |
+| 本轮派生 Tag | `v2.35.0-ben.2`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.35.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 105 个文件，新增 11,019 行，删除 171 行 |
+| 已提交修改面 | 112 个文件，新增 15,188 行，删除 174 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
+
+本轮相对 `v2.35.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
+提交不属于该实现快照。相对 immutable `ben.1` 边界的原始 rebase 重叠为 16 paths：
+`package.json` 是唯一冲突，其余 15 条路径均自动合并。这个历史冲突账户不包含后续
+ben.2 的 CI workflow 新增路径。
+
+<!-- ben2-overlap:start -->
+Conflict (1):
+- `package.json`
+
+Auto-merge (15):
+- `gui/src/i18n/de.ts`
+- `gui/src/i18n/en.ts`
+- `gui/src/i18n/fr.ts`
+- `gui/src/i18n/ja.ts`
+- `gui/src/i18n/ko.ts`
+- `gui/src/i18n/ru.ts`
+- `gui/src/i18n/tr.ts`
+- `gui/src/i18n/zh-TW.ts`
+- `gui/src/i18n/zh.ts`
+- `src/adapters/base.ts`
+- `src/adapters/openai-responses.ts`
+- `src/server/responses/core.ts`
+- `src/usage/log.ts`
+- `tests/openai-responses-passthrough.test.ts`
+- `tests/update-stop-first.test.ts`
+<!-- ben2-overlap:end -->
+
+<!-- ben2-external-gates:start -->
+| Gate | Tagged snapshot state |
+| --- | --- |
+| Candidate Cross-platform CI | `pending external gate` |
+| Atomic promotion | `pending external gate` |
+| Final main Cross-platform CI | `pending external gate` |
+| GitHub Release | `pending external gate` |
+<!-- ben2-external-gates:end -->
 
 当前实现栈中与能力直接相关的提交：
 
@@ -85,13 +121,13 @@ Responses 入站摘要有界落盘到 `provider-debug.jsonl`），并推进包�
 推进并同步文档，`14fd7793d` 保持 passthrough tee-lane 官方响应构造形状，
 `24af0874b` 将 provider 诊断按日期/小时分目录并拆分 delta timeline 子日志。
 官方发布 `v2.35.0`（`fc4de772b`，219 文件 +18208/−498）后，整个 Fork 栈
-rebase 到新基线并收敛为包版本 `2.35.0-ben.1`：仅 package.json 版本号出现
-冲突（按惯例解决为 ben.1），其余 13 个重叠文件（含 `core.ts`、
-`openai-responses.ts`、`base.ts`、`usage/log.ts` 与 9 个 GUI i18n）全部
-自动合并；官方恢复模块扩展了 strict backend ciphertext envelope 识别，但
-触发门控与转发 fail-closed 边界仍由 Fork core 接线承载（见
-「原生加密子任务恢复接力」）。完整 `bun run prepush`（typecheck、全量
-测试、privacy scan、GUI doctor）通过。
+rebase 到新基线并先收敛为包版本 `2.35.0-ben.1`。不可变 ben.1 边界的精确重叠
+为 16 paths：仅 `package.json` 版本号冲突，另外 15 条路径（含 `core.ts`、
+`openai-responses.ts`、`base.ts`、`usage/log.ts` 与 9 个 GUI i18n）自动合并。
+ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 的基线，同时
+修复 recovery reparse 后的 turn termination scope，并用 origin-only 官方 Tag/marker/main
+验证替代宽松基线假设；这些修复的本地 focused 测试和本地 CI 契约证据已提交，外部
+candidate、promotion、final CI 与 Release 仍由本页机器表逐项保持 pending。
 
 
 `ben.8` 修订为修改面收敛与历史压缩：将官方 v2.34.0 基线之后的全部历史提交压缩为单一 commit `b26cf4a20`（树内容与压缩前逐字节一致）。收敛内容：原仓库测试文件中的纯新增 fork 用例全部迁入新建 `tests/fork-*.test.ts`；还原 `server-auth` 三处 watchdog 预算、serial lane membership 及配套断言；还原 `core.ts` 与 `openai-responses.ts` 两处非必要注释 churn。收敛后原仓库测试修改从 20 个文件降至 8 个（剩余均为必要回归或宿主环境适配），共 +78/-28 行。
@@ -119,8 +155,15 @@ rebase 到新基线并收敛为包版本 `2.35.0-ben.1`：仅 package.json 版�
   `tests/fork-zhipu-glm-schema-lowering.test.ts`。39 工具测试是与已观察数量一致的
   合成目录，不等同于真实 Codex App fixture；智谱测试另覆盖顶层工具和 Responses
   Lite `additional_tools`。
-- **官方对比：** `v2.34.0` 有通用 Provider schema 处理，但没有精确 Ark/Kimi 或
-  智谱 GLM compiler、prefill 修复或 Kimi schema catalog 诊断。
+- **官方对比：** `v2.35.0:src/adapters/openai-responses.ts`（blob
+  `70e6e7a1d772e9728e31c8ff5532dc80c1ea87d0`）仍通过
+  `collectResponsesToolGroups`、`rewriteRoutedCustomToolsForUpstream` 等通用 Responses
+  处理转发工具；其中没有 `applyGlmKimiOutboundCompatibility`、精确 Ark Plan endpoint
+  gate 或 `$defs/$ref/oneOf/allOf` compiler。Fork 的
+  `src/fork/glm-kimi-compat.ts`（blob `6dcd6d130dc60fbe45ccedfdded01489055914b0`）由
+  `727cb58ec725076ecb9f4958910ebe854e423009` 引入该精确 lowering/prefill 差异，并由上列
+  `fork-glm-kimi-compat`、`fork-kimi-schema-compiler`、`fork-zhipu-glm-schema-lowering`
+  tests 固定。
 
 ### 原生 Responses message phase 推断
 
@@ -253,9 +296,17 @@ rebase 到新基线并收敛为包版本 `2.35.0-ben.1`：仅 package.json 版�
   `[features].standalone_web_search` 开启时，允许 Codex 客户端自己的
   `exec` / `web__run` 路径。
 - **代码：** `src/codex/inject.ts`。
-- **证据边界：** 开发时在隔离配置观察过该 surface，但没有绑定当前实现 SHA 的不可变
-  证据；新增行也缺少专门提交内断言，后续修改该逻辑时必须补齐。
-- **官方对比：** `v2.34.0` 不含该 capability key。
+- **证据边界：** 当前实现的 `src/codex/inject.ts` blob 为
+  `7cca45fa7f5e41328a5199a5adf5151406019220`，其中在
+  `buildProviderTableBlock` 写入该 capability；该 Fork 差异承载于
+  `0124c2809cb40c29603cff196e6d2182559bd48d`。尚缺绑定当前实现 SHA 的真实 Codex App
+  验收，不能以孤立配置观察替代。
+- **官方对比：** `v2.35.0:src/codex/inject.ts`（blob
+  `72be57878470077e9b3c434726aea329e007d79c`）同一 `buildProviderTableBlock` 只接受
+  `supportsWebsockets`/auth/hostname 参数，已核对不含
+  `supports_standalone_web_search`；Fork injection path 是上述 `src/codex/inject.ts`，
+  现有 `tests/codex-inject-integration.test.ts` 覆盖 provider-table 注入的相邻契约，
+  但尚无此 capability 的专门测试。
 
 ### 智谱 BigModel Codex 模型发现
 
@@ -267,7 +318,15 @@ rebase 到新基线并收敛为包版本 `2.35.0-ben.1`：仅 package.json 版�
 - **代码：** `src/providers/model-discovery.ts`、`src/providers/registry.ts`。
 - **测试：** `tests/zhipu-bigmodel-codex-provider.test.ts`。定向/registry 测试、typecheck、
   完整套件与真实 discovery/Responses 回放均通过；提交为 `c9446e0b5`。
-- **官方对比：** 官方 `v2.34.0` 没有该精确目录 envelope 与 endpoint gate。
+- **官方对比：** `v2.35.0:src/providers/model-discovery.ts`（blob
+  `ada0bd2aecc196e003d0b1720c96d864e4793dbc`）只以默认 `data[]`/`id` envelope 取值，
+  没有 `zhipu-bigmodel-codex`、`https://open.bigmodel.cn/api/v1` 或 `models[].slug` gate。
+  Fork `src/providers/model-discovery.ts`（blob
+  `85ea01d624b128d56400f4b699b95b32517de639`）以三元精确 gate 后采用
+  `envelopeKey: "models"`、`modelIdKey: "slug"`；此差异由
+  `c9446e0b5cddb90a0569d8e59913a91ae7eaa893` 引入，并由
+  `tests/zhipu-bigmodel-codex-provider.test.ts`（blob
+  `df3e37ba680fb11650aa86fdef14f5629f20629a`）覆盖 65 项目录与所有错配 control。
 
 ### 原生加密子任务恢复接力
 
@@ -280,11 +339,16 @@ rebase 到新基线并收敛为包版本 `2.35.0-ben.1`：仅 package.json 版�
   unreadable 集合，也会在最终路由确定后、派发给非官方转发 Provider 前触发同一
   恢复路径；恢复失败时保持 fail-closed。恢复重放不再进入其他
   OAuth/429/account/opaque/combo 重试。
-  `v2.35.0` 起官方恢复模块（`agent-task-recovery.ts`）扩展了 strict backend
-  ciphertext 的 envelope 识别，但官方 core 的触发条件仍是 Fernet 系
-  `hasUnreadableEncryptedAgentTask`；Fork 保留 core 触发门控
-  （routed-unreadable ∪ strict-backend）与对 canonical OpenAI 转发 Provider 的
-  fail-closed 拒转（`src/server/responses/core.ts`）。
+  `v2.35.0:src/server/responses/agent-task-recovery.ts` 的 blob
+  `70003c116bfc2d6fb9a85dab355827fff2295acc` 与 `v2.34.0` 相同，仍以
+  `structurallyValidFernetTokens` 识别 Fernet envelope；官方没有扩展 strict backend
+  ciphertext 识别。Fork 行为：strict non-Fernet envelope recognition、admission、routed trigger 与
+  fail-closed forwarding 都由 `src/server/responses/encrypted-payload.ts`、
+  `src/server/responses/agent-task-recovery.ts` 与 `src/server/responses/core.ts` 的 Fork
+  wiring 承担；其 core 触发门控为（routed-unreadable ∪ strict-backend），对 canonical
+  OpenAI 转发 Provider 保持 fail-closed 拒转。官方 `v2.35.0` 行为：turn termination
+  在恢复后的 Kiro 终态仍由官方路径归属；Fork 只修复 reparse 后恢复该终止对象作用域的
+  窄接线，不把官方终止语义归为 Fork 独有能力。
 - **隐私边界：** 严格 envelope 只接受精确 header/author/recipient/task、两段 content
   与一个完整非 Fernet ciphertext。直接成功和恢复后的 body 都不得进入 continuation
   state，避免 ciphertext/plaintext 写入 `responses-state.json`。
@@ -341,7 +405,7 @@ rebase 到新基线并收敛为包版本 `2.35.0-ben.1`：仅 package.json 版�
 
 - **状态：** Fork 独有——保留。
 - **包版本：** 官方稳定版 `X.Y.Z` 对应 Fork 包版本 `X.Y.Z-ben.N`。当前为
-  `2.34.0-ben.2`（`ben.1` Tag 保留为历史不可变修订）。`N` 从 1 开始且必须是安全整数；
+  `2.35.0-ben.2`（`v2.35.0-ben.1` Tag 保留为历史不可变修订）。`N` 从 1 开始且必须是安全整数；
   `ben.0`、前导零、超安全整数或其他 suffix 不属于该策略。
 - **更新语义：** 官方同基线稳定版与当前 Fork 等价，不允许显式 `ocx update` 用同基线
   官方包覆盖 Fork；registry target 无法解析时，`ben` build 在任何 cache/stop/install
@@ -363,8 +427,18 @@ rebase 到新基线并收敛为包版本 `2.35.0-ben.1`：仅 package.json 版�
 - **状态：** 官方部分覆盖——只保留剩余差异。
 - **Fork 剩余行为：** launcher/update 测试规避环境 runtime shim 与不支持的 PATH interception。`tests/server-auth.test.ts` 的 serial lane membership 与 watchdog 预算已按用户要求还原为官方行为。
 - **代码：** `tests/shutdown-launcher.test.ts`、`tests/update-stop-first.test.ts`。
-- **官方对比：** `v2.34.0` 已拥有默认 `--isolate --parallel=4` 主 lane、机器锁和声明式
-  serial lane。Fork 当前只拥有 launcher/update 的 test-only host 稳定性差异。
+- **官方对比：** `v2.35.0:tests/update-stop-first.test.ts`（blob
+  `0f7fd7ff55ec23cbdea4d157df61262bd9f8cd8e`，merge
+  `fe063d16ef620a148ab425cfffe63a8936d00e52`）已包含 recovery PID cleanup、
+  `UPDATE_SPAWN_TIMEOUT_MS`/`PROXY_READY_TIMEOUT_MS` 派生预算，以及 cleanup 后才
+  `rmSync` 的防 orphan 顺序。该官方文件不含 `nodeExecutable`；该 token 只出现在当前
+  Fork `tests/shutdown-launcher.test.ts`，其 current blob
+  `d34dd18b9f8c16d66f269bb0352d787f24f00856` 明确以 `process.execPath` 绕开
+  version-manager shim。Fork 在 `tests/update-stop-first.test.ts` 保留的唯一 host guard
+  是 PATH-precedence：Fork PATH-precedence guard（`a1e35b13db14a1686ef0033685d7214184c37743`）
+  先实测 Bun 是否保留 fake npm 的 supplied PATH，只有可表示 fixture 时才运行该恢复用例；
+  该 guard 来自 Fork 承载提交 `0124c2809cb40c29603cff196e6d2182559bd48d`，不改变官方
+  runner、cleanup 或 timeout 语义。
 
 ### 本地最小修改面规则
 
@@ -376,9 +450,12 @@ rebase 到新基线并收敛为包版本 `2.35.0-ben.1`：仅 package.json 版�
 
 ### Prepush 与 GitHub CI
 
-- **状态：** 官方完整覆盖——当前无 Fork 差异。
-- **证据：** `prepush` package script 与 `v2.34.0` 一致，`.github/` 相对官方 Tag 无
-  committed diff。不得把官方 prepush 或跨平台 workflow 归为 Fork 能力。
+- **状态：** 官方部分覆盖——保留 Fork 基线门禁。
+- **证据：** `prepush` package script 与 `v2.35.0` 一致；Fork 只新增
+  `.github/workflows/ci.yml` 的 origin-only 官方基线验证，精确验证 annotated official
+  Tag、其 peeled commit、official main ancestry 与 `origin/upstream-release` marker。
+  这不是对官方 CI 的替代，也不把 workflow 扩展为生产运行时能力。runner-local Tag proof
+  已重新验证；origin 上的官方 Tag 仍被禁止。
 
 ## 已替换、已移除或已证伪方向
 
