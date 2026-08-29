@@ -623,4 +623,77 @@ describe("Fork CI official baseline preparation", () => {
     expect(stderr).toContain("[REDACTED_PATH]");
     expect(stderr).not.toContain(bareDir);
   });
+
+  test("pins CI-only official-base preparation, dispatch Windows measurement, and hosted package smoke", async () => {
+    type WorkflowJob = {
+      name?: string;
+      needs?: string | string[];
+      if?: string;
+      "runs-on"?: unknown;
+      strategy?: { matrix?: { os?: string[] } };
+      steps?: Array<{ name?: string; uses?: string; run?: string; with?: Record<string, unknown> }>;
+    };
+    type Workflow = {
+      on?: { workflow_dispatch?: { inputs?: Record<string, unknown> } };
+      permissions?: Record<string, string>;
+      jobs?: Record<string, WorkflowJob | undefined>;
+    };
+
+    const workflow = await Bun.file(new URL("../.github/workflows/ci.yml", import.meta.url)).text();
+    const ci = Bun.YAML.parse(workflow) as Workflow;
+    const prepareName = "Prepare verified Fork official base";
+    const prepareRun = "bun scripts/prepare-fork-official-base.ts";
+    const normalized = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
+
+    expect(ci.permissions).toEqual({ contents: "read" });
+    for (const jobName of ["test", "platform-macos", "platform-windows"]) {
+      const steps = ci.jobs?.[jobName]?.steps ?? [];
+      const matching = steps.filter(step => step.name === prepareName && step.run === prepareRun);
+      expect(matching).toHaveLength(1);
+      const prepareIndex = steps.indexOf(matching[0]!);
+      const setupIndex = steps.findIndex(step => step.name === "Setup project Bun");
+      const installIndex = steps.findIndex(step => step.name === "Install dependencies");
+      const testIndex = steps.findIndex(step => /^Test\b/.test(step.name ?? ""));
+      expect(prepareIndex).toBeGreaterThan(setupIndex);
+      expect(prepareIndex).toBeLessThan(installIndex);
+      expect(prepareIndex).toBeLessThan(testIndex);
+    }
+
+    for (const jobName of ["storage-policy", "api-usage", "gates", "keyring-smoke", "npm-global-smoke"]) {
+      const steps = ci.jobs?.[jobName]?.steps ?? [];
+      expect(steps.some(step => step.run === prepareRun)).toBe(false);
+    }
+    expect(await Bun.file(new URL("../.github/actions/setup-project-bun/action.yml", import.meta.url)).text())
+      .not.toContain(prepareRun);
+
+    const checkouts = Object.values(ci.jobs ?? {})
+      .flatMap(job => job?.steps ?? [])
+      .filter(step => step.uses?.startsWith("actions/checkout@"));
+    expect(checkouts.length).toBeGreaterThan(0);
+    expect(checkouts.every(step => step.with?.["persist-credentials"] === false)).toBe(true);
+
+    const npmGlobal = ci.jobs?.["npm-global-smoke"]!;
+    expect(npmGlobal.if).toBe("github.event_name == 'workflow_dispatch' || needs.changes.outputs.packaging == 'true'");
+    expect(npmGlobal.needs).toBe("changes");
+    expect(npmGlobal["runs-on"]).toBe("${{ matrix.os }}");
+    expect(npmGlobal.strategy?.matrix?.os).toEqual(["ubuntu-latest", "windows-latest", "macos-latest"]);
+    expect(JSON.stringify(npmGlobal)).not.toContain("self-hosted");
+    expect(JSON.stringify(npmGlobal)).not.toContain("select-windows-runner");
+
+    const dispatch = ci.on?.workflow_dispatch;
+    expect(dispatch?.inputs).toMatchObject({
+      run_windows: { type: "boolean", required: false, default: false },
+    });
+    const windows = ci.jobs?.["platform-windows"]!;
+    expect(normalized(windows.if)).toBe(
+      "github.event_name == 'workflow_dispatch' && inputs.run_windows == true",
+    );
+    expect(windows.name).toBe("windows ${{ matrix.shard }}/4");
+
+    // With the exact expression above and this default, Task 6's normal
+    // dispatch (which omits run_windows) yields the pre-matrix job-level
+    // platform-windows skip. Its external allowlist must reject expanded
+    // windows 1/4 through windows 4/4 records; aggregate `ci` is additional
+    // evidence only, never a substitute for that allowlist.
+  });
 });
