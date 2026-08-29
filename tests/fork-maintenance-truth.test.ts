@@ -88,11 +88,11 @@ function compactWhitespace(value: string): string {
 }
 
 describe("Fork maintenance truth", () => {
-  test("records the exact ben.2 package and rebase-overlap truth", () => {
+  test("records the exact ben.3 package and preserved ben.2 rebase-overlap truth", () => {
     const version = JSON.parse(packageText).version;
     expect(version).toBe("2.35.0-ben.3");
-    expect(changes).toContain("| Fork 包版本 | `2.35.0-ben.2` |");
-    expect(changes).toContain("| 本轮派生 Tag | `v2.35.0-ben.2`");
+    expect(changes).toContain("| Fork 包版本 | `2.35.0-ben.3` |");
+    expect(changes).toContain("| 本轮派生 Tag | `v2.35.0-ben.3`");
     expect(changes).toContain("16 paths");
     expect(changes).not.toContain("当前为\n  `2.34.0-ben.2`");
 
@@ -112,6 +112,45 @@ describe("Fork maintenance truth", () => {
     expect(conflicts).toHaveLength(1);
     expect(merges).toHaveLength(15);
     expect(union).toHaveLength(16);
+  });
+
+  test("records the ben.3 39-to-5 squash boundary and pending external gates", () => {
+    const block = machineBlock(changes, "ben3-squash");
+    const rows = Object.fromEntries(block.split("\n").map((line) => {
+      const match = line.match(/^([a-z0-9_]+)=(.+)$/);
+      expect(match, `invalid ben3-squash row: ${line}`).not.toBeNull();
+      return [match![1]!, match![2]!];
+    }));
+
+    expect(rows).toEqual({
+      source_tag: "v2.35.0-ben.2",
+      source_peeled: "42282c405dc4c3dcb4f1e2877b89ac6ab49eeaba",
+      source_tree: "8499fcec058d61a42a4fa382118e4c7f92bbff58",
+      source_commit_count: "39",
+      squashed_commit_count: "5",
+      c1: "4d91209a587a7dbc970cd179a14ce7cf21ec1642",
+      c2: "7a35c99ec2529aac4fd011733b1617164248023b",
+      c3: "b67df10538bd77556c72d12c3ea6167175049a79",
+      c3_shared_tree: "8499fcec058d61a42a4fa382118e4c7f92bbff58",
+      c3_shared_path_count: "112",
+      c3_new_document_paths: "docs/superpowers/plans/2026-08-29-v2350-ben3-squash.md,docs/superpowers/specs/2026-08-29-v2350-ben3-squash-design.md",
+      c3_total_delta_path_count: "114",
+      c4: "fba9eadce2535cae6e76efee02695e9050262829",
+      ben2_history: "immutable",
+      ben3_annotated_tag: "pending external gate",
+      candidate_cross_platform_ci: "pending external gate",
+      atomic_promotion: "pending external gate",
+      final_main_cross_platform_ci: "pending external gate",
+      github_release: "pending external gate",
+    });
+
+    const squash = majorSection("v2.35.0-ben.3 全量历史压缩与发布边界");
+    expect(squash).toContain("39 个线性");
+    expect(squash).toContain("恰好 5 个语义提交");
+    expect(squash).toContain("112 个共享路径逐 blob 等于 ben.2 tree");
+    expect(squash).toContain("共有 114 个路径");
+    expect(squash).toContain("保持不可变，不移动、不删除、不重建");
+    expect(squash).toContain("尚未发生");
   });
 
   test("leaves external tagged-snapshot gates explicitly pending", () => {
