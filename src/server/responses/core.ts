@@ -2418,6 +2418,10 @@ async function handleResponsesInner(
     cursorConversationId: parsed._cursorConversationId,
   });
   bindTurnTerminationScope(parsed, resolvedConversationId);
+  const adoptParsedRequest = (next: OcxParsedRequest): void => {
+    parsed = next;
+    bindTurnTerminationScope(parsed, resolvedConversationId);
+  };
   const rememberKiroDeliveredFinalAnswer = (adapterName: string, response: unknown): void => {
     if (adapterName === "kiro") rememberDeliveredFinalAnswer(parsed, response);
   };
@@ -2658,7 +2662,7 @@ async function handleResponsesInner(
               (reparsed as unknown as Record<string, unknown>)[key] = parsed[key];
             }
           }
-          parsed = reparsed;
+          adoptParsedRequest(reparsed);
           // The recovery mutated `body.input` in place, so `_rawBody` now carries decrypted task
           // text. Bar it from the continuation cache before any recording path can reach it —
           // that cache is persisted to disk, which would defeat the recovery cache's TTL.
@@ -3739,7 +3743,7 @@ async function handleResponsesInner(
           const reparsed = parseRequest(parsed._rawBody);
           // Only the task-bearing input changed. Keep the already-settled model, tier, account,
           // provider and replay provenance while refreshing the input-derived context.
-          parsed = { ...parsed, context: reparsed.context, _rawBody: reparsed._rawBody };
+          adoptParsedRequest({ ...parsed, context: reparsed.context, _rawBody: reparsed._rawBody });
           const retried = await rebuildAndRefetch("agent-task-recovery", true, upstreamResponse);
           if ("failed" in retried) {
             if (options.abortSignal?.aborted || req.signal.aborted) return retried.failed;
