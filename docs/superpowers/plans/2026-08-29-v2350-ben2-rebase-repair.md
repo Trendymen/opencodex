@@ -10,6 +10,102 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-29-v2350-ben2-rebase-repair-design.md`
 
+## S1 Successor Repair Override（当前唯一执行入口）
+
+本Plan原 Tasks 1–5与首轮Task 6已经执行。首个docs-only candidate
+`d5558096bb229b5fbf5607a6468c2871b2b1213e` 已推送到
+`origin/sync/v2.35.0`；绑定run `33234936660` 在所有Linux/macOS suite的
+`Prepare verified Fork official base`步骤失败。失败原因不是网络/transient，而是官方
+`refs/tags/v2.35.0` 的真实type为 `commit`（lightweight），raw与peeled均为
+`fc4de772...`，而原脚本/Spec错误要求type=`tag`。Controller已把该run记录为terminal
+`run_conclusion_failure`。`main`仍为ben.1，marker仍为官方SHA，本地/远端ben.2 Tag、
+promotion、final CI与Release均不存在。
+
+因此当前从 **S1** 恢复；下面本节覆盖后文历史Tasks的执行状态。后文Tasks 1–5与Task 6
+Steps 1–5只作为原始审计记录，不得重复执行，不得重建state或重新dispatch失败candidate。
+当前repair按以下顺序连续执行：
+
+### Repair A：提交已批准的修订文档
+
+1. 修订Spec，记录S1状态、observed lightweight official ref、repair-only范围、failed
+   candidate/run、replacement lease与Release evidence；通过原 `SPEC_DOCUMENT` reviewer。
+2. 只提交Spec修订，父链必须是`d5558096b` descendant。
+3. 修订本Plan并通过原 `PLAN_DOCUMENT` reviewer；只提交Plan修订。两份文档不得与实现
+   或`FORK_CHANGES.md`混合。
+
+### Repair B：修复现有official-ref verifier（TDD）
+
+**Files:**
+- Modify: `scripts/prepare-fork-official-base.ts`
+- Modify: `tests/fork-ci-official-baseline.test.ts`
+
+1. 先修改现有专用测试并运行RED：把observed-style fixture改为lightweight官方Tag且期望
+   成功；保留独立annotated成功fixture；新增official ref指向blob/tree等unsupported object
+   的拒绝fixture。RED必须命中当前“not annotated”实现。
+2. `PrepareForkOfficialBaseResult.prepared`新增
+   `refKind: "lightweight" | "annotated"`。Bare ref type只接受：
+   - `commit` → lightweight，要求raw OID==`^{commit}`；
+   - `tag` → annotated，保留raw tag-object OID与peeled commit；
+   - 其他type → fail closed。
+3. 两类ref都必须继续通过完整official-main ancestry、checkout import type/raw/peeled逐项
+   equality、origin marker peeled equality、已有本地type/raw/peeled equality和zero-OID CAS。
+   Lightweight本地Tag ref以commit OID创建；annotated以tag-object OID创建。不得放宽固定URL、
+   cleanup、FETCH_HEAD、env isolation、redaction或no-mirror边界。
+4. 专用测试GREEN后运行`tests/ci-workflows.test.ts`、typecheck、privacy、prepush和diff checks；
+   提交仅这两个existing paths，中文subject。
+
+### Repair C：重建replacement维护真源快照
+
+**Files:**
+- Modify and commit implementation evidence: `tests/fork-maintenance-truth.test.ts`
+- Modify but keep uncommitted until review: `FORK_CHANGES.md`
+- Do not modify: `package.json`（保持`2.35.0-ben.2`）
+
+1. Amend现有maintenance test，使旧truth先RED，并机械要求：
+   - failed candidate `d5558096bb229b5fbf5607a6468c2871b2b1213e`；
+   - failed run `33234936660`及prepare-step/lightweight根因；
+   - observed official type=`commit`且raw/peeled/marker=`fc4de772...`；
+   - ben.2 Tag、promotion、final CI、Release未发生；
+   - replacement candidate及later gates仍逐项`pending external gate`。
+2. 提交maintenance-test amendment（不含`FORK_CHANGES.md`），捕获新的repair
+   `IMPLEMENTATION_HEAD`。
+3. 更新未提交的`FORK_CHANGES.md`：保留所有原本地/review证据，新增已知失败run与
+   lightweight纠正；不得把失败run写成pending，也不得预写replacement成功。更新新的
+   implementation HEAD/shortstat。测试转GREEN。
+4. 重跑focused、typecheck、privacy、prepush、16-overlap、112-path与diff checks；复用原
+   rebase `SPEC_COMPLIANCE`/`CODE_QUALITY` reviewer。通过后只提交`FORK_CHANGES.md`，并证明
+   parent==repair IMPLEMENTATION_HEAD、docs-only、最终path count仍112。
+
+### Repair D：复用controller state推进replacement candidate
+
+1. 复用`.tmp/v2.35.0-ben.2-state.json`；必须已含candidate=`d5558096b`、run
+   `33234936660`与`failureEvidence.kind=run_conclusion_failure`，且无tag/promotion/release。
+   不调用`init-state`，不删除/重建state。
+2. Fresh-read要求remote sync仍为`d5558096b`、main/marker仍为ben.1/official、本地远端ben.2
+   Tag和origin official Tag均不存在；新docs candidate必须是d555 descendant。
+3. 执行controller
+   `supersede-candidate d5558096... NEW_CANDIDATE`，机械验证ancestor/exact predecessor lease/
+   Tag absence，将失败candidate/run移入immutable history并重置candidate run slots。
+4. 以`d5558096b`为`--force-with-lease` expected SHA，只fast-forward
+   `origin/sync/v2.35.0`到replacement docs candidate；main/marker/Tag不动。
+5. `snapshot candidate`→`intent candidate`→只dispatch一次（不传`run_windows`）→`bind`→
+   watch→`verify candidate`。严格18-job allowlist与唯一job-level Windows skip不变。失败继续
+   走successor规则；成功才进入后文Task 7。
+
+### Repair E：Task 7与Release补充证据
+
+后文Task 7原子promotion/Tag不变。Fork ben.2 Tag仍必须annotated。Tag annotation与Release
+Notes除replacement candidate/final run外，还必须记录首个失败candidate `d5558096b` / run
+`33234936660`、annotated-only assumption被真实official lightweight ref推翻以及对应修复。
+
+### Repair 完成条件
+
+- revised Spec/Plan、script/test、maintenance contract、replacement docs snapshot全部是
+  d555 descendant且通过对应review；不重写已推送历史；
+- overall official-relative path set仍为112、原105全部保留、新增集合仍为原七路径；
+- `FORK_CHANGES.md`准确区分known failed candidate与pending replacement；
+- replacement candidate CI严格成功前不存在ben.2 Tag/promotion/Release。
+
 ## Global Constraints
 
 - 官方基线固定为 `v2.35.0` / `fc4de772b58c13f7b16b5029b1e981d612a5db06`；现有 `v2.35.0-ben.1` / `98b14f722097abce9107c76ff0eba5f4e60c2e0f` 不移动、不删除、不覆盖。
@@ -337,7 +433,14 @@ export type VersionClassification =
 
 export type PrepareForkOfficialBaseResult =
   | { kind: "not-fork"; version: string }
-  | { kind: "prepared"; version: string; tag: string; rawTagOid: string; peeledCommit: string };
+  | {
+      kind: "prepared";
+      version: string;
+      tag: string;
+      refKind: "lightweight" | "annotated";
+      rawTagOid: string;
+      peeledCommit: string;
+    };
 
 export type GitRunner = (cwd: string, args: readonly string[]) => {
   exitCode: number;
@@ -398,7 +501,8 @@ Build disposable repositories under `mkdtempSync(join(tmpdir(), "ocx-fork-base-"
 `pathToFileURL` from `node:url` and use file URLs for every local remote crossing a clone/fetch
 boundary:
 
-- official repo with full history, annotated `v2.35.0`, and `main` one or more commits ahead;
+- official repo with full history, observed-style lightweight `v2.35.0`, and `main` one or more
+  commits ahead; add a separate annotated official-Tag success fixture;
 - origin repo whose `upstream-release` points at the official Tag commit and whose tags contain only `v2.35.0-ben.1`;
 - shallow checkout of origin with `package.json` set to `2.35.0-ben.2`.
 
@@ -415,7 +519,7 @@ function git(cwd: string, args: readonly string[]) {
 }
 ```
 
-Create official history by committing a tagged baseline, creating annotated `v2.35.0`, then adding
+Create official history by committing a tagged baseline, creating lightweight `v2.35.0`, then adding
 two `main` commits. Create the origin bare repo from that history, delete the official Tag from the
 origin namespace, keep `upstream-release` at the tagged commit, add only
 `v2.35.0-ben.1`, and clone its Fork branch with exact argv:
@@ -448,14 +552,16 @@ Call `prepareForkOfficialBase()` with the local official repo URL. Assert:
 
 ```ts
 expect(result).toMatchObject({ kind: "prepared", tag: "v2.35.0" });
-expect(git(checkout, ["cat-file", "-t", "refs/tags/v2.35.0"]).stdout.trim()).toBe("tag");
+expect(result).toMatchObject({ refKind: "lightweight" });
+expect(git(checkout, ["cat-file", "-t", "refs/tags/v2.35.0"]).stdout.trim()).toBe("commit");
 expect(git(checkout, ["rev-parse", "refs/tags/v2.35.0^{commit}"]).stdout.trim())
   .toBe(officialTagCommit);
 ```
 
-Add isolated fixtures for lightweight official Tag, marker mismatch, non-ancestor Tag, local
-same-name forged Tag, missing marker, missing main/tag, fetch failure, and existing identical
-official Tag. Wrap the injected runner to capture every argv vector and assert the official fetch
+Add isolated fixtures for annotated official Tag success, unsupported blob/tree official ref,
+marker mismatch, non-ancestor Tag, local same-name forged Tag, missing marker, missing main/tag,
+fetch failure, and existing identical official Tag for both accepted kinds. Wrap the injected runner
+to capture every argv vector and assert the official fetch
 contains `--filter=blob:none`, contains no `--depth`, `--shallow-*` or `--unshallow`, and targets
 only the exact Tag plus full `refs/heads/main`. On both success and every failure fixture, assert
 the two owned `refs/ocx-ci/*` refs are absent afterward, the temporary bare directory is removed,
@@ -640,13 +746,18 @@ const bareTagRef = `refs/tags/${classification.tag}`;
 const bareType = runOrThrow("verify official tag", repoRoot, [
   `--git-dir=${bareDir}`, "cat-file", "-t", bareTagRef,
 ]).stdout.trim();
-if (bareType !== "tag") throw new Error("official release ref is not an annotated tag");
+if (bareType !== "tag" && bareType !== "commit") {
+  throw new Error("official release ref is not a tag or commit");
+}
 const bareRawOid = runOrThrow("verify official tag", repoRoot, [
   `--git-dir=${bareDir}`, "rev-parse", bareTagRef,
 ]).stdout.trim();
 const barePeeledCommit = runOrThrow("verify official tag", repoRoot, [
   `--git-dir=${bareDir}`, "rev-parse", `${bareTagRef}^{commit}`,
 ]).stdout.trim();
+if (bareType === "commit" && bareRawOid !== barePeeledCommit) {
+  throw new Error("lightweight official ref raw and peeled commits differ");
+}
 runOrThrow("verify official ancestry", repoRoot, [
   `--git-dir=${bareDir}`, "merge-base", "--is-ancestor",
   barePeeledCommit, "refs/heads/official-main",
@@ -660,10 +771,12 @@ runOrThrow("import official tag", repoRoot, [
 Immediately after the official fetch and before the import command shown above, run these bare-repo
 argv calls in exact order:
 
-1. `cat-file -t refs/tags/TAG` and require stdout exactly `tag`;
-2. `rev-parse refs/tags/TAG` to capture the raw annotated-Tag OID;
+1. `cat-file -t refs/tags/TAG` and require stdout exactly `tag` or `commit`; classify it as
+   `annotated` or `lightweight` respectively, rejecting every other object type;
+2. `rev-parse refs/tags/TAG` to capture the raw ref OID;
 3. `rev-parse refs/tags/TAG^{commit}` to capture the peeled commit;
-4. `merge-base --is-ancestor PEELED_COMMIT refs/heads/official-main` and require exit 0.
+4. for `commit`, require raw==peeled; for `tag`, retain the raw tag-object OID; then run
+   `merge-base --is-ancestor PEELED_COMMIT refs/heads/official-main` and require exit 0.
 
 Only then execute `import official tag`. After import, run `cat-file -t OFFICIAL_TAG_REF`,
 `rev-parse OFFICIAL_TAG_REF`, and `rev-parse OFFICIAL_TAG_REF^{commit}` as separate checkout argv
@@ -680,12 +793,13 @@ The complete algorithm must:
 2. delete only `refs/ocx-ci/fork-marker` / `refs/ocx-ci/official-tag` from the checkout;
 3. fetch exact origin `upstream-release` into the marker temp ref and initialize `bareDir`;
 4. fetch full official `main` commit graph plus exact raw Tag with `--filter=blob:none` and no depth;
-5. require Tag object type `tag`, capture bare raw/peeled, then require
+5. require official ref object type `tag` or `commit`, classify annotated/lightweight, capture bare
+   raw/peeled, require raw==peeled for lightweight, then require
    `merge-base --is-ancestor peeled official-main` exit 0;
 6. only after Step 5, fetch the verified Tag object from the bare repo into checkout temp ref with
    `--no-write-fetch-head`, then require checkout type/raw/peeled equal the bare evidence;
 7. compare the already verified peeled commit with marker;
-8. require any existing local official Tag raw+peeled to match; if absent, create
+8. require any existing local official Tag type+raw+peeled to match; if absent, create
    `refs/tags/${classification.tag}` with
    `["update-ref", localTagRef, officialRawOid, ZERO_OID]`;
 9. always attempt deletion of both owned temp refs and
@@ -1964,16 +2078,20 @@ non-HTTPS values; no block relies on variables surviving a prior shell session.
 
 - [ ] **Step 2: Create or recover the frozen local annotated Tag**
 
-Tag message must include official base, candidate commit, completed candidate workflow_dispatch run ID/URL, local/review gates and known gaps; explicitly mark promotion, final CI and Release pending. Use quoted `-m` arguments so no scratch Tag-message file or shell-generated file is needed.
+Tag message must include official base, the failed d555/run evidence and lightweight correction,
+replacement candidate commit/run, local/review gates and known gaps; explicitly mark promotion,
+final CI and Release pending. Use quoted `-m` arguments so no scratch Tag-message file or
+shell-generated file is needed.
 
 Classify the local Tag first:
 
 - absent + state has no Tag record + remote complete pre-state: create it once with the command
   below;
 - present: require object type `tag`, peeled commit=candidate, and annotation text equals the exact
-  two paragraphs produced by the command below (allow only Git's one trailing newline),
-  including official base, candidate SHA, stored candidate run ID/URL and pending promotion/final/
-  Release statements. If state already records `rawOid`, require exact equality; if state lacks a
+  three paragraphs produced by the command below (allow only Git's one trailing newline),
+  including official base, failed candidate/run/lightweight correction, replacement candidate SHA,
+  stored replacement run ID/URL and pending promotion/final/Release statements. If state already
+  records `rawOid`, require exact equality; if state lacks a
   Tag record because the previous process exited after creation, adopt this validated raw OID into
   state without recreating the Tag;
 - any lightweight Tag, wrong peeled commit/message/raw OID, or local Tag existing before the
@@ -1982,14 +2100,17 @@ Classify the local Tag first:
 ```bash
 git tag -a v2.35.0-ben.2 "$CANDIDATE" \
   -m "Trendymen Fork v2.35.0-ben.2（官方基线 v2.35.0 / fc4de772）" \
-  -m "Candidate: $CANDIDATE；Cross-platform workflow_dispatch run $CANDIDATE_RUN_ID：$CANDIDATE_RUN_URL。Local gates 与双 reviewer re-review 已通过。Promotion、final main CI、GitHub Release：pending。已知缺口以 tagged FORK_CHANGES.md 为准。"
+  -m "Previous candidate d5558096bb229b5fbf5607a6468c2871b2b1213e / workflow_dispatch run 33234936660 在 Tag、promotion、final CI、Release 之前失败：官方 v2.35.0 被验证为 lightweight commit ref（type=commit，raw=peeled=marker fc4de772b58c13f7b16b5029b1e981d612a5db06）。本 successor 同时接受经完整 ancestry、marker、import equality 与 CAS 验证的 lightweight/annotated official refs。" \
+  -m "Replacement candidate: $CANDIDATE；Cross-platform workflow_dispatch run $CANDIDATE_RUN_ID：$CANDIDATE_RUN_URL。Local gates 与双 reviewer re-review 已通过。Promotion、final main CI、GitHub Release：pending。已知缺口以 tagged FORK_CHANGES.md 为准。"
 test "$(git cat-file -t refs/tags/v2.35.0-ben.2)" = "tag"
 test "$(git rev-parse refs/tags/v2.35.0-ben.2^{commit})" = "$CANDIDATE"
 TAG_RAW=$(git rev-parse refs/tags/v2.35.0-ben.2)
 ```
 
 After validating/creating, use `apply_patch` to add an exact `tag` object to the state containing
-name, rawOid, peeledCommit, candidate run ID and `recordedAt`; `chmod 600` again. Re-entry compares
+name, rawOid, peeledCommit, failedCandidate=`d555...`, failedRunId=`33234936660`,
+officialRefKind=`lightweight`, replacement candidate run ID and `recordedAt`; `chmod 600` again.
+Re-entry compares
 and reuses it. After this point do not change code/docs or recreate/move the Tag.
 
 - [ ] **Step 3: Snapshot final-run identity and classify/push the atomic promotion**
@@ -2112,17 +2233,18 @@ captured concrete values (never leave shell-variable names in the file):
 
 ## Fork 修复
 - recovery reparse 后恢复 Kiro turn-termination scope
-- origin-only CI 精确验证官方 Tag/marker/main
+- origin-only CI 精确验证官方 ref/marker/main；首个 candidate `d5558096b` / run `33234936660` 证明官方 v2.35.0 为 lightweight ref并修正 annotated-only 假设
 - 修正 v2.35 维护真源、overlap 计数与 active coverage 证据
 - 删除六处无必要的 Fork test trailing whitespace
 
 ## 验证结果
-- Candidate Cross-platform CI: concrete workflow_dispatch run ID and URL
+- Failed candidate: `d5558096b` / run `33234936660`, prepare-step policy failure and no Tag/promotion/Release
+- Replacement candidate Cross-platform CI: concrete workflow_dispatch run ID and URL
 - Final Cross-platform CI: concrete main-push run ID and URL
 - Local focused/typecheck/privacy/prepush and reviewer results
 
 ## 引用与提交
-- Candidate commit, Fork Tag raw/peeled, main/sync/upstream-release exact values
+- Replacement candidate commit, Fork Tag raw/peeled, main/sync/upstream-release exact values
 
 ## 已知缺口
 - Real minted ciphertext acceptance、Ark weekly quota、service repair OCX_DEBUG boundary
