@@ -130,20 +130,22 @@ async function postResponses(
 describe("recovered Kiro turn termination scope", () => {
   test("records a recovered final answer so a phase-less replay does not send Kiro again", async () => {
     const kiro = scriptedKiroUpstream();
-    saveConfig(kiroRecoveryConfig(kiro.server.url.toString()));
-    globalThis.fetch = (async (input, init) => {
-      const body = typeof init?.body === "string" ? init.body : "";
-      if (body.includes("capture_assignment")) {
-        return new Response(recoverySse(ASSIGNMENT), {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        });
-      }
-      return originalFetch(input, init);
-    }) as typeof fetch;
-    const proxy = startServer(0);
+    let proxy: ReturnType<typeof startServer> | undefined;
 
     try {
+      saveConfig(kiroRecoveryConfig(kiro.server.url.toString()));
+      globalThis.fetch = (async (input, init) => {
+        const body = typeof init?.body === "string" ? init.body : "";
+        if (body.includes("capture_assignment")) {
+          return new Response(recoverySse(ASSIGNMENT), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+      proxy = startServer(0);
+
       const first = await postResponses(
         proxy.url.toString(),
         encryptedInput({ ciphertext: BACKEND_CIPHERTEXT }),
@@ -178,8 +180,11 @@ describe("recovered Kiro turn termination scope", () => {
       expect(entry!.attempts).toHaveLength(1);
       expect(entry!.attempts![0]!.sendCount).toBe(0);
     } finally {
-      await proxy.stop(true);
-      kiro.server.stop(true);
+      try {
+        if (proxy) await proxy.stop(true);
+      } finally {
+        kiro.server.stop(true);
+      }
     }
   });
 
@@ -189,7 +194,7 @@ describe("recovered Kiro turn termination scope", () => {
 
     expect(postBindSource).not.toContain("parsed = reparsed;");
     expect(postBindSource).not.toContain("parsed = { ...parsed, context: reparsed.context");
-    expect(postBindSource).toMatch(/const adoptParsedRequest\s*=\s*\(/);
+    expect((postBindSource.match(/const\s+adoptParsedRequest\s*=\s*\(/g) ?? []).length).toBe(1);
     expect((postBindSource.match(/adoptParsedRequest\(/g) ?? []).length).toBe(2);
   });
 });
