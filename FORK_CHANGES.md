@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.35.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.35.0) |
 | 官方 Tag commit | `fc4de772b58c13f7b16b5029b1e981d612a5db06` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `43296ea6dc08862a73dd0a3576b32321250235a0` |
+| 本轮实现 HEAD | `e89c96971c64f40e7c3823bf0158ea3508f937a8` |
 | Fork 包版本 | `2.35.0-ben.2` |
 | 本轮派生 Tag | `v2.35.0-ben.2`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.35.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 112 个文件，新增 15,188 行，删除 174 行 |
+| 已提交修改面 | 112 个文件，新增 15,541 行，删除 174 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 本轮相对 `v2.35.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
@@ -68,10 +68,24 @@ Auto-merge (15):
 - `tests/update-stop-first.test.ts`
 <!-- ben2-overlap:end -->
 
+<!-- ben2-s1-repair:start -->
+首个 candidate：`d5558096bb229b5fbf5607a6468c2871b2b1213e` 已在精确 lease 下推送到
+`origin/sync/v2.35.0`。绑定的 Cross-platform `workflow_dispatch` run 为
+`33234936660`，在 `Prepare verified Fork official base` 步骤失败；失败发生于旧的
+annotated-only policy：官方 `v2.35.0` 实际为 lightweight ref，
+type=`commit`，raw=peeled=marker=`fc4de772b58c13f7b16b5029b1e981d612a5db06`。
+
+该失败是已完成的外部证据，不是 replacement gate。失败时
+v2.35.0-ben.2 Tag：未发生；Atomic promotion：未发生；Final main Cross-platform CI：未发生；
+GitHub Release：未发生。修复后的 official-base verifier 接受经过完整 ancestry、import
+equality 与 marker/CAS 验证的 lightweight 或 annotated official ref；它不再把 annotated-only
+当作 provenance 条件。
+<!-- ben2-s1-repair:end -->
+
 <!-- ben2-external-gates:start -->
 | Gate | Tagged snapshot state |
 | --- | --- |
-| Candidate Cross-platform CI | `pending external gate` |
+| Replacement candidate Cross-platform CI | `pending external gate` |
 | Atomic promotion | `pending external gate` |
 | Final main Cross-platform CI | `pending external gate` |
 | GitHub Release | `pending external gate` |
@@ -125,9 +139,11 @@ rebase 到新基线并先收敛为包版本 `2.35.0-ben.1`。不可变 ben.1 边
 为 16 paths：仅 `package.json` 版本号冲突，另外 15 条路径（含 `core.ts`、
 `openai-responses.ts`、`base.ts`、`usage/log.ts` 与 9 个 GUI i18n）自动合并。
 ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 的基线，同时
-修复 recovery reparse 后的 turn termination scope，并用 origin-only 官方 Tag/marker/main
-验证替代宽松基线假设；这些修复的本地 focused 测试和本地 CI 契约证据已提交，外部
-candidate、promotion、final CI 与 Release 仍由本页机器表逐项保持 pending。
+修复 recovery reparse 后的 turn termination scope，并用 origin-only 官方 ref/marker/main
+验证替代宽松基线假设。首个 ben.2 candidate 的 prepare-step 失败已证明官方 `v2.35.0`
+是 lightweight commit ref，而非 annotated Tag；修复后的本地 focused 测试和本地 CI
+契约证据已提交。该已知失败与当时未发生的 Tag/promotion/final CI/Release 由本页 S1
+快照保留；仅 replacement candidate 及后续外部门禁仍由机器表逐项保持 pending。
 
 
 `ben.8` 修订为修改面收敛与历史压缩：将官方 v2.34.0 基线之后的全部历史提交压缩为单一 commit `b26cf4a20`（树内容与压缩前逐字节一致）。收敛内容：原仓库测试文件中的纯新增 fork 用例全部迁入新建 `tests/fork-*.test.ts`；还原 `server-auth` 三处 watchdog 预算、serial lane membership 及配套断言；还原 `core.ts` 与 `openai-responses.ts` 两处非必要注释 churn。收敛后原仓库测试修改从 20 个文件降至 8 个（剩余均为必要回归或宿主环境适配），共 +78/-28 行。
@@ -452,10 +468,13 @@ candidate、promotion、final CI 与 Release 仍由本页机器表逐项保持 p
 
 - **状态：** 官方部分覆盖——保留 Fork 基线门禁。
 - **证据：** `prepush` package script 与 `v2.35.0` 一致；Fork 只新增
-  `.github/workflows/ci.yml` 的 origin-only 官方基线验证，精确验证 annotated official
-  Tag、其 peeled commit、official main ancestry 与 `origin/upstream-release` marker。
-  这不是对官方 CI 的替代，也不把 workflow 扩展为生产运行时能力。runner-local Tag proof
-  已重新验证；origin 上的官方 Tag 仍被禁止。
+  `.github/workflows/ci.yml` 的 origin-only 官方基线验证，精确验证 official ref 的
+  lightweight/annotated 类型、raw/peeled commit、official main ancestry 与
+  `origin/upstream-release` marker。官方 `v2.35.0` 的实测 ref type 为 `commit`，其
+  raw/peeled/marker 均为 `fc4de772b58c13f7b16b5029b1e981d612a5db06`；因此不得再把
+  annotated-only 写成 provenance 要求。这不是对官方 CI 的替代，也不把 workflow 扩展为
+  生产运行时能力。runner-local official ref proof 已重新验证；origin 上的官方 Tag
+  仍被禁止。
 
 ## 已替换、已移除或已证伪方向
 
