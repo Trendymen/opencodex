@@ -41,6 +41,34 @@ const EXPECTED_V236_CONFLICT_PATHS = [
   "src/server/responses/core.ts",
 ] as const;
 
+const EXPECTED_V236_OVERLAP_PATHS = [
+  "docs-site/src/content/docs/reference/configuration/providers.md",
+  "docs-site/src/content/docs/zh-cn/reference/configuration/providers.md",
+  "gui/src/i18n/de.ts",
+  "gui/src/i18n/en.ts",
+  "gui/src/i18n/fr.ts",
+  "gui/src/i18n/ja.ts",
+  "gui/src/i18n/ko.ts",
+  "gui/src/i18n/ru.ts",
+  "gui/src/i18n/tr.ts",
+  "gui/src/i18n/zh-TW.ts",
+  "gui/src/i18n/zh.ts",
+  "gui/src/pages/Logs.tsx",
+  "package.json",
+  "src/adapters/openai-responses.ts",
+  "src/config.ts",
+  "src/lib/upstream-retry.ts",
+  "src/providers/registry.ts",
+  "src/server/auth-cors.ts",
+  "src/server/chat-native.ts",
+  "src/server/management/provider-routes.ts",
+  "src/server/responses-undeclared-tool-guard.ts",
+  "src/server/responses/agent-task-recovery.ts",
+  "src/server/responses/core.ts",
+  "src/types/provider.ts",
+  "tests/openai-responses-passthrough.test.ts",
+] as const;
+
 function machineBlock(source: string, name: string): string {
   const match = source.match(new RegExp(
     `<!-- ${name}:start -->\n([\\s\\S]*?)\n<!-- ${name}:end -->`,
@@ -134,7 +162,11 @@ describe("Fork maintenance truth", () => {
     expect(rows.official_new).toBe("v2.36.0");
     expect(rows.overlap_path_count).toBe("25");
     expect(rows.content_conflict_count).toBe("5");
+    const overlapPaths = rows.overlap_paths?.split(",");
+    expect(overlapPaths).toEqual(EXPECTED_V236_OVERLAP_PATHS);
+    expect(new Set(overlapPaths).size).toBe(25);
     expect(rows.content_conflicts?.split(",")).toEqual(EXPECTED_V236_CONFLICT_PATHS);
+    for (const path of EXPECTED_V236_CONFLICT_PATHS) expect(overlapPaths).toContain(path);
 
     for (const path of EXPECTED_V236_CONFLICT_PATHS) {
       const key = `decision_${path.replaceAll("/", "_").replaceAll(".", "_").replaceAll("-", "_")}`;
