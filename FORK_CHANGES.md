@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.36.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.36.0) |
 | 官方 Tag commit | `c7d8407d29bdd98b7ba743c85e654a41b3e4fca8` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `f6edfabdb1772174524653b37e108609ab47e161` |
+| 本轮实现 HEAD | `80d741d8422e030db72a5fe30eae52c8a7486cad` |
 | Fork 包版本 | `2.36.0-ben.2` |
 | 本轮派生 Tag | `v2.36.0-ben.2`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.36.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 115 个文件，新增 16,203 行，删除 174 行 |
+| 已提交修改面 | 115 个文件，新增 16,285 行，删除 174 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 本轮相对 `v2.36.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
@@ -51,6 +51,7 @@
 official_old=v2.35.0
 official_new=v2.36.0
 overlap_path_count=25
+overlap_paths=docs-site/src/content/docs/reference/configuration/providers.md,docs-site/src/content/docs/zh-cn/reference/configuration/providers.md,gui/src/i18n/de.ts,gui/src/i18n/en.ts,gui/src/i18n/fr.ts,gui/src/i18n/ja.ts,gui/src/i18n/ko.ts,gui/src/i18n/ru.ts,gui/src/i18n/tr.ts,gui/src/i18n/zh-TW.ts,gui/src/i18n/zh.ts,gui/src/pages/Logs.tsx,package.json,src/adapters/openai-responses.ts,src/config.ts,src/lib/upstream-retry.ts,src/providers/registry.ts,src/server/auth-cors.ts,src/server/chat-native.ts,src/server/management/provider-routes.ts,src/server/responses-undeclared-tool-guard.ts,src/server/responses/agent-task-recovery.ts,src/server/responses/core.ts,src/types/provider.ts,tests/openai-responses-passthrough.test.ts
 content_conflict_count=5
 content_conflicts=package.json,src/adapters/openai-responses.ts,src/config.ts,src/lib/upstream-retry.ts,src/server/responses/core.ts
 decision_package_json=official=scripts/dependencies；fork=install:local与ben版本；resolution=保留官方脚本和依赖并保留Fork本地安装入口；tests=tests/release-version-line.test.ts,tests/fork-maintenance-truth.test.ts
@@ -63,8 +64,8 @@ decision_src_server_responses_core_ts=official=Responses终端和重试生命周
 ### v2.36.0-ben.2 审查修订
 
 `v2.36.0-ben.1` 是不可变历史 Tag；本修订不移动、不删除或重建它。实现提交
-`f6edfabdb1772174524653b37e108609ab47e161` 只推进包版本并把当前 v2.36 冲突台账
-锁入维护真源测试。当前审查确认 25 个 overlap 与 5 个内容冲突的合并结果仍保留官方
+`80d741d8422e030db72a5fe30eae52c8a7486cad` 推进包版本、锁入当前 v2.36 冲突台账，
+并机械枚举全部 25 条 overlap 路径。当前审查确认 25 个 overlap 与 5 个内容冲突的合并结果仍保留官方
 v2.36 行为和 Fork 所需差异；本节的机器块是后续同步时唯一可作为当前 v2.36 冲突结论
 的账户。
 
@@ -79,7 +80,7 @@ v2.36.0-ben.2 的修复范围或新能力宣称。
 base_tag=v2.36.0
 base_peeled=c7d8407d29bdd98b7ba743c85e654a41b3e4fca8
 ben1_history=immutable
-implementation_head=f6edfabdb1772174524653b37e108609ab47e161
+implementation_head=80d741d8422e030db72a5fe30eae52c8a7486cad
 v236_conflict_ledger=completed
 kimi_schema_persistence=user_accepted_out_of_scope
 prepush=pending external gate
