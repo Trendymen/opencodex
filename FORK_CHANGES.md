@@ -229,8 +229,8 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `tests/fork-zhipu-glm-schema-lowering.test.ts`。39 工具测试是与已观察数量一致的
   合成目录，不等同于真实 Codex App fixture；智谱测试另覆盖顶层工具和 Responses
   Lite `additional_tools`。
-- **官方对比：** `v2.35.0:src/adapters/openai-responses.ts`（blob
-  `70e6e7a1d772e9728e31c8ff5532dc80c1ea87d0`）仍通过
+- **官方对比：** `v2.36.0:src/adapters/openai-responses.ts`（blob
+  `047c60a6a3fafefaa5d4ea0fea199565286d5054`）仍通过
   `collectResponsesToolGroups`、`rewriteRoutedCustomToolsForUpstream` 等通用 Responses
   处理转发工具；其中没有 `applyGlmKimiOutboundCompatibility`、精确 Ark Plan endpoint
   gate 或 `$defs/$ref/oneOf/allOf` compiler。Fork 的
@@ -375,7 +375,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `buildProviderTableBlock` 写入该 capability；该 Fork 差异承载于
   `0124c2809cb40c29603cff196e6d2182559bd48d`。尚缺绑定当前实现 SHA 的真实 Codex App
   验收，不能以孤立配置观察替代。
-- **官方对比：** `v2.35.0:src/codex/inject.ts`（blob
+- **官方对比：** `v2.36.0:src/codex/inject.ts`（blob
   `72be57878470077e9b3c434726aea329e007d79c`）同一 `buildProviderTableBlock` 只接受
   `supportsWebsockets`/auth/hostname 参数，已核对不含
   `supports_standalone_web_search`；Fork injection path 是上述 `src/codex/inject.ts`，
@@ -392,7 +392,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 - **代码：** `src/providers/model-discovery.ts`、`src/providers/registry.ts`。
 - **测试：** `tests/zhipu-bigmodel-codex-provider.test.ts`。定向/registry 测试、typecheck、
   完整套件与真实 discovery/Responses 回放均通过；提交为 `c9446e0b5`。
-- **官方对比：** `v2.35.0:src/providers/model-discovery.ts`（blob
+- **官方对比：** `v2.36.0:src/providers/model-discovery.ts`（blob
   `ada0bd2aecc196e003d0b1720c96d864e4793dbc`）只以默认 `data[]`/`id` envelope 取值，
   没有 `zhipu-bigmodel-codex`、`https://open.bigmodel.cn/api/v1` 或 `models[].slug` gate。
   Fork `src/providers/model-discovery.ts`（blob
@@ -413,8 +413,9 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   unreadable 集合，也会在最终路由确定后、派发给非官方转发 Provider 前触发同一
   恢复路径；恢复失败时保持 fail-closed。恢复重放不再进入其他
   OAuth/429/account/opaque/combo 重试。
-  `v2.35.0:src/server/responses/agent-task-recovery.ts` 的 blob
-  `70003c116bfc2d6fb9a85dab355827fff2295acc` 与 `v2.34.0` 相同，仍以
+  `v2.36.0:src/server/responses/agent-task-recovery.ts`（blob
+  `8b409e175bfb83345ac147ccbeb4b5bc4d462fcf`，相对 `v2.34.0` 新增官方 cache
+  admission 重构）仍以
   `structurallyValidFernetTokens` 识别 Fernet envelope；官方没有扩展 strict backend
   ciphertext 识别。Fork 行为：strict non-Fernet envelope recognition、admission、routed trigger 与
   fail-closed forwarding 都由 `src/server/responses/encrypted-payload.ts`、
@@ -479,7 +480,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 - **状态：** Fork 独有——保留。
 - **包版本：** 官方稳定版 `X.Y.Z` 对应 Fork 包版本 `X.Y.Z-ben.N`。当前为
-  `2.35.0-ben.2`（`v2.35.0-ben.1` Tag 保留为历史不可变修订）。`N` 从 1 开始且必须是安全整数；
+  `2.36.0-ben.1`（`v2.35.0-ben.1`/`ben.2`/`ben.3` Tag 保留为历史不可变修订）。`N` 从 1 开始且必须是安全整数；
   `ben.0`、前导零、超安全整数或其他 suffix 不属于该策略。
 - **更新语义：** 官方同基线稳定版与当前 Fork 等价，不允许显式 `ocx update` 用同基线
   官方包覆盖 Fork；registry target 无法解析时，`ben` build 在任何 cache/stop/install
@@ -504,7 +505,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 - **状态：** 官方部分覆盖——只保留剩余差异。
 - **Fork 剩余行为：** launcher/update 测试规避环境 runtime shim 与不支持的 PATH interception。`tests/server-auth.test.ts` 的 serial lane membership 与 watchdog 预算已按用户要求还原为官方行为。
 - **代码：** `tests/shutdown-launcher.test.ts`、`tests/update-stop-first.test.ts`。
-- **官方对比：** `v2.35.0:tests/update-stop-first.test.ts`（blob
+- **官方对比：** `v2.36.0:tests/update-stop-first.test.ts`（blob
   `0f7fd7ff55ec23cbdea4d157df61262bd9f8cd8e`，merge
   `fe063d16ef620a148ab425cfffe63a8936d00e52`）已包含 recovery PID cleanup、
   `UPDATE_SPAWN_TIMEOUT_MS`/`PROXY_READY_TIMEOUT_MS` 派生预算，以及 cleanup 后才
@@ -528,11 +529,11 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 ### Prepush 与 GitHub CI
 
 - **状态：** 官方部分覆盖——保留 Fork 基线门禁。
-- **证据：** `prepush` package script 与 `v2.35.0` 一致；Fork 只新增
+- **证据：** `prepush` package script 与 `v2.36.0` 一致；Fork 只新增
   `.github/workflows/ci.yml` 的 origin-only 官方基线验证，精确验证 official ref 的
   lightweight/annotated 类型、raw/peeled commit、official main ancestry 与
-  `origin/upstream-release` marker。官方 `v2.35.0` 的实测 ref type 为 `commit`，其
-  raw/peeled/marker 均为 `fc4de772b58c13f7b16b5029b1e981d612a5db06`；因此不得再把
+  `origin/upstream-release` marker。官方 `v2.36.0` 的实测 ref type 为 `commit`，其
+  raw/peeled/marker 均为 `c7d8407d29bdd98b7ba743c85e654a41b3e4fca8`；因此不得再把
   annotated-only 写成 provenance 要求。这不是对官方 CI 的替代，也不把 workflow 扩展为
   生产运行时能力。runner-local official ref proof 每轮重新验证；Fork origin 必须保留每个
   已 rebase 基线的同名 exact official Tag，但固定官方 URL 而非 origin 始终是 provenance
