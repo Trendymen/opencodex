@@ -183,9 +183,9 @@ export function deriveComboCatalogModel(
     ...(combo.alias ? { alias: combo.alias } : {}),
     ...(combo.nativeAlias ? { nativeAlias: true } : {}),
     ...(combo.displayName ? { displayName: combo.displayName } : {}),
-    routedProgressContractEligible: members.every(
-      member => member.routedProgressContractEligible === true,
-    ),
+    ...(members.every(member => member.routedProgressContractEligible === true)
+      ? { routedProgressContractEligible: true }
+      : {}),
     ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
     ...(members.every(member => member.parallelToolCalls === true)
       ? { parallelToolCalls: true }

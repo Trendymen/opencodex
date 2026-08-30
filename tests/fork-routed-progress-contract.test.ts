@@ -348,8 +348,8 @@ describe("fork routed progress contract", () => {
       { provider: thirdB.provider, model: thirdB.id, weight: 1 },
     ]) as never, [thirdA, thirdB]);
 
-    expect(allOfficial?.routedProgressContractEligible).toBe(false);
-    expect(mixed?.routedProgressContractEligible).toBe(false);
+    expect(allOfficial?.routedProgressContractEligible).toBeUndefined();
+    expect(mixed?.routedProgressContractEligible).toBeUndefined();
     expect(allThirdParty?.routedProgressContractEligible).toBe(true);
   });
 
