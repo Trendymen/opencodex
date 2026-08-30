@@ -30,21 +30,71 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 审计日期 | 2026-08-30 |
+| 审计日期 | 2026-08-31 |
 | 最新官方稳定 Release | [`v2.36.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.36.0) |
 | 官方 Tag commit | `c7d8407d29bdd98b7ba743c85e654a41b3e4fca8` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `bfa50761701e4db9f8075c37314e52344568452c` |
-| Fork 包版本 | `2.36.0-ben.1` |
-| 本轮派生 Tag | `v2.36.0-ben.1`，在本文档末尾提交完成后创建 |
+| 本轮实现 HEAD | `f6edfabdb1772174524653b37e108609ab47e161` |
+| Fork 包版本 | `2.36.0-ben.2` |
+| 本轮派生 Tag | `v2.36.0-ben.2`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.36.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 115 个文件，新增 16,168 行，删除 174 行 |
+| 已提交修改面 | 115 个文件，新增 16,203 行，删除 174 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
-本轮相对 `v2.35.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
-提交不属于该实现快照。相对 immutable `ben.1` 边界的原始 rebase 重叠为 16 paths：
-`package.json` 是唯一冲突，其余 15 条路径均自动合并。这个历史冲突账户不包含后续
-ben.2 的 CI workflow 新增路径。
+本轮相对 `v2.36.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
+提交不属于该实现快照。当前 v2.36.0 rebase 的官方变化与 Fork 历史共有 25 条路径，
+其中 5 条出现实际内容冲突；下方机器块逐项记录官方行为、Fork 保留差异、最终取舍和
+关联测试。历史 v2.35.0-ben.1 的 16-path / 1-conflict 账户仍保留在其专用区块，仅用于
+追溯，不能作为本轮冲突结论。
+
+<!-- v236-rebase-conflicts:start -->
+official_old=v2.35.0
+official_new=v2.36.0
+overlap_path_count=25
+content_conflict_count=5
+content_conflicts=package.json,src/adapters/openai-responses.ts,src/config.ts,src/lib/upstream-retry.ts,src/server/responses/core.ts
+decision_package_json=official=scripts/dependencies；fork=install:local与ben版本；resolution=保留官方脚本和依赖并保留Fork本地安装入口；tests=tests/release-version-line.test.ts,tests/fork-maintenance-truth.test.ts
+decision_src_adapters_openai_responses_ts=official=prompt-cache空工具输出和Responses通用工具链；fork=精确GLM_Kimi兼容和原始字段保真；resolution=保留双方且Fork兼容置于官方通用规范化后的最终出站边界；tests=tests/fork-glm-kimi-compat.test.ts,tests/fork-zhipu-glm-schema-lowering.test.ts,tests/openai-responses-passthrough.test.ts
+decision_src_config_ts=official=provider配置schema演进；fork=inferResponsesMessagePhaseModels；resolution=在官方schema上追加窄字段并贯通读取写入和DTO；tests=tests/fork-provider-message-phase-config.test.ts,tests/provider-model-discovery-contract.test.ts
+decision_src_lib_upstream_retry_ts=official=共享transient_5xx总发送预算；fork=恢复与continuation共享预算；resolution=合并为单一预算且保留Fork恢复链的实际send计数；tests=tests/upstream-transient-retry.test.ts,tests/agent-task-recovery.test.ts
+decision_src_server_responses_core_ts=official=Responses终端和重试生命周期；fork=nested_exec修复严格加密恢复turn_termination重绑和消息phase；resolution=官方生命周期保留Fork通过窄接线在同一资源生命周期内组合；tests=tests/fork-agent-task-recovery-kiro-turn-termination.test.ts,tests/nested-exec-repair.test.ts,tests/responses-message-phase-rewrite.test.ts
+<!-- v236-rebase-conflicts:end -->
+
+### v2.36.0-ben.2 审查修订
+
+`v2.36.0-ben.1` 是不可变历史 Tag；本修订不移动、不删除或重建它。实现提交
+`f6edfabdb1772174524653b37e108609ab47e161` 只推进包版本并把当前 v2.36 冲突台账
+锁入维护真源测试。当前审查确认 25 个 overlap 与 5 个内容冲突的合并结果仍保留官方
+v2.36 行为和 Fork 所需差异；本节的机器块是后续同步时唯一可作为当前 v2.36 冲突结论
+的账户。
+
+Kimi 工具 schema catalog 的持久化行为已在代码审查中被标记为隐私/最小修改面问题；
+用户明确要求本修订不改变该兼容路径，因此它作为用户接受的现有行为保留，不作为
+v2.36.0-ben.2 的修复范围或新能力宣称。
+
+`bun run prepush` 与 `workflow_dispatch` 的 `run_windows=true` Windows suite 是本修订
+的后续验证门；在 Tag、promotion、final CI 和 Release 之前必须真实执行并记录结果。
+
+<!-- v236-ben2-review:start -->
+base_tag=v2.36.0
+base_peeled=c7d8407d29bdd98b7ba743c85e654a41b3e4fca8
+ben1_history=immutable
+implementation_head=f6edfabdb1772174524653b37e108609ab47e161
+v236_conflict_ledger=completed
+kimi_schema_persistence=user_accepted_out_of_scope
+prepush=pending external gate
+windows_dispatch=pending external gate
+candidate_cross_platform_ci=pending external gate
+atomic_promotion=pending external gate
+final_main_cross_platform_ci=pending external gate
+github_release=pending external gate
+<!-- v236-ben2-review:end -->
+
+### 历史 v2.35.0-ben.1 rebase 冲突账户（非本轮结论）
+
+相对 immutable `v2.35.0-ben.1` 边界的历史 rebase 重叠为 16 paths：`package.json`
+是唯一冲突，其余 15 条路径均自动合并。这个历史冲突账户不包含后续 ben.2 的 CI workflow
+新增路径，也不代表 v2.36.0 的冲突结果。
 
 <!-- ben2-overlap:start -->
 Conflict (1):
