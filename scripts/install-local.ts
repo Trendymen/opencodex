@@ -298,20 +298,24 @@ export async function runLocalInstallLifecycle(
   await deps.stop();
   try {
     await deps.verifyStopped();
+  } catch (verifyError) {
+    throw verifyError;
+  }
+  try {
     await deps.replace();
-  } catch (error) {
+  } catch (replaceError) {
     if (restart) {
       try {
         await deps.restart();
         await deps.ready();
       } catch (restartError) {
         throw new AggregateError(
-          [error, restartError],
+          [replaceError, restartError],
           "local package replacement failed and the previous proxy mode could not be restored",
         );
       }
     }
-    throw error;
+    throw replaceError;
   }
   if (!restart) return;
   await deps.restart();
