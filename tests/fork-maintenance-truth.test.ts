@@ -33,6 +33,14 @@ const EXPECTED_ATOMIC_REFSET = [
   ["tag", "fork", "no-force-no-lease", "refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N"],
 ] as const;
 
+const EXPECTED_V236_CONFLICT_PATHS = [
+  "package.json",
+  "src/adapters/openai-responses.ts",
+  "src/config.ts",
+  "src/lib/upstream-retry.ts",
+  "src/server/responses/core.ts",
+] as const;
+
 function machineBlock(source: string, name: string): string {
   const match = source.match(new RegExp(
     `<!-- ${name}:start -->\n([\\s\\S]*?)\n<!-- ${name}:end -->`,
@@ -112,6 +120,33 @@ describe("Fork maintenance truth", () => {
     expect(conflicts).toHaveLength(1);
     expect(merges).toHaveLength(15);
     expect(union).toHaveLength(16);
+  });
+
+  test("records the current v2.36 rebase conflict decisions separately from the historical ben.1 overlap", () => {
+    const current = machineBlock(changes, "v236-rebase-conflicts");
+    const rows = Object.fromEntries(current.split("\n").map((line) => {
+      const match = line.match(/^([a-z0-9_]+)=(.+)$/);
+      expect(match, `invalid v236-rebase-conflicts row: ${line}`).not.toBeNull();
+      return [match![1]!, match![2]!];
+    }));
+
+    expect(rows.official_old).toBe("v2.35.0");
+    expect(rows.official_new).toBe("v2.36.0");
+    expect(rows.overlap_path_count).toBe("25");
+    expect(rows.content_conflict_count).toBe("5");
+    expect(rows.content_conflicts?.split(",")).toEqual(EXPECTED_V236_CONFLICT_PATHS);
+
+    for (const path of EXPECTED_V236_CONFLICT_PATHS) {
+      const key = `decision_${path.replaceAll("/", "_").replaceAll(".", "_").replaceAll("-", "_")}`;
+      const decision = rows[key];
+      expect(decision, `missing v2.36 decision for ${path}`).toBeDefined();
+      expect(decision).toContain("official=");
+      expect(decision).toContain("fork=");
+      expect(decision).toContain("resolution=");
+      expect(decision).toContain("tests=");
+    }
+
+    expect(changes.indexOf("<!-- ben2-overlap:start -->")).toBeGreaterThan(current.indexOf("official_old=v2.35.0"));
   });
 
   test("records the ben.3 39-to-5 squash boundary and pending external gates", () => {
