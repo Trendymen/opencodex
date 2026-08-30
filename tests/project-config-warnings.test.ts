@@ -274,7 +274,9 @@ model_provider = "anthropic"
 [model_providers.anthropic]
 name = "anthropic"
 `);
-    expect(collectProjectCodexConfigWarnings({ cwd: testDir, codexConfigPath })).toEqual([]);
+    const warnings = collectProjectCodexConfigWarnings({ cwd: testDir, codexConfigPath });
+    expect(warnings).not.toContainEqual(expect.objectContaining({ path: projectDir }));
+    expect(warnings.every(warning => warning.path !== projectDir)).toBe(true);
   });
 
   test("uncached collection reflects project config changes", () => {

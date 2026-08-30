@@ -1,7 +1,7 @@
-import { chmodSync, existsSync, lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { commandInvocation } from "../src/lib/win-exec";
 import {
@@ -18,6 +18,60 @@ import { statusWinswRaw, type WinswStatus } from "../src/lib/winsw";
 import { runWithBundledDependencies } from "./install-local-vendor";
 
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
+const GUI_FONT_STACK = '--font-ui:"OpenAI Sans", "Noto Sans SC", "Microsoft YaHei UI"';
+const GUI_FONT_DECLARATION = /--font-ui:"OpenAI Sans"[^;}]*/g;
+const ANY_GUI_FONT_DECLARATION = /--font-ui:[^;}]*/g;
+
+export function patchBuiltGuiFontStack(
+  assetsDir = join(root, "gui", "dist", "assets"),
+): { files: number; replacements: number } {
+  if (!existsSync(assetsDir)) {
+    throw new Error("built GUI assets directory not found: gui/dist/assets");
+  }
+  const assetsStat = lstatSync(assetsDir);
+  if (!assetsStat.isDirectory() || assetsStat.isSymbolicLink()) {
+    throw new Error("built GUI assets path must be a regular directory: gui/dist/assets");
+  }
+  let files = 0;
+  let replacements = 0;
+  for (const entry of readdirSync(assetsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".css")) continue;
+    const cssPath = join(assetsDir, entry.name);
+    const css = readFileSync(cssPath, "utf8");
+    const matches = css.match(GUI_FONT_DECLARATION);
+    if (!matches?.length) continue;
+    const patched = css.replace(GUI_FONT_DECLARATION, GUI_FONT_STACK);
+    writeFileSync(cssPath, patched, "utf8");
+    files += 1;
+    replacements += matches.length;
+  }
+  if (files === 0) throw new Error("built GUI CSS contains no --font-ui declaration to patch");
+  assertGuiFontStack(assetsDir, "built gui/dist/assets");
+  return { files, replacements };
+}
+
+export function assertGuiFontStack(assetsDir: string, label = "gui/dist/assets"): void {
+  if (!existsSync(assetsDir)) throw new Error(`${label} not found`);
+  const assetsStat = lstatSync(assetsDir);
+  if (!assetsStat.isDirectory() || assetsStat.isSymbolicLink()) {
+    throw new Error(`${label} must be a regular directory`);
+  }
+  let declarations = 0;
+  for (const entry of readdirSync(assetsDir, { withFileTypes: true })) {
+    if (!entry.name.endsWith(".css")) continue;
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw new Error(`${label} contains a non-regular CSS entry`);
+    }
+    const cssPath = join(assetsDir, entry.name);
+    const css = readFileSync(cssPath, "utf8");
+    const found = css.match(ANY_GUI_FONT_DECLARATION) ?? [];
+    declarations += found.length;
+    if (found.some(declaration => declaration !== GUI_FONT_STACK)) {
+      throw new Error(`${label} contains a non-canonical --font-ui declaration`);
+    }
+  }
+  if (declarations === 0) throw new Error(`${label} contains no --font-ui declaration`);
+}
 
 export function localInstallRestartArgs(serviceWasInstalled: boolean): string[] {
   return serviceWasInstalled ? ["ocx", "service", "repair"] : ["ocx", "start"];
@@ -242,8 +296,23 @@ export async function runLocalInstallLifecycle(
   deps: LocalInstallLifecycleDeps,
 ): Promise<void> {
   await deps.stop();
-  await deps.verifyStopped();
-  await deps.replace();
+  try {
+    await deps.verifyStopped();
+    await deps.replace();
+  } catch (error) {
+    if (restart) {
+      try {
+        await deps.restart();
+        await deps.ready();
+      } catch (restartError) {
+        throw new AggregateError(
+          [error, restartError],
+          "local package replacement failed and the previous proxy mode could not be restored",
+        );
+      }
+    }
+    throw error;
+  }
   if (!restart) return;
   await deps.restart();
   await deps.ready();
@@ -293,6 +362,20 @@ function packageIdentity(): { name: string } {
   return { name: pkg.name };
 }
 
+function installedPackageRoot(name: string): string {
+  const result = runCaptured(["npm", "root", "-g"]);
+  if (result.status !== 0 || result.stdout.trim().length === 0) {
+    throw new Error(`could not resolve npm global root: ${result.stderr.trim() || `exit ${result.status}`}`);
+  }
+  const globalRoot = resolve(result.stdout.trim());
+  const packageRoot = resolve(globalRoot, ...name.split("/"));
+  const child = relative(globalRoot, packageRoot);
+  if (!child || child.startsWith("..") || isAbsolute(child)) {
+    throw new Error("resolved npm package path escapes the global root");
+  }
+  return packageRoot;
+}
+
 export async function runLocalInstaller(args = process.argv.slice(2)): Promise<number> {
   const restart = args.length === 0 ? true : args.length === 1 && args[0] === "--no-restart" ? false : null;
   if (restart === null) {
@@ -303,6 +386,9 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
   const { name } = packageIdentity();
   console.log("==> Building GUI...");
   run(["bun", "run", "build:gui"]);
+  console.log("==> Patching built GUI font stack...");
+  const fontPatch = patchBuiltGuiFontStack();
+  console.log(`    patched ${fontPatch.replacements} declaration(s) across ${fontPatch.files} CSS file(s)`);
 
   console.log("==> Packing immutable local snapshot...");
   const tarball = runWithBundledDependencies(join(root, "package.json"), () => {
@@ -317,6 +403,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
     return validatedPackedTarball(root, new TextDecoder().decode(pack.stdout));
   });
 
+  let lifecycleError: unknown;
   try {
     const serviceProbe = probeLocalServiceInstallation();
     const serviceWasInstalled = requireKnownServiceInstallation(serviceProbe);
@@ -349,6 +436,11 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         // keeps its install.js fallback for a genuinely missing binary.
         run(["npm", "install", "-g", "--ignore-scripts", tarball]);
         run(["ocx", "--version"]);
+        assertGuiFontStack(
+          join(installedPackageRoot(name), "gui", "dist", "assets"),
+          "installed gui/dist/assets",
+        );
+        console.log("    installed GUI font stack verified");
         localInstallAfterReplace(serviceWasInstalled, restart);
       },
       restart: () => {
@@ -361,9 +453,23 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         run(["ocx", "ready", "--json", "--wait", "--timeout", "30"]);
       },
     });
-  } finally {
-    rmSync(tarball, { force: true });
+  } catch (error) {
+    lifecycleError = error;
   }
+  let cleanupError: unknown;
+  try {
+    rmSync(tarball, { force: true });
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (lifecycleError !== undefined && cleanupError !== undefined) {
+    throw new AggregateError(
+      [lifecycleError, cleanupError],
+      "local install failed and its temporary tarball could not be removed",
+    );
+  }
+  if (lifecycleError !== undefined) throw lifecycleError;
+  if (cleanupError !== undefined) throw cleanupError;
 
   console.log("Done. Source edits will not affect this packaged runtime until you run this installer again.");
   return 0;
