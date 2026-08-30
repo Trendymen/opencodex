@@ -254,6 +254,35 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 - **官方对比：** 官方 bridge 已对 adapter event 做 phase 推断，但原生 Responses
   passthrough 没有可配置的 phase inference；不能因名称相似删除 Fork 状态机。
 
+### 第三方工具任务的用户可见进度契约
+
+- **状态：** Fork 独有——保留。
+- **行为：** 第三方模型的工具任务会收到同一份 provider-neutral 进度契约：首次工具调用前、
+  重要里程碑后、长操作前、最多连续四个纯工具响应后，以及工作中收到新用户消息后，使用
+  普通 assistant 文本向用户更新。写入契约前，会把已知 GPT 双 channel 总览、Intermediate
+  commentary 段、compaction 更新措辞和 skill 通知措辞精确改写为普通 assistant 语义；
+  最终第三方提示不再包含 `commentary`、`final_answer` 或 channel 等 Codex/GPT 专属术语，
+  并尊重用户明确提出的静默或不同节奏要求。转换型 adapter 复用
+  既有 non-OpenAI tool-catalog nudge；原生 Responses passthrough 只在非 OpenAI 运营目标、
+  请求确实带工具且已有字符串 `instructions` 时幂等追加。routed compaction、缺失/非字符串
+  instructions、ChatGPT forward 和公共 OpenAI Responses 都保持原始字节形状。任务完成时，
+  契约要求模型用一条自包含的普通 assistant 响应清楚说明结果。
+- **边界：** OCX 不合成 assistant 进度消息，也不把工具调用等同于真实仓库进展。已有
+  message phase 推断只负责给模型实际生成的文本补 `commentary` / `final_answer`。provider
+  debug 仅记录 instruction 字节数与契约存在布尔值，不落盘提示正文。
+- **代码：** `src/fork/routed-progress-contract.ts`；最小接线位于
+  `src/adapters/identity.ts`、`src/adapters/anthropic.ts`、
+  `src/adapters/google.ts`、`src/adapters/openai-chat.ts`、
+  `src/adapters/command-code.ts`、`src/adapters/kiro.ts`、
+  `src/adapters/cursor/request-builder.ts`、`src/adapters/openai-responses.ts`、
+  `src/codex/catalog/parsing.ts`、`src/codex/catalog/provider-fetch.ts`、
+  `src/codex/catalog/aggregation.ts`、`src/codex/catalog/sync.ts` 和
+  `src/fork/outbound-debug.ts`。
+- **测试：** `tests/fork-routed-progress-contract.test.ts` 覆盖转换型 adapter、模板/无模板
+  catalog、Responses wire 幂等、ChatGPT/public OpenAI 不变和脱敏 debug 证据。
+- **官方对比：** 官方 `v2.35.0` 已有 non-OpenAI tool-catalog nudge 与 routed identity
+  修复，但没有普通 assistant 进度契约、第三方 Responses wire 注入或对应 debug 证明。
+
 ### Nested code-mode 工具修复
 
 - **状态：** 官方部分覆盖——保留差异。

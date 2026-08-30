@@ -22,6 +22,7 @@ import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-t
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeXaiResponsesWebSearch } from "./xai-web-search";
 import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../fork/glm-kimi-compat";
+import { applyRoutedProgressContractToResponsesBody } from "../fork/routed-progress-contract";
 import { debugResponsesOutboundShape } from "../fork/outbound-debug";
 import {
   isXaiSchemaTarget,
@@ -2097,6 +2098,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // anything after it cannot.
       if (parsed._compactionRequest === true && !isCanonicalOpenAiForwardProvider(provider)) {
         outBody = buildRoutedCompactionBody(outBody);
+      }
+      if (parsed._compactionRequest !== true && !isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = applyRoutedProgressContractToResponsesBody(outBody);
       }
       const glmKimiCompatibility = applyGlmKimiOutboundCompatibility({
         body: outBody,

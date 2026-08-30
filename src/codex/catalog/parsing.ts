@@ -124,6 +124,8 @@ export interface CatalogModel {
    * forward provider. It may inherit pinned native Codex metadata without changing its wire id.
    */
   codexForwardNativeCapabilityAlias?: boolean;
+  /** Destination-derived prompt policy; true only when the configured route is third-party. */
+  routedProgressContractEligible?: boolean;
   /** Whether Codex may send Responses text.verbosity for this routed model. */
   supportsVerbosity?: boolean;
   /** Whether this exact routed model has a verified OpenAI-compatible service tier. */

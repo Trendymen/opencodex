@@ -69,7 +69,7 @@ describe("base variant selection", () => {
     expect(selectBaseVariant({ kind: "variant", id }, rev(paths), paths).ok).toBe(true);
     const withVariant = read(paths.configPath)!;
     expect(withVariant).toContain("model_instructions_file = ");
-    expect(withVariant).toContain(resolve(join(paths.baseVariantDir, id + ".md")));
+    expect(withVariant).toContain(resolve(join(paths.baseVariantDir, id + ".md")).replace(/\\/g, "\\\\"));
     expect(readPromptLayers(paths).baseSelection).toEqual({ kind: "variant", id });
 
     expect(selectBaseVariant({ kind: "default" }, rev(paths), paths).ok).toBe(true);

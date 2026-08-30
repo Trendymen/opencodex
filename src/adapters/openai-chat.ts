@@ -8,7 +8,7 @@ import { isDebugEnabled } from "../lib/debug-settings";
 import { isCyberPolicyCode } from "../lib/errors";
 import { redactSecretString } from "../lib/redact";
 import { contentPartsToText } from "./image";
-import { identifyRoutedModel } from "./identity";
+import { identifyRoutedModel, identifyRoutedToolPrompt } from "./identity";
 import { peekReasoningForCall } from "../responses/reasoning-replay-cache";
 import { buildNonOpenAIToolCatalogNudgeForTools, shouldInjectNonOpenAIToolCatalogNudge } from "./tool-catalog-nudge";
 import { openRouterProviderPayload, resolveOpenRouterRouting } from "../providers/openrouter-routing";
@@ -679,7 +679,8 @@ function messagesToChatFormat(parsed: OcxParsedRequest, provider: OcxProviderCon
     const wireModelId = provider.modelSuffixBracketStrip
       ? stripBracketedModelSuffix(parsed.modelId)
       : parsed.modelId;
-    const sys = identifyRoutedModel(systemParts.join("\n\n"), wireModelId);
+    const identifySystem = toolCatalogNudge ? identifyRoutedToolPrompt : identifyRoutedModel;
+    const sys = identifySystem(systemParts.join("\n\n"), wireModelId);
     out.push({ role: "system", content: sys });
   }
 

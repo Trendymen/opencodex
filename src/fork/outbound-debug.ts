@@ -4,6 +4,7 @@ import type { OcxProviderConfig } from "../types";
 import { debugProviderDiagnostic } from "../lib/debug";
 import { isDebugEnabled } from "../lib/debug-settings";
 import type { KimiToolSchemaLoweringDiagnostic } from "./glm-kimi-compat";
+import { hasRoutedProgressContract } from "./routed-progress-contract";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -120,6 +121,10 @@ export function debugResponsesOutboundShape(args: {
     toolChoice: body.tool_choice,
     parallelToolCalls: body.parallel_tool_calls,
     previousResponseIdPresent: typeof body.previous_response_id === "string" && body.previous_response_id.length > 0,
+    instructions: {
+      bytes: typeof body.instructions === "string" ? Buffer.byteLength(body.instructions, "utf8") : 0,
+      routedProgressContractPresent: hasRoutedProgressContract(body.instructions),
+    },
     topLevelTools: debugToolSummary(Array.isArray(body.tools) ? body.tools : []),
     additionalTools: debugToolSummary(additionalTools),
     input: {
