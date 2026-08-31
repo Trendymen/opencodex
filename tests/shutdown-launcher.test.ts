@@ -21,8 +21,9 @@ import { removeTreeWithRetry } from "./helpers/remove-tree";
  */
 
 const BIN_OCX = join(import.meta.dir, "..", "bin", "ocx.mjs");
-const nodeAvailable = !spawnSync("node", ["--version"], { stdio: "ignore" }).error;
-const runnable = process.platform !== "win32" && nodeAvailable;
+const nodeProbe = spawnSync("node", ["-p", "process.execPath"], { encoding: "utf8" });
+const nodeExecutable = nodeProbe.status === 0 ? nodeProbe.stdout.trim() : "";
+const runnable = process.platform !== "win32" && nodeExecutable.length > 0;
 
 const spawned: ChildProcess[] = [];
 const tmpHomes: string[] = [];
@@ -91,7 +92,10 @@ describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
         const codexConfig = join(home, "config.toml");
         writeFileSync(codexConfig, 'model = "gpt-5.1"\n');
 
-        const child = spawn("node", [BIN_OCX, "start", "--port", String(port)], {
+        // `node` can be a version-manager shim (Volta/asdf). Signalling the shim PID lets the
+        // real Node launcher survive as an orphan, which makes this test report the product bug
+        // it is meant to prevent. Probe process.execPath once and launch that executable directly.
+        const child = spawn(nodeExecutable, [BIN_OCX, "start", "--port", String(port)], {
           stdio: "ignore",
           env: {
             ...process.env,
