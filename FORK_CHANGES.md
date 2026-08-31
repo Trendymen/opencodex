@@ -36,13 +36,16 @@
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
 | ben.1 实现 HEAD | `b21ffe791f95cd2c0c44a3d0019c2b9a746e8be0` |
 | ben.1 派生 Tag | `v2.37.0-ben.1`（peeled `842654520bde9ec358ce49f43e6bb3533555728f`，不可变） |
-| 当前修订 | `ben.2`：新增实现提交见下表，官方基线仍为 `v2.37.0`（无新官方 Release） |
+| 当前修订 | `ben.3`：全量历史压缩发布，官方基线仍为 `v2.37.0`（无新官方 Release） |
 | ben.2 实现 HEAD | `b4fc9d7bc749874d5c1bd5a68832cc2e094579d2`（`feat(responses): 分段聚合第三方 reasoning summary 为多 part`） |
-| Fork 包版本 | `2.37.0-ben.2` |
-| 本轮派生 Tag | `v2.37.0-ben.2`，在本文档末尾提交完成后创建 |
+| ben.2 派生 Tag | `v2.37.0-ben.2`（peeled `4108827bd655fc4d87701faf98fe2ae84c893c75`，不可变） |
+| ben.3 实现 HEAD | `2e3a137770dc211acffb8345ed97a3be2fea8a27`（C4 版本真源；C1-C3 压缩树与 ben.2 树逐 blob 等价） |
+| Fork 包版本 | `2.37.0-ben.3` |
+| 本轮派生 Tag | `v2.37.0-ben.3`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.37.0`，最终必须与派生 Tag 指向同一 commit |
 | ben.1 已提交修改面 | 134 个文件，新增 17,307 行，删除 191 行 |
 | ben.2 已提交修改面 | 135 个文件，新增 17,694 行，删除 193 行（相对 `v2.37.0`，不含末尾文档提交） |
+| ben.3 提交形态 | 32 笔（31 笔 Fork 提交 + 1 笔旧末尾文档提交）收敛为 5 笔（C1 feat / C2 test / C3 chore / C4 版本真源 / C5 末尾文档）；C3 树与 ben.2 树逐 blob 等价，C4 仅 package.json 版本行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 本轮相对 `v2.37.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
@@ -84,6 +87,24 @@ tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts,tes
 - 修改面：仅 `src/server/responses-reasoning-summary-rewrite.ts`（相对 ben.1 +240/−56）与上述新测试文件；无公共 API、路由或 provider 行为变化，passthrough 与 JSON 改写路径行为保持。
 - ben.2 实现 HEAD 短统计（相对官方 `v2.37.0`）：135 个文件，新增 17,694 行，删除 193 行。
 - 验证边界：聚焦 5 个 reasoning-summary 测试文件 31 pass；`bun run typecheck` 通过；`bun run test:changed` 14,319 tests / 0 fail；独立 reviewer COMBINED_REVIEW Approved（无 Critical/Important finding）。
+
+## v2.37.0-ben.3 全量历史压缩与发布边界
+
+本修订只重组已提交的 Fork 历史，不改变 ben.2 已有运行时、兼容层、测试或 CI 内容。不可变源 Tag `v2.37.0-ben.2` 的 peeled commit 为 `4108827bd655fc4d87701faf98fe2ae84c893c75`，其历史保持不可变，不移动、不删除、不重建。
+
+压缩结构（相对官方 `v2.37.0` / `54e2274cff231631c0ea2ff12574ff03829d5fe6`，32 笔收敛为 5 笔）：
+
+- C1 `feat: 汇总 Fork 运行时与兼容扩展`：全部 src、gui、docs-site、structure 与 .gitignore（72 文件）。
+- C2 `test: 汇总 Fork 回归与兼容覆盖`：全部 Fork 测试与真源/台账锚点（48 文件）。
+- C3 `chore: 汇总 Fork CI 发布与审计基础设施`：CI workflow、本地安装与官方基线准备脚本、代理本地规则、维护真源 FORK_CHANGES.md 与 superpowers 审计文档（15 文件）。
+- C4 `chore: 推进 v2.37.0-ben.3 版本真源`：仅 package.json 版本行推进为 `2.37.0-ben.3`。
+- C5 末尾文档提交（本轮 FORK_CHANGES.md 更新）。
+
+树等价不变量：C3 树与 ben.2 末尾文档树（`4108827bd`）逐 blob 完全一致（`git diff` 为空）；C4 仅 package.json 版本行差异；C5 仅 FORK_CHANGES.md。
+
+提交形态收敛记录：原栈中跨 ben.1/ben.2 的 rebase 过程提交（含 14 笔 v2.36 轮候选、版本真源与文档往返）全部折叠进上述五笔；无能力丢失，全部修改面（135 文件）在 C1-C3 中完整保留。计数口径：git rev-list --count v2.37.0..4108827bd = 32（31 笔 Fork 提交 + 1 笔旧末尾文档提交）。
+
+新的 annotated `v2.37.0-ben.3` Tag、candidate 验证、双审、五成员 atomic promotion、最终 main CI 与 Release 流程沿用 `docs/fork-sync-automation.md` 完整 15 步流程执行。
 
 <!-- v236-rebase-conflicts:start -->
 official_old=v2.35.0
