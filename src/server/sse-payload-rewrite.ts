@@ -20,6 +20,7 @@ export type SsePayloadRewrite = (payload: string) => string;
  * once per teardown path.
  */
 export type SseBlockRewrite = ((block: string) => readonly string[]) & {
+  flush?: () => readonly string[];
   dispose?: () => void;
 };
 
@@ -49,6 +50,20 @@ export function composeSseBlockRewrites(...rewrites: SseBlockRewrite[]): SseBloc
   // Child disposal is part of the contract: one idempotent disposer for the
   // whole chain, so relay teardown never leaks a nested collector.
   let disposed = false;
+  composed.flush = () => {
+    if (disposed) return [];
+    const output: string[] = [];
+    for (let index = 0; index < active.length; index++) {
+      let blocks = active[index]!.flush?.() ?? [];
+      for (let nextIndex = index + 1; nextIndex < active.length; nextIndex++) {
+        const next: string[] = [];
+        for (const block of blocks) next.push(...active[nextIndex]!(block));
+        blocks = next;
+      }
+      output.push(...blocks);
+    }
+    return output;
+  };
   composed.dispose = () => {
     if (disposed) return;
     disposed = true;
@@ -139,6 +154,7 @@ export function relaySseWithBlockRewrite(
   const encoder = new TextEncoder();
   let buffer = "";
   let bufferBytes = 0;
+  let delimiter = "\n\n";
   // Relays have several independent teardown paths; disposal is exactly once.
   let disposed = false;
   let cancelled = false;
@@ -203,6 +219,7 @@ export function relaySseWithBlockRewrite(
     let next: { block: string; delimiter: string; rest: string } | null;
     while ((next = nextSseBlock(buffer))) {
       replaceBuffer(next.rest);
+      delimiter = next.delimiter;
       for (const outBlock of rewrite(next.block)) {
         enqueueText(controller, outBlock + next.delimiter);
         emitted += 1;
@@ -222,6 +239,12 @@ export function relaySseWithBlockRewrite(
     return emitted;
   };
 
+  const emitRewriteFlush = (controller: ReadableStreamDefaultController<Uint8Array>): number => {
+    const tailBlocks = rewrite.flush?.() ?? [];
+    for (const block of tailBlocks) enqueueText(controller, block + delimiter);
+    return tailBlocks.length;
+  };
+
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
@@ -238,6 +261,7 @@ export function relaySseWithBlockRewrite(
           if (done) {
             appendBuffer(decoder.decode());
             emitProcessedBlocks(controller, true);
+            emitRewriteFlush(controller);
             releaseBuffer();
             disposeRewrite();
             controller.close();

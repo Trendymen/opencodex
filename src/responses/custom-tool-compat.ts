@@ -6,6 +6,7 @@ import {
 } from "./apply-patch-envelope";
 import { compileCodeModeHelperInput } from "./code-mode-helper-compat";
 import { collectResponsesToolGroups } from "./tool-groups";
+import { functionCallOutputText } from "../fork/custom-tool-output";
 
 const ROUTED_CUSTOM_TOOL_PASSTHROUGH = new Set(["apply_patch"]);
 const BUILTIN_FUNCTIONS_NAMESPACE = "functions";
@@ -191,7 +192,7 @@ function rewriteForUpstream(
       || isPlainObject(value.parameters);
     if (!isDefinition) return { ...rest, type: "function" };
     const inputDescription = value.name === "exec"
-      ? "JavaScript source for unified exec. Use await tools.exec_command(...) for shell commands and text(...) to return textual output; do not provide a bare shell command."
+      ? "JavaScript source for unified exec. This exact exec function is the only top-level entry for code-mode nested tools. Invoke nested tools inside JavaScript with await tools.<name>(...), and use text(...) to return their result. Never emit nested tool names such as web__run or functions.exec as top-level function calls."
       : "Raw input for this client-executed custom tool.";
     return {
       ...rest,
@@ -228,7 +229,7 @@ function rewriteForUpstream(
     && typeof value.call_id === "string"
     && callIds.has(value.call_id)
   ) {
-    return { ...value, type: "function_call_output" };
+    return { ...value, type: "function_call_output", output: functionCallOutputText(value.output) };
   }
 
   let changed = false;

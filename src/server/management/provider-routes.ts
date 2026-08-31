@@ -338,6 +338,19 @@ function applyProviderPatchFields(
     }
     touched = true;
   }
+  if (Object.hasOwn(rawBody, "inferResponsesMessagePhaseModels")) {
+    const value = rawBody.inferResponsesMessagePhaseModels;
+    if (value === null) {
+      delete next.inferResponsesMessagePhaseModels;
+    } else {
+      const error = nonBlankStringArrayConfigError(value, "inferResponsesMessagePhaseModels");
+      if (error) return { error };
+      const models = normalizeNonBlankStringArray(value as string[]);
+      if (models.length > 0) next.inferResponsesMessagePhaseModels = models;
+      else delete next.inferResponsesMessagePhaseModels;
+    }
+    touched = true;
+  }
 
   // headers is the one object-valued field in the mask. PATCH semantics merge it
   // shallowly into the existing block so a single fingerprint header can be added
@@ -467,6 +480,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       modelAutoCompactTokenLimits: p.modelAutoCompactTokenLimits,
       modelSupportsServiceTier: p.modelSupportsServiceTier,
       noStructuredOutputModels: p.noStructuredOutputModels,
+      inferResponsesMessagePhaseModels: p.inferResponsesMessagePhaseModels,
       upstreamHttpVersion: p.upstreamHttpVersion,
       authMode: p.authMode,
       apiKeyTransport: p.apiKeyTransport,
@@ -567,6 +581,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // reached disk and the next loadConfig() refused it. Canonicalize to absent, which is what
     // "clear" means everywhere else.
     if (prov && prov.upstreamHttpVersion === null) delete prov.upstreamHttpVersion;
+    if (prov?.inferResponsesMessagePhaseModels) {
+      prov.inferResponsesMessagePhaseModels = normalizeNonBlankStringArray(prov.inferResponsesMessagePhaseModels);
+    }
     if (!name || !prov?.adapter || !prov?.baseUrl) {
       return jsonResponse({ error: "name, provider.adapter and provider.baseUrl are required" }, 400);
     }
