@@ -14,7 +14,7 @@ const ARK_AGENT_PLAN_V3 = "https://ark.cn-beijing.volces.com/api/plan/v3";
 /** True when the model family is OpenAI's own GPT line (gpt-*, o3/o4-mini, codex-*,
  *  chatgpt-*). Third-party re-hosts of other families never match this. */
 function isOpenAiGptModelFamily(modelId: string): boolean {
-  const normalized = modelId.trim().toLowerCase();
+  const normalized = typeof modelId === "string" ? modelId.trim().toLowerCase() : "";
   return /^(chatgpt|gpt|codex)([-_.]|$)/.test(normalized) || /^o[34]([-_]|$)/.test(normalized);
 }
 const ZHIPU_CODEX_RESPONSES = "https://open.bigmodel.cn/api/v1";
