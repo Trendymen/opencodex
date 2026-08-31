@@ -75,6 +75,8 @@ exec result whose outer cell emitted no usable value.
   provider-facing custom-to-function lowering.
 - Successful and failed empty exec wrappers recognized by the existing
   `normalizeEmptyExecToolResultText()` contract.
+- A monotonic successful-wrapper classifier shared by Responses, Cursor, and Kiro, preserving the
+  existing `.test()` compatibility surface without overlapping-regex backtracking.
 - Stateful, stateless, key-auth, and noncanonical forward Responses destinations inside the same
   non-OpenAI gate.
 
@@ -97,6 +99,7 @@ exec result whose outer cell emitted no usable value.
   content, or agent-task recovery.
 - Installing, replacing, restarting, or repairing the globally installed OpenCodex service.
 - Adding configuration, GUI, docs-site, or management API surface.
+- Duplicating or partially reimplementing empty-wrapper parsing inside the Responses adapter.
 
 ## Options considered
 
@@ -258,6 +261,49 @@ Both new operations are copy-on-change:
 The existing outbound diagnostics already record destination, model, tool presence, input item
 types, and body size. This task does not require a new persisted log surface.
 
+### 6. Bounded shared successful-wrapper classification
+
+The existing exported `EMPTY_EXEC_OUTPUT_REGEX` has adjacent and overlapping whitespace
+repetitions in the successful `Output:` tail. A near-match such as `Output:` plus a long whitespace
+run and one non-whitespace character exhibits approximately fourfold CPU growth when input length
+doubles. The new synchronous Responses call site makes that shared classifier reachable for
+arbitrary paired exec strings, so the task must repair the shared root rather than add an
+adapter-local parser or an arbitrary length cap.
+
+In `src/adapters/exec-tool-result-normalize.ts`, replace successful-wrapper classification with one
+monotonic forward scan that preserves the old regex language exactly, without implicitly trimming
+the direct `.test(text)` input:
+
+1. At index zero, optionally match one of the case-sensitive prefixes `Script completed`,
+   `Command finished`, or `Execution finished`. After that token, consume any non-`\n` suffix up to
+   the first `\n`, then consume that LF and every immediately contiguous LF. If no LF exists, the
+   optional status-line production cannot match.
+2. At the resulting index, optionally match case-sensitive `Wall time`. Apply the identical
+   arbitrary non-`\n` suffix plus one-or-more-contiguous-LF rule. If no LF exists, the optional
+   wall-time production cannot match.
+3. At the resulting index, optionally consume exact `Output:`. Only when `Output:` was consumed may
+   the scanner consume arbitrary ECMAScript `\s` before probing for `<empty>`.
+4. If exact `<empty>` begins at the current index, consume it. When `Output:` was absent, the marker
+   must begin at the current index; the compatibility `.test()` path must not skip leading
+   whitespace to discover it. Thus direct `.test("<empty>")` and `.test("  <empty>")` retain their
+   distinct old results even though higher-level normalizers may trim before calling.
+5. After the optional marker, consume only ECMAScript `\s` to EOF. Any duplicate marker or other
+   non-whitespace payload rejects the successful-empty classification.
+6. `Script failed` remains excluded and continues through `isFailedEmptyExecWrapper()` first.
+
+Every loop must advance one index and no prefix may be retried. Export
+`isSuccessfulEmptyExecWrapper(text: string): boolean` for direct shared use. Preserve the existing
+`EMPTY_EXEC_OUTPUT_REGEX.test(text)` consumer contract as a compatibility object backed by that
+function, because Cursor already consumes only `.test()` and no caller depends on RegExp state.
+
+The scan is a behavior-preserving performance repair. A deterministic short-input parity corpus in
+the new isolated test must compare the compatibility `.test()` result against the literal old regex
+for status suffixes, one/multiple LF, CRLF, optional Wall time, with/without Output, ECMAScript
+whitespace before and after the marker, direct leading whitespace, duplicate markers, missing
+required LF, and real payload. The long performance near-match must never be sent through the old
+regex oracle. Existing successful/failed Cursor/Kiro fixtures remain green; grammar changes outside
+the old language require a separate decision.
+
 ## Error and compatibility behavior
 
 - A compliant model emits nested results through `text(...)` and sees no post-call rewrite.
@@ -280,11 +326,13 @@ types, and body size. This task does not require a new persisted log surface.
 
 ## File scope
 
-Required production file:
+Required production files:
 
 - Modify `src/adapters/openai-responses.ts` to add the local eligibility/appender and paired-result
   normalizer, import existing predicates/constants/helpers, and activate them at two existing
   request-pipeline boundaries.
+- Modify `src/adapters/exec-tool-result-normalize.ts` to replace the successful empty-wrapper regex
+  engine path with the monotonic shared classifier while preserving the exported `.test()` surface.
 
 Required test file:
 
@@ -294,12 +342,12 @@ Required test file:
 No changes are required in:
 
 - `src/adapters/tool-catalog-nudge.ts`;
-- `src/adapters/exec-tool-result-normalize.ts`;
+- `src/adapters/cursor/tool-result-normalize.ts`;
 - provider registry/configuration;
 - Responses core, relay, routing, GUI, docs-site, or structure documents.
 
-If implementation proves that either existing shared helper must change, stop and revise this Spec
-before widening the production file scope.
+No third production file is permitted. Cursor and Kiro must inherit the shared scanner through their
+existing imports without consumer edits.
 
 ## Test design
 
@@ -357,6 +405,15 @@ Required shared-gate result matrix:
 24. On a fresh eligible request, the echo sentence precedes the newly appended routed progress
     contract. If the caller already supplied either contract in another position, both remain
     exactly once without reordering existing text.
+25. A deterministic short-input corpus compares `EMPTY_EXEC_OUTPUT_REGEX.test(value)` against the
+    literal legacy regex for every grammar boundary named in Design §6. This characterization test
+    is expected to pass before and after the refactor and must not include a large adversarial input.
+26. A uniquely paired exec output shaped as `Output:` plus 64,000 spaces plus one non-matching
+    character remains byte-identical and completes within a deliberately loose 250 ms process-CPU
+    tripwire after an 8,000-space warm-up call. The threshold is a super-linear regression detector,
+    not a performance target; the adapter path must exercise the shared scanner rather than a copied
+    helper. The old regex measured approximately 1,645 ms process CPU at 64,000 spaces on the
+    authoring machine, leaving a wide cross-machine separation from the threshold.
 
 ## Verification and acceptance
 
@@ -370,10 +427,16 @@ bun test tests/openai-responses-passthrough.test.ts
 bun test tests/fork-routed-progress-contract.test.ts
 bun test tests/cursor-exec-empty-result.test.ts
 bun run typecheck
-bun run test:changed
+bun scripts/test.ts --changed=origin/dev
 bun run privacy:scan
 git diff --check
 ```
+
+`origin/dev` is the Fork-owned daily integration baseline and must be named explicitly. Before this
+gate runs, reviewed document-only changes are committed and pushed to `origin/dev`, while the two
+production files and new test remain uncommitted. The selector must therefore report exactly those
+three task files. Never use the ambiguous `--changed=dev` alias: it resolves `upstream/dev` first in
+this repository and audits the cumulative Fork-versus-upstream delta rather than current work.
 
 Acceptance requires:
 
@@ -383,7 +446,10 @@ Acceptance requires:
   normalizer is a no-op for unpaired outputs while existing forward/stateless orphan policy remains
   unchanged;
 - the predecessor task's test remains green;
-- no production file outside `src/adapters/openai-responses.ts` changes;
+- no production file outside `src/adapters/openai-responses.ts` and
+  `src/adapters/exec-tool-result-normalize.ts` changes;
+- the successful-wrapper near-match follows the shared monotonic path within the bounded CPU
+  tripwire while ordinary non-empty output remains byte-identical;
 - the implementation remains the smallest additive delta relative to the refreshed official
   baseline and predecessor commit.
 
@@ -395,9 +461,10 @@ must use the original conversation state rather than editing persisted history.
 
 1. Draft and independently review this Spec and its Plan without touching implementation files.
 2. Wait for the predecessor task to reach a terminal completed state and commit its scoped changes.
-3. Refresh `HEAD`, `git status`, the official baseline, and the overlapping adapter diff.
+3. Refresh `origin/dev`, `git status`, the official baseline, and the overlapping adapter diff.
 4. Update the document only if the landed pipeline differs from the dependency assumed above.
-5. Commit the approved Spec/Plan as one Chinese documentation commit.
+5. Commit the approved Spec/Plan as one Chinese documentation commit and push it to `origin/dev`
+   before running the task-scoped changed gate.
 6. Execute the implementation in the current checkout using the explicitly selected execution
    method; do not create a worktree.
 7. Complete focused verification and independent implementation review before the Chinese
