@@ -3,6 +3,7 @@ import {
   cyberPolicyErrorType,
   CYBER_POLICY_ERROR_CODE,
   CYBER_POLICY_FALLBACK_MESSAGE,
+  httpStatusFromTerminalError,
   isCyberPolicyCode,
   isCyberPolicyMessage,
 } from "../lib/errors";
@@ -33,6 +34,7 @@ export const MAX_INSPECTION_SSE_FRAME_BYTES = MAX_CLIENT_SSE_FRAME_BYTES;
 export const MAX_COMPLETED_OUTPUT_ITEMS = 256;
 export const MAX_COMPLETED_OUTPUT_ITEM_SOURCE_BYTES = 8 * 1024 * 1024;
 export const MAX_TAIL_ERROR_MESSAGE_CHARS = 512;
+export const MAX_TAIL_ERROR_FIELD_CHARS = 128;
 const ADAPTER_EOF_INCOMPLETE_PAYLOAD = JSON.stringify({
   type: "response.incomplete",
   response: {
@@ -152,6 +154,9 @@ export type SseTerminalOutputBoundary = {
   finish(): Uint8Array;
   terminalSeen(): boolean;
   doneSeen(): boolean;
+  pendingCleanEofFailure(): CleanEofUpstreamError | null;
+  /** Safe ordinary-error replay for a reader-reset tail, never for clean EOF. */
+  pendingReadErrorFrame(): Uint8Array | null;
   dispose(): void;
 };
 
@@ -168,6 +173,7 @@ export function createSseTerminalOutputBoundary(): SseTerminalOutputBoundary {
   const framer = new BoundedSseFrameBuffer(MAX_INSPECTION_SSE_FRAME_BYTES);
   let terminal = false;
   let done = false;
+  let cleanEofFailure: CleanEofUpstreamError | null = null;
   let pendingDone: { block: Uint8Array; delimiter: Uint8Array } | null = null;
   let disposed = false;
 
@@ -184,6 +190,14 @@ export function createSseTerminalOutputBoundary(): SseTerminalOutputBoundary {
       const policyError = parsed !== undefined && isPolicyRewriteType(parsed)
         ? cyberPolicyTerminalError(parsed)
         : undefined;
+      const ordinaryFailure = policyError ? null : cleanEofUpstreamErrorFromParsed(parsed);
+      if (ordinaryFailure) {
+        cleanEofFailure = ordinaryFailure;
+        // An ordinary top-level error is not a Responses terminal. Hold it so
+        // a later real terminal remains authoritative; only clean EOF emits
+        // the normalized response.failed envelope.
+        continue;
+      }
       const outboundBlock = policyError
         ? encoder.encode(rewritePolicyTerminalBlock(
           decoder.decode(frame.block),
@@ -239,10 +253,15 @@ export function createSseTerminalOutputBoundary(): SseTerminalOutputBoundary {
     },
     terminalSeen: () => terminal,
     doneSeen: () => done,
+    pendingCleanEofFailure: () => cleanEofFailure,
+    pendingReadErrorFrame: () => cleanEofFailure === null
+      ? null
+      : encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: cleanEofFailure.error })}\n\n`),
     dispose() {
       if (disposed) return;
       disposed = true;
       pendingDone = null;
+      cleanEofFailure = null;
       framer.dispose();
     },
   };
@@ -306,8 +325,10 @@ export function relaySseWithFailedTail(
               // A clean upstream EOF is still a failed Responses turn when no
               // protocol terminal arrived. Make that state explicit so Codex
               // does not treat HTTP 200 + bare EOF as a retryable disconnect.
-              const incomplete = adapterEofIncompleteFrame(encoder);
-              controller.enqueue(incomplete);
+              const cleanEofFailure = terminalBoundary.pendingCleanEofFailure();
+              controller.enqueue(cleanEofFailure
+                ? encoder.encode(`event: response.failed\ndata: ${cleanEofFailure.payload}\n\n`)
+                : adapterEofIncompleteFrame(encoder));
               controller.enqueue(doneFrame(encoder));
             }
             terminalBoundary.dispose();
@@ -320,9 +341,11 @@ export function relaySseWithFailedTail(
       } catch (err) {
         let partial: Uint8Array = new Uint8Array(0);
         let tailTerminal = false;
+        let pendingReadError: Uint8Array | null = null;
         try {
           partial = terminalBoundary.finish();
           tailTerminal = terminalBoundary.terminalSeen();
+          if (!tailTerminal) pendingReadError = terminalBoundary.pendingReadErrorFrame();
         } catch {
           // A near-cap ambiguous delimiter tail may itself overflow at EOF.
           // Preserve the original read/framing failure and continue emitting
@@ -335,6 +358,7 @@ export function relaySseWithFailedTail(
           if (tailTerminal) {
             if (!terminalBoundary.doneSeen()) controller.enqueue(doneFrame(encoder));
           } else {
+            if (pendingReadError) controller.enqueue(pendingReadError);
             // Leading blank line terminates a partial SSE block so the failed frame parses cleanly.
             controller.enqueue(failedTailFrame(encoder, err));
           }
@@ -490,6 +514,52 @@ function policyFailurePayload(policyError: { message: string; type?: string }, p
     retryable: false,
     response,
   });
+}
+
+/**
+ * The only safe terminal envelope promoted from a non-terminal upstream
+ * `error`: its exact three normalized fields, never arbitrary upstream data.
+ */
+export type CleanEofUpstreamError = {
+  error: { type: string; code: string; message: string };
+  payload: string;
+  httpStatus: number;
+};
+
+export function cleanEofUpstreamErrorFromParsed(parsed: unknown): CleanEofUpstreamError | null {
+  try {
+    const root = asJsonRecord(parsed);
+    if (!root || root.type !== "error" || cyberPolicyTerminalError(parsed)) return null;
+    const response = asJsonRecord(root.response);
+    const candidates = [
+      asJsonRecord(root.error),
+      asJsonRecord(root.last_error),
+      asJsonRecord(response?.error),
+    ];
+    for (const candidate of candidates) {
+      const message = stringField(candidate, "message");
+      if (!message) continue;
+      const error = {
+        type: redactSecretString(stringField(candidate, "type") ?? "upstream_error")
+          .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
+        code: redactSecretString(stringField(candidate, "code") ?? "upstream_error")
+          .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
+        message: redactSecretString(message).slice(0, MAX_TAIL_ERROR_MESSAGE_CHARS),
+      };
+      return {
+        error,
+        httpStatus: httpStatusFromTerminalError(error),
+        payload: JSON.stringify({
+          type: "response.failed",
+          response: { status: "failed", error, last_error: error },
+        }),
+      };
+    }
+  } catch {
+    // EOF repair must retain the existing generic fallback when an upstream
+    // payload cannot be normalized safely.
+  }
+  return null;
 }
 
 export function adapterEofIncompleteFrame(encoder: TextEncoder): Uint8Array {
@@ -819,6 +889,8 @@ export type SseInspector = {
   reported(): boolean;
   /** True once any protocol terminal was parsed, including metadata-only inspectors. */
   terminalSeen(): boolean;
+  /** Last usable ordinary upstream error, for clean-EOF accounting only. Optional for test seams. */
+  pendingCleanEofFailure?(): CleanEofUpstreamError | null;
 };
 
 export type SseInspectorHandlers = {
@@ -887,6 +959,7 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
   let decoder: TextDecoder | null = new TextDecoder();
   let reported = false;
   let sawTerminal = false;
+  let cleanEofFailure: CleanEofUpstreamError | null = null;
   let disposed = false;
   let delimiterTail: Uint8Array = new Uint8Array(0);
   let candidate: Uint8Array = new Uint8Array(0);
@@ -921,6 +994,7 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
     clearFrameState();
     clearCompletedItems();
     firstResponseId = undefined;
+    cleanEofFailure = null;
   };
 
   const ensureCandidateCapacity = (requiredBytes: number): void => {
@@ -1021,6 +1095,8 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
       try { handlers.onParsedPayload(parsed); } catch { /* inspection must never throw into the pump */ }
     }
     reportFirstOutput.parsed(parsed);
+    const ordinaryFailure = cleanEofUpstreamErrorFromParsed(parsed);
+    if (ordinaryFailure) cleanEofFailure = ordinaryFailure;
     const status = terminalStatusFromParsed(parsed);
     const policyTerminal = status === "failed"
       && isPolicyRewriteType(parsed)
@@ -1178,6 +1254,7 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
     dispose,
     reported: () => reported,
     terminalSeen: () => sawTerminal,
+    pendingCleanEofFailure: () => cleanEofFailure,
   };
 }
 
@@ -1368,7 +1445,8 @@ export function consumeForInspection(
     onCleanEof: () => {
       if (!inspector.reported()) {
         if (logCtx) logCtx.terminalSource = "synthetic";
-        onTerminal("incomplete");
+        const ordinaryFailure = inspector.pendingCleanEofFailure?.() ?? null;
+        onTerminal(ordinaryFailure ? "failed" : "incomplete", ordinaryFailure?.httpStatus);
       }
     },
     onReadError: () => {
