@@ -34,11 +34,15 @@
 | 最新官方稳定 Release | [`v2.37.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.37.0) |
 | 官方 Tag commit | `54e2274cff231631c0ea2ff12574ff03829d5fe6` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `b21ffe791f95cd2c0c44a3d0019c2b9a746e8be0` |
-| Fork 包版本 | `2.37.0-ben.1` |
-| 本轮派生 Tag | `v2.37.0-ben.1`，在本文档末尾提交完成后创建 |
+| ben.1 实现 HEAD | `b21ffe791f95cd2c0c44a3d0019c2b9a746e8be0` |
+| ben.1 派生 Tag | `v2.37.0-ben.1`（peeled `842654520bde9ec358ce49f43e6bb3533555728f`，不可变） |
+| 当前修订 | `ben.2`：新增实现提交见下表，官方基线仍为 `v2.37.0`（无新官方 Release） |
+| ben.2 实现 HEAD | `b4fc9d7bc749874d5c1bd5a68832cc2e094579d2`（`feat(responses): 分段聚合第三方 reasoning summary 为多 part`） |
+| Fork 包版本 | `2.37.0-ben.2` |
+| 本轮派生 Tag | `v2.37.0-ben.2`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.37.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 134 个文件，新增 17,307 行，删除 191 行 |
+| ben.1 已提交修改面 | 134 个文件，新增 17,307 行，删除 191 行 |
+| ben.2 已提交修改面 | 135 个文件，新增 17,694 行，删除 193 行（相对 `v2.37.0`，不含末尾文档提交） |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 本轮相对 `v2.37.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
@@ -65,6 +69,21 @@ verification=git rev-list 计数（官方 14 笔、旧栈 33、新栈 25=33−9+
 version_convergence=ben.3/ben.4/ben.5 候选收敛为 2.37.0-ben.1
 tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts,tests/release-version-line.test.ts
 <!-- v237-rebase-conflicts:end -->
+
+## v2.37.0-ben.2 修订
+
+官方基线不变（`v2.37.0` / `54e2274cff231631c0ea2ff12574ff03829d5fe6`），本轮为用户明确要求的增量修订。
+
+- 实现提交 `b4fc9d7bc749874d5c1bd5a68832cc2e094579d2`：`feat(responses): 分段聚合第三方 reasoning summary 为多 part`。
+  - part 0 保持既有“粗体标题+首句”单 delta 发射方式；
+  - part 1+ 按 3 句或 500 Unicode code point（先到为准）聚合，每个 part 发出完整 added / delta / done / part-done 生命周期；
+  - `response.reasoning_text.done` 时 flush 残余缓冲为最后一个 part，并按最后一个 part 的 `summary_index` 发送总 `summary_text.done`（text 为各 part 以换行连接）；
+  - 终态 `response.output_item.done` / `response.completed` 将已发送 parts 复用为 `summary[]`，原始 reasoning `content[]` 全程保留（含 encrypted_content 项）；
+  - code point 安全切分（surrogate pair 不跨 part 断开）。
+- 新增测试 `tests/responses-reasoning-summary-part-split.test.ts`（3 用例：3 句聚合 / 500 code point 兜底 / 残余 flush 与终态复用）。
+- 修改面：仅 `src/server/responses-reasoning-summary-rewrite.ts`（相对 ben.1 +240/−56）与上述新测试文件；无公共 API、路由或 provider 行为变化，passthrough 与 JSON 改写路径行为保持。
+- ben.2 实现 HEAD 短统计（相对官方 `v2.37.0`）：135 个文件，新增 17,694 行，删除 193 行。
+- 验证边界：聚焦 5 个 reasoning-summary 测试文件 31 pass；`bun run typecheck` 通过；`bun run test:changed` 14,319 tests / 0 fail；独立 reviewer COMBINED_REVIEW Approved（无 Critical/Important finding）。
 
 <!-- v236-rebase-conflicts:start -->
 official_old=v2.35.0
