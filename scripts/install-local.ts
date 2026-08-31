@@ -1,9 +1,9 @@
-import { chmodSync, existsSync, lstatSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { commandInvocation } from "../src/lib/win-exec";
+import { commandInvocation, resolveWindowsCommand } from "../src/lib/win-exec";
 import {
   diagnoseService,
   probeServiceInstallation,
@@ -89,7 +89,7 @@ type LaunchdPlistWriteDeps = {
   validate?: (path: string) => void;
 };
 
-type CapturedCommandResult = { status: number; stdout: string; stderr: string };
+type CapturedCommandResult = { status: number; stdout: string; stderr: string; errorCode?: string };
 
 function decodeCommandOutput(value: Uint8Array | string | undefined): string {
   if (typeof value === "string") return value;
@@ -113,10 +113,15 @@ function runCaptured(command: string[], env = process.env): CapturedCommandResul
       stderr: decodeCommandOutput(result.stderr),
     };
   } catch (error) {
+    const errorCode = error && typeof error === "object" && "code" in error
+      && typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : undefined;
     return {
       status: -1,
       stdout: "",
       stderr: error instanceof Error ? error.message : String(error),
+      ...(errorCode ? { errorCode } : {}),
     };
   }
 }
@@ -360,24 +365,230 @@ export function validatedPackedTarball(packageRoot: string, packJson: string): s
   return tarball;
 }
 
-function packageIdentity(): { name: string } {
-  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { name?: unknown };
-  if (typeof pkg.name !== "string" || pkg.name.length === 0) throw new Error("package.json name is required");
-  return { name: pkg.name };
+const SAFE_PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+const SAFE_PACKAGE_VERSION = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
+const MAX_PACKAGE_NAME_CHARS = 214;
+
+function packageIdentitySafe(name: string, version: string): boolean {
+  return name.length <= MAX_PACKAGE_NAME_CHARS
+    && SAFE_PACKAGE_NAME.test(name)
+    && SAFE_PACKAGE_VERSION.test(version);
 }
 
-function installedPackageRoot(name: string): string {
-  const result = runCaptured(["npm", "root", "-g"]);
-  if (result.status !== 0 || result.stdout.trim().length === 0) {
-    throw new Error(`could not resolve npm global root: ${result.stderr.trim() || `exit ${result.status}`}`);
+export function parsePackageIdentity(source: string): { name: string; version: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    throw new Error("invalid package.json identity");
   }
-  const globalRoot = resolve(result.stdout.trim());
-  const packageRoot = resolve(globalRoot, ...name.split("/"));
-  const child = relative(globalRoot, packageRoot);
-  if (!child || child.startsWith("..") || isAbsolute(child)) {
-    throw new Error("resolved npm package path escapes the global root");
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("invalid package.json identity");
   }
-  return packageRoot;
+  const pkg = parsed as {
+    name?: unknown;
+    version?: unknown;
+  };
+  if (typeof pkg.name !== "string" || typeof pkg.version !== "string"
+    || !packageIdentitySafe(pkg.name, pkg.version)) {
+    throw new Error("invalid package.json identity");
+  }
+  return { name: pkg.name, version: pkg.version };
+}
+
+function packageIdentity(): { name: string; version: string } {
+  return parsePackageIdentity(readFileSync(join(root, "package.json"), "utf8"));
+}
+
+function pathIsContained(rootPath: string, childPath: string): boolean {
+  const child = relative(rootPath, childPath);
+  return child.length > 0 && !child.startsWith("..") && !isAbsolute(child);
+}
+
+type ValidatedPackageRoot = { root: string; bin: string };
+
+function validatePackageRoot(
+  packageRoot: string,
+  name: string,
+  version: string,
+): ValidatedPackageRoot | null {
+  try {
+    const canonicalRoot = realpathSync(packageRoot);
+    const rootStat = lstatSync(canonicalRoot);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
+    const packageJson = join(canonicalRoot, "package.json");
+    const stat = lstatSync(packageJson);
+    if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    const pkg = JSON.parse(readFileSync(packageJson, "utf8")) as {
+      name?: unknown;
+      version?: unknown;
+      bin?: unknown;
+    };
+    if (pkg.name !== name || pkg.version !== version) return null;
+    const packageCommandName = name.startsWith("@") ? name.split("/")[1] : name;
+    const bin = typeof pkg.bin === "string"
+      ? packageCommandName === "ocx" ? pkg.bin : undefined
+      : pkg.bin && typeof pkg.bin === "object" && !Array.isArray(pkg.bin)
+        && Object.prototype.hasOwnProperty.call(pkg.bin, "ocx")
+        ? (pkg.bin as Record<string, unknown>).ocx
+        : undefined;
+    if (typeof bin !== "string" || !bin || isAbsolute(bin)) return null;
+    const binPath = resolve(canonicalRoot, bin);
+    if (!pathIsContained(canonicalRoot, binPath)) return null;
+    const canonicalBin = realpathSync(binPath);
+    if (!pathIsContained(canonicalRoot, canonicalBin)) return null;
+    const binStat = lstatSync(canonicalBin);
+    if (!binStat.isFile() || binStat.isSymbolicLink()) return null;
+    return { root: canonicalRoot, bin: canonicalBin };
+  } catch {
+    return null;
+  }
+}
+
+function packageRootFromExecutable(executable: string, name: string, version: string): string | null {
+  const trimmed = executable.trim();
+  if (!trimmed || /[\r\n]/.test(trimmed) || !isAbsolute(trimmed)) return null;
+  try {
+    const wrapperName = basename(trimmed).toLowerCase();
+    if (wrapperName !== "ocx" && wrapperName !== "ocx.cmd" && wrapperName !== "ocx.exe") return null;
+    const realExecutable = realpathSync(trimmed);
+    const executableStat = lstatSync(realExecutable);
+    if (!executableStat.isFile() || executableStat.isSymbolicLink()) return null;
+    const directPackageRoot = resolve(dirname(realExecutable), "..");
+    const direct = validatePackageRoot(directPackageRoot, name, version);
+    if (direct?.bin === realExecutable) return direct.root;
+
+    const imageRoot = realpathSync(resolve(dirname(trimmed), ".."));
+    const imageBinRoot = realpathSync(join(imageRoot, "bin"));
+    if (!pathIsContained(imageRoot, imageBinRoot)) return null;
+    if (!pathIsContained(imageBinRoot, realExecutable)) return null;
+    const imageLibRoot = realpathSync(join(imageRoot, "lib"));
+    if (!pathIsContained(imageRoot, imageLibRoot)) return null;
+    const nodeModulesRoot = realpathSync(join(imageLibRoot, "node_modules"));
+    if (!pathIsContained(imageLibRoot, nodeModulesRoot)
+      || !pathIsContained(imageRoot, nodeModulesRoot)) return null;
+    const voltaPackageRoot = realpathSync(resolve(nodeModulesRoot, ...name.split("/")));
+    if (!pathIsContained(nodeModulesRoot, voltaPackageRoot)
+      || !pathIsContained(imageRoot, voltaPackageRoot)) return null;
+    return validatePackageRoot(voltaPackageRoot, name, version)?.root ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const MAX_WINDOWS_NPM_SHIM_BYTES = 16 * 1024;
+
+function expectedWindowsNpmShim(packageBin: string, npmPrefix: string): string | null {
+  if (!pathIsContained(npmPrefix, packageBin)) return null;
+  const target = relative(npmPrefix, packageBin).replace(/[\\/]/g, "\\");
+  return [
+    "@ECHO off",
+    "GOTO start",
+    ":find_dp0",
+    "SET dp0=%~dp0",
+    "EXIT /b",
+    ":start",
+    "SETLOCAL",
+    "CALL :find_dp0",
+    "",
+    "IF EXIST \"%dp0%\\node.exe\" (",
+    "  SET \"_prog=%dp0%\\node.exe\"",
+    ") ELSE (",
+    "  SET \"_prog=node\"",
+    "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+    ")",
+    "",
+    `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\${target}\" %*`,
+    "",
+  ].join("\n");
+}
+
+function executableSelectsPackage(
+  executable: string | null,
+  packageBin: string,
+  npmGlobalRoot: string,
+  platform: NodeJS.Platform,
+): boolean {
+  if (typeof executable !== "string") return false;
+  const trimmed = executable.trim();
+  if (!trimmed || /[\r\n]/.test(trimmed) || !isAbsolute(trimmed)) return false;
+  try {
+    const canonicalExecutable = realpathSync(trimmed);
+    const stat = lstatSync(canonicalExecutable);
+    if (!stat.isFile() || stat.isSymbolicLink()) return false;
+    if (canonicalExecutable === packageBin) return true;
+    if (platform !== "win32") return false;
+
+    const launcherStat = lstatSync(trimmed);
+    if (!launcherStat.isFile() || launcherStat.isSymbolicLink()
+      || launcherStat.size > MAX_WINDOWS_NPM_SHIM_BYTES
+      || basename(canonicalExecutable).toLowerCase() !== "ocx.cmd") return false;
+    const npmPrefix = realpathSync(dirname(npmGlobalRoot));
+    if (dirname(canonicalExecutable).toLowerCase() !== npmPrefix.toLowerCase()) return false;
+    const expected = expectedWindowsNpmShim(packageBin, npmPrefix);
+    if (!expected) return false;
+    const source = readFileSync(canonicalExecutable, "utf8");
+    if (source.includes("\0")) return false;
+    return source.replace(/\r\n/g, "\n") === expected;
+  } catch {
+    return false;
+  }
+}
+
+function selectedExecutablePath(command: string, platform: NodeJS.Platform): string | null {
+  if (platform !== "win32") return Bun.which(command);
+  const resolved = resolveWindowsCommand(command);
+  return isAbsolute(resolved) ? resolved : null;
+}
+
+type InstalledPackageRootOptions = {
+  platform?: NodeJS.Platform;
+  findExecutable?: (command: string) => string | null;
+};
+
+export function resolveInstalledPackageRoot(
+  name: string,
+  version: string,
+  runCommand: (command: string[]) => CapturedCommandResult = runCaptured,
+  options: InstalledPackageRootOptions = {},
+): string {
+  if (!packageIdentitySafe(name, version)) {
+    throw new Error("invalid installed package identity");
+  }
+  const platform = options.platform ?? process.platform;
+  const findExecutable = options.findExecutable ?? (command => selectedExecutablePath(command, platform));
+  const volta = runCommand(["volta", "which", "ocx"]);
+  const npmSelectionProofRequired = volta.status === 0;
+  if (volta.status === 0) {
+    const packageRoot = packageRootFromExecutable(volta.stdout, name, version);
+    if (packageRoot) return packageRoot;
+  } else if (volta.status !== -1 || volta.errorCode !== "ENOENT") {
+    throw new Error(`could not locate the installed package matching ${name}@${version}`);
+  }
+
+  const npmRoot = runCommand(["npm", "root", "-g"]);
+  const globalRootOutput = npmRoot.stdout.trim();
+  if (npmRoot.status === 0
+    && globalRootOutput.length > 0
+    && !/[\r\n]/.test(globalRootOutput)
+    && isAbsolute(globalRootOutput)) {
+    try {
+      const globalRoot = realpathSync(globalRootOutput);
+      const packageRoot = realpathSync(resolve(globalRoot, ...name.split("/")));
+      if (pathIsContained(globalRoot, packageRoot)) {
+        const validated = validatePackageRoot(packageRoot, name, version);
+        if (validated
+          && (!npmSelectionProofRequired
+            || executableSelectsPackage(findExecutable("ocx"), validated.bin, globalRoot, platform))) {
+          return validated.root;
+        }
+      }
+    } catch {
+      // The fixed failure below deliberately omits private paths and command diagnostics.
+    }
+  }
+
+  throw new Error(`could not locate the installed package matching ${name}@${version}`);
 }
 
 export async function runLocalInstaller(args = process.argv.slice(2)): Promise<number> {
@@ -387,7 +598,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
     return 2;
   }
 
-  const { name } = packageIdentity();
+  const { name, version } = packageIdentity();
   console.log("==> Building GUI...");
   run(["bun", "run", "build:gui"]);
   console.log("==> Patching built GUI font stack...");
@@ -441,7 +652,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         run(["npm", "install", "-g", "--ignore-scripts", tarball]);
         run(["ocx", "--version"]);
         assertGuiFontStack(
-          join(installedPackageRoot(name), "gui", "dist", "assets"),
+          join(resolveInstalledPackageRoot(name, version), "gui", "dist", "assets"),
           "installed gui/dist/assets",
         );
         console.log("    installed GUI font stack verified");
