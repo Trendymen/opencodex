@@ -34,21 +34,37 @@
 | 最新官方稳定 Release | [`v2.37.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.37.0) |
 | 官方 Tag commit | `54e2274cff231631c0ea2ff12574ff03829d5fe6` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `9fd79e6c514b18a92b6cae240d8123accdfa7d0d` |
+| 本轮实现 HEAD | `b21ffe791f95cd2c0c44a3d0019c2b9a746e8be0` |
 | Fork 包版本 | `2.37.0-ben.1` |
 | 本轮派生 Tag | `v2.37.0-ben.1`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.37.0`，最终必须与派生 Tag 指向同一 commit |
 | 已提交修改面 | 134 个文件，新增 17,307 行，删除 191 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
-本轮相对 `v2.36.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
-提交不属于该实现快照。本次实现先重放到 `upstream/dev` 的
-`870a2adb6eaccc9da9ea9832a596e1b2650ab1ea`，再以仍存在的官方稳定 Tag `v2.36.0`
-作为 Fork 发布基线；上游 dev 中提前写入的 `2.37.0` 不进入本 Fork，包版本保持
-`2.36.0-ben.3`。当前 v2.36.0 rebase 的官方变化与 Fork 历史共有 25 条路径，
-其中 5 条出现实际内容冲突；下方机器块逐项记录官方行为、Fork 保留差异、最终取舍和
-关联测试。历史 v2.35.0-ben.1 的 16-path / 1-conflict 账户仍保留在其专用区块，仅用于
+本轮相对 `v2.37.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
+提交不属于该实现快照。本轮把 ben.3/ben.4/ben.5 三次候选收敛为统一派生 `2.37.0-ben.1`。
+rebase 采用范围排除：官方 v2.36.0..v2.37.0 之间的 14 笔提交（含官方已预发布的
+9 笔 Fork 作者提交，PR #3007/#3012/#3014/#3016）不参与重放，Fork 侧 25 笔全部重放，
+无能力丢失。内容冲突两处：gui sidecar CSS 按官方侧解决并保留 Fork 测试增量
+（fc0360d52），package.json 按官方 version 2.37.0 与 Fork `install:local` script
+双方保留合并。kiro.ts 同文件双方均无内容差异（官方重写覆盖 Fork 无差异段）。
+历史 v2.36.0 轮的 25-path / 5-conflict 账户保留在其专用区块，仅用于追溯。历史 v2.35.0-ben.1 的 16-path / 1-conflict 账户仍保留在其专用区块，仅用于
 追溯，不能作为本轮冲突结论。
+
+<!-- v237-rebase-conflicts:start -->
+official_old=v2.36.0
+official_new=v2.37.0
+mechanism=rebase 范围排除：官方 v2.36.0..v2.37.0 之间 14 笔提交（含官方预发布的 9 笔 Fork 作者提交）upstream-reachable，rebase --onto 自动排除；Fork 侧 25 笔全部重放，无 Fork 提交被 drop
+overlap_path_count=3
+overlap_paths=gui/tests/sidecar-layout.test.ts,package.json,src/adapters/kiro.ts
+content_conflict_count=2
+content_conflicts=gui/src/styles-dashboard-workspace.css,package.json
+decision_package_json=official=version 2.37.0；fork=install:local script；resolution=双方保留；tests=tests/release-version-line.test.ts
+decision_css=官方 PR #3007（df8b3882f）已吸收 Fork 73eb88b7f 全部内容；冲突按官方侧解决，Fork 保留测试增量 fc0360d52；tests=gui/tests/sidecar-layout.test.ts
+verification=git rev-list 计数（官方 14 笔、旧栈 33、新栈 25=33−9+1 文档+1 测试）+ merge-base --is-ancestor 逐笔祖先验证 + CSS blob 双侧等价（2b854f57c）
+version_convergence=ben.3/ben.4/ben.5 候选收敛为 2.37.0-ben.1
+tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts,tests/release-version-line.test.ts
+<!-- v237-rebase-conflicts:end -->
 
 <!-- v236-rebase-conflicts:start -->
 official_old=v2.35.0
@@ -267,24 +283,29 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 ### 火山方舟 Agent Plan GLM/Kimi 与智谱 GLM Responses 兼容
 
 - **状态：** Fork 独有——保留。
-- **行为：** 只对 `openai-responses` 且 base URL 精确为
-  `https://ark.cn-beijing.volces.com/api/plan/v3` 的请求启用。GLM-5.3 和
-  Kimi-K3 遇到 Ark 拒绝 assistant prefill 时追加尾部 user turn。Kimi-K3 的
+- **行为：** 仅对 `openai-responses` adapter 且非官方 OpenAI 目的地的第三方请求启用。
+  智谱 GLM 在 base URL 精确为 `https://ark.cn-beijing.volces.com/api/plan/v3`（Ark）或
+  `https://open.bigmodel.cn/api/v1`（BigModel）时启用；Kimi-K3 限 Ark endpoint。
+  `ben.5` 起尾部 user turn 修复扩展到所有第三方 `openai-responses` 目的地
+  （官方 OpenAI 目的地与 GPT 族硬排除）：目的地拒绝 assistant prefill 时追加尾部
+  user turn，由 `isOpenAiOperatedResponsesDestination` 与
+  `isOpenAiGptModelFamily`（容错非字符串 model id）双 gate 控制。Kimi-K3 的
   function schema 在深度/节点预算内降级 `$defs`、`$ref`、`oneOf`、`allOf` 和
   根级 `anyOf`；保留嵌套 `anyOf`、工具名称、描述、可见 properties 和 App 原始
   schema。智谱 Codex 仅在 `openai-responses`、base URL 精确为
   `https://open.bigmodel.cn/api/v1` 且模型为 `glm-5.3` 或 `glm-5.3-flash` 时复用
   同一 provider-facing schema compiler；GLM 不写 Kimi schema catalog，也不触发
   Kimi 专用 trace 或诊断字段。
-- **代码：** `src/fork/glm-kimi-compat.ts`；最小接线位于
-  `src/adapters/openai-responses.ts` 和 `src/server/responses/core.ts`。
+- **代码：** `src/fork/glm-kimi-compat.ts`（blob
+  `dd1fd17bd349`，`ben.5` 起含 trailing user turn 扩展与 GPT family gate 容错）；
+  最小接线位于 `src/adapters/openai-responses.ts` 和 `src/server/responses/core.ts`。
 - **测试：** `tests/fork-glm-kimi-compat.test.ts`、
   `tests/fork-kimi-schema-compiler.test.ts`、
   `tests/fork-zhipu-glm-schema-lowering.test.ts`。39 工具测试是与已观察数量一致的
   合成目录，不等同于真实 Codex App fixture；智谱测试另覆盖顶层工具和 Responses
   Lite `additional_tools`。
-- **官方对比：** `v2.36.0:src/adapters/openai-responses.ts`（blob
-  `047c60a6a3fafefaa5d4ea0fea199565286d5054`）仍通过
+- **官方对比：** `v2.37.0:src/adapters/openai-responses.ts`（blob
+  `047c60a6a3fafefaa5d4ea0fea199565286d5054`，v2.37 未变更）仍通过
   `collectResponsesToolGroups`、`rewriteRoutedCustomToolsForUpstream` 等通用 Responses
   处理转发工具；其中没有 `applyGlmKimiOutboundCompatibility`、精确 Ark Plan endpoint
   gate 或 `$defs/$ref/oneOf/allOf` compiler。Fork 的
@@ -458,7 +479,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `buildProviderTableBlock` 写入该 capability；该 Fork 差异承载于
   `0124c2809cb40c29603cff196e6d2182559bd48d`。尚缺绑定当前实现 SHA 的真实 Codex App
   验收，不能以孤立配置观察替代。
-- **官方对比：** `v2.36.0:src/codex/inject.ts`（blob
+- **官方对比：** `v2.37.0:src/codex/inject.ts`（blob
   `72be57878470077e9b3c434726aea329e007d79c`）同一 `buildProviderTableBlock` 只接受
   `supportsWebsockets`/auth/hostname 参数，已核对不含
   `supports_standalone_web_search`；Fork injection path 是上述 `src/codex/inject.ts`，
@@ -475,7 +496,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 - **代码：** `src/providers/model-discovery.ts`、`src/providers/registry.ts`。
 - **测试：** `tests/zhipu-bigmodel-codex-provider.test.ts`。定向/registry 测试、typecheck、
   完整套件与真实 discovery/Responses 回放均通过；提交为 `c9446e0b5`。
-- **官方对比：** `v2.36.0:src/providers/model-discovery.ts`（blob
+- **官方对比：** `v2.37.0:src/providers/model-discovery.ts`（blob
   `ada0bd2aecc196e003d0b1720c96d864e4793dbc`）只以默认 `data[]`/`id` envelope 取值，
   没有 `zhipu-bigmodel-codex`、`https://open.bigmodel.cn/api/v1` 或 `models[].slug` gate。
   Fork `src/providers/model-discovery.ts`（blob
@@ -496,7 +517,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   unreadable 集合，也会在最终路由确定后、派发给非官方转发 Provider 前触发同一
   恢复路径；恢复失败时保持 fail-closed。恢复重放不再进入其他
   OAuth/429/account/opaque/combo 重试。
-  `v2.36.0:src/server/responses/agent-task-recovery.ts`（blob
+  `v2.37.0:src/server/responses/agent-task-recovery.ts`（blob
   `8b409e175bfb83345ac147ccbeb4b5bc4d462fcf`，相对 `v2.34.0` 新增官方 cache
   admission 重构）仍以
   `structurallyValidFernetTokens` 识别 Fernet envelope；官方没有扩展 strict backend
@@ -563,7 +584,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 - **状态：** Fork 独有——保留。
 - **包版本：** 官方稳定版 `X.Y.Z` 对应 Fork 包版本 `X.Y.Z-ben.N`。当前为
-  `2.36.0-ben.1`（`v2.35.0-ben.1`/`ben.2`/`ben.3` Tag 保留为历史不可变修订）。`N` 从 1 开始且必须是安全整数；
+  `2.37.0-ben.1`（`v2.35.0-ben.*`/`v2.36.0-ben.*` Tag 保留为历史不可变修订）。`N` 从 1 开始且必须是安全整数；
   `ben.0`、前导零、超安全整数或其他 suffix 不属于该策略。
 - **更新语义：** 官方同基线稳定版与当前 Fork 等价，不允许显式 `ocx update` 用同基线
   官方包覆盖 Fork；registry target 无法解析时，`ben` build 在任何 cache/stop/install
@@ -588,7 +609,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 - **状态：** 官方部分覆盖——只保留剩余差异。
 - **Fork 剩余行为：** launcher/update 测试规避环境 runtime shim 与不支持的 PATH interception。`tests/server-auth.test.ts` 的 serial lane membership 与 watchdog 预算已按用户要求还原为官方行为。
 - **代码：** `tests/shutdown-launcher.test.ts`、`tests/update-stop-first.test.ts`。
-- **官方对比：** `v2.36.0:tests/update-stop-first.test.ts`（blob
+- **官方对比：** `v2.37.0:tests/update-stop-first.test.ts`（blob
   `0f7fd7ff55ec23cbdea4d157df61262bd9f8cd8e`，merge
   `fe063d16ef620a148ab425cfffe63a8936d00e52`）已包含 recovery PID cleanup、
   `UPDATE_SPAWN_TIMEOUT_MS`/`PROXY_READY_TIMEOUT_MS` 派生预算，以及 cleanup 后才
@@ -612,11 +633,11 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 ### Prepush 与 GitHub CI
 
 - **状态：** 官方部分覆盖——保留 Fork 基线门禁。
-- **证据：** `prepush` package script 与 `v2.36.0` 一致；Fork 只新增
+- **证据：** `prepush` package script 与 `v2.37.0` 一致；Fork 只新增
   `.github/workflows/ci.yml` 的 origin-only 官方基线验证，精确验证 official ref 的
   lightweight/annotated 类型、raw/peeled commit、official main ancestry 与
-  `origin/upstream-release` marker。官方 `v2.36.0` 的实测 ref type 为 `commit`，其
-  raw/peeled/marker 均为 `c7d8407d29bdd98b7ba743c85e654a41b3e4fca8`；因此不得再把
+  `origin/upstream-release` marker。官方 `v2.37.0` 的实测 ref type 为 `commit`，其
+  raw/peeled/marker 均为 `54e2274cff231631c0ea2ff12574ff03829d5fe6`；因此不得再把
   annotated-only 写成 provenance 要求。这不是对官方 CI 的替代，也不把 workflow 扩展为
   生产运行时能力。runner-local official ref proof 每轮重新验证；Fork origin 必须保留每个
   已 rebase 基线的同名 exact official Tag，但固定官方 URL 而非 origin 始终是 provenance
