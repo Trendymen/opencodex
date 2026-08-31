@@ -310,7 +310,7 @@ describe("GET /api/system/memory", () => {
     };
     expect(Object.keys(body.appOwnedBytes.stores).sort()).toEqual([
       "antigravity_replay", "claude_debug", "crash_ring", "cursor_blobs", "image_normalize",
-      "injection_debug", "model_cache", "provider_debug", "request_log", "responses_continuation",
+      "injection_debug", "model_cache", "request_log", "responses_continuation",
       "usage_snapshot", "usage_summary", "vision_descriptions",
     ]);
     expect(Object.values(body.appOwnedBytes.stores).flatMap(snapshot => Object.values(snapshot))
