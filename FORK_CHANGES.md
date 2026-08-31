@@ -34,11 +34,11 @@
 | 最新官方稳定 Release | [`v2.36.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.36.0) |
 | 官方 Tag commit | `c7d8407d29bdd98b7ba743c85e654a41b3e4fca8` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| 本轮实现 HEAD | `f5cb88b80f9b9fde813dca84a29fe1a88943bc68` |
+| 本轮实现 HEAD | `579e4bc15d8ed974d24d8b2ce1adf6c902f63180` |
 | Fork 包版本 | `2.36.0-ben.4` |
 | 本轮派生 Tag | `v2.36.0-ben.4`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.36.0`，最终必须与派生 Tag 指向同一 commit |
-| 已提交修改面 | 143 个文件，新增 17,976 行，删除 235 行 |
+| 已提交修改面 | 159 个文件，新增 18,829 行，删除 252 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 本轮相对 `v2.36.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
