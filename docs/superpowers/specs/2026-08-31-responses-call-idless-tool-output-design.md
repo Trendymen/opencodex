@@ -85,7 +85,10 @@ content while leaving every valid or state-resolvable item unchanged.
 Add a private, pure helper in `src/adapters/openai-responses.ts`:
 
 ```ts
-function repairCallIdlessToolOutputs(body: unknown): unknown
+function repairCallIdlessToolOutputs(
+  body: unknown,
+  options?: { omitInputImages?: boolean },
+): unknown
 ```
 
 The helper returns the original reference unless `body.input` contains at
@@ -110,7 +113,11 @@ Each matching item becomes this Responses message shape:
 
 The label uses a non-empty `name` when present and otherwise uses
 `unknown tool`. The content uses the adapter's existing tool-output text
-conversion rather than adding a second output serializer.
+conversion rather than adding a second output serializer. Ordinary requests
+pass `item.output` directly to that conversion. Routed compaction requests pass
+`stripInputImagesDeep(item.output)` when `options.omitInputImages` is true, so a
+nested image cannot be serialized into an `input_text` string before the
+existing routed-compaction rewrite reaches it.
 
 The normalizer must not:
 
@@ -129,7 +136,8 @@ existing complete orphan repair:
 raw routed Responses body
   -> stateful/stateless parameter policy (unchanged)
   -> optional empty-output annotation (unchanged)
-  -> call-ID-less output normalization (new, every provider)
+  -> call-ID-less output normalization (new, every provider;
+     omitInputImages only for routed compaction)
   -> forward/stateless full orphan repair (unchanged)
   -> all remaining provider and schema transforms (unchanged)
 ```
@@ -137,7 +145,13 @@ raw routed Responses body
 This ordering preserves the existing explicit annotation for an empty result,
 then removes the structurally invalid output before a strict destination sees
 it. Forward and stateless routes continue through their existing broader
-repair without double-processing the converted message.
+repair without double-processing the converted message. The activation passes
+`omitInputImages: parsed._compactionRequest === true
+&& !isCanonicalOpenAiForwardProvider(provider)`, matching the existing
+`buildRoutedCompactionBody()` predicate exactly. Ordinary turns and canonical
+ChatGPT private compact turns therefore retain the approved
+`toolOutputText(item.output)` behavior and never receive a false routed-
+compaction marker.
 
 ### Why a user message
 
@@ -161,7 +175,10 @@ carrier alone.
   behavior.
 - Empty or whitespace-only output remains governed by the existing provider
   annotation setting before conversion.
-- Non-text output parts use the existing `toolOutputText()` degradation policy.
+- Non-text output parts use the existing `toolOutputText()` degradation policy
+  on ordinary turns. Routed compaction first applies its existing recursive
+  image omission, preserving text siblings while preventing image payloads from
+  being embedded inside the generated text carrier.
 - The repair creates no new logs containing output bodies. Existing outbound
   shape diagnostics can show the type-count change without private content.
 
@@ -210,6 +227,15 @@ Required cases:
 11. A converted message does not retain the original tool-output `id`,
     `namespace`, `internal_chat_message_metadata_passthrough`, or invalid
     `call_id` fields.
+12. An ordinary call-ID-less output object with a nested `input_image` keeps the
+    existing tool-output text conversion and does not claim compaction occurred.
+13. The same shape on a routed compaction request omits the image before
+    text conversion, preserves text siblings, and emits the existing
+    `[image omitted for compaction]` marker without image bytes.
+14. A canonical ChatGPT forward provider with `_compactionRequest === true`
+    still performs the call-ID-less conversion but keeps ordinary
+    `toolOutputText(item.output)` semantics and never emits the routed-
+    compaction omission marker.
 
 ## Verification and acceptance
 

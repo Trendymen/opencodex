@@ -63,6 +63,7 @@ Create `tests/responses-call-idless-tool-output.test.ts` with this setup:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { createResponsesPassthroughAdapter } from "../src/adapters/openai-responses";
+import type { OcxProviderConfig } from "../src/types";
 
 const provider = {
   adapter: "openai-responses" as const,
@@ -84,16 +85,40 @@ function build(
   });
 }
 
-function buildRawBody(rawBody: Record<string, unknown>): Record<string, unknown> {
-  const adapter = createResponsesPassthroughAdapter(provider);
+function buildRawBody(
+  rawBody: Record<string, unknown>,
+  options: { provider?: OcxProviderConfig; compactionRequest?: boolean } = {},
+): Record<string, unknown> {
+  const adapter = createResponsesPassthroughAdapter(options.provider ?? provider);
   const request = adapter.buildRequest({
     modelId: "glm-5.3-flash",
     context: { messages: [] },
     stream: true,
     options: {},
     _rawBody: rawBody,
+    ...(options.compactionRequest ? { _compactionRequest: true } : {}),
   }, { headers: new Headers() });
   return JSON.parse(request.body) as Record<string, unknown>;
+}
+
+function singleCarrierText(body: Record<string, unknown>): string {
+  const outbound = body.input as Array<Record<string, unknown>>;
+  expect(outbound.some(item => (
+    (item.type === "function_call_output" || item.type === "custom_tool_call_output")
+    && (typeof item.call_id !== "string" || item.call_id.trim() === "")
+  ))).toBe(false);
+  const carriers = outbound.filter(item => {
+    if (item.type !== "message" || item.role !== "user" || !Array.isArray(item.content)) return false;
+    const first = item.content[0];
+    return typeof first === "object" && first !== null
+      && (first as Record<string, unknown>).type === "input_text"
+      && String((first as Record<string, unknown>).text).startsWith(
+        "[unlinked tool output from vision_result; original call_id missing]",
+      );
+  });
+  expect(carriers).toHaveLength(1);
+  const content = carriers[0]!.content as Array<Record<string, unknown>>;
+  return String(content[0]!.text);
 }
 ```
 
@@ -213,7 +238,62 @@ expect(body).toMatchObject(topLevel);
 
 This locks the selected boundary: valid and non-empty call ids retain their existing ordinary stateful key-auth behavior, and no stateless field stripping occurs.
 
-- [ ] **Step 6: Run the new test and verify RED**
+- [ ] **Step 6: Add ordinary, routed-compaction, and canonical-compact image boundaries**
+
+Use one call-ID-less output object containing an `input_text` sibling and a nested `input_image`. Add three cases:
+
+```ts
+const imageOutput = {
+  type: "function_call_output",
+  name: "vision_result",
+  output: {
+    content: [
+      { type: "input_text", text: "visible evidence" },
+      { type: "input_image", image_url: "data:image/png;base64,PRIVATE" },
+    ],
+  },
+};
+
+test("ordinary turns keep the existing tool-output text conversion", () => {
+  const carrierText = singleCarrierText(build([imageOutput]));
+  expect(carrierText).toContain("visible evidence");
+  expect(carrierText).toContain("input_image");
+  expect(carrierText).not.toContain("[image omitted for compaction]");
+});
+
+test("routed compaction omits nested images before creating the text carrier", () => {
+  const rawBody = { model: "glm-5.3-flash", input: [imageOutput], stream: true };
+  const body = buildRawBody(rawBody, { compactionRequest: true });
+  const outbound = body.input as Array<Record<string, unknown>>;
+  const carrierText = singleCarrierText(body);
+  expect(outbound).toHaveLength(2);
+  expect(outbound[1]).toMatchObject({ type: "message", role: "user" });
+  expect(carrierText).toContain("visible evidence");
+  expect(carrierText).toContain("[image omitted for compaction]");
+  expect(carrierText).not.toContain("input_image");
+  expect(carrierText).not.toContain("base64,PRIVATE");
+});
+
+test("canonical private compact does not inherit routed-compaction image omission", () => {
+  const canonical: OcxProviderConfig = {
+    adapter: "openai-responses",
+    baseUrl: "https://chatgpt.com/backend-api/codex",
+    authMode: "forward",
+  };
+  const rawBody = { model: "gpt-5.6-sol", input: [imageOutput], stream: true };
+  const carrierText = singleCarrierText(buildRawBody(rawBody, {
+    provider: canonical,
+    compactionRequest: true,
+  }));
+  expect(carrierText).toContain("visible evidence");
+  expect(carrierText).toContain("input_image");
+  expect(carrierText).not.toContain("[image omitted for compaction]");
+});
+```
+
+The routed test must fail before the option-aware implementation; the ordinary and canonical cases protect against expanding the omission policy.
+
+- [ ] **Step 7: Run the new test and verify RED**
 
 Run:
 
@@ -221,9 +301,16 @@ Run:
 bun test tests/responses-call-idless-tool-output.test.ts
 ```
 
-Expected: the real-shape and invalid-ID tests fail because the serialized outbound body still contains the original tool-output items; the valid/stateful preservation test passes.
+Expected for the incremental image-boundary cycle: the existing real-shape,
+invalid-ID, valid/stateful, ordinary, and canonical-private-compact cases pass.
+The routed-compaction case fails because the first implementation has already
+converted the call-ID-less object into an early text carrier, so the later
+compaction rewrite cannot replace its nested image; the failure must show the
+missing omission marker and/or retained image bytes. Record that exact failing
+test name, non-zero exit status, and first relevant assertion diff before adding
+the option-aware helper behavior.
 
-- [ ] **Step 7: Record the RED evidence**
+- [ ] **Step 8: Record the RED evidence**
 
 Save the command, non-zero exit status, failing test names, and the first assertion diff. Do not edit production code until the failure proves the missing normalizer rather than a test setup error.
 
@@ -237,7 +324,7 @@ Save the command, non-zero exit status, failing test names, and the first assert
 
 **Interfaces:**
 - Consumes: `toolOutputText(output: unknown): string`.
-- Produces: private `repairCallIdlessToolOutputs(body: unknown): unknown`.
+- Produces: private `repairCallIdlessToolOutputs(body, options?): unknown`.
 - Preserves: `repairOrphanedInputItems(body, dropReasoning, synthesizeMissingCallOutputs)` and its `forward || stateless` gate.
 
 - [ ] **Step 1: Add the pure normalizer beside `toolOutputText()`**
@@ -245,7 +332,10 @@ Save the command, non-zero exit status, failing test names, and the first assert
 Add this implementation immediately after `toolOutputText()`:
 
 ```ts
-function repairCallIdlessToolOutputs(body: unknown): unknown {
+function repairCallIdlessToolOutputs(
+  body: unknown,
+  options?: { omitInputImages?: boolean },
+): unknown {
   if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
   let changed = false;
   const input = body.input.map(item => {
@@ -257,12 +347,15 @@ function repairCallIdlessToolOutputs(body: unknown): unknown {
     const toolName = typeof item.name === "string" && item.name.trim().length > 0
       ? item.name.trim()
       : "unknown tool";
+    const output = options?.omitInputImages === true
+      ? stripInputImagesDeep(item.output)
+      : item.output;
     return {
       type: "message",
       role: "user",
       content: [{
         type: "input_text",
-        text: `[unlinked tool output from ${toolName}; original call_id missing]\n${toolOutputText(item.output)}`,
+        text: `[unlinked tool output from ${toolName}; original call_id missing]\n${toolOutputText(output)}`,
       }],
     };
   });
@@ -282,7 +375,10 @@ if (stateless) outBody = stripStatefulResponsesParams(outBody);
 if (provider.annotateEmptyToolOutputs === true) {
   outBody = annotateEmptyResponsesToolOutputs(outBody, true);
 }
-outBody = repairCallIdlessToolOutputs(outBody);
+outBody = repairCallIdlessToolOutputs(outBody, {
+  omitInputImages: parsed._compactionRequest === true
+    && !isCanonicalOpenAiForwardProvider(provider),
+});
 if (forward || stateless) {
   outBody = repairOrphanedInputItems(outBody, unexpandedMiss, stateless && !forward);
 }
@@ -363,7 +459,7 @@ git diff -- src/adapters/openai-responses.ts tests/responses-call-idless-tool-ou
 git diff --numstat -- src/adapters/openai-responses.ts tests/responses-call-idless-tool-output.test.ts
 ```
 
-Include the approved Spec path, this Plan path, RED/GREEN output, all verification outputs, and named risks: provider state preservation, valid-item preservation, input immutability, no fake identity, no recovery/reasoning overlap, and minimum Fork delta.
+Include the approved Spec path, this Plan path, RED/GREEN output, all verification outputs, and named risks: provider state preservation, valid-item preservation, input immutability, no fake identity, no recovery/reasoning overlap, and minimum Fork delta. Explicitly include the image boundary: `omitInputImages` activates only when `parsed._compactionRequest === true && !isCanonicalOpenAiForwardProvider(provider)`; ordinary and canonical private compact keep the original `toolOutputText()` behavior; routed compaction must retain text siblings and the omission marker without retaining `input_image` or image bytes.
 
 - [ ] **Step 3: Run independent L2 reviews**
 
