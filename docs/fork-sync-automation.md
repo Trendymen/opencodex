@@ -2,6 +2,12 @@
 
 本文档是 Trendymen/opencodex Fork 每小时上游稳定版同步自动化的完整规则真源。自动化任务的消息文本是本文档的精简索引；两者冲突时以本文档为准。
 
+## 分支职责
+
+- `main` 只表示最新已发布的 Fork Release：必须指向最新 Fork Tag 的 peeled commit，不承载未发布开发。
+- `dev` 是自由开发线，也是上游稳定版同步、rebase、验证、双审与 Fork Release 的唯一候选线。它可以在最新 Fork Release 之上继续开发，也可以为发布收敛、压缩并在有明确 lease 的前提下强制更新远端。
+- `sync/vX.Y.Z` 是该官方基线的可审计发布 ref；发布时与 `main`、Fork Tag 指向同一 Release commit。新开发从发布后的 `dev` 继续，不写入 `main`。
+
 ## 目标与候选资格
 
 - 每小时检查上游 lidge-jun/opencodex 是否发布了比 upstream-release 更新的稳定 GitHub Release。
@@ -24,6 +30,7 @@
 
 1. 本会话存在需要用户重大决策的未决事项时，停止新的同步、rebase、Tag、Release 和 push，提醒用户先处理；不得绕过或猜测。
 2. 要求工作树、索引干净且没有进行中的 Git 操作；存在其他未提交工作时 fail closed，不得 stash、覆盖或混入同步提交。
+3. `main` 本地/远端必须一致，且只作为已发布 Release 指针校验。不要因 `dev` 有已提交开发内容或领先 `main` 而停止同步；`dev` 正是本流程的发布候选来源。
 
 ## 维护真源
 
@@ -56,13 +63,15 @@ FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维�
 - 远端 push 完成但本地 main / upstream-release 未对齐：用捕获的本地旧 OID 做 compare-and-swap 对齐；不得移动已验证的 sync branch。
 - Tag 存在但 GitHub Release 缺失或元数据不合格：只创建或幂等修正同名 Release，不移动 Tag、不递增 revision。Release 须满足 tagName 精确、name 等于 Tag、isDraft=false、isPrerelease=false，中文 body 至少含官方基线、Fork 修改点、验证结果、已知缺口与 commit。
 
+`dev` 可以在已发布 `main` 之上有自由的已提交开发内容；这不是 drift。只有候选来源、远端 `dev` 预期 SHA、或其重写权限无法确定时才 fail closed。
+
 全部闭环且无更新官方稳定 Release 才可记录无需同步。
 
 ## 新官方稳定 Release 同步流程
 
-1. fetch 后固定本地/远端 main、dev、upstream-release、sync/vX.Y.Z 和目标 Fork Tag 的 raw/peeled SHA。本地 main 与 marker 与远端一致；漂移则停止。dev 的本地/远端状态只采集证据，本流程不修改 dev。
-2. 保护候选历史：远端 sync 存在必须 fetch；本地缺失从远端 SHA 创建，本地存在必须与远端一致且来源明确；远端独有、分叉或来源不明时停止。仅远端不存在时从精确 old_main 新建。
-3. rebase branch 必须是 sync/vX.Y.Z，执行等价于 git rebase --onto new-tag-sha old-marker-sha sync/vX.Y.Z。rebase 阶段不得移动 main，不得 detached HEAD 验证。
+1. fetch 后固定本地/远端 main、dev、upstream-release、sync/vX.Y.Z 和目标 Fork Tag 的 raw/peeled SHA。本地 main 与 marker 必须和远端一致；dev 的本地/远端状态同时记录为候选证据。
+2. 保护候选历史：候选固定为已提交的 `dev`。远端 dev 必须 fetch；本地 dev 领先、落后或分叉时均须记录两端 SHA 与来源。只要本地 dev 是当前已知、干净的发布候选，可继续；来源不明、远端独有而无法证明、或 lease 预期无法固定时停止。远端 sync 存在必须 fetch；发布时 sync 必须 fast-forward 到 Release commit，远端独有或来源不明时停止。
+3. 在 `dev` 上执行等价于 `git rebase --onto new-tag-sha old-marker-sha dev`。rebase 阶段不得移动 main，不得 detached HEAD 验证。rebase 完成后从 dev 的候选 commit 建立或更新 `sync/vX.Y.Z` 审计 ref；不得将 dev 当作只读证据。
 4. 冲突处理以 FORK_CHANGES.md、src/fork 边界、AGENTS.local.md、既有测试和新官方实现为依据。仅当前官方源码与测试证明等价或更优才可删除 Fork 行为；名称相似、旧文档或单次 HTTP 200 不算证据。部分覆盖只移除被替代部分；语义改变、能力放弃或无法判定时请用户决定。Fork 逻辑优先放窄模块或 src/fork，官方高频文件最小接线。
 5. revision：新官方 vX.Y.Z 首次派生固定 X.Y.Z-ben.1 / vX.Y.Z-ben.1。同基线已有 Release 不自动递增；仅用户明确要求才允许 ben.2、ben.3。重复 heartbeat 幂等。
 6. 完成并提交全部 rebase、冲突、版本与实现修复。
@@ -71,10 +80,10 @@ FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维�
 9. 只暂存 FORK_CHANGES.md，核对 staged list 与 diff check，创建末尾 documentation commit。机械验证 HEAD^ 等于 IMPLEMENTATION_HEAD 且提交只含本文档。
 10. 执行双审门禁（见上）。未通过前禁止后续 push、Tag、Release。
 11. 双审通过后创建中文注释 annotated Tag vX.Y.Z-ben.N；raw 类型必须是 tag，peeled 等于末尾文档 commit。远端已存在时核对 OID，否则 fail closed。禁止 force Tag。
-12. 一次 git push --atomic：末尾文档 commit 以普通 fast-forward refspec（不加 +）推到 sync/vX.Y.Z；main 以 `+` refspec 加显式 expected-SHA --force-with-lease 强制更新到同一 Release commit（仅作最新 Release 指针）；官方 Tag SHA 推到 upstream-release；Fork Tag 与官方基线 Tag refspec 不加 +。所有 branch 用显式 expected-SHA --force-with-lease。任一漂移、冲突、失败 fail closed；禁止无 lease 的普通 force 和拆分推送。
-13. push 成功后、Release API 前，用旧 OID compare-and-swap 对齐本地 main / upstream-release；fetch 核对。Release 失败也保持 branch 收敛。
+12. 一次 git push --atomic：末尾文档 commit 以普通 fast-forward refspec（不加 `+`）推到 `sync/vX.Y.Z`；`main` 与 `dev` 都以 `+` refspec 加各自显式 expected-SHA `--force-with-lease` 更新到同一 Release commit（main 仅作最新 Release 指针，dev 允许为发布收敛或压缩重写）；官方 Tag SHA 推到 `upstream-release`；Fork Tag 与官方基线 Tag refspec 不加 `+`。任一 lease 漂移、冲突、失败 fail closed；禁止无 lease 的 force 和拆分推送。
+13. push 成功后、Release API 前，用旧 OID compare-and-swap 对齐本地 main / upstream-release；dev 已是候选 checkout，不重写到其他内容；fetch 核对。Release 失败也保持 branch 收敛。
 14. 创建或核对同名 GitHub Release：ben.N 为正式修订，非 prerelease 非 draft；标题等于 Tag；中文 Notes 含官方基线、修改点、验证、已知缺口、commit。默认仅 source archive。后验查询元数据；不合格只幂等修正。失败保留 Tag，任务标未完成，下次只收敛 Release。
-15. 终验：本地/远端 main、sync/vX.Y.Z、Tag peeled 一致；Tag 为 annotated；upstream-release 等于官方 SHA；官方基线 Tag 在 origin；Release 公开指向 Fork Tag。报告官方 Tag、修改点、冲突摘要、双审结论、验证、commit、push、Release URL 与残余风险。
+15. 终验：发布时本地/远端 main、dev、sync/vX.Y.Z、Tag peeled 一致；Tag 为 annotated；upstream-release 等于官方 SHA；官方基线 Tag 在 origin；Release 公开指向 Fork Tag。发布后 dev 可以继续领先 main 进行自由开发。报告官方 Tag、修改点、冲突摘要、双审结论、验证、commit、push、Release URL 与残余风险。
 
 ## 通用约束
 
