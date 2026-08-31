@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { IncomingMeta, ProviderAdapter } from "./base";
-import { namespacedToolName, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
+import { namespacedToolName, toolChoiceToolPredicate, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
 import { catalogModelSupportsReasoningSummaries } from "../codex/catalog";
 import { COMPACT_PROMPT, compactionItemToText, decodeCompactionSummary, isCompactionItemType } from "../responses/compaction";
 import { collectResponsesToolGroups } from "../responses/tool-groups";
@@ -22,6 +22,8 @@ import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-t
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "./xai-web-search";
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "./empty-tool-output-annotation";
+import { CODE_MODE_RESULT_ECHO_SENTENCE, normalizeEmptyExecToolResultText } from "./exec-tool-result-normalize";
+import { isBareShellBridgeTool, isCodexCodeModeExecTool } from "./tool-catalog-nudge";
 import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../fork/glm-kimi-compat";
 import { applyRoutedProgressContractToResponsesBody } from "../fork/routed-progress-contract";
 import { debugResponsesOutboundShape } from "../fork/outbound-debug";
@@ -873,6 +875,21 @@ function repairOversizedReplayCallIds(body: unknown): unknown {
   return changed ? { ...body, input } : body;
 }
 
+function isRoutedCodeModeExecOutputGuardEligible(
+  parsed: OcxParsedRequest,
+  body: unknown,
+  provider: OcxProviderConfig,
+): boolean {
+  if (parsed._compactionRequest === true) return false;
+  if (isOpenAiOperatedResponsesDestination(provider)) return false;
+  if (!isPlainObject(body) || typeof body.instructions !== "string") return false;
+
+  const tools = parsed.context.tools ?? [];
+  const visible = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
+  return visible.some(isCodexCodeModeExecTool)
+    && !visible.some(isBareShellBridgeTool);
+}
+
 /** Flatten a Responses tool-output `output` value (string or content-part array) to plain text. */
 function toolOutputText(output: unknown): string {
   if (typeof output === "string") return output;
@@ -914,6 +931,51 @@ function repairCallIdlessToolOutputs(
     };
   });
   return changed ? { ...body, input } : body;
+}
+
+type CustomCallOccurrence = {
+  count: number;
+  call: Record<string, unknown>;
+};
+
+function normalizePairedCodeModeExecOutputs(body: unknown): unknown {
+  if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
+
+  const calls = new Map<string, CustomCallOccurrence>();
+  for (const item of body.input) {
+    if (!isPlainObject(item) || item.type !== "custom_tool_call") continue;
+    if (typeof item.call_id !== "string" || item.call_id.trim().length === 0) continue;
+    const occurrence = calls.get(item.call_id);
+    if (occurrence) occurrence.count += 1;
+    else calls.set(item.call_id, { count: 1, call: item });
+  }
+
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!isPlainObject(item) || item.type !== "custom_tool_call_output") return item;
+    if (typeof item.call_id !== "string" || item.call_id.trim().length === 0) return item;
+    if (typeof item.output !== "string") return item;
+
+    const occurrence = calls.get(item.call_id);
+    if (!occurrence || occurrence.count !== 1) return item;
+    if (occurrence.call.name !== "exec" || occurrence.call.namespace !== undefined) return item;
+
+    const normalized = normalizeEmptyExecToolResultText(item.output, { toolName: "exec" });
+    if (normalized === undefined || normalized === item.output) return item;
+    changed = true;
+    return { ...item, output: normalized };
+  });
+
+  return changed ? { ...body, input } : body;
+}
+
+function appendCodeModeResultEchoSentence(body: unknown): unknown {
+  if (!isPlainObject(body) || typeof body.instructions !== "string") return body;
+  if (body.instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)) return body;
+  const instructions = body.instructions.length > 0
+    ? `${body.instructions}\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}`
+    : CODE_MODE_RESULT_ECHO_SENTENCE;
+  return { ...body, instructions };
 }
 
 /** True when a Responses tool output item is present but carries no usable content. */
@@ -2170,6 +2232,11 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       outBody = applyTierDecisionToResponsesBody(outBody, parsed.options?.tierDecision);
       const stateless = provider.statelessResponses === true;
       if (stateless) outBody = stripStatefulResponsesParams(outBody);
+      const codeModeExecOutputGuardEligible = isRoutedCodeModeExecOutputGuardEligible(
+        parsed,
+        outBody,
+        provider,
+      );
       // A replay miss can leave a function_call_output whose paired function_call sat
       // in the prefix that was never expanded. A stateless upstream cannot resolve the
       // pair from its own storage either, so it needs the same repair the forward
@@ -2182,6 +2249,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         omitInputImages: parsed._compactionRequest === true
           && !isCanonicalOpenAiForwardProvider(provider),
       });
+      if (codeModeExecOutputGuardEligible) {
+        outBody = normalizePairedCodeModeExecOutputs(outBody);
+      }
       if (forward || stateless) {
         outBody = repairOrphanedInputItems(outBody, unexpandedMiss, stateless && !forward);
       }
@@ -2263,6 +2333,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // anything after it cannot.
       if (parsed._compactionRequest === true && !isCanonicalOpenAiForwardProvider(provider)) {
         outBody = buildRoutedCompactionBody(outBody);
+      }
+      if (codeModeExecOutputGuardEligible) {
+        outBody = appendCodeModeResultEchoSentence(outBody);
       }
       if (parsed._compactionRequest !== true && !isOpenAiOperatedResponsesDestination(provider)) {
         outBody = applyRoutedProgressContractToResponsesBody(outBody);
