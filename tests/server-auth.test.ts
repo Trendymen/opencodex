@@ -2336,7 +2336,7 @@ describe("server local API auth", () => {
         ws.addEventListener("error", () => reject(new Error("websocket failed to open")), { once: true });
       });
       const waitForTerminal = () => new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), watchdogMs(1000));
+        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), INTERNAL_DEADLINE_MS);
         const onMessage = (event: MessageEvent) => {
           const text = typeof event.data === "string" ? event.data : "";
           if (text.includes('"type":"response.completed"')) {
@@ -2349,11 +2349,13 @@ describe("server local API auth", () => {
       });
 
       await waitForOpen;
+      const firstTerminal = waitForTerminal();
       ws.send(JSON.stringify({ type: "response.create", model: "ws-refresh/gpt-test", input: "hello" }));
-      await waitForTerminal();
+      await firstTerminal;
       Date.now = () => now + 180_000;
+      const secondTerminal = waitForTerminal();
       ws.send(JSON.stringify({ type: "response.create", model: "ws-refresh/gpt-test", input: "again" }));
-      await waitForTerminal();
+      await secondTerminal;
       ws.close();
 
       expect(seenAuth).toEqual(["Bearer old-access-token", "Bearer new-access-token"]);
