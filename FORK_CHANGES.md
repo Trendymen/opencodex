@@ -31,32 +31,44 @@
 | 项目 | 当前值 |
 | --- | --- |
 | 审计日期 | 2026-08-31 |
-| 最新官方稳定 Release | [`v2.37.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.37.0) |
-| 官方 Tag commit | `54e2274cff231631c0ea2ff12574ff03829d5fe6` |
+| 最新官方稳定 Release | [`v2.38.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.38.0) |
+| 官方 Tag commit | `ebb4d552e8f463bc1519ab5aab602342b0ba70dc` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| ben.1 实现 HEAD | `b21ffe791f95cd2c0c44a3d0019c2b9a746e8be0` |
-| ben.1 派生 Tag | `v2.37.0-ben.1`（peeled `842654520bde9ec358ce49f43e6bb3533555728f`，不可变） |
-| 当前修订 | `ben.3`：全量历史压缩发布，官方基线仍为 `v2.37.0`（无新官方 Release） |
-| ben.2 实现 HEAD | `b4fc9d7bc749874d5c1bd5a68832cc2e094579d2`（`feat(responses): 分段聚合第三方 reasoning summary 为多 part`） |
-| ben.2 派生 Tag | `v2.37.0-ben.2`（peeled `4108827bd655fc4d87701faf98fe2ae84c893c75`，不可变） |
-| ben.3 实现 HEAD | `2e3a137770dc211acffb8345ed97a3be2fea8a27`（C4 版本真源；C1-C3 压缩树与 ben.2 树逐 blob 等价） |
-| Fork 包版本 | `2.37.0-ben.3` |
-| 本轮派生 Tag | `v2.37.0-ben.3`，在本文档末尾提交完成后创建 |
-| 同步分支 | `sync/v2.37.0`，最终必须与派生 Tag 指向同一 commit |
-| ben.1 已提交修改面 | 134 个文件，新增 17,307 行，删除 191 行 |
-| ben.2 已提交修改面 | 135 个文件，新增 17,694 行，删除 193 行（相对 `v2.37.0`，不含末尾文档提交） |
-| ben.3 提交形态 | 32 笔（31 笔 Fork 提交 + 1 笔旧末尾文档提交）收敛为 5 笔（C1 feat / C2 test / C3 chore / C4 版本真源 / C5 末尾文档）；C3 树与 ben.2 树逐 blob 等价，C4 仅 package.json 版本行 |
+| dev 候选实现 HEAD | `afcd6921a3a7ac6d2a7cb3140cad96c05ad2afca`（已从 `origin/dev` 的 `09fbd1453fa2c374d5d0e9cad9ae15cf86cf7e8f` 重放，并同步 v2.38 官方证据锚测试） |
+| Fork 包版本 | `2.38.0-ben.1` |
+| 本轮派生 Tag | `v2.38.0-ben.1`，在本文档末尾提交完成后创建 |
+| 同步分支 | `sync/v2.38.0`，发布时与 `main`、`dev`、Fork Tag 指向同一 Release commit |
+| 已提交修改面 | 148 个文件，新增 22,049 行，删除 230 行（相对 `v2.38.0`，不含末尾文档提交） |
+| dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
-本轮相对 `v2.37.0` 的实现短统计严格以本表的 `IMPLEMENTATION_HEAD` 计算；最终文档
-提交不属于该实现快照。本轮把 ben.3/ben.4/ben.5 三次候选收敛为统一派生 `2.37.0-ben.1`。
-rebase 采用范围排除：官方 v2.36.0..v2.37.0 之间的 14 笔提交（含官方已预发布的
-9 笔 Fork 作者提交，PR #3007/#3012/#3014/#3016）不参与重放，Fork 侧 25 笔全部重放，
-无能力丢失。内容冲突两处：gui sidecar CSS 按官方侧解决并保留 Fork 测试增量
-（fc0360d52），package.json 按官方 version 2.37.0 与 Fork `install:local` script
-双方保留合并。kiro.ts 同文件双方均无内容差异（官方重写覆盖 Fork 无差异段）。
-历史 v2.36.0 轮的 25-path / 5-conflict 账户保留在其专用区块，仅用于追溯。历史 v2.35.0-ben.1 的 16-path / 1-conflict 账户仍保留在其专用区块，仅用于
-追溯，不能作为本轮冲突结论。
+本轮相对 `v2.38.0` 的实现短统计严格以本表的 `dev 候选实现 HEAD` 计算；最终文档
+提交不属于该实现快照。候选来自已提交且来源明确的 `dev`：本地 `dev` / `origin/dev`
+原候选为 `09fbd1453`，在官方 `v2.38.0` 之上重放并加入证据锚测试为 `afcd6921a`；该预期分叉将在发布时
+以显式 lease 收敛到同一 Release commit，而不是当作未知 drift。
+
+本轮官方改动与 Fork 候选重叠 6 条路径：`package.json`、`src/codex/catalog/provider-fetch.ts`、
+`src/codex/catalog/sync.ts`、`src/config.ts`、`src/server/management/provider-routes.ts`、
+`src/update/index.ts`。实际内容冲突仅 package.json：官方 `2.38.0` 版本与 Fork
+`install:local` script 双方保留，并将 Fork 版本收敛为 `2.38.0-ben.1`。其余重叠文件
+自动合并；当前官方源码和测试没有证明任何 Fork 差异可移除。
+
+历史 v2.37.0 及更早轮次的冲突账户保留在专用区块，仅用于追溯，不能作为本轮结论。
+
+<!-- v238-rebase:start -->
+official_old=v2.37.0
+official_new=v2.38.0
+candidate_branch=dev
+candidate_before=09fbd1453fa2c374d5d0e9cad9ae15cf86cf7e8f
+candidate_after=fac328f9465b4ce17abddf7fec2df006c9a58aa0
+overlap_path_count=6
+overlap_paths=package.json,src/codex/catalog/provider-fetch.ts,src/codex/catalog/sync.ts,src/config.ts,src/server/management/provider-routes.ts,src/update/index.ts
+content_conflict_count=1
+content_conflicts=package.json
+decision_package_json=official=version 2.38.0；fork=install:local script；resolution=双方保留并收敛为 2.38.0-ben.1；tests=tests/release-version-line.test.ts,tests/fork-version-policy.test.ts
+dev_promotion=发布时 main 与 dev 以各自 explicit lease 收敛到同一 Release commit；main 保持已发布指针，dev 后续可继续开发
+tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts,tests/fork-ci-official-baseline.test.ts
+<!-- v238-rebase:end -->
 
 <!-- v237-rebase-conflicts:start -->
 official_old=v2.36.0
@@ -344,12 +356,12 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `tests/fork-zhipu-glm-schema-lowering.test.ts`。39 工具测试是与已观察数量一致的
   合成目录，不等同于真实 Codex App fixture；智谱测试另覆盖顶层工具和 Responses
   Lite `additional_tools`。
-- **官方对比：** `v2.37.0:src/adapters/openai-responses.ts`（blob
-  `047c60a6a3fafefaa5d4ea0fea199565286d5054`，v2.37 未变更）仍通过
+- **官方对比：** `v2.38.0:src/adapters/openai-responses.ts`（blob
+  `047c60a6a3fafefaa5d4ea0fea199565286d5054`，v2.38 未变更）仍通过
   `collectResponsesToolGroups`、`rewriteRoutedCustomToolsForUpstream` 等通用 Responses
   处理转发工具；其中没有 `applyGlmKimiOutboundCompatibility`、精确 Ark Plan endpoint
   gate 或 `$defs/$ref/oneOf/allOf` compiler。Fork 的
-  `src/fork/glm-kimi-compat.ts`（blob `6dcd6d130dc60fbe45ccedfdded01489055914b0`）由
+  `src/fork/glm-kimi-compat.ts`（blob `dd1fd17bd349`）由
   `727cb58ec725076ecb9f4958910ebe854e423009` 引入该精确 lowering/prefill 差异，并由上列
   `fork-glm-kimi-compat`、`fork-kimi-schema-compiler`、`fork-zhipu-glm-schema-lowering`
   tests 固定。
@@ -519,7 +531,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `buildProviderTableBlock` 写入该 capability；该 Fork 差异承载于
   `0124c2809cb40c29603cff196e6d2182559bd48d`。尚缺绑定当前实现 SHA 的真实 Codex App
   验收，不能以孤立配置观察替代。
-- **官方对比：** `v2.37.0:src/codex/inject.ts`（blob
+- **官方对比：** `v2.38.0:src/codex/inject.ts`（blob
   `72be57878470077e9b3c434726aea329e007d79c`）同一 `buildProviderTableBlock` 只接受
   `supportsWebsockets`/auth/hostname 参数，已核对不含
   `supports_standalone_web_search`；Fork injection path 是上述 `src/codex/inject.ts`，
@@ -536,7 +548,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 - **代码：** `src/providers/model-discovery.ts`、`src/providers/registry.ts`。
 - **测试：** `tests/zhipu-bigmodel-codex-provider.test.ts`。定向/registry 测试、typecheck、
   完整套件与真实 discovery/Responses 回放均通过；提交为 `c9446e0b5`。
-- **官方对比：** `v2.37.0:src/providers/model-discovery.ts`（blob
+- **官方对比：** `v2.38.0:src/providers/model-discovery.ts`（blob
   `ada0bd2aecc196e003d0b1720c96d864e4793dbc`）只以默认 `data[]`/`id` envelope 取值，
   没有 `zhipu-bigmodel-codex`、`https://open.bigmodel.cn/api/v1` 或 `models[].slug` gate。
   Fork `src/providers/model-discovery.ts`（blob
@@ -557,7 +569,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   unreadable 集合，也会在最终路由确定后、派发给非官方转发 Provider 前触发同一
   恢复路径；恢复失败时保持 fail-closed。恢复重放不再进入其他
   OAuth/429/account/opaque/combo 重试。
-  `v2.37.0:src/server/responses/agent-task-recovery.ts`（blob
+  `v2.38.0:src/server/responses/agent-task-recovery.ts`（blob
   `8b409e175bfb83345ac147ccbeb4b5bc4d462fcf`，相对 `v2.34.0` 新增官方 cache
   admission 重构）仍以
   `structurallyValidFernetTokens` 识别 Fernet envelope；官方没有扩展 strict backend
@@ -649,7 +661,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 - **状态：** 官方部分覆盖——只保留剩余差异。
 - **Fork 剩余行为：** launcher/update 测试规避环境 runtime shim 与不支持的 PATH interception。`tests/server-auth.test.ts` 的 serial lane membership 与 watchdog 预算已按用户要求还原为官方行为。
 - **代码：** `tests/shutdown-launcher.test.ts`、`tests/update-stop-first.test.ts`。
-- **官方对比：** `v2.37.0:tests/update-stop-first.test.ts`（blob
+- **官方对比：** `v2.38.0:tests/update-stop-first.test.ts`（blob
   `0f7fd7ff55ec23cbdea4d157df61262bd9f8cd8e`，merge
   `fe063d16ef620a148ab425cfffe63a8936d00e52`）已包含 recovery PID cleanup、
   `UPDATE_SPAWN_TIMEOUT_MS`/`PROXY_READY_TIMEOUT_MS` 派生预算，以及 cleanup 后才
@@ -673,11 +685,11 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 ### Prepush 与 GitHub CI
 
 - **状态：** 官方部分覆盖——保留 Fork 基线门禁。
-- **证据：** `prepush` package script 与 `v2.37.0` 一致；Fork 只新增
+- **证据：** `prepush` package script 与 `v2.38.0` 一致；Fork 只新增
   `.github/workflows/ci.yml` 的 origin-only 官方基线验证，精确验证 official ref 的
   lightweight/annotated 类型、raw/peeled commit、official main ancestry 与
-  `origin/upstream-release` marker。官方 `v2.37.0` 的实测 ref type 为 `commit`，其
-  raw/peeled/marker 均为 `54e2274cff231631c0ea2ff12574ff03829d5fe6`；因此不得再把
+  `origin/upstream-release` marker。官方 `v2.38.0` 的实测 ref type 为 `commit`，其
+  raw/peeled/marker 均为 `ebb4d552e8f463bc1519ab5aab602342b0ba70dc`；因此不得再把
   annotated-only 写成 provenance 要求。这不是对官方 CI 的替代，也不把 workflow 扩展为
   生产运行时能力。runner-local official ref proof 每轮重新验证；Fork origin 必须保留每个
   已 rebase 基线的同名 exact official Tag，但固定官方 URL 而非 origin 始终是 provenance
