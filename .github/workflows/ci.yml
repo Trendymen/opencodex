@@ -44,6 +44,12 @@ on:
       - ".github/workflows/enforce-pr-target.yml"
       - ".github/workflows/stale-needs-info.yml"
   workflow_dispatch:
+    inputs:
+      run_windows:
+        description: Run the Windows suite measurement lane
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -282,6 +288,9 @@ jobs:
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
 
+      - name: Prepare verified Fork official base
+        run: bun scripts/prepare-fork-official-base.ts
+
       # The GUI install is NOT optional here, however unrelated it looks to a
       # test shard. Several files under tests/ import JSX-bearing modules from
       # gui/src (ProviderRail and friends), and React is declared only in
@@ -486,6 +495,9 @@ jobs:
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
 
+      - name: Prepare verified Fork official base
+        run: bun scripts/prepare-fork-official-base.ts
+
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile
@@ -566,7 +578,8 @@ jobs:
     name: windows ${{ matrix.shard }}/4
     needs: select-windows-runner
     if: >-
-      github.event_name == 'workflow_dispatch'
+      github.event_name == 'workflow_dispatch' &&
+      inputs.run_windows == true
     runs-on: ${{ fromJSON(needs.select-windows-runner.outputs.runner) }}
     # Sharded like the Linux legs. The single-leg run reached 30 minutes on a
     # green suite and was killed in cleanup; four shards put each leg inside the
@@ -622,6 +635,9 @@ jobs:
 
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
+
+      - name: Prepare verified Fork official base
+        run: bun scripts/prepare-fork-official-base.ts
 
       - name: Install dependencies
         run: |
@@ -736,7 +752,7 @@ jobs:
   npm-global-smoke:
     name: npm-global ${{ matrix.os }}
     needs: changes
-    if: needs.changes.outputs.packaging == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.packaging == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 8
     strategy:
