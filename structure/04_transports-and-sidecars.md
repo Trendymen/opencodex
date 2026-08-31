@@ -103,6 +103,35 @@ semantic no-progress budget.
 - 다른 대안 대신 이 방식을 선택한 이유: Calls and prose are not a repository oracle, and tool names do not prove side effects. A proxy cutoff would either miss the reported loop because items kept changing or terminate legitimate slow work. Retrying after the cutoff could also replay side-effecting work.
 - 장점, 단점 및 영향: OpenCodex does not manufacture a root cause or silently terminate healthy long turns. The combined route still needs a client-side semantic boundary; if a future client sends an explicit privacy-safe progress marker, the proxy may enforce that contract without inferring workspace state.
 
+### Routed user-visible progress guidance
+
+Tool-enabled requests to third-party models carry one provider-neutral progress contract. Translated
+adapters receive it through the existing non-OpenAI tool-catalog nudge, while Cursor adds it after
+its effective tool budget is known. Native Responses passthrough
+adds the same contract only when the destination is not OpenAI-operated, the request exposes a
+top-level or Responses Lite tool catalog, and top-level `instructions` is already a string. Routed
+compaction, missing/non-string instructions, ChatGPT forwarding, and public OpenAI Responses remain
+unchanged. The helper is idempotent so replay or layered adapter paths never duplicate the contract.
+
+The contract asks the model to emit ordinary assistant text before its first tool call, after
+meaningful milestones, before long operations, after no more than four consecutive tool-only
+responses, and promptly after a new user message. Before adding it, routed prompt composition
+rewrites the known GPT-only dual-channel overview, intermediate-commentary section, compaction
+wording, and skill notification wording into ordinary-assistant language. The resulting third-party
+prompt contains no Responses phase or channel names.
+It is guidance rather than an enforcement boundary: OpenCodex never synthesizes progress text or
+claims that a tool call changed repository state. When work finishes, it asks for one self-contained
+ordinary assistant response that clearly states the result. Provider debug records only instruction
+bytes and whether the contract is present, never the instruction text.
+
+[Decision Log]
+- 목적과 의도: Keep routed models conversationally responsive during long tool loops without asking non-OpenAI models to understand Codex-specific message phase names.
+- 기존 구현 및 제약 조건: Catalog `base_instructions` is not a reliable wire prompt, native Responses phase inference can classify only assistant text the provider actually emitted, and repeated tool-only turns left users without visible acknowledgement even after a new message.
+- 검토한 주요 대안: Rewrite catalog prose only; synthesize proxy-authored assistant messages; add provider-specific prompts; or reuse one bounded provider-neutral contract at the existing shared tool-prompt and Responses boundaries.
+- 선택한 방식: Keep native OpenAI byte shape unchanged, append the contract idempotently only to tool-enabled third-party prompt paths, mirror it in routed catalog metadata, and expose a redacted boolean/byte diagnostic.
+- 다른 대안 대신 이 방식을 선택한 이유: Catalog-only guidance may never reach the wire, synthetic text would attribute words to a model that never produced them, and provider-specific copies would drift.
+- 장점, 단점 및 영향: Every supported third-party tool transport receives equivalent plain-assistant guidance and live logs can prove delivery without prompt capture. Model compliance remains probabilistic; the proxy still cannot infer semantic workspace progress.
+
 [Decision Log]
 - 목적과 의도: Keep transport helpers reusable without making every consumer evaluate the full routed Responses and sidecar graph at module load.
 - 기존 구현 및 제약 조건: The original `responses.ts` split copied the monolith import header into `fetch-helpers.ts`; seven helper exports therefore retained 39 distinct runtime import specifiers and reached 326 modules even though the implementations used only three runtime dependencies.
