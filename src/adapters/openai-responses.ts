@@ -885,6 +885,37 @@ function toolOutputText(output: unknown): string {
   }).filter(Boolean).join("\n");
 }
 
+/** Preserve invalid call-ID-less tool results as truthful text carriers for strict Responses APIs. */
+function repairCallIdlessToolOutputs(
+  body: unknown,
+  options?: { omitInputImages?: boolean },
+): unknown {
+  if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!isPlainObject(item)) return item;
+    if (item.type !== "function_call_output" && item.type !== "custom_tool_call_output") return item;
+    if (typeof item.call_id === "string" && item.call_id.trim().length > 0) return item;
+
+    changed = true;
+    const toolName = typeof item.name === "string" && item.name.trim().length > 0
+      ? item.name.trim()
+      : "unknown tool";
+    const output = options?.omitInputImages === true
+      ? stripInputImagesDeep(item.output)
+      : item.output;
+    return {
+      type: "message",
+      role: "user",
+      content: [{
+        type: "input_text",
+        text: `[unlinked tool output from ${toolName}; original call_id missing]\n${toolOutputText(output)}`,
+      }],
+    };
+  });
+  return changed ? { ...body, input } : body;
+}
+
 /** True when a Responses tool output item is present but carries no usable content. */
 function isToolOutputEmpty(output: unknown): boolean {
   if (typeof output === "string") return output.trim() === "";
@@ -2147,6 +2178,10 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (provider.annotateEmptyToolOutputs === true) {
         outBody = annotateEmptyResponsesToolOutputs(outBody, true);
       }
+      outBody = repairCallIdlessToolOutputs(outBody, {
+        omitInputImages: parsed._compactionRequest === true
+          && !isCanonicalOpenAiForwardProvider(provider),
+      });
       if (forward || stateless) {
         outBody = repairOrphanedInputItems(outBody, unexpandedMiss, stateless && !forward);
       }
