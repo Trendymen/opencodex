@@ -393,8 +393,10 @@ request logs must therefore finalize through the context-aware terminal mapper; 
 The client-facing boundary treats the first Responses terminal as authoritative in both relay
 shapes. High-confidence policy errors carried as `response.incomplete`, `response.failed`, or a
 top-level `error` are normalized to one `response.failed / cyber_policy` event without changing the
-refusal outcome; later bytes cannot create a second terminal. A clean HTTP 200 EOF with no terminal
-instead emits one `response.incomplete` with `adapter_eof`, followed by one `[DONE]`. Delimiter-less
+refusal outcome; later bytes cannot create a second terminal. When an ordinary top-level `error`
+precedes a clean HTTP 200 EOF with no terminal, its bounded type, code, and redacted message are
+preserved in one `response.failed`; a terminal-less EOF with no usable error instead emits one
+`response.incomplete` with `adapter_eof`. Both outcomes are followed by one `[DONE]`. Delimiter-less
 EOF candidates follow the owning repair policy: the native boundary accepts a structurally valid
 terminal tail, while an opted-in terminal repair keeps its unframed suffix tainted and emits
 `missing_terminal_event`. Pull/tee and eager relays therefore agree on terminal, sentinel, and
@@ -407,9 +409,10 @@ request-log accounting without promoting a truncated repair candidate.
   an unterminated final frame, and a read error exercise different pull/tee and eager cleanup paths.
 - 검토한 주요 대안: Forward every byte unchanged; classify only request logs; synthesize a failure
   after every EOF or read error; normalize the bounded terminal at the client output boundary.
-- 선택한 방식: Rewrite only high-confidence policy terminal shapes, preserve their bounded metadata,
-  flush native terminal candidates before transport-error classification, keep repair-owned
-  delimiter-less candidates tainted, and synthesize `adapter_eof` only when no real terminal exists.
+- 선택한 방식: Rewrite high-confidence policy terminal shapes, preserve a bounded ordinary upstream
+  error until clean EOF, flush native terminal candidates before transport-error classification,
+  keep repair-owned delimiter-less candidates tainted, and synthesize `adapter_eof` only when no real
+  terminal or usable upstream error exists.
 - 다른 대안 대신 이 방식을 선택한 이유: Log-only classification leaves Codex retry behavior
   unchanged, while unconditional synthesis can create two contradictory outcomes for one turn.
 - 장점, 단점 및 영향: Both native relay shapes expose exactly one terminal and one sentinel with

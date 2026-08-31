@@ -4883,11 +4883,14 @@ async function handleResponsesInner(
           ...(clientBlockRewrite
             ? { rewriteBlocks: clientBlockRewrite }
             : {}),
-          onSynthetic: kind => {
+          onSynthetic: (kind, httpStatusOverride) => {
             if (!reportNativeTerminal) return;
             if (kind === "incomplete") {
               logCtx.terminalSource = "synthetic";
               reportNativeTerminal("incomplete");
+            } else if (kind === "upstream-error") {
+              logCtx.terminalSource = "synthetic";
+              reportNativeTerminal("failed", httpStatusOverride);
             } else {
               logCtx.transportPhase = "mid_stream";
               logCtx.terminalSource = "synthetic";
