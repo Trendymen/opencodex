@@ -35,8 +35,8 @@
 | 官方 Tag commit | `c7d8407d29bdd98b7ba743c85e654a41b3e4fca8` |
 | 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
 | 本轮实现 HEAD | `80d741d8422e030db72a5fe30eae52c8a7486cad` |
-| Fork 包版本 | `2.36.0-ben.2` |
-| 本轮派生 Tag | `v2.36.0-ben.2`，在本文档末尾提交完成后创建 |
+| Fork 包版本 | `2.36.0-ben.3` |
+| 本轮派生 Tag | `v2.36.0-ben.3`，在本文档末尾提交完成后创建 |
 | 同步分支 | `sync/v2.36.0`，最终必须与派生 Tag 指向同一 commit |
 | 已提交修改面 | 115 个文件，新增 16,285 行，删除 174 行 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
