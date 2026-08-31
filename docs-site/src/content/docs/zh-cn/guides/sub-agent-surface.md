@@ -86,7 +86,9 @@ opencodex 会安全失败，而不是转发空任务或不可读任务：
 
 恢复选项是选择原生 ChatGPT 子级、在 combo 中添加原生 ChatGPT 目标、在异构 provider 委派中使用 v1，或者在你控制调用方时将任务作为明文 v2 `agent_message` 内容重新发送。
 
-实验性的 `agentTaskRecovery` 默认关闭。显式启用后，它可以通过向固定 ChatGPT 端点发送额外的认证请求来恢复这种格式，但会消耗配额、增加延迟，并依赖非公开的后端行为。任何失败都会保留原有的 `unreadable_encrypted_agent_task` 错误。详见[英文配置参考](/reference/configuration/agents/#encrypted-v2-task-recovery)。
+实验性的 `agentTaskRecovery` 默认关闭。显式启用后，它可以通过向固定 ChatGPT 端点发送额外的认证请求来恢复这种格式，但会消耗配额、增加延迟，并依赖非公开的后端行为。
+
+同一个开关也控制一条更窄的原生兜底：当当前子任务是完整且严格匹配路由头的后端密文 `NEW_TASK`，并且规范原生 ChatGPT 子级已经耗尽现有的 pre-output transient 5xx 重试后仍失败时，opencodex 才会恢复明文，并对**同一个原生目标**仅重发一次。原生子级正常成功时不会预先 recovery；开关关闭时不会分类、不会发送 recovery 请求，也不会增加重试或缓存副作用。推理、压缩、历史消息、普通 `gAAAA…` 文本、不完整/不匹配的 envelope 和 combo 都不能触发此路径。recovery 失败时会保留原本的终态响应；路由子级的失败仍保持 `unreadable_encrypted_agent_task`。详见[英文配置参考](/reference/configuration/agents/#encrypted-v2-task-recovery)。
 
 ## 更改模式
 
