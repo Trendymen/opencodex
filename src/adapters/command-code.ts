@@ -10,7 +10,7 @@ import { readBoundedResponseBody } from "../lib/bounded-body";
 import { debugDroppedFrame } from "../lib/debug";
 import { configuredReasoningEfforts } from "../reasoning-effort";
 import { commandCodeReasoningEfforts, refreshCommandCodeReasoningEfforts } from "../providers/command-code-efforts";
-import { identifyRoutedModel } from "./identity";
+import { identifyRoutedModel, identifyRoutedToolPrompt } from "./identity";
 import { buildNonOpenAIToolCatalogNudgeForTools } from "./tool-catalog-nudge";
 import { parseDataUrl } from "./image";
 
@@ -493,7 +493,8 @@ export function createCommandCodeAdapter(provider: OcxProviderConfig): ProviderA
       const tools = visibleTools(parsed);
       const toolNudge = buildNonOpenAIToolCatalogNudgeForTools(tools, parsed.options.toolChoice);
       const choiceInstruction = toolChoiceInstruction(parsed);
-      const system = identifyRoutedModel([
+      const identifySystem = toolNudge ? identifyRoutedToolPrompt : identifyRoutedModel;
+      const system = identifySystem([
         ...(parsed.context.systemPrompt ?? []),
         ...(toolNudge ? [toolNudge] : []),
         ...(choiceInstruction ? [choiceInstruction] : []),
