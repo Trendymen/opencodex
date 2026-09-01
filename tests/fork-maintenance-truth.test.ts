@@ -727,6 +727,7 @@ describe("Fork maintenance truth", () => {
       "gui/src/i18n/zh.ts",
       "src/responses/state.ts",
       "tests/responses-state.test.ts",
+      "tests/shutdown-launcher.test.ts",
     ] as const;
     for (const path of paths) {
       expect(changes).toContain(`\`${path}\`（blob \`${currentGitBlob(path)}\``);
