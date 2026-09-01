@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { decideDevVersion } from "../scripts/bump-dev-version";
 
 /**
- * The bump rule that keeps dev off an already-published version.
+ * The optional ordinary-release bump rule. Fork ben revisions deliberately leave the
+ * freely advancing dev line unchanged.
  *
  * Every case here is a real repair this repository performed by hand. The rule was got
  * wrong once during design - "increment the released minor" - and befcac3e1 is the
@@ -32,6 +33,29 @@ function tempPackageJson(version: string): string {
 }
 
 describe("dev version bump rule", () => {
+  test("a Fork ben release leaves dev on its freely advancing line", () => {
+    expect(decideDevVersion("v2.39.0-ben.1", "2.39.0-ben.1")).toMatchObject({
+      changed: false,
+      version: "2.39.0-ben.1",
+    });
+    expect(decideDevVersion("2.39.0-ben.12", "2.39.0-ben.1")).toMatchObject({
+      changed: false,
+      version: "2.39.0-ben.1",
+    });
+  });
+
+  test("only canonical Fork ben versions qualify for the no-op", () => {
+    for (const released of [
+      "2.39.0-ben.0",
+      "2.39.0-ben.01",
+      "02.39.0-ben.1",
+      "9007199254740993.39.0-ben.1",
+      "2.39.0-ben.1.extra",
+    ]) {
+      expect(() => decideDevVersion(released, "2.39.0-ben.1")).toThrow(/canonical Fork version/);
+    }
+  });
+
   test("a stable release moves dev to the next minor", () => {
     // e4a85d134 (2.33.0 -> 2.34.0) and 076ad3036 (2.34.0 -> 2.35.0).
     expect(decideDevVersion("2.36.0", "2.36.0")).toMatchObject({ changed: true, version: "2.37.0" });
@@ -49,12 +73,19 @@ describe("dev version bump rule", () => {
       version: "2.36.0",
     });
     expect(decideDevVersion("2.36.0-preview.20260829", "2.35.0").version).not.toBe("2.37.0");
+    expect(decideDevVersion("2.36.0-beta.1", "2.35.0")).toMatchObject({
+      changed: true,
+      version: "2.36.0",
+    });
+    expect(decideDevVersion("2.36.0-rc.1", "2.35.0")).toMatchObject({
+      changed: true,
+      version: "2.36.0",
+    });
   });
 
   test("dev already ahead is a no-op, not a downgrade", () => {
     expect(decideDevVersion("2.36.0", "2.37.0")).toMatchObject({ changed: false, version: "2.37.0" });
-    // A prerelease of a FUTURE core is ahead of a published stable. This is the same
-    // ordering release-version-line.test.ts pins, so the two must not disagree.
+    // A prerelease of a FUTURE core is ahead of a published stable.
     expect(decideDevVersion("2.36.0", "2.37.0-preview.1")).toMatchObject({ changed: false });
     // dev already carries the prerelease stable core.
     expect(decideDevVersion("2.36.0-preview.20260830", "2.36.0")).toMatchObject({ changed: false });
@@ -106,6 +137,15 @@ describe("dev version bump rule", () => {
     expect(proc.exitCode).toBe(0);
     // Byte-identical, not merely "still parses": a no-op run that reformats the file
     // would open a pull request with a diff and no version change.
+    expect(readFileSync(path, "utf8")).toBe(before);
+    expect(new TextDecoder().decode(proc.stdout)).toContain('"changed":false');
+  });
+
+  test("the CLI treats a canonical Fork ben release as a byte-identical no-op", () => {
+    const path = tempPackageJson("2.39.0-ben.1");
+    const before = readFileSync(path, "utf8");
+    const proc = Bun.spawnSync(["bun", CLI, "v2.39.0-ben.1", path]);
+    expect(proc.exitCode).toBe(0);
     expect(readFileSync(path, "utf8")).toBe(before);
     expect(new TextDecoder().decode(proc.stdout)).toContain('"changed":false');
   });

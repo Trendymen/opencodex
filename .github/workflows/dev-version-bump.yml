@@ -1,9 +1,9 @@
 name: Dev version bump
 
-# When a release publishes, open a pull request that moves `dev` past the published
-# version. Without this, `dev` keeps carrying a version that is at or behind a released
-# one, and `tests/release-version-line.test.ts` fails on `dev` and on every pull request
-# opened against it - inherited red a contributor cannot fix from their own diff.
+# When an ordinary upstream release publishes, optionally open a pull request that moves
+# `dev` to the next development version. Fork `ben.N` releases are immutable snapshots but
+# do not couple later `dev` commits to another version bump, so the decision helper returns
+# a no-op for them.
 #
 # That has been repaired by hand four times: 32529c2b2, e4a85d134, 076ad3036, befcac3e1.
 # The second of those ADDED the detector and two more repairs followed it, so more
@@ -11,8 +11,7 @@ name: Dev version bump
 #
 # WHAT THIS DOES NOT DO. It does not push to `dev`. It opens a pull request and a human
 # merges it, because ruleset `Protect dev` requires an approving review and code-owner
-# sign-off that a bot cannot supply. Until that merge the red persists. This converts a
-# forgotten chore into a queued, reviewable change - not into an automatic repair.
+# sign-off that a bot cannot supply. This is a queued convenience, not a required-CI gate.
 #
 # A `release` event resolves this workflow file from the repository DEFAULT branch
 # (`main`), not from `dev` - the same trap documented in cleanup-closed-pr-branches.yml.
@@ -49,10 +48,9 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: dev
-          # Tags are load-bearing, not decoration: the freeness gate below is a bun
-          # test that reads the local tag set, and release-version-line.test.ts
-          # returns EARLY on an empty set. A shallow checkout would make that gate
-          # silently vacuous instead of failing loudly.
+          # Existing candidate branches are recovered by validating
+          # origin/dev...origin/<branch>; full history keeps that ancestry and merge base
+          # available. Tags are no longer a version-line CI gate.
           fetch-depth: 0
           # Do NOT set persist-credentials: false here as the read-only workflows do.
           # This job has to push its bump branch.
@@ -73,15 +71,6 @@ jobs:
         run: |
           set -euo pipefail
           bun scripts/bump-dev-version.ts "${RELEASED_VERSION}" package.json
-
-      - name: Prove the chosen version is unused
-        if: ${{ steps.decide.outputs.changed == 'true' }}
-        # The script decides the candidate from the released version SHAPE, which is all
-        # a pure function can see. Whether that candidate is actually FREE is a property
-        # of the tag set, so it is settled here by the detector that already owns the
-        # question. If this fails, no pull request is opened and the job goes red asking
-        # for a human decision - which is the correct outcome, not a fallback.
-        run: bun test tests/release-version-line.test.ts
 
       - name: Open the bump pull request
         if: ${{ steps.decide.outputs.changed == 'true' }}
@@ -146,10 +135,9 @@ jobs:
             --body "$(cat <<BODY
           ## Summary
 
-          \`${RELEASED_VERSION}\` published, so \`dev\` would otherwise keep a version at or
-          behind a released one and \`tests/release-version-line.test.ts\` would fail on
-          \`dev\` and on every pull request opened against it. This moves \`dev\` to
-          \`${NEXT_VERSION}\`.
+          \`${RELEASED_VERSION}\` published as an ordinary upstream release. This optional
+          maintenance change moves \`dev\` to \`${NEXT_VERSION}\`; Fork \`ben.N\` releases
+          are intentionally no-ops and never create this pull request.
 
           Opened automatically by \`.github/workflows/dev-version-bump.yml\`. The same
           repair was previously done by hand in 32529c2b2, e4a85d134, 076ad3036, and
@@ -157,9 +145,9 @@ jobs:
 
           ## Verification
 
-          \`bun test tests/release-version-line.test.ts\` ran against this exact tree
-          before the pull request was opened; the workflow refuses to open one if the
-          chosen version collides with a published release.
+          \`bun scripts/bump-dev-version.ts\` selected \`${NEXT_VERSION}\` and rewrote only
+          the version line in \`package.json\`. The branch validation above refuses any
+          existing candidate branch with a different version or additional files.
 
           ## Checklist
 

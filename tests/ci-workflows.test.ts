@@ -152,14 +152,9 @@ describe("GitHub Actions hardening", () => {
     expect(linuxShards).toEqual([1, 2, 3, 4]);
     expect(workflow).toContain(`--shard=\${{ matrix.shard }}/${linuxShards.length}`);
 
-    // Every job that runs tests/ must fetch tags, because one of those tests reads
-    // them. tests/release-version-line.test.ts compares package.json against the
-    // newest release tag, and actions/checkout brings no tags by default: git is
-    // present, `git tag --list` exits 0, and stdout is empty. The check then has an
-    // empty set, cannot fail, and a version regression rides through green. That is
-    // how the first cut of that test shipped, so pin the flag rather than trusting a
-    // comment. Asserted per job so a future edit cannot drop it from one leg while
-    // the other still carries it.
+    // Every test job verifies the exact Fork official baseline Tag before running.
+    // actions/checkout omits tags by default, so pin fetch-tags per job rather than
+    // trusting one leg to cover provenance for the others.
     for (const jobName of ["test", "platform-macos", "platform-windows"]) {
       const steps = (ci.jobs?.[jobName] as { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> })?.steps ?? [];
       const checkout = steps.find(step => typeof step.uses === "string" && step.uses.includes("actions/checkout"));
@@ -5260,5 +5255,23 @@ describe("gui exhaustive-deps suppression stays scoped and effective", () => {
     // reappears, the config route has been misunderstood.
     expect(models).not.toContain("react-doctor-disable-next-line");
   });
-});
 
+  test("Fork ben releases do not couple dev CI to a published version line", async () => {
+    const workflow = await readText(".github/workflows/dev-version-bump.yml");
+    const parsed = Bun.YAML.parse(workflow) as {
+      jobs?: Record<string, { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> }>;
+    };
+    const checkout = parsed.jobs?.["open-bump-pr"]?.steps?.find(step =>
+      step.uses?.startsWith("actions/checkout@")
+    );
+
+    // Existing candidate branches are validated with an origin/dev...origin/<branch>
+    // merge-base diff, so a depth-1 checkout can make recovery fail before the no-op
+    // Fork version policy is even reached.
+    expect(checkout?.with?.ref).toBe("dev");
+    expect(checkout?.with?.["fetch-depth"]).toBe(0);
+    expect(workflow).toContain('bun scripts/bump-dev-version.ts "${RELEASED_VERSION}" package.json');
+    expect(workflow).not.toContain("release-version-line.test.ts");
+    expect(workflow).not.toContain("Prove the chosen version is unused");
+  });
+});

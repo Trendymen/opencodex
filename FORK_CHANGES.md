@@ -83,11 +83,50 @@ auto_merge_path_count=17
 overlap_paths=bin/ocx.mjs,gui/src/i18n/de.ts,gui/src/i18n/en.ts,gui/src/i18n/fr.ts,gui/src/i18n/ja.ts,gui/src/i18n/ko.ts,gui/src/i18n/ru.ts,gui/src/i18n/tr.ts,gui/src/i18n/zh-TW.ts,gui/src/i18n/zh.ts,gui/src/pages/Logs.tsx,package.json,src/adapters/openai-responses.ts,src/codex/catalog/provider-fetch.ts,src/server/responses/encrypted-payload.ts,src/update/index.ts,tests/openai-responses-passthrough.test.ts,tests/responses-state.test.ts,tests/update-stop-first.test.ts
 content_conflict_count=2
 content_conflicts=bin/ocx.mjs,package.json
-decision_bin_ocx_mjs=official=hasPendingTeardownIn；fork=forkUpdateDecision；resolution=双方 import 与调用链均保留；tests=tests/release-version-line.test.ts,tests/update-stop-first.test.ts
-decision_package_json=official=version 2.39.0 与 package 表面；fork=install:local 与 ben 版本策略；resolution=保留官方表面并收敛为 2.39.0-ben.1；tests=tests/fork-version-policy.test.ts,tests/release-version-line.test.ts
+decision_bin_ocx_mjs=official=hasPendingTeardownIn；fork=forkUpdateDecision；resolution=双方 import 与调用链均保留；tests=tests/fork-version-policy.test.ts,tests/update-stop-first.test.ts
+decision_package_json=official=version 2.39.0 与 package 表面；fork=install:local 与 ben 版本策略；resolution=保留官方表面并收敛为 2.39.0-ben.1；tests=tests/fork-version-policy.test.ts
 external_actions=full_release；rebase 默认要求完成验证、双审、annotated Fork Tag、六成员 atomic push 与 GitHub Release；仅用户明确叫停时中止
-tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts,tests/release-version-line.test.ts
+tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts
 <!-- v239-rebase:end -->
+
+## v2.39.0-ben.1 发布后 Cross-platform CI 修复候选
+
+不可变 Release `v2.39.0-ben.1` 继续指向
+`419a1bc7b327cf1183c05e73e9c9559fea221600`；本节记录后续 `dev` 修复候选，不移动、
+删除或重建既有 Tag，也不把该修复误记为已包含在 ben.1 中。
+
+- **失败证据：** Cross-platform CI 的 `main` run `33500137925` 与 `dev` run
+  `33500138061` 均在 `tests/server-auth.test.ts` 的
+  `websocket passthrough refreshes pool auth for each response.create turn` 失败；Linux
+  `test 4/4` 与两个 macOS 全套均显示第一轮 Authorization 已提前变为刷新后的 credential，
+  其余主体门禁通过。
+- **根因：** fixture 在安装 fake clock/fetch 之前调用 `startServer()`，且
+  `updateAccountQuota()` 在 fake clock 之前用真实墙钟写入 `updatedAt`。startup
+  pool-quota prime 直接以 2027 fake clock 对比该 quota 时间戳，把本应新鲜的 quota 判为
+  过期并在第一轮 WebSocket turn 前刷新 credential。
+- **上游证据：** 官方后续分支提交 `33d32b6a34049480f5457358fcd3796260ae52a4`
+  固定测试账户 namespace，`c8c8dc3387742c4efe98d1c7e0a1ed2d111d009b` 将 fake
+  clock/fetch 提前到 server startup 之前，`523efb84e7e0513e2d892e68f6e68cfd8c3f5e0d`
+  进一步把 quota seed 移到 fake clock 之后，但其 PR run `33492261941` 仍在同一断言失败；
+  后续 `ecf51c67f89b45e29303b9c5be49678733008c2e` 同时后移 credential seed，run
+  `33494259452` 才通过；这是完整 fixture 顺序的 CI 实证，不把 credential `replacedAt`
+  误写成 startup stale filter 的直接输入。四者均不在正式 `v2.39.0` Tag 中。
+- **最小修复：** 仅调整 `tests/server-auth.test.ts` fixture：用 `ws-refresh` namespace 固定
+  `pool-a`，在启动 server 前安装 fake clock/fetch，并在 fake clock 下 seed credential 与
+  quota；affinity fixture 在时钟推进 24 小时的同一同步段重新 seed quota，确保未等待的
+  startup prime 无论何时取 snapshot 都不会访问真实 WHAM；保留 Fork 已有的“先注册
+  terminal listener、再发送 frame”顺序，不修改生产 auth、quota 或 WebSocket 行为。
+- **TDD/验证：** 新增 `updatedAt === fake now` 断言后，旧顺序稳定得到 expected
+  `1800000000000` / received 真实墙钟的 RED；修复后两个相关用例 2 pass / 0 fail，CI
+  shard 4 的精确 12 文件 batch 242 pass / 0 fail。
+- **dev/Release 解耦：** 用户明确 `dev` 可以在不发布新 Fork Release 的情况下继续提交和
+  推送。已删除 `tests/release-version-line.test.ts` 及 dev-bump workflow 对它的调用；Fork
+  `ben.N` Release 对 `scripts/bump-dev-version.ts` 为 no-op。普通 stable/preview 发布继续由
+  release helper/workflow 保护；Fork `ben.N` 发布继续执行双审、严格 Tag namespace
+  preflight、不可变 annotated Tag 与 atomic leased push。`forkVersionTagError()` 只保留为
+  policy/reference test，不宣称为在线发布门禁。
+- **交付边界：** 本修复只推进 `dev`；不移动 `main`、`sync/v2.39.0`、既有
+  `v2.39.0-ben.1` Tag 或 GitHub Release，也不创建 `ben.2`。
 
 <!-- v238-rebase:start -->
 official_old=v2.37.0
@@ -777,10 +816,11 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `src/fork/version-policy.d.mts`；
   `src/update/notify.ts`、`src/update/index.ts` 和 `bin/ocx.mjs` 只保留窄接线。
 - **测试：** `tests/fork-version-policy.test.ts`（blob `40c1092241345b88c3c26756bca1d3d59586f501`）；
-  `tests/release-version-line.test.ts` 只增加经用户批准的最小门禁调用。Node/Bun 策略、
-  package-shaped npm launcher、same-base late `ben.3` 与 immutable current Tag 均覆盖；
-  本轮实现提交为 `3337a56f7`。该测试不硬编码当前包版本号，版本推进只改
-  `package.json`。
+  Node/Bun 策略、package-shaped npm launcher、same-base late `ben.3` 与 immutable
+  current Tag 均覆盖。原 `tests/release-version-line.test.ts` 已按用户规则移除：普通 `dev`
+  提交不再强制绑定新 Release 版本。普通 stable/preview 发布仍由 release helper/workflow
+  保护；Fork `ben.N` 发布仍由双审、严格 Tag namespace preflight、immutable annotated Tag
+  与 atomic leased push 保护。
 - **官方对比：** 官方 `v2.39.0` 没有该 Fork ben 版本与 Tag 策略。
 - **前端边界：** 按用户要求不修改 `gui/src/App.tsx` 或 CSS。GUI 继续通过现有链路显示
   真实版本，视觉缩短仅来自实际包版本从 `2.34.1-trendymen.1` 改为 `ben` 系列。

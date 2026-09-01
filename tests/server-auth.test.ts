@@ -2105,32 +2105,36 @@ describe("server local API auth", () => {
         return Response.json({ id: "resp_test", object: "response", status: "completed", output: [] });
       },
     });
-    redirectCanonicalCodexTo(upstream.url.toString());
     const now = 1_800_000_000_000;
-    saveConfig({
-      port: 0,
-      defaultProvider: "openai",
-      openaiProviderTierVersion: 2,
-      websockets: true,
-      providers: poolProviders(),
-      codexAccounts: [
-        { id: "main", email: "main@example.test", isMain: true },
-        { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
-      ],
-      activeCodexAccountId: "pool-a",
-    } as OcxConfig);
-    saveCodexAccountCredential("pool-a", {
-      accessToken: "pool-access-token",
-      refreshToken: "pool-refresh-token",
-      expiresAt: now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 10 * 60_000,
-      chatgptAccountId: "acct-pool-a",
-    });
-    updateAccountQuota("pool-a", 10, 5);
-
     const originalNow = Date.now;
-    const server = startServer(0);
+    const originalFetch = globalThis.fetch;
+    let server: ReturnType<typeof startServer> | undefined;
     try {
+      redirectCanonicalCodexTo(upstream.url.toString());
+      saveConfig({
+        port: 0,
+        defaultProvider: "openai",
+        openaiProviderTierVersion: 2,
+        websockets: true,
+        providers: poolProviders(),
+        codexAccounts: [
+          { id: "main", email: "main@example.test", isMain: true },
+          { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
+        ],
+        activeCodexAccountId: "pool-a",
+      } as OcxConfig);
+      saveCodexAccountCredential("pool-a", {
+        accessToken: "pool-access-token",
+        refreshToken: "pool-refresh-token",
+        expiresAt: now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 10 * 60_000,
+        chatgptAccountId: "acct-pool-a",
+      });
+      // startServer schedules an asynchronous pool-quota prime. Seed a fresh
+      // quota under the same fake clock so that prime performs no real WHAM I/O.
       Date.now = () => now;
+      updateAccountQuota("pool-a", 10, 5);
+      expect(getAccountQuota("pool-a")?.updatedAt).toBe(now);
+      server = startServer(0);
       for (const threadId of ["expired-http", "expired-compact", "expired-ws"]) {
         const response = await fetch(new URL("/v1/responses", server.url), {
           method: "POST",
@@ -2146,6 +2150,8 @@ describe("server local API auth", () => {
       expect(upstreamRequests).toBe(3);
 
       Date.now = () => now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 1;
+      updateAccountQuota("pool-a", 10, 5);
+      expect(getAccountQuota("pool-a")?.updatedAt).toBe(now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 1);
       const httpResponse = await fetch(new URL("/v1/responses", server.url), {
         method: "POST",
         headers: {
@@ -2194,8 +2200,12 @@ describe("server local API auth", () => {
       expect(upstreamRequests).toBe(3);
     } finally {
       Date.now = originalNow;
-      await server.stop(true);
-      await upstream.stop(true);
+      globalThis.fetch = originalFetch;
+      try {
+        if (server) await server.stop(true);
+      } finally {
+        await upstream.stop(true);
+      }
     }
   });
 
@@ -2218,35 +2228,37 @@ describe("server local API auth", () => {
         );
       },
     });
-    redirectCanonicalCodexTo(upstream.url.toString());
     const now = 1_800_000_000_000;
-    saveConfig({
-      port: 0,
-      defaultProvider: "openai",
-      openaiProviderTierVersion: 2,
-      websockets: true,
-      providers: poolProviders(),
-      codexAccounts: [
-        { id: "main", email: "main@example.test", isMain: true },
-        { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
-      ],
-      activeCodexAccountId: "pool-a",
-    } as OcxConfig);
-    saveCodexAccountCredential("pool-a", {
-      accessToken: "old-access-token",
-      refreshToken: "old-refresh-token",
-      expiresAt: now + 120_000,
-      chatgptAccountId: "acct-pool-a",
-    });
-    updateAccountQuota("pool-a", 10, 5);
-
     const originalNow = Date.now;
     const originalFetch = globalThis.fetch;
-    const server = startServer(0);
-    const wsUrl = new URL("/v1/responses", server.url);
-    wsUrl.protocol = "ws:";
+    let server: ReturnType<typeof startServer> | undefined;
     try {
+      redirectCanonicalCodexTo(upstream.url.toString());
+      const redirectedFetch = globalThis.fetch;
+      saveConfig({
+        port: 0,
+        defaultProvider: "openai",
+        openaiProviderTierVersion: 2,
+        websockets: true,
+        providers: poolProviders(),
+        codexAccounts: [
+          { id: "main", email: "main@example.test", isMain: true },
+          { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
+        ],
+        codexAccountNamespaces: { "ws-refresh": "pool-a" },
+        activeCodexAccountId: "pool-a",
+      } as OcxConfig);
+      // Keep the startup quota prime inside one coherent fixture clock/network:
+      // quota timestamps, staleness reads, and any refresh all use these fakes.
       Date.now = () => now;
+      saveCodexAccountCredential("pool-a", {
+        accessToken: "old-access-token",
+        refreshToken: "old-refresh-token",
+        expiresAt: now + 120_000,
+        chatgptAccountId: "acct-pool-a",
+      });
+      updateAccountQuota("pool-a", 10, 5);
+      expect(getAccountQuota("pool-a")?.updatedAt).toBe(now);
       globalThis.fetch = (async (input, init) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         if (url === "https://auth.openai.com/oauth/token") {
@@ -2256,9 +2268,11 @@ describe("server local API auth", () => {
             expires_in: 3600,
           }), { status: 200 });
         }
-        return originalFetch(input, init);
+        return redirectedFetch(input, init);
       }) as typeof fetch;
-
+      server = startServer(0);
+      const wsUrl = new URL("/v1/responses", server.url);
+      wsUrl.protocol = "ws:";
       const ws = new WebSocket(wsUrl);
       const waitForOpen = new Promise<void>((resolve, reject) => {
         ws.addEventListener("open", () => resolve(), { once: true });
@@ -2279,11 +2293,11 @@ describe("server local API auth", () => {
 
       await waitForOpen;
       const firstTerminal = waitForTerminal();
-      ws.send(JSON.stringify({ type: "response.create", model: "gpt-test", input: "hello" }));
+      ws.send(JSON.stringify({ type: "response.create", model: "ws-refresh/gpt-test", input: "hello" }));
       await firstTerminal;
       Date.now = () => now + 180_000;
       const secondTerminal = waitForTerminal();
-      ws.send(JSON.stringify({ type: "response.create", model: "gpt-test", input: "again" }));
+      ws.send(JSON.stringify({ type: "response.create", model: "ws-refresh/gpt-test", input: "again" }));
       await secondTerminal;
       ws.close();
 
@@ -2293,8 +2307,11 @@ describe("server local API auth", () => {
     } finally {
       Date.now = originalNow;
       globalThis.fetch = originalFetch;
-      await server.stop(true);
-      await upstream.stop(true);
+      try {
+        if (server) await server.stop(true);
+      } finally {
+        await upstream.stop(true);
+      }
     }
   });
 
