@@ -184,6 +184,24 @@ function appendTrailingUserTurnForPrefillRestrictedModel(
   };
 }
 
+function normalizeVolcengineAgentPlanAssistantContent(body: unknown, provider: OcxProviderConfig): unknown {
+  if (!usesVolcengineAgentPlanResponses(provider) || !isPlainObject(body) || !Array.isArray(body.input)) return body;
+  let changed = false;
+  const input = body.input.flatMap(item => {
+    if (!isPlainObject(item)
+      || (item.type !== undefined && item.type !== "message")
+      || item.role !== "assistant"
+      || !Array.isArray(item.content)) return [item];
+    const content = item.content.filter(part => !isPlainObject(part)
+      || (part.type !== "output_text" && part.type !== "input_text")
+      || (typeof part.text === "string" && part.text.trim().length > 0));
+    if (content.length === item.content.length && content.length > 0) return [item];
+    changed = true;
+    return content.length > 0 ? [{ ...item, content }] : [];
+  });
+  return changed ? { ...body, input } : body;
+}
+
 function localDefinition(ref: unknown, definitions: Record<string, unknown>): unknown {
   if (typeof ref !== "string" || !ref.startsWith("#/$defs/")) return undefined;
   return definitions[ref.slice("#/$defs/".length)];
@@ -356,7 +374,8 @@ export function applyGlmKimiOutboundCompatibility(args: {
       ...traceContext,
     });
   }
-  let body = appendTrailingUserTurnForPrefillRestrictedModel(args.body, args.provider, args.modelId);
+  let body = normalizeVolcengineAgentPlanAssistantContent(args.body, args.provider);
+  body = appendTrailingUserTurnForPrefillRestrictedModel(body, args.provider, args.modelId);
   let lowered: { body: unknown; diagnostic?: KimiToolSchemaLoweringDiagnostic };
   try {
     lowered = lowerKimiFunctionToolSchemas(body, args.provider, args.modelId);
