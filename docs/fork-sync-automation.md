@@ -13,6 +13,7 @@
 - 每小时检查上游 lidge-jun/opencodex 是否发布了比 upstream-release 更新的稳定 GitHub Release。
 - 只接受非 draft、非 prerelease 的正式 Release；忽略 preview、beta、rc、draft 和仅有 Tag 的版本。
 - 候选官方 Tag 必须指向可从上游默认分支 main 到达的 commit。
+- 用户要求对新官方稳定 Release 执行 rebase 时，默认同时授权并要求完成本文第 1–15 步的完整发布闭环；不得自行缩窄为只在本地 rebase、验证或建 Tag。只有用户明确要求暂停、中止或限定到某个中间门禁时，才停在该边界。
 
 ## 分支拓扑
 
@@ -40,6 +41,7 @@ tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
 
 <!-- fork-release-lifecycle:start -->
 rebase_branch=dev
+rebase_request=full_steps_1_to_15_unless_user_explicitly_stops
 sync_role=audit-release-ref
 release_instant_dev=must-equal-RELEASE_COMMIT
 post_release_advanced_dev=must-not-reset
