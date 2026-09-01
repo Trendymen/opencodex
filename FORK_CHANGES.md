@@ -34,26 +34,34 @@
 | 本轮官方维护基线 | [`v2.39.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.39.0) |
 | 官方 Tag commit | `af6113a0381d6fff2e4dce587652825c7eeb6423` |
 | 当前上游最新稳定 Release | `v2.39.0`（`af6113a0381d6fff2e4dce587652825c7eeb6423`），即本轮 rebase 基线 |
-| dev 候选实现 HEAD | `a26596f3bb63dd3d36f3ad462b2ad2c972374129`（rebase 完成并锁定 v2.39 台账、当前 blob 与决策语义） |
+| dev 候选实现 HEAD | `99bc343f8d8ba7e43e7d267ba3d6a5af36128458`（rebase 完成，锁定 v2.39 台账、当前 blob、完整发布授权与 launcher 隔离修复） |
 | Fork 包版本 | `2.39.0-ben.1` |
-| 本轮派生 Tag | `v2.39.0-ben.1`；本轮只执行 rebase，未授权创建 Tag 或 Release |
-| 同步分支 | `sync/v2.39.0` 尚未建立；只在后续发布候选完整验证后建立 |
-| 已提交修改面 | 165 个文件，新增 27,256 行，删除 291 行（相对 `v2.39.0`，不含末尾文档提交） |
-| 最终本地门禁 | rebase 后 typecheck 与 privacy scan 通过；8 个聚焦文件 310 pass / 1 skip / 0 fail / 1,323 assertions；本轮不发布，完整 prepush 尚未执行 |
-| 外部发布状态 | 未发生：`main`、`origin/dev`、`upstream-release`、Tag 与 Release 均未修改 |
+| 本轮派生 Tag | `v2.39.0-ben.1`；rebase 默认包含完整发布闭环，双审通过后创建 annotated Tag |
+| 同步分支 | `sync/v2.39.0` 尚未建立；完整验证与双审通过后在发布阶段建立 |
+| 已提交修改面 | 165 个文件，新增 27,270 行，删除 291 行（相对 `v2.39.0`，不含末尾文档提交） |
+| 最终本地门禁 | `99bc343f8` 上完整 `bun run prepush` 退出 0：主套件 17,156 pass / 14 skip / 0 fail，全部串行隔离套件通过，privacy scan 通过；`bun run build:gui` 退出 0 |
+| 外部发布状态 | 发布动作尚未执行；本轮 rebase 已授权完整验证、双审、Tag、六成员 atomic push 与 GitHub Release 闭环 |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
 本轮相对 `v2.39.0` 的实现短统计严格以最终捕获的 `IMPLEMENTATION_HEAD` 计算；末尾
 `FORK_CHANGES.md` 文档提交不属于实现快照。候选来自已提交且来源明确的 `dev`：
 `v2.38.0-ben.2` Release commit `1092cfb48` 在官方 `v2.39.0` 之上重放为临时候选
-`ff3653f0a`。本轮只执行 rebase 与验证，不创建 Tag、push 或 GitHub Release。
+`ff3653f0a`。本轮 rebase 按完整发布闭环执行，不再单独等待 Tag、push 或 GitHub Release 授权；
+只有用户明确叫停才停在中间门禁。
 
 官方 v2.39 改动与 Fork 候选重叠 19 条路径。内容冲突 2 条：`bin/ocx.mjs` 同时保留
 官方 pending-teardown 检查与 Fork version policy import；`package.json` 同时保留官方
 v2.39 package 表面、Fork `install:local`，并将候选版本收敛为 `2.39.0-ben.1`。
 其余 17 条路径自动合并；range-diff 显示 Fork 主体提交等价重放，v2.38 ben.2 版本提交
 仅按新官方基线调整版本。
+
+首次完整 `bun run prepush` 在全量主套件得到 17,153 pass / 14 skip 后，唯一失败面是
+`tests/shutdown-launcher.test.ts` 的三个信号场景都在启动门禁前退出。诊断证明官方
+`0ef04e640` 新增的 configured-port ownership probe 会先探测默认 `10100`；测试只传
+`--port`、未把临时 `config.json` 的端口同步到该测试端口，因此误认真实运行中的代理为
+当前 fixture owner。`99bc343f8` 只补齐测试配置隔离，不修改生产探测语义或延长超时；
+独立复测三个信号场景 3 pass / 0 fail；随后完整 prepush 与 GUI build 均退出 0。
 
 历史 v2.38.0 及更早轮次账户保留在专用区块，仅用于追溯，不能作为本轮结论。
 
@@ -70,7 +78,7 @@ content_conflict_count=2
 content_conflicts=bin/ocx.mjs,package.json
 decision_bin_ocx_mjs=official=hasPendingTeardownIn；fork=forkUpdateDecision；resolution=双方 import 与调用链均保留；tests=tests/release-version-line.test.ts,tests/update-stop-first.test.ts
 decision_package_json=official=version 2.39.0 与 package 表面；fork=install:local 与 ben 版本策略；resolution=保留官方表面并收敛为 2.39.0-ben.1；tests=tests/fork-version-policy.test.ts,tests/release-version-line.test.ts
-external_actions=none；本轮未授权 Tag、push、main/dev/sync promotion 或 GitHub Release
+external_actions=full_release；rebase 默认要求完成验证、双审、annotated Fork Tag、六成员 atomic push 与 GitHub Release；仅用户明确叫停时中止
 tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts,tests/release-version-line.test.ts
 <!-- v239-rebase:end -->
 
@@ -852,10 +860,13 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 7. **同基线发布竞态：** 完整远端 ben namespace 的最终复核到 atomic push 之间无法对
    尚不存在的 differently named future Tag 建立 wildcard lease；依赖 single publisher，
    push 后必须在 GitHub Release 前复核，发现竞态时保留 immutable Tag 并停止 Release。
-8. **上游版本边界：** 当前候选已 rebase 到官方 `v2.39.0`；本轮仅完成 rebase 与验证，
-   未授权 Tag、push 或 Release，不宣称已发布 v2.39 Fork 修订。
+8. **上游版本边界：** 当前候选已 rebase 到官方 `v2.39.0`；本轮按完整发布闭环继续，
+   在 annotated Tag、六成员 atomic push 与 GitHub Release 后验验证完成前不宣称已发布。
 9. **并行工作区：** 本清单只按 committed SHA 计算，绝不因工作区中恰好存在其他任务
    文件而把它们混入提交或能力清单。
+10. **React Doctor：** `prepush` 对 changed GUI 的诊断报告官方 `v2.39.0` 已存在的
+    `gui/tests/provider-marks-assets.test.ts:2` unused `readdirSync`；该文件不在 Fork 相对官方
+    的 diff 中，`lint:gui` 与 `build:gui` 均通过，因此本轮按最小修改面不混入修复。
 
 ## Fork 版本、Tag 与 GitHub Release 规则
 
@@ -919,6 +930,7 @@ tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
 
 <!-- fork-release-lifecycle:start -->
 rebase_branch=dev
+rebase_request=full_steps_1_to_15_unless_user_explicitly_stops
 sync_role=audit-release-ref
 release_instant_dev=must-equal-RELEASE_COMMIT
 post_release_advanced_dev=must-not-reset
@@ -1014,6 +1026,7 @@ tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
 
 <!-- fork-release-lifecycle:start -->
 rebase_branch=dev
+rebase_request=full_steps_1_to_15_unless_user_explicitly_stops
 sync_role=audit-release-ref
 release_instant_dev=must-equal-RELEASE_COMMIT
 post_release_advanced_dev=must-not-reset
