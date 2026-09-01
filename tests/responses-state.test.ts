@@ -2314,19 +2314,48 @@ describe("Responses previous_response_id state", () => {
     // schedulePersist site sits downstream of, so a process had its only look BEFORE it
     // wrote anything. Here nothing touches the continuation store at all.
     const old = new Date(Date.now() - 60 * 60 * 1_000);
-    const deadPid = process.pid === 4242 ? 4243 : 4242;
+    const deadPid = 2_147_483_647;
+    try {
+      process.kill(deadPid, 0);
+      throw new Error(`test fixture PID ${deadPid} is unexpectedly alive`);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("unexpectedly alive")) throw error;
+    }
     const stale = join(home, `responses-state.json.ocx.${deadPid}.1.tmp`);
     const young = join(home, "responses-state.json.ocx.6262.4.tmp");
     for (const path of [stale, young]) writeFileSync(path, "private state");
     utimesSync(stale, old, old);
 
-    const removed = sweepAbandonedResponseStateTemps({
-      isProcessAlive: pid => pid !== deadPid,
-    });
+    const removed = sweepAbandonedResponseStateTemps();
 
     expect(removed).toBe(1);
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(young)).toBe(true);
+  });
+
+  test("periodic reclaim ignores caller attempts to override its fixed budgets", () => {
+    const old = new Date(Date.now() - 60 * 60 * 1_000);
+    const deadPid = 2_147_483_647;
+    try {
+      process.kill(deadPid, 0);
+      throw new Error(`test fixture PID ${deadPid} is unexpectedly alive`);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("unexpectedly alive")) throw error;
+    }
+    const stale = join(home, `responses-state.json.ocx.${deadPid}.7.tmp`);
+    writeFileSync(stale, "private state");
+    utimesSync(stale, old, old);
+
+    const invokeWithUntrustedArgument = sweepAbandonedResponseStateTemps as unknown as
+      (options: { maxEntries: number; maxCleanups: number; deadlineMs: number }) => number;
+    const removed = invokeWithUntrustedArgument({
+      maxEntries: 0,
+      maxCleanups: 0,
+      deadlineMs: 0,
+    });
+
+    expect(removed).toBe(1);
+    expect(existsSync(stale)).toBe(false);
   });
 
   test("boot floor reclaims a pre-boot temp whose pid has been reused", () => {
