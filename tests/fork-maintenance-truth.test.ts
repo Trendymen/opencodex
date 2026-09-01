@@ -551,10 +551,10 @@ describe("Fork maintenance truth", () => {
     expect(automation).toContain("post_release_advanced_dev=must-not-reset");
   });
 
-  test("grounds every active official comparison in v2.38.0 evidence", () => {
+  test("grounds every active official comparison in v2.39.0 evidence", () => {
     const evidence = {
       "火山方舟 Agent Plan GLM/Kimi 与智谱 GLM Responses 兼容": [
-        "`v2.38.0:src/adapters/openai-responses.ts`（blob `047c60a6a3fafefaa5d4ea0fea199565286d5054`，v2.38 未变更）",
+        "`v2.39.0:src/adapters/openai-responses.ts`（blob `0d918076171c14142a1bafdc6dde693a54a9d38f`，v2.39 已变更）",
         "`src/fork/glm-kimi-compat.ts`（blob `64ce11986a7fc2391c7b8965256e55c16a2bfa72`）",
         "`tests/fork-volcengine-empty-assistant-content.test.ts`（blob `95cfba92ac6e3ef6ee5fe27b62519f5a144b7862`）",
       ],
@@ -578,7 +578,7 @@ describe("Fork maintenance truth", () => {
       ],
       "GUI Logs/Debug 恢复标签与 sidecar 契约": [
         "`gui/src/pages/Logs.tsx`（blob `c8f79494aff1df856466adc0d7718b6338e5473d`）",
-        "`gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`，与官方 v2.38.0 相同）",
+        "`gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`，与官方 v2.39.0 相同）",
         "`gui/src/i18n/de.ts`（blob `60502ed061b10ba6cc2b5303e3b01fbbf4b8a00b`）",
         "`gui/src/i18n/en.ts`（blob `9f4ed1948c4f3862a458623f68bae9ef38eeaf65`）",
         "`gui/src/i18n/fr.ts`（blob `77849e5fe9ca6ac2cc1b46806c9b07ca8c4b6b29`）",
@@ -588,24 +588,24 @@ describe("Fork maintenance truth", () => {
         "`gui/src/i18n/tr.ts`（blob `1b3e23979f32f1fc7e2712c721214ee6025bd2da`）",
         "`gui/src/i18n/zh-TW.ts`（blob `b463b9e38c524808b799cbabd9ab6a0581dd4477`）",
         "`gui/src/i18n/zh.ts`（blob `4cbffe4401797b2e2ad21663efbc7da81e8dabed`）",
-        "`gui/tests/sidecar-layout.test.ts`（blob `e140a627260bbf952708e7f710874a5f76cc5b2b`，与官方 v2.38.0 相同）",
+        "`gui/tests/sidecar-layout.test.ts`（blob `e140a627260bbf952708e7f710874a5f76cc5b2b`，与官方 v2.39.0 相同）",
       ],
       "`ben` Fork 修订版本策略": [
         "`src/fork/version-policy.mjs`（blob `1c9351fea6dd28f5d70fb945c37e5ac46536a7b6`）",
         "`tests/fork-version-policy.test.ts`（blob `40c1092241345b88c3c26756bca1d3d59586f501`）",
       ],
       "Standalone web search 能力注入": [
-        "`v2.38.0:src/codex/inject.ts`（blob `72be57878470077e9b3c434726aea329e007d79c`）",
+        "`v2.39.0:src/codex/inject.ts`（blob `72be57878470077e9b3c434726aea329e007d79c`）",
         "当前实现的 `src/codex/inject.ts` blob 为 `7cca45fa7f5e41328a5199a5adf5151406019220`",
         "`0124c2809cb40c29603cff196e6d2182559bd48d`",
       ],
       "智谱 BigModel Codex 模型发现": [
-        "`v2.38.0:src/providers/model-discovery.ts`（blob `ada0bd2aecc196e003d0b1720c96d864e4793dbc`）",
+        "`v2.39.0:src/providers/model-discovery.ts`（blob `ada0bd2aecc196e003d0b1720c96d864e4793dbc`）",
         "`src/providers/model-discovery.ts`（blob `85ea01d624b128d56400f4b699b95b32517de639`）",
         "`c9446e0b5cddb90a0569d8e59913a91ae7eaa893`",
       ],
       "默认测试 runner 与负载敏感隔离": [
-        "`v2.38.0:tests/update-stop-first.test.ts`（blob `0f7fd7ff55ec23cbdea4d157df61262bd9f8cd8e`，merge `fe063d16ef620a148ab425cfffe63a8936d00e52`）",
+        "`v2.39.0:tests/update-stop-first.test.ts`（blob `d20eafb5c7051744168d7ce649186c49da789d8e`，merge `fe063d16ef620a148ab425cfffe63a8936d00e52`）",
         "Fork PATH-precedence guard（`a1e35b13db14a1686ef0033685d7214184c37743`）",
         "`src/responses/state.ts`（blob `35540a0ee7210d6cd1c6a2fd377a8a1837501e4e`）",
         "`tests/responses-state.test.ts`（blob `5836f31c6883c98b2acc6361788c7599e5ceaa96`）",
@@ -615,7 +615,7 @@ describe("Fork maintenance truth", () => {
     } as const;
     for (const [title, anchors] of Object.entries(evidence)) {
       const active = section(title);
-      expect(active).toContain("v2.38.0");
+      expect(active).toContain("v2.39.0");
       expect(active).not.toContain("v2.34.0");
       for (const anchor of anchors) expect(compactWhitespace(active)).toContain(anchor);
     }
@@ -624,7 +624,7 @@ describe("Fork maintenance truth", () => {
   test("separates Fork strict backend recovery from official v2.35 turn termination", () => {
     const recovery = section("原生加密子任务恢复接力");
     expect(compactWhitespace(recovery)).toContain(
-      "`v2.38.0:src/server/responses/agent-task-recovery.ts`（blob `8b409e175bfb83345ac147ccbeb4b5bc4d462fcf`，相对 `v2.34.0` 新增官方 cache admission 重构）",
+      "`v2.39.0:src/server/responses/agent-task-recovery.ts`（blob `8b409e175bfb83345ac147ccbeb4b5bc4d462fcf`，相对 `v2.34.0` 新增官方 cache admission 重构）",
     );
     expect(recovery).not.toContain("官方恢复模块（`agent-task-recovery.ts`）扩展了 strict backend ciphertext 的 envelope 识别");
     expect(compactWhitespace(recovery)).toContain("Fork 行为：strict non-Fernet envelope recognition、admission、routed trigger 与 fail-closed forwarding");
