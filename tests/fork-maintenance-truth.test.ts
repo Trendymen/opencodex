@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 const repoUrl = new URL("../", import.meta.url);
 const packageText = readFileSync(new URL("package.json", repoUrl), "utf8");
 const changes = readFileSync(new URL("FORK_CHANGES.md", repoUrl), "utf8");
+const automation = readFileSync(new URL("docs/fork-sync-automation.md", repoUrl), "utf8");
 
 const EXPECTED_OVERLAPS = [
   "gui/src/i18n/de.ts",
@@ -25,10 +26,77 @@ const EXPECTED_OVERLAPS = [
 ] as const;
 
 const EXPECTED_AUTO_MERGES = EXPECTED_OVERLAPS.filter(path => path !== "package.json");
+const EXPECTED_V238_OVERLAP_PATHS = [
+  "bin/ocx.mjs",
+  "gui/src/i18n/de.ts",
+  "gui/src/i18n/en.ts",
+  "gui/src/i18n/fr.ts",
+  "gui/src/i18n/ja.ts",
+  "gui/src/i18n/ko.ts",
+  "gui/src/i18n/ru.ts",
+  "gui/src/i18n/tr.ts",
+  "gui/src/i18n/zh-TW.ts",
+  "gui/src/i18n/zh.ts",
+  "package.json",
+  "src/codex/catalog/provider-fetch.ts",
+  "src/codex/catalog/sync.ts",
+  "src/config.ts",
+  "src/server/management/provider-routes.ts",
+  "src/update/index.ts",
+  "structure/04_transports-and-sidecars.md",
+] as const;
+const EXPECTED_V238_CONFLICT_PATHS = ["package.json"] as const;
+const EXPECTED_PACKAGE_DECISION = {
+  official: "version 2.38.0",
+  fork: "install:local script",
+  resolution: "双方保留并收敛为 2.38.0-ben.1",
+  tests: "tests/release-version-line.test.ts,tests/fork-version-policy.test.ts",
+} as const;
+const EXPECTED_DEV_PROMOTION = "发布瞬间当前已验证 dev 与 main/sync/Fork Tag 收敛到 RELEASE_COMMIT；发布后 advanced dev 不得被自动重置回旧 RELEASE_COMMIT";
+const EXPECTED_V238_KEYS = [
+  "official_old",
+  "official_new",
+  "candidate_branch",
+  "candidate_before",
+  "candidate_after",
+  "overlap_path_count",
+  "auto_merge_path_count",
+  "overlap_paths",
+  "content_conflict_count",
+  "content_conflicts",
+  "decision_package_json",
+  "dev_promotion",
+  "tests",
+] as const;
+const EXPECTED_RELEASE_LIFECYCLE = [
+  "rebase_branch=dev",
+  "sync_role=audit-release-ref",
+  "release_instant_dev=must-equal-RELEASE_COMMIT",
+  "post_release_advanced_dev=must-not-reset",
+  "sync_ancestry=EXPECTED_REMOTE_SYNC-absent-or-ancestor-of-RELEASE_COMMIT",
+  "final_convergence=local-remote-main-dev-sync-fork-tag-equal-RELEASE_COMMIT",
+].join("\n");
+const EXPECTED_RELEASE_LIFECYCLE_KEYS = [
+  "rebase_branch",
+  "sync_role",
+  "release_instant_dev",
+  "post_release_advanced_dev",
+  "sync_ancestry",
+  "final_convergence",
+] as const;
+const EXPECTED_RELEASE_LIFECYCLE_RECORD = {
+  rebase_branch: "dev",
+  sync_role: "audit-release-ref",
+  release_instant_dev: "must-equal-RELEASE_COMMIT",
+  post_release_advanced_dev: "must-not-reset",
+  sync_ancestry: "EXPECTED_REMOTE_SYNC-absent-or-ancestor-of-RELEASE_COMMIT",
+  final_convergence: "local-remote-main-dev-sync-fork-tag-equal-RELEASE_COMMIT",
+} as const;
 const EXPECTED_ATOMIC_REFSET = [
-  ["branch", "main", "leased", "candidate-commit:refs/heads/main"],
-  ["branch", "sync", "leased", "candidate-commit:refs/heads/sync/vX.Y.Z"],
-  ["branch", "marker", "leased", "official-peeled:refs/heads/upstream-release"],
+  ["branch", "main", "leased-force", "RELEASE_COMMIT:refs/heads/main"],
+  ["branch", "dev", "leased-force", "RELEASE_COMMIT:refs/heads/dev"],
+  ["branch", "sync", "leased-fast-forward", "RELEASE_COMMIT:refs/heads/sync/vX.Y.Z"],
+  ["branch", "marker", "leased-force", "OFFICIAL_COMMIT:refs/heads/upstream-release"],
   ["tag", "official", "no-force-no-lease", "refs/tags/vX.Y.Z:refs/tags/vX.Y.Z"],
   ["tag", "fork", "no-force-no-lease", "refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N"],
 ] as const;
@@ -77,6 +145,55 @@ function machineBlock(source: string, name: string): string {
   return match![1]!;
 }
 
+function strictKeyValueBlock(
+  source: string,
+  name: string,
+  expectedKeys: readonly string[],
+): Record<string, string> {
+  expect([...source.matchAll(new RegExp(`<!-- ${name}:start -->`, "g"))]).toHaveLength(1);
+  expect([...source.matchAll(new RegExp(`<!-- ${name}:end -->`, "g"))]).toHaveLength(1);
+  const lines = machineBlock(source, name).split("\n");
+  if (lines.some(line => line.length === 0)) throw new Error(`${name} contains a blank row`);
+  const entries: Array<[string, string]> = lines.map((line) => {
+    const match = line.match(/^([a-z0-9_]+)=(.+)$/);
+    if (!match) throw new Error(`invalid ${name} row: ${line}`);
+    return [match[1]!, match[2]!];
+  });
+  const keys = entries.map(([key]) => key);
+  if (new Set(keys).size !== keys.length) throw new Error(`${name} contains a duplicate key`);
+  if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
+    throw new Error(`${name} keys differ from the exact contract`);
+  }
+  return Object.fromEntries(entries);
+}
+
+function parsePackageDecision(value: string): Record<string, string> {
+  const expectedKeys = Object.keys(EXPECTED_PACKAGE_DECISION);
+  const entries: Array<[string, string]> = value.split("；").map((part) => {
+    const match = part.match(/^([a-z_]+)=(.+)$/);
+    if (!match) throw new Error(`invalid package decision part: ${part}`);
+    return [match[1]!, match[2]!];
+  });
+  const keys = entries.map(([key]) => key);
+  if (new Set(keys).size !== keys.length) throw new Error("package decision contains a duplicate key");
+  if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
+    throw new Error("package decision keys differ from the exact contract");
+  }
+  const parsed = Object.fromEntries(entries);
+  if (JSON.stringify(parsed) !== JSON.stringify(EXPECTED_PACKAGE_DECISION)) {
+    throw new Error("package decision values differ from the exact contract");
+  }
+  return parsed;
+}
+
+function strictReleaseLifecycle(source: string): string {
+  const parsed = strictKeyValueBlock(source, "fork-release-lifecycle", EXPECTED_RELEASE_LIFECYCLE_KEYS);
+  if (JSON.stringify(parsed) !== JSON.stringify(EXPECTED_RELEASE_LIFECYCLE_RECORD)) {
+    throw new Error("release lifecycle values differ from the exact contract");
+  }
+  return machineBlock(source, "fork-release-lifecycle");
+}
+
 function backtickedPaths(lines: string[]): string[] {
   return lines.map((line) => {
     const match = line.match(/^- `([^`]+)`$/);
@@ -100,19 +217,21 @@ function majorSection(title: string): string {
 }
 
 function parseAtomicRefset(block: string): string[][] {
-  const rows = block.split("\n").filter(Boolean).map((line) => {
+  const lines = block.split("\n");
+  if (lines.some(line => line.length === 0)) throw new Error("atomic refset contains a blank row");
+  const rows = lines.map((line) => {
     const fields = line.split("|");
     if (fields.length !== 4 || fields.some(field => !field)) {
       throw new Error(`invalid atomic refset row: ${line}`);
     }
     return fields;
   });
-  if (rows.length !== 5) throw new Error("atomic refset must contain exactly five rows");
+  if (rows.length !== 6) throw new Error("atomic refset must contain exactly six rows");
   if (JSON.stringify(rows) !== JSON.stringify(EXPECTED_ATOMIC_REFSET)) {
-    throw new Error("atomic refset differs from the exact five-member contract");
+    throw new Error("atomic refset differs from the exact six-member contract");
   }
   for (const [kind, name, policy, refspec] of rows) {
-    if (kind === "branch" && policy !== "leased") throw new Error(`${name} branch is not leased`);
+    if (kind === "branch" && !policy.startsWith("leased-")) throw new Error(`${name} branch is not leased`);
     if (kind === "tag" && policy !== "no-force-no-lease") throw new Error(`${name} tag policy is invalid`);
     if (kind === "tag" && refspec.startsWith("+")) throw new Error(`${name} tag refspec is forced`);
   }
@@ -179,6 +298,48 @@ describe("Fork maintenance truth", () => {
     }
 
     expect(changes.indexOf("<!-- ben2-overlap:start -->")).toBeGreaterThan(current.indexOf("official_old=v2.35.0"));
+  });
+
+  test("records the complete current v2.38 overlap and conflict account", () => {
+    const rows = strictKeyValueBlock(changes, "v238-rebase", EXPECTED_V238_KEYS);
+
+    expect(rows.official_old).toBe("v2.37.0");
+    expect(rows.official_new).toBe("v2.38.0");
+    expect(rows.candidate_branch).toBe("dev");
+    expect(rows.candidate_before).toBe("09fbd1453fa2c374d5d0e9cad9ae15cf86cf7e8f");
+    expect(rows.candidate_after).toBe("fac328f9465b4ce17abddf7fec2df006c9a58aa0");
+    expect(rows.overlap_path_count).toBe("17");
+    expect(rows.auto_merge_path_count).toBe("16");
+    expect(rows.content_conflict_count).toBe("1");
+    const overlapPaths = rows.overlap_paths?.split(",");
+    expect(overlapPaths).toEqual(EXPECTED_V238_OVERLAP_PATHS);
+    expect(new Set(overlapPaths).size).toBe(17);
+    expect(rows.content_conflicts?.split(",")).toEqual(EXPECTED_V238_CONFLICT_PATHS);
+    for (const path of EXPECTED_V238_CONFLICT_PATHS) expect(overlapPaths).toContain(path);
+    expect(parsePackageDecision(rows.decision_package_json)).toEqual(EXPECTED_PACKAGE_DECISION);
+    expect(rows.dev_promotion).toBe(EXPECTED_DEV_PROMOTION);
+    expect(rows.tests).toBe("tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts,tests/fork-ci-official-baseline.test.ts");
+  });
+
+  test("rejects ambiguous or incomplete current rebase machine blocks", () => {
+    const valid = machineBlock(changes, "v238-rebase");
+    const wrap = (block: string) => `<!-- v238-rebase:start -->\n${block}\n<!-- v238-rebase:end -->`;
+    expect(() => strictKeyValueBlock(wrap(`${valid}\nofficial_old=v2.37.0`), "v238-rebase", EXPECTED_V238_KEYS)).toThrow();
+    expect(() => strictKeyValueBlock(wrap(`${valid}\nunknown=value`), "v238-rebase", EXPECTED_V238_KEYS)).toThrow();
+    expect(() => strictKeyValueBlock(wrap(valid.replace(/^tests=.+$/m, "")), "v238-rebase", EXPECTED_V238_KEYS)).toThrow();
+    expect(() => strictKeyValueBlock(`${wrap(valid)}\n${wrap(valid)}`, "v238-rebase", EXPECTED_V238_KEYS)).toThrow();
+    expect(() => strictKeyValueBlock(wrap(valid.replace("official_new=v2.38.0", "official_new=v2.38.0\n")), "v238-rebase", EXPECTED_V238_KEYS)).toThrow();
+    const decision = `official=${EXPECTED_PACKAGE_DECISION.official}；fork=${EXPECTED_PACKAGE_DECISION.fork}；resolution=${EXPECTED_PACKAGE_DECISION.resolution}；tests=${EXPECTED_PACKAGE_DECISION.tests}`;
+    expect(() => parsePackageDecision(`${decision}；official=wrong`)).toThrow();
+    expect(() => parsePackageDecision(decision.replace("version 2.38.0", "wrong"))).toThrow();
+    expect(() => {
+      const altered = strictKeyValueBlock(
+        wrap(valid.replace(EXPECTED_DEV_PROMOTION, "发布瞬间允许 advanced dev；发布后自动重置")),
+        "v238-rebase",
+        EXPECTED_V238_KEYS,
+      );
+      if (altered.dev_promotion !== EXPECTED_DEV_PROMOTION) throw new Error("invalid dev promotion contract");
+    }).toThrow();
   });
 
   test("records the ben.3 39-to-5 squash boundary and pending external gates", () => {
@@ -287,10 +448,11 @@ describe("Fork maintenance truth", () => {
     expect(gates).toContain("| GitHub Release | `pending external gate` |");
   });
 
-  test("requires the exact five-member official and Fork Tag atomic refset in each generic flow", () => {
+  test("requires the exact six-member atomic refset in every release contract", () => {
     const flows = [
       majorSection("没有新官方版本时的幂等收敛"),
       majorSection("每次稳定版 rebase 的强制流程"),
+      automation,
     ];
 
     for (const flow of flows) {
@@ -298,7 +460,14 @@ describe("Fork maintenance truth", () => {
       expect([...flow.matchAll(/<!-- official-atomic-refset:end -->/g)]).toHaveLength(1);
       const block = machineBlock(flow, "official-atomic-refset");
       expect(parseAtomicRefset(block)).toEqual(EXPECTED_ATOMIC_REFSET);
+      expect(strictReleaseLifecycle(flow)).toBe(EXPECTED_RELEASE_LIFECYCLE);
     }
+  });
+
+  test("rejects duplicate or contradictory release lifecycle blocks", () => {
+    const valid = machineBlock(automation, "fork-release-lifecycle");
+    const duplicate = `${automation}\n<!-- fork-release-lifecycle:start -->\n${valid.replace("must-not-reset", "may-reset")}\n<!-- fork-release-lifecycle:end -->`;
+    expect(() => strictReleaseLifecycle(duplicate)).toThrow();
   });
 
   test("rejects atomic refsets with an extra row, missing lease, or forced Tag", () => {
@@ -309,6 +478,17 @@ describe("Fork maintenance truth", () => {
       "tag|official|no-force-no-lease|refs/tags/vX.Y.Z:refs/tags/vX.Y.Z",
       "tag|official|no-force-no-lease|+refs/tags/vX.Y.Z:refs/tags/vX.Y.Z",
     ))).toThrow();
+    expect(() => parseAtomicRefset(valid.replace("\nbranch|dev", "\n\nbranch|dev"))).toThrow();
+  });
+
+  test("keeps dev as the rebase line and sync as the audit ref", () => {
+    expect(automation).toContain("git rebase --onto <new-tag-sha> <old-upstream-release-sha> dev");
+    expect(automation).not.toContain("git rebase --onto <new-tag-sha> <old-upstream-release-sha> sync/vX.Y.Z");
+    expect(automation).toContain("RELEASE_COMMIT");
+    expect(automation).toContain("OFFICIAL_COMMIT");
+    expect(automation).toContain('git merge-base --is-ancestor "$EXPECTED_REMOTE_SYNC" "$RELEASE_COMMIT"');
+    expect(automation).toContain("本地/远端 `main`、`dev`、`sync/vX.Y.Z`");
+    expect(automation).toContain("post_release_advanced_dev=must-not-reset");
   });
 
   test("grounds every active official comparison in v2.38.0 evidence", () => {
