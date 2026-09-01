@@ -24,6 +24,7 @@ import {
   providerMatchesRegistryTransportWithStaticGuards,
   providerSupportsLiveModelDiscovery,
 } from "./providers/static-model-discovery";
+import { knownStaticModelIdsForProvider } from "./providers/known-model-ids";
 import {
   isCanonicalOpenAiForwardProvider,
   LEGACY_CHATGPT_PROVIDER_ID,
@@ -101,27 +102,7 @@ export function knownModelIdsForProvider(
   prov: OcxProviderConfig,
   config?: Pick<OcxConfig, "customModels">,
 ): string[] {
-  const ids = new Set<string>();
-  for (const id of prov.models ?? []) ids.add(id);
-  if (prov.defaultModel) ids.add(prov.defaultModel);
-  const registry = providerMatchesRegistryTransportWithStaticGuards(provName, prov)
-    ? PROVIDER_REGISTRY.find(entry => entry.id === provName)
-    : undefined;
-  for (const id of registry?.models ?? []) ids.add(id);
-  // Registry model-keyed hint maps double as known native ids (e.g. NVIDIA carries no
-  // static models list but names `moonshotai/kimi-k2.6` in its effort/window maps).
-  for (const map of [
-    registry?.modelContextWindows,
-    registry?.modelInputModalities,
-    registry?.modelReasoningEfforts,
-    registry?.modelDefaultReasoningEfforts,
-    registry?.modelReasoningEffortMap,
-    registry?.modelMaxOutputTokens,
-    registry?.modelSupportsServiceTier,
-    registry?.modelSupportsVerbosity,
-  ]) {
-    for (const id of Object.keys(map ?? {})) ids.add(id);
-  }
+  const ids = new Set(knownStaticModelIdsForProvider(provName, prov));
   for (const cached of getStaleCached(provName) ?? []) ids.add(cached.id);
   for (const model of config?.customModels ?? []) {
     if (model.provider === provName && model.modelId) ids.add(model.modelId);

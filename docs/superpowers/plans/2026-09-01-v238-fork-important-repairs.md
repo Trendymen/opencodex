@@ -253,9 +253,17 @@ Cover:
 ```ts
 expect(salvageCustomModelsForLoad("bad").value).toBeUndefined();
 expect(salvageCustomModelsForLoad([badRow, goodRow]).value).toEqual([canonicalGoodRow]);
-expect(salvageCustomModelsForLoad([firstId, duplicateId, duplicateSlug]).value).toEqual([firstId]);
 expect(salvageCustomModelsForLoad([{ ...goodRow, reasoningEfforts: ["high", "low", "high"] }]).value?.[0]?.reasoningEfforts).toEqual(["low", "high"]);
 expect(customModelsCandidateError([{ ...goodRow, codexToolMode: null }])).toContain("codexToolMode");
+```
+
+Replace the combined duplicate assertion with explicit asymmetric cases:
+
+```ts
+expect(salvageCustomModelsForLoad([firstId, duplicateId]).value).toEqual([firstId]);
+expect(salvageCustomModelsForLoad([firstId, distinctIdSameRoutedSlug]).value)
+  .toEqual([firstId, distinctIdSameRoutedSlug]);
+expect(customModelsCandidateError([firstId, distinctIdSameRoutedSlug])).toContain("duplicate");
 ```
 
 Add temp-CODEX_HOME integration cases proving `loadConfig()` does not rewrite malformed disk bytes,
@@ -280,7 +288,7 @@ Expected: module/import or behavior failures because the helper and explicit bou
 
 - [ ] **Step 3: Implement the narrow shared module**
 
-Implement the approved field table. Preserve unknown keys in the internal config object by starting a surviving row with `{ ...record }`, then overwrite/delete known fields according to salvage. Keep first valid ID and first `routedSlug(provider, modelId)` in original order. Apply `canonicalizeReasoningEfforts()` after filtering valid declared efforts. Return `undefined` for zero survivors.
+Implement the approved field table. Preserve unknown keys in the internal config object by starting a surviving row with `{ ...record }`, then overwrite/delete known fields according to salvage. Keep the first valid stable ID, but preserve distinct rows whose native IDs encode to the same routed identity so existing ambiguity guards remain fail-closed; strict write validation still rejects a new routed-identity collision. Apply `canonicalizeReasoningEfforts()` after filtering valid declared efforts. Return `undefined` for zero survivors.
 
 `knownCustomModelProjection()` must construct fields explicitly and must not spread the input.
 
@@ -301,10 +309,12 @@ In `validateConfigCandidate()`, add `customModelsCandidateError(value)` to the e
 ```bash
 bun test --isolate tests/fork-custom-model-config-schema.test.ts \
   tests/config.test.ts tests/custom-model-catalog-migration.test.ts \
-  tests/config-user-edits.test.ts
+  tests/config-user-edits.test.ts tests/cli-models.test.ts
 ```
 
-Expected: all pass; no disk mutation on read.
+Expected: all pass; no disk mutation on read. The exact encoded-selector and native-slash ambiguity
+removal cases retain both historical rows and refuse deletion, while unambiguous exact removal still
+passes.
 
 - [ ] **Step 6: Commit and review**
 
@@ -344,6 +354,8 @@ PUT absent -> preserve
 PUT enum -> set
 PUT null -> delete property
 PUT invalid -> 400, no persistence, no converge call
+PUT metadata-only edit on a grandfathered collision member -> allowed
+PUT modelId change that creates/enlarges a collision -> 409, no persistence/converge
 GET /api/custom-models -> known fields only
 /api/models custom row -> stored value only
 secret-shaped unknown config keys -> absent from every response
@@ -358,6 +370,8 @@ require the property to be omitted. Spy on persistence and catalog convergence f
 whole-config null, and invalid enums; both call counts must stay zero.
 
 Add CLI cases for add/edit/inherit, canonical reasoning order, `list-custom --json`, text `inherit`, and `models live --json` custom rows.
+Retain the existing `tests/cli-models.test.ts` cases proving exact stable-ID removal can shrink a
+collision class while encoded/native routed selectors matching both members fail without writes.
 
 - [ ] **Step 2: Run RED**
 

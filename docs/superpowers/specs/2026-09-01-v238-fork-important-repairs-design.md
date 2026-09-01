@@ -242,8 +242,9 @@ and applies this normative table:
 After field salvage, duplicate identity handling is deterministic:
 
 - keep the first valid row for each `id`; drop later rows with the same `id`;
-- keep the first valid row for each encoded routed identity `routedSlug(provider, modelId)`; drop
-  later rows with the same routed identity;
+- preserve distinct rows whose native IDs encode to the same routed identity during forgiving disk
+  load. Existing configurations rely on the runtime/CLI ambiguity guard to refuse destructive or
+  ambiguous selection; silently dropping one row would be data loss;
 - preserve the relative order of surviving rows;
 - if no row survives, expose `customModels` as `undefined`, not `[]`.
 
@@ -269,10 +270,33 @@ conflict rules, and persist the sanitized projection only as part of that author
 Restarting after such a write yields the same projection. A concurrent edit must never be
 overwritten from a stale in-memory snapshot.
 
+Routed-identity collisions use this exact boundary contract:
+
+- forgiving disk load preserves every structurally valid distinct-ID member of a historical
+  collision class;
+- an unrelated internal field-scoped/guarded save preserves every unchanged collision member and a
+  subsequent reload returns the same rows;
+- strict whole-config replacement rejects every candidate containing a routed-identity collision,
+  including a grandfathered class; the operator must use field-scoped edits or resolve the class;
+- POST and offline CLI add reject a row colliding with any current row or applicable static roster;
+- PUT/live CLI edit allow metadata-only changes on an existing collision member because provider and
+  model ID are unchanged; a model-ID change that creates or enlarges a collision is rejected;
+- exact stable-ID removal may remove one member and shrink/resolve the class;
+- a routed/native selector matching multiple members remains ambiguous and performs no persistence.
+
+This design deliberately does not add persisted-baseline comparison to the pure
+`validateConfigCandidate(candidate)` API. That boundary remains deterministic and strict; the
+existing guarded internal save is the only path that preserves unchanged historical collision
+classes during unrelated mutations.
+
 Acceptance tests cover non-array input, mixed valid/invalid rows, every field rule above, duplicate
-IDs, duplicate routed identities, all-invalid arrays, bounded diagnostics, raw-load write freedom,
+IDs, preserved read-time routed-identity collisions, strict write rejection of those collisions,
+all-invalid arrays, bounded diagnostics, raw-load write freedom,
 restart stability, an unrelated authorized mutation after salvage, concurrent-disk-change handling,
 and strict whole-config rejection without losing providers, API keys, accounts, or listener state.
+Collision acceptance additionally covers load -> guarded unrelated save -> reload preservation,
+metadata-only PUT/edit, model-ID mutation rejection, add rejection, exact-ID removal, routed-selector
+ambiguity with zero writes, and strict whole-config rejection of a grandfathered class.
 Out-of-order and duplicate reasoning ladders are exercised through disk salvage, strict whole-config
 writes, POST, PUT, and CLI add/edit; every successful path stores the same canonical ladder so the
 first-entry fallback semantics remain unchanged.
