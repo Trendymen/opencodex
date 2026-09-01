@@ -47,7 +47,33 @@ sync_ancestry=EXPECTED_REMOTE_SYNC-absent-or-ancestor-of-RELEASE_COMMIT
 final_convergence=local-remote-main-dev-sync-fork-tag-equal-RELEASE_COMMIT
 <!-- fork-release-lifecycle:end -->
 
+<!-- same-base-ben-preflight:start -->
+scope=strict-local-and-remote-vX.Y.Z-ben.N
+snapshot=name-raw-peeled
+pre_local_tag=freeze-local-baseline-and-remote-baseline
+pre_push=local-baseline-plus-exact-target-and-remote-baseline
+post_push=remote-baseline-or-remote-baseline-plus-exact-target
+higher_revision=fail-closed-at-every-checkpoint
+other_drift=fail-closed
+post_success=required-before-github-release
+serialization=single-publisher-required
+toctou=final-recheck-to-push-window-is-residual-risk
+<!-- same-base-ben-preflight:end -->
+
 四个 branch 使用各自精确 expected-SHA lease；`main`、`dev` 与 marker 允许按发布策略 force，`sync/vX.Y.Z` 只能普通 fast-forward。两个 Tag 都不 force、不使用 lease。任何 mismatch、atomic 不支持或不确定失败都 fail closed，禁止拆分推送。
+
+同基线维护发布还必须枚举本地与 origin 远端完整的 `refs/tags/vX.Y.Z-ben.*` 名称空间，
+仅按与 `X.Y.Z-ben.N` 解析器等价的严格规则接受有效 revision，并将每个 Tag 冻结为名称、raw
+OID 与 peeled OID 的映射。阶段迁移必须精确：创建本地目标 Tag 前冻结 `LOCAL_BASELINE` 与
+`REMOTE_BASELINE`；atomic push 紧邻前，本地只能等于 baseline 或 baseline 加精确 annotated
+目标 Tag（raw 等于本地捕获的 Tag object、peeled 等于 `RELEASE_COMMIT`），远端必须仍精确
+等于 `REMOTE_BASELINE`；确定成功或不确定结果后，本地保持不变，远端只能等于 baseline 或
+baseline 加同一个精确目标对象。每个阶段都重新计算最高有效 revision；任何其他新增、删除、
+替换、对象身份变化或更高 revision 都 fail closed。确定成功也必须在创建 GitHub Release 前
+完成 post-push 全集合复核；若 TOCTOU 窗口出现更高 revision，保留已发布 immutable Tag，停止
+Release 并报告竞态，不自动删除或移动 Tag。发布期间只允许一个 publisher。Git 无法对尚未
+存在的更高 Tag 名称空间建立 lease，因此最终复核到 push 之间仍有不可完全消除的 TOCTOU
+窗口，必须作为残余风险报告，不能以较早的本地测试快照替代最终远端复核。
 
 `leased-fast-forward` 的操作含义不是“lease 可以代替 fast-forward”。若远端 sync 已存在，必须在 atomic push 紧邻前执行并通过：
 
@@ -101,6 +127,10 @@ FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维�
 
 `dev` 可以在已发布 `main` 之上有自由的已提交开发内容；这不是 drift。只有候选来源、远端 `dev` 预期 SHA、或其重写权限无法确定时才 fail closed。
 
+上述每个补 Tag、atomic push 重试或不确定结果恢复入口都必须重新执行完整同基线远端 Fork
+Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 raw/peeled 身份漂移时停止，
+不得仅因目标 Tag 本身仍缺失而继续创建较低 revision。
+
 全部闭环且无更新官方稳定 Release 才可记录无需同步。
 
 ## 新官方稳定 Release 同步流程
@@ -109,7 +139,7 @@ FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维�
 2. 保护候选历史：候选固定为已提交的 `dev`。远端 dev 必须 fetch；本地 dev 领先、落后或分叉时均须记录两端 SHA 与来源。只要本地 dev 是当前已知、干净的发布候选，可继续；来源不明、远端独有而无法证明、或 lease 预期无法固定时停止。远端 sync 存在必须 fetch；发布时 sync 必须 fast-forward 到 Release commit，远端独有或来源不明时停止。
 3. 在 `dev` 上执行等价于 `git rebase --onto <new-tag-sha> <old-upstream-release-sha> dev`。rebase 阶段不得移动 main，不得 detached HEAD 验证。完成实现、验证和末尾文档提交后，本地 `sync/vX.Y.Z` 才可准备为同一 `RELEASE_COMMIT`；不得将 dev 当作只读证据，也不得在 sync 上 rebase。
 4. 冲突处理以 FORK_CHANGES.md、src/fork 边界、AGENTS.local.md、既有测试和新官方实现为依据。仅当前官方源码与测试证明等价或更优才可删除 Fork 行为；名称相似、旧文档或单次 HTTP 200 不算证据。部分覆盖只移除被替代部分；语义改变、能力放弃或无法判定时请用户决定。Fork 逻辑优先放窄模块或 src/fork，官方高频文件最小接线。
-5. revision：新官方 vX.Y.Z 首次派生固定 X.Y.Z-ben.1 / vX.Y.Z-ben.1。同基线已有 Release 不自动递增；仅用户明确要求才允许 ben.2、ben.3。重复 heartbeat 幂等。
+5. revision：新官方 vX.Y.Z 首次派生固定 X.Y.Z-ben.1 / vX.Y.Z-ben.1。同基线已有 Release 不自动递增；仅用户明确要求才允许 ben.2、ben.3。`ben.N` 按官方基线独立维护：即使完整 Tag 集已有更新官方稳定版，明确授权的旧基线维护修订仍可继续，但必须存在精确官方基线 Tag、不得低于同基线最高有效 ben revision、不得复用或移动既有 Fork Tag，也不得声称包含更新官方版本能力。普通 stable/preview 仍遵守全局单调版本门禁。重复 heartbeat 幂等。
 6. 完成并提交全部 rebase、冲突、版本与实现修复。
 7. 捕获固定 `IMPLEMENTATION_HEAD`，不得从后续 HEAD 反推。按该 SHA 中文更新 FORK_CHANGES.md：官方 Release/Tag/SHA、实现 commit、shortstat、包版本、目标 Tag、能力状态、官方覆盖证据、已移除方向、已知缺口与验收边界。历史移除记录不删，旧 PASS 不沿用。
 8. 文档更新后执行最终验证：定向测试；共享 runtime/adapter/server/script/runner/version 改动跑一次 bun run prepush；GUI 改动按规则构建；privacy scan 必须通过。验证促成实现修改时回到第 7 步。

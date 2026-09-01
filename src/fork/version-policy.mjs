@@ -26,36 +26,12 @@ export function forkUpdateDecision(latest, current) {
   return latest && isSameUpstreamVersion(latest, current) ? "same" : "proceed";
 }
 
-function stableParts(value) {
-  const match = STABLE_VERSION_RE.exec(value);
-  if (!match) return null;
-  const parts = match.slice(1, 4).map(Number);
-  return parts.every(Number.isSafeInteger) ? parts : null;
-}
-
-function compareStable(left, right) {
-  for (let index = 0; index < 3; index += 1) {
-    if (left[index] !== right[index]) return left[index] - right[index];
-  }
-  return 0;
-}
-
 /** Validate the immutable, monotonic tag line for a recognized fork version. */
 export function forkVersionTagError(version, tags, pointsAtHead = () => false) {
   const base = forkBaseVersion(version);
   if (!base) return undefined;
   const baseTag = `v${base}`;
   if (!tags.includes(baseTag)) return `fork version ${version} has no official ${baseTag} base tag`;
-
-  const baseParts = stableParts(base);
-  const stableCores = tags
-    .filter(tag => /^v\d+\.\d+\.\d+$/.test(tag))
-    .map(tag => stableParts(tag.slice(1)))
-    .filter(parts => parts !== null);
-  if (baseParts && stableCores.some(parts => compareStable(baseParts, parts) < 0)) {
-    const highest = stableCores.sort(compareStable).at(-1);
-    return `fork base ${baseTag} is behind v${highest.join(".")}`;
-  }
 
   const revision = Number(FORK_VERSION_RE.exec(version.trim())[4]);
   const highestRevision = Math.max(0, ...tags

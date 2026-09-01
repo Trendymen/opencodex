@@ -142,9 +142,10 @@ OFFICIAL_COMMIT
 ```
 
 Preparing or validating a local candidate may create a local `sync/vX.Y.Z` only after
-`IMPLEMENTATION_HEAD` and the subsequent `RELEASE_COMMIT` are fixed. This repair task itself does
-not create or move local or remote `sync`, `main`, `dev`, marker, or tag refs. Remote ref movement is
-a deferred release action after every review and validation gate passes.
+`IMPLEMENTATION_HEAD` and the subsequent `RELEASE_COMMIT` are fixed. Repair, validation, and review
+do not create or move local or remote `sync`, `main`, `dev`, marker, or tag refs. The user has now
+explicitly authorized publishing `v2.38.0-ben.2`; ref movement remains deferred until every review
+and validation gate passes and then follows the single atomic release transaction below.
 
 ### Atomic promotion
 
@@ -184,6 +185,41 @@ illegal post-publication reset of an advanced `dev`.
 `v2.38.0-ben.1` is immutable and already points at `a22ca82b2`. A descendant containing the
 Volcengine repair cannot reuse it. The repaired candidate becomes `2.38.0-ben.2`; a new annotated
 `v2.38.0-ben.2` may be created only after final validation and all blocking reviews pass.
+
+Fork revisions are maintained per official base. A recognized `X.Y.Z-ben.N` remains eligible after
+a newer official stable tag exists only when all of these conditions hold:
+
+- the exact official `vX.Y.Z` base tag exists;
+- `N` is not below an existing valid `vX.Y.Z-ben.M` revision;
+- an existing `vX.Y.Z-ben.N` either peels to the candidate commit or blocks reuse;
+- the user explicitly authorized that same-base maintenance revision.
+
+This exception applies only to numbered `ben.N` Fork versions. Ordinary stable and preview versions
+retain the repository-wide monotonic release check against the complete tag set. It therefore permits
+the explicitly requested `2.38.0-ben.2` maintenance release without pretending that the candidate
+contains official v2.39 behavior or weakening immutable Tag checks.
+
+The release preflight must not rely on the earlier local test snapshot. Only strict numbered
+`vX.Y.Z-ben.N` names participate, and each namespace is a complete map from name to raw Tag object
+OID and peeled commit OID. The phase-aware states are exact:
+
+1. Before local target creation, freeze `LOCAL_BASELINE` and `REMOTE_BASELINE`, reject a target below
+   the highest valid revision, and reject any pre-existing target with incompatible identity.
+2. Immediately before push, local state must be baseline plus at most the exact annotated target
+   whose raw OID is the captured local Tag object and whose peeled OID is `RELEASE_COMMIT`; remote
+   state must still equal `REMOTE_BASELINE` exactly.
+3. After a definite success or uncertain result, local state stays unchanged. Remote state may only
+   equal baseline or baseline plus the exact same target raw/peeled identity. Branch results still
+   distinguish atomic success from a no-op or failure.
+4. Every checkpoint recomputes the highest valid same-base revision. Any other addition, deletion,
+   replacement, higher revision, raw change, or peeled change fails closed.
+5. The complete post-push check runs after reported success as well as uncertain results and before
+   GitHub Release creation. If a higher revision appeared in the acknowledged race window, the
+   immutable lower Tag is not moved or deleted; Release creation stops and the race is reported.
+
+Publication is serialized to one publisher. Git cannot lease a future, differently named higher
+revision, so the final remote recheck-to-push interval remains an explicit TOCTOU residual risk
+rather than a guarantee supplied by the six-member refset.
 
 All implementation and test repairs are committed before capturing `IMPLEMENTATION_HEAD`. The
 package version commit is part of that implementation snapshot. `FORK_CHANGES.md` is then updated
@@ -540,8 +576,10 @@ independently understandable function, with Chinese commit messages by default:
 3. `customModels` schema and `codexToolMode` management contract;
 4. staged local packaging and test cleanup;
 5. GUI sidecar test repair;
-6. `2.38.0-ben.2` version and final implementation evidence;
-7. trailing `FORK_CHANGES.md` documentation commit.
+6. same-base Fork maintenance-version policy, its contract tests, and the matching Spec/Plan/
+   automation clarification;
+7. `2.38.0-ben.2` version and final implementation evidence;
+8. trailing `FORK_CHANGES.md` documentation commit.
 
 Process documents, review findings, or test phases do not become artificial commit boundaries.
 
@@ -587,5 +625,6 @@ dependency-installation changes receive an additional security-focused review. C
 findings block; fixes return to the same reviewer with `REVIEW_PHASE: RE_REVIEW`, complete prior
 findings, scoped fix diff, and real verification evidence.
 
-No tag, push, branch promotion, GitHub Release, global installation, service replacement, restart,
-or repair is authorized by this design.
+The user has explicitly authorized the final annotated Tag, six-member atomic push, local
+compare-and-swap convergence, and GitHub Release for `v2.38.0-ben.2` after every blocking gate passes.
+Global installation, service replacement, restart, and repair remain unauthorized.

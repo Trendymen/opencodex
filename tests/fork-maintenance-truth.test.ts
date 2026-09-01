@@ -5,6 +5,10 @@ const repoUrl = new URL("../", import.meta.url);
 const packageText = readFileSync(new URL("package.json", repoUrl), "utf8");
 const changes = readFileSync(new URL("FORK_CHANGES.md", repoUrl), "utf8");
 const automation = readFileSync(new URL("docs/fork-sync-automation.md", repoUrl), "utf8");
+const repairPlan = readFileSync(
+  new URL("docs/superpowers/plans/2026-09-01-v238-fork-important-repairs.md", repoUrl),
+  "utf8",
+);
 
 const EXPECTED_OVERLAPS = [
   "gui/src/i18n/de.ts",
@@ -100,6 +104,30 @@ const EXPECTED_ATOMIC_REFSET = [
   ["tag", "official", "no-force-no-lease", "refs/tags/vX.Y.Z:refs/tags/vX.Y.Z"],
   ["tag", "fork", "no-force-no-lease", "refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N"],
 ] as const;
+const EXPECTED_SAME_BASE_TAG_PREFLIGHT_KEYS = [
+  "scope",
+  "snapshot",
+  "pre_local_tag",
+  "pre_push",
+  "post_push",
+  "higher_revision",
+  "other_drift",
+  "post_success",
+  "serialization",
+  "toctou",
+] as const;
+const EXPECTED_SAME_BASE_TAG_PREFLIGHT = {
+  scope: "strict-local-and-remote-vX.Y.Z-ben.N",
+  snapshot: "name-raw-peeled",
+  pre_local_tag: "freeze-local-baseline-and-remote-baseline",
+  pre_push: "local-baseline-plus-exact-target-and-remote-baseline",
+  post_push: "remote-baseline-or-remote-baseline-plus-exact-target",
+  higher_revision: "fail-closed-at-every-checkpoint",
+  other_drift: "fail-closed",
+  post_success: "required-before-github-release",
+  serialization: "single-publisher-required",
+  toctou: "final-recheck-to-push-window-is-residual-risk",
+} as const;
 
 const EXPECTED_V236_CONFLICT_PATHS = [
   "package.json",
@@ -192,6 +220,18 @@ function strictReleaseLifecycle(source: string): string {
     throw new Error("release lifecycle values differ from the exact contract");
   }
   return machineBlock(source, "fork-release-lifecycle");
+}
+
+function strictSameBaseTagPreflight(source: string): Record<string, string> {
+  const parsed = strictKeyValueBlock(
+    source,
+    "same-base-ben-preflight",
+    EXPECTED_SAME_BASE_TAG_PREFLIGHT_KEYS,
+  );
+  if (JSON.stringify(parsed) !== JSON.stringify(EXPECTED_SAME_BASE_TAG_PREFLIGHT)) {
+    throw new Error("same-base ben preflight values differ from the exact contract");
+  }
+  return parsed;
 }
 
 function backtickedPaths(lines: string[]): string[] {
@@ -462,6 +502,19 @@ describe("Fork maintenance truth", () => {
       expect(parseAtomicRefset(block)).toEqual(EXPECTED_ATOMIC_REFSET);
       expect(strictReleaseLifecycle(flow)).toBe(EXPECTED_RELEASE_LIFECYCLE);
     }
+  });
+
+  test("freezes the complete same-base Fork Tag namespace before maintenance publication", () => {
+    expect(strictSameBaseTagPreflight(automation)).toEqual(EXPECTED_SAME_BASE_TAG_PREFLIGHT);
+    expect(strictSameBaseTagPreflight(repairPlan)).toEqual(EXPECTED_SAME_BASE_TAG_PREFLIGHT);
+
+    const valid = machineBlock(automation, "same-base-ben-preflight");
+    const duplicate = `${automation}\n<!-- same-base-ben-preflight:start -->\n${valid}\n<!-- same-base-ben-preflight:end -->`;
+    expect(() => strictSameBaseTagPreflight(duplicate)).toThrow();
+    expect(() => strictSameBaseTagPreflight(automation.replace(
+      "local-baseline-plus-exact-target-and-remote-baseline",
+      "local-baseline-plus-any-target-and-remote-baseline",
+    ))).toThrow();
   });
 
   test("rejects duplicate or contradictory release lifecycle blocks", () => {
