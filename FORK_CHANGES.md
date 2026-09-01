@@ -34,12 +34,12 @@
 | 本轮官方维护基线 | [`v2.39.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.39.0) |
 | 官方 Tag commit | `af6113a0381d6fff2e4dce587652825c7eeb6423` |
 | 当前上游最新稳定 Release | `v2.39.0`（`af6113a0381d6fff2e4dce587652825c7eeb6423`），即本轮 rebase 基线 |
-| dev 候选实现 HEAD | `99bc343f8d8ba7e43e7d267ba3d6a5af36128458`（rebase 完成，锁定 v2.39 台账、当前 blob、完整发布授权与 launcher 隔离修复） |
+| dev 候选实现 HEAD | `3231b9e5d311eb8b9ba6706142d243b339141066`（rebase 完成，锁定 v2.39 台账、完整发布授权、launcher 隔离及其动态 blob 锚） |
 | Fork 包版本 | `2.39.0-ben.1` |
 | 本轮派生 Tag | `v2.39.0-ben.1`；rebase 默认包含完整发布闭环，双审通过后创建 annotated Tag |
 | 同步分支 | `sync/v2.39.0` 尚未建立；完整验证与双审通过后在发布阶段建立 |
-| 已提交修改面 | 165 个文件，新增 27,270 行，删除 291 行（相对 `v2.39.0`，不含末尾文档提交） |
-| 最终本地门禁 | `99bc343f8` 上完整 `bun run prepush` 退出 0：主套件 17,156 pass / 14 skip / 0 fail，全部串行隔离套件通过，privacy scan 通过；`bun run build:gui` 退出 0 |
+| 已提交修改面 | 165 个文件，新增 27,284 行，删除 291 行（相对 `v2.39.0`，不含后续末尾文档提交） |
+| 最终本地门禁 | `3231b9e5d` 上完整 `bun run prepush` 退出 0：主套件 17,156 pass / 14 skip / 0 fail，全部串行隔离套件通过，privacy scan 通过；`bun run build:gui` 退出 0 |
 | 外部发布状态 | 发布动作尚未执行；本轮 rebase 已授权完整验证、双审、Tag、六成员 atomic push 与 GitHub Release 闭环 |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
@@ -62,6 +62,13 @@ v2.39 package 表面、Fork `install:local`，并将候选版本收敛为 `2.39.
 `--port`、未把临时 `config.json` 的端口同步到该测试端口，因此误认真实运行中的代理为
 当前 fixture owner。`99bc343f8` 只补齐测试配置隔离，不修改生产探测语义或延长超时；
 独立复测三个信号场景 3 pass / 0 fail；随后完整 prepush 与 GUI build 均退出 0。
+
+CODE_QUALITY 复审随后发现维护真源仍把修复前 launcher 测试 blob 标为 current，而动态
+blob 门禁只覆盖原有 12 个路径。`3231b9e5d` 将
+`tests/shutdown-launcher.test.ts` 纳入 `currentGitBlob()` 动态集合，并把 active 锚点更新为
+当前 blob `781712cb24756d0d2d4dab19039dc7b701d4c3a2`。该门禁修复先在旧文档上稳定得到
+1 fail，再更新锚点恢复为 17 pass / 0 fail；随后绑定 `3231b9e5d` 重跑完整 prepush 与
+GUI build，均退出 0。
 
 历史 v2.38.0 及更早轮次账户保留在专用区块，仅用于追溯，不能作为本轮结论。
 
@@ -801,8 +808,8 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `fe063d16ef620a148ab425cfffe63a8936d00e52`）已包含 recovery PID cleanup、
   `UPDATE_SPAWN_TIMEOUT_MS`/`PROXY_READY_TIMEOUT_MS` 派生预算，以及 cleanup 后才
   `rmSync` 的防 orphan 顺序。该官方文件不含 `nodeExecutable`；该 token 只出现在当前
-  Fork `tests/shutdown-launcher.test.ts`，其 current blob
-  `d34dd18b9f8c16d66f269bb0352d787f24f00856` 明确以 `process.execPath` 绕开
+  Fork `tests/shutdown-launcher.test.ts`（blob `781712cb24756d0d2d4dab19039dc7b701d4c3a2`）
+  明确以 `process.execPath` 绕开
   version-manager shim。Fork 在 `tests/update-stop-first.test.ts` 保留的唯一 host guard
   是 PATH-precedence：Fork PATH-precedence guard（`a1e35b13db14a1686ef0033685d7214184c37743`）
   先实测 Bun 是否保留 fake npm 的 supplied PATH，只有可表示 fixture 时才运行该恢复用例；
