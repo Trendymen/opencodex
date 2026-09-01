@@ -15,7 +15,7 @@ import {
   type ServiceInstallationProbe,
 } from "../src/service";
 import { statusWinswRaw, type WinswStatus } from "../src/lib/winsw";
-import { runWithBundledDependencies } from "./install-local-vendor";
+import { prepareBundledLocalPackage, type PreparedLocalPackage } from "./install-local-vendor";
 
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const GUI_FONT_STACK = '--font-ui:"OpenAI Sans", "Noto Sans SC", "Microsoft YaHei UI"';
@@ -591,6 +591,15 @@ export function resolveInstalledPackageRoot(
   throw new Error(`could not locate the installed package matching ${name}@${version}`);
 }
 
+export function localGlobalInstallCommand(
+  prepared: Pick<PreparedLocalPackage, "tarball" | "npmCache">,
+): string[] {
+  return [
+    "npm", "install", "-g", "--ignore-scripts", "--offline", "--no-audit", "--no-fund",
+    "--package-lock=false", "--cache", prepared.npmCache, prepared.tarball,
+  ];
+}
+
 export async function runLocalInstaller(args = process.argv.slice(2)): Promise<number> {
   const restart = args.length === 0 ? true : args.length === 1 && args[0] === "--no-restart" ? false : null;
   if (restart === null) {
@@ -606,17 +615,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
   console.log(`    patched ${fontPatch.replacements} declaration(s) across ${fontPatch.files} CSS file(s)`);
 
   console.log("==> Packing immutable local snapshot...");
-  const tarball = runWithBundledDependencies(join(root, "package.json"), () => {
-    const packInvocation = commandInvocation("npm", ["pack", "--json"]);
-    const pack = Bun.spawnSync([packInvocation.file, ...packInvocation.args], {
-      cwd: root,
-      stdout: "pipe",
-      stderr: "inherit",
-      ...(packInvocation.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
-    });
-    if (pack.exitCode !== 0) throw new Error(`npm pack failed (${pack.exitCode})`);
-    return validatedPackedTarball(root, new TextDecoder().decode(pack.stdout));
-  });
+  const preparedPackage = prepareBundledLocalPackage(root);
 
   let lifecycleError: unknown;
   try {
@@ -649,7 +648,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         // lifecycle scripts can only repeat work the pack step already did —
         // the bun postinstall download in particular. Skip them; the launcher
         // keeps its install.js fallback for a genuinely missing binary.
-        run(["npm", "install", "-g", "--ignore-scripts", tarball]);
+        run(localGlobalInstallCommand(preparedPackage));
         run(["ocx", "--version"]);
         assertGuiFontStack(
           join(resolveInstalledPackageRoot(name, version), "gui", "dist", "assets"),
@@ -673,7 +672,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
   }
   let cleanupError: unknown;
   try {
-    rmSync(tarball, { force: true });
+    preparedPackage.cleanup();
   } catch (error) {
     cleanupError = error;
   }
