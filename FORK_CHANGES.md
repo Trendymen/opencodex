@@ -34,12 +34,12 @@
 | 本轮官方维护基线 | [`v2.38.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.38.0) |
 | 官方 Tag commit | `ebb4d552e8f463bc1519ab5aab602342b0ba70dc` |
 | 当前上游最新稳定 Release | `v2.39.0`（`af6113a0381d6fff2e4dce587652825c7eeb6423`）；不属于本轮 v2.38 维护候选能力范围 |
-| dev 候选实现 HEAD | `fa1bf7a7fb025a4c0b02d7a211bebd51aa805e89` |
+| dev 候选实现 HEAD | `9a364c5c6dc48868a910f5808fd24e0f2e50c8b8` |
 | Fork 包版本 | `2.38.0-ben.2` |
 | 本轮派生 Tag | `v2.38.0-ben.2`；当前仍 pending，只有完整验证与阻塞审查通过后才创建 |
 | 同步分支 | `sync/v2.38.0`，发布时与 `main`、`dev`、Fork Tag 指向同一 Release commit |
-| 已提交修改面 | 163 个文件，新增 26,887 行，删除 289 行（相对 `v2.38.0`，不含末尾文档提交） |
-| 最终本地门禁 | `fa1bf7a7f` generation：focused root 189 pass / 0 fail / 1,237 assertions；`bun run prepush` exit 0；主 suite 16,942 pass / 14 skip / 0 fail / 371,475 assertions；全部串行专项 0 fail；privacy PASS；React Doctor changed scope 无 finding |
+| 已提交修改面 | 165 个文件，新增 27,025 行，删除 292 行（相对 `v2.38.0`，不含末尾文档提交） |
+| 最终本地门禁 | `9a364c5c6` generation：focused root 322 pass / 0 fail / 1,610 assertions；`bun run prepush` exit 0；主 suite 16,945 pass / 14 skip / 0 fail / 301,126 assertions；全部串行专项 0 fail；privacy PASS；React Doctor changed scope 无 finding |
 | 外部发布状态 | `v2.38.0-ben.2` annotated Tag、六成员 atomic push、GitHub Release 均尚未发生，等待最终三路审查 |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
@@ -641,8 +641,11 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 - **行为：** `bun run install:local` 构建 GUI，但 tracked root `package.json` 全程只读。
   完整 manifest bytes 在 `build:gui -> prepare:package` 前冻结，并从同一 snapshot 解析
   name/version；source preparation、GUI patch、pack、offline validation、stop/replace/restart/
-  ready lifecycle 与 cleanup 各阶段都比较相同字节。任何 drift 在 global uninstall/install
-  前 fail closed，primary/cleanup 双错误仍保持原始错误在前。
+  ready lifecycle 与 cleanup 各阶段都比较相同字节。stop 与 replacement admission 前的
+  drift fail closed；一旦 replacement 已开始，restart/ready 无条件优先恢复服务，completion/
+  cleanup 再报告 source drift，避免诊断断言把旧/新服务同时留在停机状态。任何 prepared
+  stage 后的 manifest mismatch、read error 或 lifecycle admission failure 都进入统一 cleanup
+  ownership，primary/cleanup 双错误保持原始错误在前。
   owner-only 临时 stage 复制 package `files` 与经过 canonical containment 校验的完整
   runtime dependency closure，只在 staged manifest 写入排序后的 `bundleDependencies`。
   `npm pack --json --ignore-scripts` 产物必须是唯一 regular local tarball，并重新计算
@@ -657,13 +660,14 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   和 offline installed tree 中可解析，missing optional 不制造占位或网络回退。最终 global
   install argv 复用同一 validated tarball/cache 与 offline/no-script 策略。
 - **代码：** `scripts/install-local-vendor.ts`（blob `6eccd1c64fd823e9189d19f89169b4ffb8d15a93`）；
-  `scripts/install-local.ts`（blob `f6e58bab3b0add21ca3fb5ca9b62217b94c689f2`）。
-- **测试：** `tests/fork-install-local-staging.test.ts`（blob `93b6d65fb6a4dff0ecc447102a97c440d066b848`）
+  `scripts/install-local.ts`（blob `93cb375c1621ef82fc25f8642f4746da144aef1a`）。
+- **测试：** `tests/fork-install-local-staging.test.ts`（blob `2ab483349ae32e81b3dacc64a222dce3c18f69c5`）
   覆盖 staging、present/missing optional、offline closure、forged/empty/malformed pack JSON、
   integrity/shasum/file rows、tarball escape/symlink、installed identity/main/bin/exports/files、
   link/cycle/special-file containment、默认 large-junk Bun probe 与 cleanup/error ordering；
-  `tests/fork-install-local-manifest-lifecycle.test.ts`（blob `a61f9350f95aa345ba8c560e4af61975be0778be`）
-  固定 pre-build snapshot 与 lifecycle cleanup 所有权；`tests/install-local-vendor.test.ts`、
+  `tests/fork-install-local-manifest-lifecycle.test.ts`（blob `aa9580f645df7bf27ed71062cb6eb2265d3c2274`）
+  固定 pre-build snapshot、post-prepare read failure cleanup、lifecycle admission cleanup 及
+  replace 成功/失败后 recovery-first 顺序；`tests/install-local-vendor.test.ts`、
   `tests/install-local.test.ts` 保留相邻生命周期回归。这些仍是 isolated/unit/static 证据；
   本轮未执行真实全局替换或 service stop/restart 恢复。
 - **官方对比：** 官方 `v2.38.0` 与当前 upstream 开发分支没有同等本地源码安装器。
