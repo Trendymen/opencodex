@@ -2153,39 +2153,36 @@ describe("server local API auth", () => {
         return Response.json({ id: "resp_test", object: "response", status: "completed", output: [] });
       },
     });
-    redirectCanonicalCodexTo(upstream.url.toString());
     const now = 1_800_000_000_000;
-    saveConfig({
-      port: 0,
-      defaultProvider: "openai",
-      openaiProviderTierVersion: 2,
-      websockets: true,
-      providers: poolProviders(),
-      codexAccounts: [
-        { id: "main", email: "main@example.test", isMain: true },
-        { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
-      ],
-      activeCodexAccountId: "pool-a",
-    } as OcxConfig);
-    saveCodexAccountCredential("pool-a", {
-      accessToken: "pool-access-token",
-      refreshToken: "pool-refresh-token",
-      expiresAt: now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 10 * 60_000,
-      chatgptAccountId: "acct-pool-a",
-    });
     const originalNow = Date.now;
-    // Pin the clock BEFORE startServer, not after. `startServer` returns synchronously but
-    // arms an async pool-quota prime (src/server/index.ts:2054-2064) that outlives its
-    // return, and that prime decides staleness with `Date.now() - quota.updatedAt >=
-    // POOL_CACHE_TTL` (src/codex/auth-api.ts:1334-1337), where a MISSING entry is stale too.
-    // Seeding the quota after the pin is what actually keeps the prime quiet: a seed written
-    // before the pin stamps `updatedAt` with the real clock, which reads as months of cache
-    // age against this 2027 `now` and sends the prime off to fetch and rotate the credential
-    // out from under the assertions.
-    Date.now = () => now;
-    updateAccountQuota("pool-a", 10, 5);
-    const server = startServer(0);
+    const originalFetch = globalThis.fetch;
+    let server: ReturnType<typeof startServer> | undefined;
     try {
+      redirectCanonicalCodexTo(upstream.url.toString());
+      saveConfig({
+        port: 0,
+        defaultProvider: "openai",
+        openaiProviderTierVersion: 2,
+        websockets: true,
+        providers: poolProviders(),
+        codexAccounts: [
+          { id: "main", email: "main@example.test", isMain: true },
+          { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
+        ],
+        activeCodexAccountId: "pool-a",
+      } as OcxConfig);
+      saveCodexAccountCredential("pool-a", {
+        accessToken: "pool-access-token",
+        refreshToken: "pool-refresh-token",
+        expiresAt: now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 10 * 60_000,
+        chatgptAccountId: "acct-pool-a",
+      });
+      // startServer schedules an asynchronous pool-quota prime. Seed a fresh
+      // quota under the same fake clock so that prime performs no real WHAM I/O.
+      Date.now = () => now;
+      updateAccountQuota("pool-a", 10, 5);
+      expect(getAccountQuota("pool-a")?.updatedAt).toBe(now);
+      server = startServer(0);
       for (const threadId of ["expired-http", "expired-compact", "expired-ws"]) {
         const response = await fetch(new URL("/v1/responses", server.url), {
           method: "POST",
@@ -2201,6 +2198,8 @@ describe("server local API auth", () => {
       expect(upstreamRequests).toBe(3);
 
       Date.now = () => now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 1;
+      updateAccountQuota("pool-a", 10, 5);
+      expect(getAccountQuota("pool-a")?.updatedAt).toBe(now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 1);
       const httpResponse = await fetch(new URL("/v1/responses", server.url), {
         method: "POST",
         headers: {
@@ -2249,8 +2248,12 @@ describe("server local API auth", () => {
       expect(upstreamRequests).toBe(3);
     } finally {
       Date.now = originalNow;
-      await server.stop(true);
-      await upstream.stop(true);
+      globalThis.fetch = originalFetch;
+      try {
+        if (server) await server.stop(true);
+      } finally {
+        await upstream.stop(true);
+      }
     }
   });
 
@@ -2273,49 +2276,38 @@ describe("server local API auth", () => {
         );
       },
     });
-    redirectCanonicalCodexTo(upstream.url.toString());
     const now = 1_800_000_000_000;
-    saveConfig({
-      port: 0,
-      defaultProvider: "openai",
-      openaiProviderTierVersion: 2,
-      websockets: true,
-      providers: poolProviders(),
-      codexAccounts: [
-        { id: "main", email: "main@example.test", isMain: true },
-        { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
-      ],
-      codexAccountNamespaces: { "ws-refresh": "pool-a" },
-      activeCodexAccountId: "pool-a",
-    } as OcxConfig);
     const originalNow = Date.now;
     const originalFetch = globalThis.fetch;
-    // Both the clock and the fetch stub go up before `startServer`. The async pool-quota
-    // prime it arms (src/server/index.ts:2054-2064) reads the clock AND fetches, so leaving
-    // either real for the width of two dynamic `import()` resolutions is what made this test
-    // fail on loaded CI runners while passing locally: the prime judged `pool-a` stale
-    // against a 2027 clock versus a `updatedAt` stamped in real time, then refreshed the
-    // credential before the first turn was served — so `seenAuth[0]` was already the new
-    // token. The failure diff was always the first element, never the second.
-    Date.now = () => now;
-    // Seed the credential and quota AFTER the clock is pinned.
-    //
-    // Both writes stamp real time when they run before the pin: `updateAccountQuota` sets
-    // `updatedAt: Date.now()`, and `saveCodexAccountCredential` sets `replacedAt`. The
-    // startup pool-quota prime then compares those stamps
-    // against this 2027 `now` and judges stale — so it refreshes the credential before the
-    // first turn is served and `seenAuth[0]` is already the new token. Pinning the clock
-    // and the fetch stub first (#3139) closed the window for the prime's own reads, but not
-    // for a timestamp written before either was in place, which is why this kept flaking on
-    // loaded runners after that fix.
-    saveCodexAccountCredential("pool-a", {
-      accessToken: "old-access-token",
-      refreshToken: "old-refresh-token",
-      expiresAt: now + 120_000,
-      chatgptAccountId: "acct-pool-a",
-    });
-    updateAccountQuota("pool-a", 10, 5);
-    globalThis.fetch = (async (input, init) => {
+    let server: ReturnType<typeof startServer> | undefined;
+    try {
+      redirectCanonicalCodexTo(upstream.url.toString());
+      const redirectedFetch = globalThis.fetch;
+      saveConfig({
+        port: 0,
+        defaultProvider: "openai",
+        openaiProviderTierVersion: 2,
+        websockets: true,
+        providers: poolProviders(),
+        codexAccounts: [
+          { id: "main", email: "main@example.test", isMain: true },
+          { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
+        ],
+        codexAccountNamespaces: { "ws-refresh": "pool-a" },
+        activeCodexAccountId: "pool-a",
+      } as OcxConfig);
+      // Keep the startup quota prime inside one coherent fixture clock/network:
+      // quota timestamps, staleness reads, and any refresh all use these fakes.
+      Date.now = () => now;
+      saveCodexAccountCredential("pool-a", {
+        accessToken: "old-access-token",
+        refreshToken: "old-refresh-token",
+        expiresAt: now + 120_000,
+        chatgptAccountId: "acct-pool-a",
+      });
+      updateAccountQuota("pool-a", 10, 5);
+      expect(getAccountQuota("pool-a")?.updatedAt).toBe(now);
+      globalThis.fetch = (async (input, init) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         if (url === "https://auth.openai.com/oauth/token") {
           return new Response(JSON.stringify({
@@ -2324,12 +2316,11 @@ describe("server local API auth", () => {
             expires_in: 3600,
           }), { status: 200 });
         }
-        return originalFetch(input, init);
-    }) as typeof fetch;
-    const server = startServer(0);
-    const wsUrl = new URL("/v1/responses", server.url);
-    wsUrl.protocol = "ws:";
-    try {
+        return redirectedFetch(input, init);
+      }) as typeof fetch;
+      server = startServer(0);
+      const wsUrl = new URL("/v1/responses", server.url);
+      wsUrl.protocol = "ws:";
       const ws = new WebSocket(wsUrl);
       const waitForOpen = new Promise<void>((resolve, reject) => {
         ws.addEventListener("open", () => resolve(), { once: true });
@@ -2364,8 +2355,11 @@ describe("server local API auth", () => {
     } finally {
       Date.now = originalNow;
       globalThis.fetch = originalFetch;
-      await server.stop(true);
-      await upstream.stop(true);
+      try {
+        if (server) await server.stop(true);
+      } finally {
+        await upstream.stop(true);
+      }
     }
   });
 
