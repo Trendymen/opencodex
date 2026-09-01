@@ -21,7 +21,7 @@ export function arkQuotaClientError(bodyText: string): ArkQuotaClientError | und
     if (typeof message !== "string" || message.trim().length === 0) return undefined;
     const normalizedMessage = message.trim();
     if (record.code === "usage_limit_reached") return undefined;
-    if (!/^You have exceeded the(?: \d+-hour)? usage (?:quota|limit)\.\s+It will reset at \d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\s*\+0800\s*CST\./i.test(normalizedMessage)) {
+    if (!/^You have exceeded the(?: (?:\d+-hour|weekly))? usage (?:quota|limit)\.\s+It will reset at \d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\s*\+0800\s*CST\./i.test(normalizedMessage)) {
       return undefined;
     }
     return {
