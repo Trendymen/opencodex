@@ -2181,7 +2181,13 @@ describe("Responses previous_response_id state", () => {
 
   test("recovers only old response-state temps owned by dead processes", () => {
     const old = new Date(Date.now() - 60 * 60 * 1_000);
-    const deadPid = process.pid === 4242 ? 4243 : 4242;
+    const deadPid = 2_147_483_647;
+    try {
+      process.kill(deadPid, 0);
+      throw new Error(`test fixture PID ${deadPid} is unexpectedly alive`);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("unexpectedly alive")) throw error;
+    }
     const stale = join(home, `responses-state.json.ocx.${deadPid}.1.tmp`);
     const live = join(home, "responses-state.json.ocx.5252.2.tmp");
     const current = join(home, `responses-state.json.ocx.${process.pid}.3.tmp`);
@@ -2314,7 +2320,9 @@ describe("Responses previous_response_id state", () => {
     for (const path of [stale, young]) writeFileSync(path, "private state");
     utimesSync(stale, old, old);
 
-    const removed = sweepAbandonedResponseStateTemps();
+    const removed = sweepAbandonedResponseStateTemps({
+      isProcessAlive: pid => pid !== deadPid,
+    });
 
     expect(removed).toBe(1);
     expect(existsSync(stale)).toBe(false);
