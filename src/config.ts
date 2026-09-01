@@ -5,6 +5,10 @@ import { Database } from "bun:sqlite";
 import * as z from "zod/v4";
 import { isValidProviderName, hasOwnProvider } from "./config/provider-name";
 import {
+  customModelsCandidateError,
+  salvageCustomModelsForLoad,
+} from "./config/custom-models";
+import {
   apiKeyTransportConfigError,
   booleanRecordConfigError,
   modelAdapterRecordConfigError,
@@ -61,6 +65,8 @@ import { providerDestinationConfigError } from "./lib/destination-policy";
 import { redactSecretString } from "./lib/redact";
 import { openRouterRoutingConfigError } from "./providers/openrouter-routing";
 import { MODEL_ALIAS_PATTERN } from "./providers/default-aliases";
+import { encodedModelIdCollides } from "./providers/slug-codec";
+import { knownStaticModelIdsForProvider } from "./providers/known-model-ids";
 import { vercelGatewayRoutingConfigError } from "./providers/vercel-gateway-routing";
 import {
   MODEL_ADAPTER_OVERRIDE_ALLOWED,
@@ -948,6 +954,7 @@ const configSchema = z.object({
   // path below and wipe providers/pool accounts. Warning emitted in loadConfig.
   streamMode: z.enum(["auto", "legacy-tee", "eager-relay"]).optional().catch(undefined),
   blockedModelRedirects: z.record(z.string(), z.string()).optional().catch(undefined),
+  customModels: z.unknown().optional(),
   // Same degrade-don't-reject rationale as the fields above: a hand-edited
   // non-string must not trip the backup-and-defaults repair path. Unset then
   // takes the canonical sideband path (src/server/live.ts normalizeSidebandRoot).
@@ -1838,6 +1845,66 @@ function warnInheritedFastWireConflicts(configPath: string, config: OcxConfig): 
   );
 }
 
+const customModelLoadWarnings = new WeakMap<object, string>();
+
+function sanitizeCustomModelsForLoad(parsed: unknown): void {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+  const root = parsed as Record<string, unknown>;
+  if (!Object.hasOwn(root, "customModels")) return;
+  const result = salvageCustomModelsForLoad(root.customModels);
+  if (result.value === undefined) delete root.customModels;
+  else root.customModels = result.value;
+  if (result.changed) {
+    customModelLoadWarnings.set(root, `customModels normalized: dropped ${result.droppedRows} row(s), changed ${result.changedFields} row(s)`);
+  }
+}
+
+function customModelLoadWarning(parsed: unknown): string | null {
+  return parsed && typeof parsed === "object" ? customModelLoadWarnings.get(parsed) ?? null : null;
+}
+
+function warnDegradedCustomModels(parsed: unknown): void {
+  const warning = customModelLoadWarning(parsed);
+  if (warning) console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
+}
+
+function customModelsConfigError(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const root = value as Record<string, unknown>;
+  return Object.hasOwn(root, "customModels") ? customModelsCandidateError(root.customModels) : null;
+}
+
+function customModelsSemanticError(config: OcxConfig): string | null {
+  for (let index = 0; index < (config.customModels?.length ?? 0); index += 1) {
+    const row = config.customModels![index]!;
+    const providerName = row.provider as string;
+    const modelId = row.modelId as string;
+    if (!isValidProviderName(providerName)) {
+      return `customModels.${index}.provider: invalid provider name`;
+    }
+    if (!hasOwnProvider(config.providers, providerName)) {
+      return `customModels.${index}.provider: provider is not configured`;
+    }
+    const provider = config.providers[providerName]!;
+    if (provider.models !== undefined
+      && (!Array.isArray(provider.models)
+        || provider.models.some(id => typeof id !== "string" || id.length === 0 || id !== id.trim()))) {
+      return `providers.${providerName}.models: must contain only non-empty trimmed strings`;
+    }
+    if (provider.defaultModel !== undefined
+      && (typeof provider.defaultModel !== "string"
+        || provider.defaultModel.length === 0
+        || provider.defaultModel !== provider.defaultModel.trim())) {
+      return `providers.${providerName}.defaultModel: must be a non-empty trimmed string`;
+    }
+    const knownIds = knownStaticModelIdsForProvider(providerName, provider);
+    if (encodedModelIdCollides(modelId, knownIds)) {
+      return `customModels.${index}.modelId: ambiguous encoded model id`;
+    }
+  }
+  return null;
+}
+
 /**
  * Load and validate config.json into an OcxConfig. Missing files reset to
  * defaults and clear stale overlays. Broken existing files also fall back to
@@ -1860,6 +1927,7 @@ export function loadConfig(): OcxConfig {
     sanitizeAliasesForLoad(parsed);
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
+    sanitizeCustomModelsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       const config = normalizeApiKeyIds(result.data as OcxConfig);
@@ -1867,6 +1935,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedStreamMode(parsed, config);
       warnDegradedHostname(parsed, config);
       warnDegradedApiKeys(parsed, config);
+      warnDegradedCustomModels(parsed);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
       warnDegradedNativeSubagentConfig(parsed, config);
@@ -1891,6 +1960,7 @@ export function loadConfig(): OcxConfig {
       warnInheritedFastWireConflicts(configPath, config);
       warnDegradedHostname(parsed, config);
       warnDegradedApiKeys(parsed, config);
+      warnDegradedCustomModels(parsed);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
       warnDegradedNativeSubagentConfig(parsed, config);
@@ -1911,6 +1981,7 @@ export function loadConfig(): OcxConfig {
         warnInheritedFastWireConflicts(configPath, config);
         warnDegradedHostname(parsed, config);
         warnDegradedApiKeys(parsed, config);
+        warnDegradedCustomModels(parsed);
         warnDegradedCodexAccountPriorities(parsed, config);
         warnDegradedClaudeSubagentEffort(parsed);
         warnDegradedNativeSubagentConfig(parsed, config);
@@ -2017,6 +2088,8 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   if (hostCircuitWarning) warnings.push(hostCircuitWarning);
   const recoveryWarning = malformedAgentTaskRecoveryWarning(rawParsed);
   if (recoveryWarning) warnings.push(recoveryWarning);
+  const customModelsWarning = customModelLoadWarning(rawParsed);
+  if (customModelsWarning) warnings.push(customModelsWarning);
   if (syncDisabledReason) {
     warnings.push(`syncCodexSubagentDefaults ignored: ${syncDisabledReason}`);
   }
@@ -2225,11 +2298,20 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
     ?? codexAccountPickerEnabledError(value)
     ?? emptyCompletionRetryError(value)
     ?? oauthOpenBrowserError(value)
-    ?? loopbackListenerPortError(value);
+    ?? loopbackListenerPortError(value)
+    ?? customModelsConfigError(value);
   if (boundaryError) return { ok: false, error: boundaryError };
   const result = configSchema.safeParse(value);
   if (result.success) {
     const config = normalizeApiKeyIds(result.data as OcxConfig);
+    const semanticError = customModelsSemanticError(config);
+    if (semanticError) return { ok: false, error: semanticError };
+    const rawCustomModels = value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>).customModels
+      : undefined;
+    const customModels = salvageCustomModelsForLoad(rawCustomModels).value;
+    if (customModels === undefined) delete config.customModels;
+    else config.customModels = customModels;
     return { ok: true, config };
   }
   return { ok: false, error: schemaDiagnosticsError(result.error) };
@@ -2243,6 +2325,7 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     // persist that fallback over the user's providers/keys).
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
+    sanitizeCustomModelsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       return validFileConfigDiagnostics(normalizeApiKeyIds(result.data as OcxConfig), parsed);
@@ -2266,10 +2349,12 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     // that ignores the error and writes it back preserves what the operator configured.
     const salvaged = salvageConfigCandidate(merged, retryResult.error);
     if (salvaged) {
+      const customModelsWarning = customModelLoadWarning(parsed);
       return {
         config: normalizeApiKeyIds(salvaged.parsed),
         source: "fallback",
         error: schemaDiagnosticsError(result.error),
+        ...(customModelsWarning ? { warnings: [customModelsWarning] } : {}),
       };
     }
 
