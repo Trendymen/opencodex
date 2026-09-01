@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const repoUrl = new URL("../", import.meta.url);
@@ -9,6 +10,12 @@ const repairPlan = readFileSync(
   new URL("docs/superpowers/plans/2026-09-01-v238-fork-important-repairs.md", repoUrl),
   "utf8",
 );
+
+function currentGitBlob(path: string): string {
+  const bytes = readFileSync(new URL(path, repoUrl));
+  const header = Buffer.from(`blob ${bytes.byteLength}\0`, "utf8");
+  return createHash("sha1").update(header).update(bytes).digest("hex");
+}
 
 const EXPECTED_OVERLAPS = [
   "gui/src/i18n/de.ts",
@@ -70,6 +77,44 @@ const EXPECTED_V238_KEYS = [
   "content_conflicts",
   "decision_package_json",
   "dev_promotion",
+  "tests",
+] as const;
+const EXPECTED_V239_OVERLAP_PATHS = [
+  "bin/ocx.mjs",
+  "gui/src/i18n/de.ts",
+  "gui/src/i18n/en.ts",
+  "gui/src/i18n/fr.ts",
+  "gui/src/i18n/ja.ts",
+  "gui/src/i18n/ko.ts",
+  "gui/src/i18n/ru.ts",
+  "gui/src/i18n/tr.ts",
+  "gui/src/i18n/zh-TW.ts",
+  "gui/src/i18n/zh.ts",
+  "gui/src/pages/Logs.tsx",
+  "package.json",
+  "src/adapters/openai-responses.ts",
+  "src/codex/catalog/provider-fetch.ts",
+  "src/server/responses/encrypted-payload.ts",
+  "src/update/index.ts",
+  "tests/openai-responses-passthrough.test.ts",
+  "tests/responses-state.test.ts",
+  "tests/update-stop-first.test.ts",
+] as const;
+const EXPECTED_V239_CONFLICT_PATHS = ["bin/ocx.mjs", "package.json"] as const;
+const EXPECTED_V239_KEYS = [
+  "official_old",
+  "official_new",
+  "candidate_branch",
+  "candidate_before",
+  "candidate_after",
+  "overlap_path_count",
+  "auto_merge_path_count",
+  "overlap_paths",
+  "content_conflict_count",
+  "content_conflicts",
+  "decision_bin_ocx_mjs",
+  "decision_package_json",
+  "external_actions",
   "tests",
 ] as const;
 const EXPECTED_RELEASE_LIFECYCLE = [
@@ -382,6 +427,40 @@ describe("Fork maintenance truth", () => {
     }).toThrow();
   });
 
+  test("records the complete current v2.39 overlap and conflict account", () => {
+    const rows = strictKeyValueBlock(changes, "v239-rebase", EXPECTED_V239_KEYS);
+    expect(rows.official_old).toBe("v2.38.0");
+    expect(rows.official_new).toBe("v2.39.0");
+    expect(rows.candidate_branch).toBe("dev");
+    expect(rows.candidate_before).toBe("1092cfb48b2e8f478c21e3fa9daf09bb002e7bef");
+    expect(rows.candidate_after).toBe("6835e7ea163144c52d520231ed6df2830a9dac5d");
+    expect(rows.overlap_path_count).toBe("19");
+    expect(rows.auto_merge_path_count).toBe("17");
+    expect(rows.content_conflict_count).toBe("2");
+    const overlapPaths = rows.overlap_paths?.split(",");
+    expect(overlapPaths).toEqual(EXPECTED_V239_OVERLAP_PATHS);
+    expect(new Set(overlapPaths).size).toBe(19);
+    expect(rows.content_conflicts?.split(",")).toEqual(EXPECTED_V239_CONFLICT_PATHS);
+    for (const path of EXPECTED_V239_CONFLICT_PATHS) expect(overlapPaths).toContain(path);
+    for (const decision of [rows.decision_bin_ocx_mjs, rows.decision_package_json]) {
+      expect(decision).toContain("official=");
+      expect(decision).toContain("fork=");
+      expect(decision).toContain("resolution=");
+      expect(decision).toContain("tests=");
+    }
+    expect(rows.external_actions).toContain("none");
+    expect(rows.external_actions).toContain("未授权");
+  });
+
+  test("rejects ambiguous or incomplete v2.39 rebase machine blocks", () => {
+    const valid = machineBlock(changes, "v239-rebase");
+    const wrap = (block: string) => `<!-- v239-rebase:start -->\n${block}\n<!-- v239-rebase:end -->`;
+    expect(() => strictKeyValueBlock(wrap(`${valid}\nofficial_old=v2.38.0`), "v239-rebase", EXPECTED_V239_KEYS)).toThrow();
+    expect(() => strictKeyValueBlock(wrap(`${valid}\nunknown=value`), "v239-rebase", EXPECTED_V239_KEYS)).toThrow();
+    expect(() => strictKeyValueBlock(wrap(valid.replace(/^tests=.+$/m, "")), "v239-rebase", EXPECTED_V239_KEYS)).toThrow();
+    expect(() => strictKeyValueBlock(`${wrap(valid)}\n${wrap(valid)}`, "v239-rebase", EXPECTED_V239_KEYS)).toThrow();
+  });
+
   test("records the ben.3 39-to-5 squash boundary and pending external gates", () => {
     const block = machineBlock(changes, "ben3-squash");
     const rows = Object.fromEntries(block.split("\n").map((line) => {
@@ -577,17 +656,17 @@ describe("Fork maintenance truth", () => {
         "`tests/fork-install-local-guard-recovery.test.ts`（blob `05d24eb1b37ab7bf70c5a52d3adf261bba51c50e`）",
       ],
       "GUI Logs/Debug 恢复标签与 sidecar 契约": [
-        "`gui/src/pages/Logs.tsx`（blob `c8f79494aff1df856466adc0d7718b6338e5473d`）",
+        "`gui/src/pages/Logs.tsx`（blob `3cd4c4684b86a0506e154388aa5d82686b1db674`）",
         "`gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`，与官方 v2.39.0 相同）",
-        "`gui/src/i18n/de.ts`（blob `60502ed061b10ba6cc2b5303e3b01fbbf4b8a00b`）",
-        "`gui/src/i18n/en.ts`（blob `9f4ed1948c4f3862a458623f68bae9ef38eeaf65`）",
-        "`gui/src/i18n/fr.ts`（blob `77849e5fe9ca6ac2cc1b46806c9b07ca8c4b6b29`）",
-        "`gui/src/i18n/ja.ts`（blob `aa80841cca96080a93f68e545c52e724171663d3`）",
-        "`gui/src/i18n/ko.ts`（blob `49562e8a7b9c87070fdabd7c0bcb0be7dc1bcd26`）",
-        "`gui/src/i18n/ru.ts`（blob `cafcd2687f40b36c48bf660aff8234d0b06ad64b`）",
-        "`gui/src/i18n/tr.ts`（blob `1b3e23979f32f1fc7e2712c721214ee6025bd2da`）",
-        "`gui/src/i18n/zh-TW.ts`（blob `b463b9e38c524808b799cbabd9ab6a0581dd4477`）",
-        "`gui/src/i18n/zh.ts`（blob `4cbffe4401797b2e2ad21663efbc7da81e8dabed`）",
+        "`gui/src/i18n/de.ts`（blob `f106b6cefbc25608ddb06c6a6ddb93ce47b6a51b`）",
+        "`gui/src/i18n/en.ts`（blob `6d16305d9e9bb009e12bd7ec6338a3de8f084850`）",
+        "`gui/src/i18n/fr.ts`（blob `964e57e8cff18422c280411a8b05fe16e452ffb7`）",
+        "`gui/src/i18n/ja.ts`（blob `2d0b91b729254c9ff354b8dc18a91234f9a73d54`）",
+        "`gui/src/i18n/ko.ts`（blob `c7e3e90b9acdd0537f1c0d60b87bae09ce47f040`）",
+        "`gui/src/i18n/ru.ts`（blob `59a18905097d085ba7cc1712b2cf12a152bf6403`）",
+        "`gui/src/i18n/tr.ts`（blob `8a02bb70d8d13dc02d0746fdb8e1dd9df86a3ec4`）",
+        "`gui/src/i18n/zh-TW.ts`（blob `f0c61d157d573cff890a929103bb7e1ed631b4ac`）",
+        "`gui/src/i18n/zh.ts`（blob `84f1bf3ea9f3b9cfb5802ad142362612859afa7f`）",
         "`gui/tests/sidecar-layout.test.ts`（blob `e140a627260bbf952708e7f710874a5f76cc5b2b`，与官方 v2.39.0 相同）",
       ],
       "`ben` Fork 修订版本策略": [
@@ -607,8 +686,8 @@ describe("Fork maintenance truth", () => {
       "默认测试 runner 与负载敏感隔离": [
         "`v2.39.0:tests/update-stop-first.test.ts`（blob `d20eafb5c7051744168d7ce649186c49da789d8e`，merge `fe063d16ef620a148ab425cfffe63a8936d00e52`）",
         "Fork PATH-precedence guard（`a1e35b13db14a1686ef0033685d7214184c37743`）",
-        "`src/responses/state.ts`（blob `35540a0ee7210d6cd1c6a2fd377a8a1837501e4e`）",
-        "`tests/responses-state.test.ts`（blob `5836f31c6883c98b2acc6361788c7599e5ceaa96`）",
+        "`src/responses/state.ts`（blob `b95a1fa2c6d36b9b43269af60d51f5a64e6754ec`）",
+        "`tests/responses-state.test.ts`（blob `335bff1d733ee12897153fd1b2ab14eac2b420a3`）",
         "`fe063d16ef620a148ab425cfffe63a8936d00e52`",
       ],
       "Prepush 与 GitHub CI": [],
@@ -618,6 +697,26 @@ describe("Fork maintenance truth", () => {
       expect(active).toContain("v2.39.0");
       expect(active).not.toContain("v2.34.0");
       for (const anchor of anchors) expect(compactWhitespace(active)).toContain(anchor);
+    }
+  });
+
+  test("binds active mutable-file anchors to the current Git blob identity", () => {
+    const paths = [
+      "gui/src/pages/Logs.tsx",
+      "gui/src/i18n/de.ts",
+      "gui/src/i18n/en.ts",
+      "gui/src/i18n/fr.ts",
+      "gui/src/i18n/ja.ts",
+      "gui/src/i18n/ko.ts",
+      "gui/src/i18n/ru.ts",
+      "gui/src/i18n/tr.ts",
+      "gui/src/i18n/zh-TW.ts",
+      "gui/src/i18n/zh.ts",
+      "src/responses/state.ts",
+      "tests/responses-state.test.ts",
+    ] as const;
+    for (const path of paths) {
+      expect(changes).toContain(`\`${path}\`（blob \`${currentGitBlob(path)}\``);
     }
   });
 
