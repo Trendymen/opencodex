@@ -3318,6 +3318,9 @@ type IndexedCustomModels = {
 };
 
 function indexCustomModels(value: ConfigMergeValue): IndexedCustomModels | null {
+  if (value === MISSING_CONFIG_VALUE || value === undefined) {
+    return { order: [], byId: new Map() };
+  }
   if (!Array.isArray(value)) return null;
   const order: string[] = [];
   const byId = new Map<string, Record<string, unknown>>();

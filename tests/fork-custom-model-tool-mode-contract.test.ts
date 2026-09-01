@@ -132,6 +132,34 @@ describe("Fork custom model tool-mode management contract", () => {
     }
   });
 
+  test("POST rejects malformed canonical fields without normalization or side effects", async () => {
+    const invalidBodies = [
+      { provider: 42, modelId: "new-model" },
+      { provider: " deepseek", modelId: "new-model" },
+      { provider: "deepseek", modelId: 42 },
+      { provider: "deepseek", modelId: "" },
+      { provider: "deepseek", modelId: " padded-model " },
+      { provider: "deepseek", modelId: "new-model", displayName: 42 },
+      { provider: "deepseek", modelId: "new-model", displayName: "" },
+      { provider: "deepseek", modelId: "new-model", displayName: " padded " },
+      { provider: "deepseek", modelId: "new-model", contextWindow: 1.5 },
+      { provider: "deepseek", modelId: "new-model", contextWindow: 0 },
+      { provider: "deepseek", modelId: "new-model", contextWindow: "128000" },
+      { provider: "deepseek", modelId: "new-model", defaultReasoningEffort: null },
+    ];
+    for (const body of invalidBodies) {
+      fixture.customModels = [];
+      persistCalls = 0;
+      convergeCalls = 0;
+      const before = structuredClone(fixture.customModels);
+      const response = await call("POST", body);
+      expect(response?.status, JSON.stringify(body)).toBe(400);
+      expect(fixture.customModels).toEqual(before);
+      expect(persistCalls).toBe(0);
+      expect(convergeCalls).toBe(0);
+    }
+  });
+
   test("PUT preserves omitted, sets enums, clears with null, and never leaks opaque keys", async () => {
     const preserved = await call("PUT", { displayName: "Renamed" }, "/api/custom-models/existing-uuid");
     expect((await preserved!.json() as Record<string, unknown>).codexToolMode).toBe("shell");
@@ -159,6 +187,38 @@ describe("Fork custom model tool-mode management contract", () => {
     expect(fixture.customModels).toEqual(before);
     expect(persistCalls).toBe(0);
     expect(convergeCalls).toBe(0);
+  });
+
+  test("PUT rejects malformed canonical fields before mutation and keeps explicit clears", async () => {
+    for (const body of [
+      { modelId: 42 },
+      { modelId: "" },
+      { modelId: " padded-model " },
+      { displayName: 42 },
+      { displayName: " padded " },
+      { contextWindow: "128000" },
+      { contextWindow: 1.5 },
+      { contextWindow: 0 },
+    ]) {
+      fixture = config();
+      persistCalls = 0;
+      convergeCalls = 0;
+      const before = structuredClone(fixture.customModels);
+      const response = await call("PUT", body, "/api/custom-models/existing-uuid");
+      expect(response?.status, JSON.stringify(body)).toBe(400);
+      expect(fixture.customModels).toEqual(before);
+      expect(persistCalls).toBe(0);
+      expect(convergeCalls).toBe(0);
+    }
+
+    fixture = config();
+    const clearedName = await call("PUT", { displayName: "" }, "/api/custom-models/existing-uuid");
+    expect(clearedName?.status).toBe(200);
+    expect(fixture.customModels?.[0]?.displayName).toBeUndefined();
+
+    const clearedContext = await call("PUT", { contextWindow: null }, "/api/custom-models/existing-uuid");
+    expect(clearedContext?.status).toBe(200);
+    expect(fixture.customModels?.[0]?.contextWindow).toBeUndefined();
   });
 
   test("PUT allows metadata-only edits on a historical collision but rejects identity expansion", async () => {
