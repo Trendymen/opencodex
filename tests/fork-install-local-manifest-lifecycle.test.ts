@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   finalizeLocalInstallCleanup,
+  runLocalInstallLifecycleWithManifestGuard,
   prepareLocalInstallSource,
   type LocalInstallSourcePreparationDeps,
 } from "../scripts/install-local";
@@ -81,6 +82,23 @@ describe("Fork local installer root-manifest lifecycle", () => {
     }
   });
 
+  test("a post-prepare manifest read failure still cleans the owned stage exactly once", () => {
+    let reads = 0;
+    let cleanups = 0;
+    const readFailure = new Error("manifest temporarily unreadable");
+    expect(() => prepareLocalInstallSource({
+      readManifestBytes: () => {
+        reads += 1;
+        if (reads === 4) throw readFailure;
+        return ORIGINAL;
+      },
+      build: () => {},
+      patch: () => ({ files: 1, replacements: 1 }),
+      prepare: expected => prepared(expected, () => { cleanups += 1; }),
+    })).toThrow(readFailure);
+    expect(cleanups).toBe(1);
+  });
+
   test("an unchanged source transfers the exact pre-build snapshot to staging", () => {
     let expectedByPrepare = "";
     const result = prepareLocalInstallSource({
@@ -110,5 +128,64 @@ describe("Fork local installer root-manifest lifecycle", () => {
     }
     expect(() => finalizeLocalInstallCleanup({ cleanup: () => {} }, lifecycle)).toThrow(lifecycle);
     expect(() => finalizeLocalInstallCleanup({ cleanup: () => { throw cleanup; } })).toThrow(cleanup);
+  });
+
+  test("lifecycle-admission manifest failure still reaches final staged cleanup", async () => {
+    const manifest = new Error("manifest drift before stop");
+    const cleanup = new Error("cleanup failed");
+    let lifecycleError: unknown;
+    let cleanupCalls = 0;
+    try {
+      await runLocalInstallLifecycleWithManifestGuard(true, {
+        stop: () => { throw new Error("stop must not run"); },
+        verifyStopped: () => {},
+        replace: () => {},
+        restart: () => {},
+        ready: () => {},
+      }, () => { throw manifest; });
+    } catch (error) {
+      lifecycleError = error;
+    }
+    try {
+      finalizeLocalInstallCleanup({
+        cleanup: () => { cleanupCalls += 1; throw cleanup; },
+      }, lifecycleError);
+      throw new Error("expected finalization failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors).toEqual([manifest, cleanup]);
+    }
+    expect(cleanupCalls).toBe(1);
+  });
+
+  test("manifest drift after replacement never blocks restart and ready recovery", async () => {
+    for (const replaceFails of [false, true]) {
+      const events: string[] = [];
+      let drifted = false;
+      const replaceError = new Error("replace failed");
+      let lifecycleError: unknown;
+      try {
+        await runLocalInstallLifecycleWithManifestGuard(true, {
+          stop: () => { events.push("stop"); },
+          verifyStopped: () => { events.push("verify"); },
+          replace: () => {
+            events.push("replace");
+            drifted = true;
+            if (replaceFails) throw replaceError;
+          },
+          restart: () => { events.push("restart"); },
+          ready: () => { events.push("ready"); },
+        }, phase => {
+          if (drifted && phase === "local install lifecycle completion") {
+            throw new Error("manifest drift after replacement");
+          }
+        });
+      } catch (error) {
+        lifecycleError = error;
+      }
+      expect(events).toEqual(["stop", "verify", "replace", "restart", "ready"]);
+      if (replaceFails) expect(lifecycleError).toBe(replaceError);
+      else expect((lifecycleError as Error).message).toMatch(/manifest drift after replacement/);
+    }
   });
 });
