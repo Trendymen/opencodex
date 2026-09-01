@@ -332,6 +332,30 @@ export async function runLocalInstallLifecycle(
   await deps.ready();
 }
 
+export async function runLocalInstallLifecycleWithManifestGuard(
+  restart: boolean,
+  deps: LocalInstallLifecycleDeps,
+  assertManifest: (phase: string) => void,
+): Promise<void> {
+  assertManifest("local install stop admission");
+  await runLocalInstallLifecycle(restart, {
+    stop: deps.stop,
+    verifyStopped: async () => {
+      await deps.verifyStopped();
+      assertManifest("local install stop verification");
+    },
+    replace: async () => {
+      assertManifest("global package replacement admission");
+      await deps.replace();
+    },
+    // Once replacement starts, service recovery wins over source-tree diagnostics.
+    // A later completion/cleanup check still reports drift without stranding the proxy.
+    restart: deps.restart,
+    ready: deps.ready,
+  });
+  assertManifest("local install lifecycle completion");
+}
+
 function run(command: string[], options?: InstallLocalRunOptions): void {
   const [executable, ...args] = command;
   const invocation = commandInvocation(executable ?? "", args);
@@ -627,18 +651,25 @@ export function prepareLocalInstallSource(
     throw new Error("root package.json changed during built GUI patching");
   }
   const preparedPackage = deps.prepare(rootManifestBytes);
-  if (preparedPackage.rootManifestBytes !== rootManifestBytes
-    || deps.readManifestBytes() !== rootManifestBytes) {
-    const primary = new Error("root package.json changed while preparing the local package");
+  let postPrepareError: unknown;
+  try {
+    if (preparedPackage.rootManifestBytes !== rootManifestBytes
+      || deps.readManifestBytes() !== rootManifestBytes) {
+      throw new Error("root package.json changed while preparing the local package");
+    }
+  } catch (error) {
+    postPrepareError = error;
+  }
+  if (postPrepareError !== undefined) {
     try {
       preparedPackage.cleanup();
     } catch (cleanupError) {
       throw new AggregateError(
-        [primary, cleanupError],
+        [postPrepareError, cleanupError],
         "local source preparation failed and its staged package could not be removed",
       );
     }
-    throw primary;
+    throw postPrepareError;
   }
   return { rootManifestBytes, identity, fontPatch, preparedPackage };
 }
@@ -693,13 +724,12 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
   const assertSourceManifest = (phase: string): void => {
     assertRootManifestUnchanged(root, rootManifestBytes, phase);
   };
-  assertSourceManifest("local install lifecycle admission");
 
   let lifecycleError: unknown;
   try {
     const serviceProbe = probeLocalServiceInstallation();
     const serviceWasInstalled = requireKnownServiceInstallation(serviceProbe);
-    await runLocalInstallLifecycle(restart, {
+    await runLocalInstallLifecycleWithManifestGuard(restart, {
       stop: () => {
         console.log("==> Stopping current proxy...");
         run(["ocx", "stop"]);
@@ -718,10 +748,8 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         }
         const serviceDiagnostic = diagnoseService();
         assertNoRunningService(serviceDiagnostic);
-        assertSourceManifest("local install stop verification");
       },
       replace: () => {
-        assertSourceManifest("global package replacement admission");
         console.log("==> Replacing global package...");
         run(["npm", "uninstall", "-g", name], { allowFailure: true });
         // Every dependency ships inside the tarball (bundleDependencies), so
@@ -738,18 +766,15 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         localInstallAfterReplace(serviceWasInstalled, restart);
       },
       restart: () => {
-        assertSourceManifest("local install restart");
         console.log(serviceWasInstalled
           ? "==> Refreshing background service with packaged proxy..."
           : "==> Starting packaged proxy...");
         restartLocalInstall(serviceWasInstalled);
       },
       ready: () => {
-        assertSourceManifest("local install readiness check");
         run(["ocx", "ready", "--json", "--wait", "--timeout", "30"]);
       },
-    });
-    assertSourceManifest("local install lifecycle completion");
+    }, assertSourceManifest);
   } catch (error) {
     lifecycleError = error;
   }
