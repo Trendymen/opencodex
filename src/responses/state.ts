@@ -1885,11 +1885,14 @@ export function inspectAbandonedResponseStateTemps(): ResponseStateTempRecoveryR
 }
 
 /** Sweeper adapter: narrows the reclaim to the `() => number` the liveness tick expects. */
-export function sweepAbandonedResponseStateTemps(): number {
+export function sweepAbandonedResponseStateTemps(
+  options: ResponseStateTempRecoveryOptions = {},
+): number {
   return reclaimAbandonedResponseStateTemps({
     maxEntries: PERIODIC_TEMP_MAX_ENTRIES,
     maxCleanups: PERIODIC_TEMP_MAX_CLEANUPS,
     deadlineMs: PERIODIC_TEMP_SCAN_DEADLINE_MS,
+    ...options,
   }).removed;
 }
 
