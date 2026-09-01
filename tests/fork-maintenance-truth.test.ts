@@ -53,7 +53,7 @@ const EXPECTED_V238_CONFLICT_PATHS = ["package.json"] as const;
 const EXPECTED_PACKAGE_DECISION = {
   official: "version 2.38.0",
   fork: "install:local script",
-  resolution: "双方保留并收敛为 2.38.0-ben.1",
+  resolution: "双方保留并收敛为 2.38.0-ben.2",
   tests: "tests/release-version-line.test.ts,tests/fork-version-policy.test.ts",
 } as const;
 const EXPECTED_DEV_PROMOTION = "发布瞬间当前已验证 dev 与 main/sync/Fork Tag 收敛到 RELEASE_COMMIT；发布后 advanced dev 不得被自动重置回旧 RELEASE_COMMIT";
@@ -505,8 +505,15 @@ describe("Fork maintenance truth", () => {
   });
 
   test("freezes the complete same-base Fork Tag namespace before maintenance publication", () => {
-    expect(strictSameBaseTagPreflight(automation)).toEqual(EXPECTED_SAME_BASE_TAG_PREFLIGHT);
-    expect(strictSameBaseTagPreflight(repairPlan)).toEqual(EXPECTED_SAME_BASE_TAG_PREFLIGHT);
+    const flows = [
+      majorSection("没有新官方版本时的幂等收敛"),
+      majorSection("每次稳定版 rebase 的强制流程"),
+      automation,
+      repairPlan,
+    ];
+    for (const flow of flows) {
+      expect(strictSameBaseTagPreflight(flow)).toEqual(EXPECTED_SAME_BASE_TAG_PREFLIGHT);
+    }
 
     const valid = machineBlock(automation, "same-base-ben-preflight");
     const duplicate = `${automation}\n<!-- same-base-ben-preflight:start -->\n${valid}\n<!-- same-base-ben-preflight:end -->`;
@@ -548,8 +555,40 @@ describe("Fork maintenance truth", () => {
     const evidence = {
       "火山方舟 Agent Plan GLM/Kimi 与智谱 GLM Responses 兼容": [
         "`v2.38.0:src/adapters/openai-responses.ts`（blob `047c60a6a3fafefaa5d4ea0fea199565286d5054`，v2.38 未变更）",
-        "`src/fork/glm-kimi-compat.ts`（blob `dd1fd17bd349`）",
-        "`727cb58ec725076ecb9f4958910ebe854e423009`",
+        "`src/fork/glm-kimi-compat.ts`（blob `64ce11986a7fc2391c7b8965256e55c16a2bfa72`）",
+        "`tests/fork-volcengine-empty-assistant-content.test.ts`（blob `95cfba92ac6e3ef6ee5fe27b62519f5a144b7862`）",
+      ],
+      "Ark quota 在 Codex Desktop 中的展示": [
+        "`src/fork/ark-quota-display.ts`（blob `a80fd68a576013788bce100179c5982e2adb63ba`）",
+        "`tests/fork-ark-weekly-quota.test.ts`（blob `52e4b0b0d49438ffa5c14a12cba1c4f5eb704d35`）",
+      ],
+      "自定义模型配置、工具模式与公开投影": [
+        "`src/config/custom-models.ts`（blob `12a84dd14a674eda773a83a31f9923c740a0e213`）",
+        "`tests/fork-custom-model-config-schema.test.ts`（blob `3d4d45554e572bfdebec58c369c5dd8c42f3297c`）",
+        "`tests/fork-custom-model-tool-mode-contract.test.ts`（blob `70d779ea7521a56846846d7abd96e43d3e94d779`）",
+      ],
+      "本地源码包安装": [
+        "`scripts/install-local-vendor.ts`（blob `4c12faf88274e676c77555a57be65913edf74bfc`）",
+        "`scripts/install-local.ts`（blob `7a91d67b9809f99cc64533ff8e0be42352ac5a43`）",
+        "`tests/fork-install-local-staging.test.ts`（blob `ac21c0928e5725c923540370cd5df863f9f4bf83`）",
+      ],
+      "GUI Logs/Debug 恢复标签与 sidecar 契约": [
+        "`gui/src/pages/Logs.tsx`（blob `c8f79494aff1df856466adc0d7718b6338e5473d`）",
+        "`gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`，与官方 v2.38.0 相同）",
+        "`gui/src/i18n/de.ts`（blob `60502ed061b10ba6cc2b5303e3b01fbbf4b8a00b`）",
+        "`gui/src/i18n/en.ts`（blob `9f4ed1948c4f3862a458623f68bae9ef38eeaf65`）",
+        "`gui/src/i18n/fr.ts`（blob `77849e5fe9ca6ac2cc1b46806c9b07ca8c4b6b29`）",
+        "`gui/src/i18n/ja.ts`（blob `aa80841cca96080a93f68e545c52e724171663d3`）",
+        "`gui/src/i18n/ko.ts`（blob `49562e8a7b9c87070fdabd7c0bcb0be7dc1bcd26`）",
+        "`gui/src/i18n/ru.ts`（blob `cafcd2687f40b36c48bf660aff8234d0b06ad64b`）",
+        "`gui/src/i18n/tr.ts`（blob `1b3e23979f32f1fc7e2712c721214ee6025bd2da`）",
+        "`gui/src/i18n/zh-TW.ts`（blob `b463b9e38c524808b799cbabd9ab6a0581dd4477`）",
+        "`gui/src/i18n/zh.ts`（blob `4cbffe4401797b2e2ad21663efbc7da81e8dabed`）",
+        "`gui/tests/sidecar-layout.test.ts`（blob `e140a627260bbf952708e7f710874a5f76cc5b2b`，与官方 v2.38.0 相同）",
+      ],
+      "`ben` Fork 修订版本策略": [
+        "`src/fork/version-policy.mjs`（blob `1c9351fea6dd28f5d70fb945c37e5ac46536a7b6`）",
+        "`tests/fork-version-policy.test.ts`（blob `40c1092241345b88c3c26756bca1d3d59586f501`）",
       ],
       "Standalone web search 能力注入": [
         "`v2.38.0:src/codex/inject.ts`（blob `72be57878470077e9b3c434726aea329e007d79c`）",
