@@ -304,6 +304,38 @@ describe("Fork customModels config integration", () => {
     expect(loadConfig().customModels).toEqual(persisted.customModels);
   });
 
+  test("guarded first additions merge independent live and persisted custom-model ids", () => {
+    writeConfig(baseConfig(undefined));
+    const live = loadConfig();
+    armClaudeCodeBaseline(live);
+
+    const liveRow = model({ id: "live-row", modelId: "live-model" });
+    const persistedRow = model({ id: "persisted-row", modelId: "persisted-model" });
+    live.customModels = [liveRow as unknown as OcxCustomModel];
+    writeConfig(baseConfig([persistedRow]));
+
+    saveConfigPreservingClaudeCode(live);
+
+    expect(diskConfig().customModels).toEqual([liveRow, persistedRow]);
+    expect(loadConfig().customModels).toEqual([liveRow, persistedRow]);
+  });
+
+  test("guarded last-row deletion preserves a concurrently added persisted custom model", () => {
+    const baselineRow = model({ id: "baseline-row", modelId: "baseline-model" });
+    writeConfig(baseConfig([baselineRow]));
+    const live = loadConfig();
+    armClaudeCodeBaseline(live);
+
+    delete live.customModels;
+    const persistedRow = model({ id: "persisted-row", modelId: "persisted-model" });
+    writeConfig(baseConfig([baselineRow, persistedRow]));
+
+    saveConfigPreservingClaudeCode(live);
+
+    expect(diskConfig().customModels).toEqual([persistedRow]);
+    expect(loadConfig().customModels).toEqual([persistedRow]);
+  });
+
   test("guarded unrelated save and reload preserve every historical routed collision member", () => {
     const slash = model({ id: "slash", modelId: "openai/gpt-5.5" });
     const hyphen = model({ id: "hyphen", modelId: "openai-gpt-5.5" });
