@@ -10,8 +10,12 @@ import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";
 
 export function bundledDependenciesForLocalPackage(
   dependencies: Record<string, string> | undefined,
+  presentOptionalDependencies: readonly string[] = [],
 ): string[] {
-  return Object.keys(dependencies ?? {}).sort();
+  return [...new Set([
+    ...Object.keys(dependencies ?? {}),
+    ...presentOptionalDependencies,
+  ])].sort();
 }
 
 export type LocalPackageStageOptions = Readonly<{
@@ -64,6 +68,16 @@ export const defaultLocalPackageStageOptions: LocalPackageStageOptions = {
   run: runCommand,
   removeTree: path => rmSync(path, { recursive: true, force: true }),
 };
+
+export function assertRootManifestUnchanged(
+  packageRoot: string,
+  expectedBytes: string,
+  phase: string,
+): void {
+  if (readFileSync(join(packageRoot, "package.json"), "utf8") !== expectedBytes) {
+    throw new Error(`root package.json changed during ${phase}`);
+  }
+}
 
 function pathContained(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
@@ -207,6 +221,15 @@ function resolveInstalledDependency(start: string, name: string, boundary: strin
   return null;
 }
 
+function presentRootOptionalDependencies(
+  packageRoot: string,
+  manifest: PackageManifest,
+): string[] {
+  return Object.keys(manifest.optionalDependencies ?? {}).filter(name => (
+    resolveInstalledDependency(packageRoot, name, packageRoot) !== null
+  ));
+}
+
 function collectDependencyPackageRoots(
   packageRoot: string,
   boundary: string,
@@ -297,6 +320,7 @@ function verifyInstalledPackage(
   validationRoot: string,
   rootManifest: PackageManifest,
   run: LocalPackageStageOptions["run"],
+  requiredBundledDependencies: readonly string[],
 ): void {
   if (typeof rootManifest.name !== "string" || typeof rootManifest.version !== "string") {
     throw new Error("package identity must be strings");
@@ -326,7 +350,12 @@ function verifyInstalledPackage(
   collectExportTargets(installed.exports, exportTargets);
   for (const target of exportTargets) verifyInstalledTarget(installedRoot, target, "exports");
   verifyDependencyClosure(installedRoot, validationRoot);
-  if (Object.hasOwn(installed.dependencies ?? {}, "bun")) {
+  for (const dependency of requiredBundledDependencies) {
+    if (!resolveInstalledDependency(installedRoot, dependency, validationRoot)) {
+      throw new Error(`bundled dependency is missing after offline validation: ${dependency}`);
+    }
+  }
+  if (requiredBundledDependencies.includes("bun")) {
     const bunRoot = resolveInstalledDependency(installedRoot, "bun", validationRoot);
     const binary = bunRoot && ["bun.exe", "bun"]
       .map(name => join(bunRoot, "bin", name))
@@ -343,10 +372,15 @@ function throwAggregate(primary: unknown, cleanup: unknown, message: string): ne
 export function prepareBundledLocalPackage(
   packageRoot: string,
   options: LocalPackageStageOptions = defaultLocalPackageStageOptions,
+  expectedRootManifestBytes?: string,
 ): PreparedLocalPackage {
   const root = realpathSync(packageRoot);
   const rootManifestPath = join(root, "package.json");
-  const rootManifestBytes = readFileSync(rootManifestPath, "utf8");
+  const observedRootManifestBytes = readFileSync(rootManifestPath, "utf8");
+  const rootManifestBytes = expectedRootManifestBytes ?? observedRootManifestBytes;
+  if (observedRootManifestBytes !== rootManifestBytes) {
+    throw new Error("root package.json changed before local package preparation");
+  }
   const rootManifest = JSON.parse(rootManifestBytes) as PackageManifest;
   if (typeof rootManifest.name !== "string" || typeof rootManifest.version !== "string") {
     throw new Error("package manifest requires string name and version");
@@ -374,9 +408,13 @@ export function prepareBundledLocalPackage(
     if (!existsSync(sourceModules)) throw new Error("installed node_modules is required for local bundling");
     copyContainedEntry(sourceModules, join(stagedPackage, "node_modules"), sourceModules);
 
+    const requiredBundledDependencies = bundledDependenciesForLocalPackage(
+      rootManifest.dependencies,
+      presentRootOptionalDependencies(root, rootManifest),
+    );
     const stagedManifest: PackageManifest = {
       ...rootManifest,
-      bundleDependencies: bundledDependenciesForLocalPackage(rootManifest.dependencies),
+      bundleDependencies: requiredBundledDependencies,
     };
     writeFileSync(join(stagedPackage, "package.json"), JSON.stringify(stagedManifest, null, 2) + "\n", { mode: 0o600 });
     const allowedDependencyRoots = collectDependencyPackageRoots(
@@ -387,6 +425,7 @@ export function prepareBundledLocalPackage(
     const pack = options.run(["npm", "pack", "--json", "--ignore-scripts"], stagedPackage, { ...process.env });
     if (pack.exitCode !== 0) throw new Error(`npm pack failed (${pack.exitCode})`);
     const tarball = parsePackTarball(pack.stdout, stagedManifest, stagedPackage, allowedDependencyRoots);
+    assertRootManifestUnchanged(root, rootManifestBytes, "local package pack");
 
     mkdirSync(validationRoot, { recursive: true, mode: 0o700 });
     mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
@@ -395,19 +434,21 @@ export function prepareBundledLocalPackage(
       "--package-lock=false", "--cache", cacheRoot, "--prefix", validationRoot, tarball,
     ], stagedPackage, { ...process.env });
     if (install.exitCode !== 0) throw new Error(`offline package validation failed (${install.exitCode})`);
-    verifyInstalledPackage(validationRoot, rootManifest, options.run);
-    if (readFileSync(rootManifestPath, "utf8") !== rootManifestBytes) {
-      throw new Error("root package.json changed during local package preparation");
-    }
+    assertRootManifestUnchanged(root, rootManifestBytes, "offline package validation");
+    verifyInstalledPackage(validationRoot, rootManifest, options.run, requiredBundledDependencies);
+    assertRootManifestUnchanged(root, rootManifestBytes, "local package preparation");
 
     return {
       tarball,
       npmCache: cacheRoot,
       rootManifestBytes,
       cleanup: () => {
-        const changed = readFileSync(rootManifestPath, "utf8") !== rootManifestBytes
-          ? new Error("root package.json changed before local package cleanup")
-          : undefined;
+        let changed: Error | undefined;
+        try {
+          assertRootManifestUnchanged(root, rootManifestBytes, "local package cleanup");
+        } catch (error) {
+          changed = error as Error;
+        }
         try {
           options.removeTree(stageRoot);
         } catch (cleanupError) {

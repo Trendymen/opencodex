@@ -22,6 +22,12 @@ describe("local installer vendored dependencies", () => {
     expect(
       bundledDependenciesForLocalPackage({ zod: "4.4.3", bun: "1.4.0" }),
     ).toEqual(["bun", "zod"]);
+    expect(
+      bundledDependenciesForLocalPackage(
+        { zod: "4.4.3" },
+        ["platform-runtime", "zod"],
+      ),
+    ).toEqual(["platform-runtime", "zod"]);
     expect(bundledDependenciesForLocalPackage(undefined)).toEqual([]);
   });
 

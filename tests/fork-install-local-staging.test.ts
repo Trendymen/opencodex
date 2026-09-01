@@ -31,7 +31,7 @@ function write(path: string, content: string, mode?: number): void {
   if (mode !== undefined) chmodSync(path, mode);
 }
 
-function fixture(options: { omitTransitive?: boolean } = {}): string {
+function fixture(options: { omitTransitive?: boolean; optional?: "present" | "missing" } = {}): string {
   const root = mkdtempSync(join(tmpdir(), "ocx-local-package-stage-fixture-"));
   roots.push(root);
   write(join(root, "package.json"), JSON.stringify({
@@ -44,6 +44,7 @@ function fixture(options: { omitTransitive?: boolean } = {}): string {
     files: ["bin", "dist", "README.md", "LICENSE"],
     scripts: { prepack: "node -e \"process.exit(99)\"" },
     dependencies: { "fixture-dep": "1.0.0" },
+    ...(options.optional ? { optionalDependencies: { "fixture-optional": "1.0.0" } } : {}),
   }, null, 2) + "\n");
   write(join(root, "bin/fixture.mjs"), "#!/usr/bin/env node\nconsole.log('fixture');\n", 0o755);
   write(join(root, "dist/index.js"), "export const fixture = true;\n");
@@ -65,6 +66,14 @@ function fixture(options: { omitTransitive?: boolean } = {}): string {
       main: "index.js",
     }));
     write(join(root, "node_modules/fixture-dep/node_modules/fixture-transitive/index.js"), "module.exports = 42;\n");
+  }
+  if (options.optional === "present") {
+    write(join(root, "node_modules/fixture-optional/package.json"), JSON.stringify({
+      name: "fixture-optional",
+      version: "1.0.0",
+      main: "index.js",
+    }));
+    write(join(root, "node_modules/fixture-optional/index.js"), "module.exports = 'optional';\n");
   }
   return root;
 }
@@ -107,6 +116,224 @@ describe("Fork local package staging", () => {
     })).toThrow();
     expect(stages).toHaveLength(1);
     expect(existsSync(stages[0]!)).toBe(false);
+  });
+
+  test("a present root optional dependency is bundled and resolves from the offline archive", () => {
+    const root = fixture({ optional: "present" });
+    const prepared = prepareBundledLocalPackage(root);
+    try {
+      const stagedManifest = JSON.parse(readFileSync(join(dirname(prepared.tarball), "package.json"), "utf8"));
+      expect(stagedManifest.bundleDependencies).toEqual(["fixture-dep", "fixture-optional"]);
+      const installedRoot = join(dirname(dirname(prepared.tarball)), "validation/node_modules/ocx-stage-fixture");
+      expect(existsSync(join(installedRoot, "node_modules/fixture-optional/package.json"))).toBe(true);
+    } finally {
+      prepared.cleanup();
+    }
+  });
+
+  test("a missing root optional dependency is omitted without network fallback", () => {
+    const root = fixture({ optional: "missing" });
+    const prepared = prepareBundledLocalPackage(root);
+    try {
+      const stagedManifest = JSON.parse(readFileSync(join(dirname(prepared.tarball), "package.json"), "utf8"));
+      expect(stagedManifest.bundleDependencies).toEqual(["fixture-dep"]);
+    } finally {
+      prepared.cleanup();
+    }
+  });
+
+  test("rejects forged pack integrity, hashes, rows, and archive surface evidence", () => {
+    const mutations: Array<[string, (rows: any[]) => void]> = [
+      ["integrity", rows => { rows[0].integrity = "sha512-forged"; }],
+      ["shasum", rows => { rows[0].shasum = "0".repeat(40); }],
+      ["duplicate file", rows => { rows[0].files.push({ ...rows[0].files[0] }); }],
+      ["malformed file row", rows => { rows[0].files.push(null); }],
+      ["absolute path", rows => { rows[0].files.push({ path: "/etc/passwd" }); }],
+      ["dot segment", rows => { rows[0].files.push({ path: "dist/../secret.txt" }); }],
+      ["sensitive path", rows => { rows[0].files.push({ path: ".env" }); }],
+      ["outside surface", rows => { rows[0].files.push({ path: "secret.txt" }); }],
+      ["multiple tarballs", rows => { rows.push({ ...rows[0] }); }],
+    ];
+    for (const [name, mutate] of mutations) {
+      const root = fixture();
+      expect(() => prepareBundledLocalPackage(root, {
+        ...defaultLocalPackageStageOptions,
+        run: (command, cwd, env, options) => {
+          const result = defaultLocalPackageStageOptions.run(command, cwd, env, options);
+          if (command[0] === "npm" && command[1] === "pack") {
+            const rows = JSON.parse(result.stdout);
+            mutate(rows);
+            return { ...result, stdout: JSON.stringify(rows) };
+          }
+          return result;
+        },
+      }), name).toThrow();
+    }
+  });
+
+  test("rejects empty, malformed, or structurally invalid npm pack JSON", () => {
+    for (const stdout of ["", "not json", "{}", "[]"]) {
+      const root = fixture();
+      expect(() => prepareBundledLocalPackage(root, {
+        ...defaultLocalPackageStageOptions,
+        run: (command, cwd, env, options) => command[0] === "npm" && command[1] === "pack"
+          ? { exitCode: 0, stdout, timedOut: false }
+          : defaultLocalPackageStageOptions.run(command, cwd, env, options),
+      }), stdout).toThrow();
+    }
+  });
+
+  test("rejects a tarball filename that escapes the owned package directory", () => {
+    const root = fixture();
+    expect(() => prepareBundledLocalPackage(root, {
+      ...defaultLocalPackageStageOptions,
+      run: (command, cwd, env, options) => {
+        const result = defaultLocalPackageStageOptions.run(command, cwd, env, options);
+        if (command[0] !== "npm" || command[1] !== "pack") return result;
+        const rows = JSON.parse(result.stdout);
+        rows[0].filename = "../outside.tgz";
+        return { ...result, stdout: JSON.stringify(rows) };
+      },
+    })).toThrow(/tarball|escape|package directory/i);
+  });
+
+  test.skipIf(process.platform === "win32")("rejects a symlink substituted for the packed tarball", () => {
+    const root = fixture();
+    const outside = join(root, "outside.tgz");
+    write(outside, "not the packed bytes");
+    expect(() => prepareBundledLocalPackage(root, {
+      ...defaultLocalPackageStageOptions,
+      run: (command, cwd, env, options) => {
+        const result = defaultLocalPackageStageOptions.run(command, cwd, env, options);
+        if (command[0] === "npm" && command[1] === "pack") {
+          const rows = JSON.parse(result.stdout);
+          const tarball = join(cwd, rows[0].filename);
+          rmSync(tarball);
+          symlinkSync(outside, tarball);
+        }
+        return result;
+      },
+    })).toThrow(/tarball|link|regular/i);
+  });
+
+  test("rejects installed identity, entrypoint, export, and declared-file drift", () => {
+    const mutations: Array<[string, (installedRoot: string) => void]> = [
+      ["identity", installedRoot => {
+        const manifestPath = join(installedRoot, "package.json");
+        const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+        manifest.name = "other-package";
+        writeFileSync(manifestPath, JSON.stringify(manifest));
+      }],
+      ["main", installedRoot => {
+        const manifestPath = join(installedRoot, "package.json");
+        const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+        manifest.main = "dist/missing.js";
+        writeFileSync(manifestPath, JSON.stringify(manifest));
+      }],
+      ["bin", installedRoot => {
+        rmSync(join(installedRoot, "bin/fixture.mjs"));
+      }],
+      ["exports", installedRoot => {
+        const manifestPath = join(installedRoot, "package.json");
+        const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+        manifest.exports = { ".": "./dist/missing.js" };
+        writeFileSync(manifestPath, JSON.stringify(manifest));
+      }],
+      ["declared file", installedRoot => {
+        rmSync(join(installedRoot, "README.md"));
+      }],
+    ];
+    for (const [name, mutate] of mutations) {
+      const root = fixture();
+      expect(() => prepareBundledLocalPackage(root, {
+        ...defaultLocalPackageStageOptions,
+        run: (command, cwd, env, options) => {
+          const result = defaultLocalPackageStageOptions.run(command, cwd, env, options);
+          if (command[0] === "npm" && command[1] === "install" && result.exitCode === 0) {
+            const prefix = command[command.indexOf("--prefix") + 1]!;
+            mutate(join(prefix, "node_modules/ocx-stage-fixture"));
+          }
+          return result;
+        },
+      }), name).toThrow();
+    }
+  });
+
+  test("the pre-build manifest snapshot rejects drift before staging ownership begins", () => {
+    const root = fixture();
+    const before = readFileSync(join(root, "package.json"), "utf8");
+    const manifest = JSON.parse(before);
+    manifest.files.push("secret.txt");
+    writeFileSync(join(root, "package.json"), JSON.stringify(manifest));
+    let madeStage = false;
+    expect(() => prepareBundledLocalPackage(root, {
+      ...defaultLocalPackageStageOptions,
+      makeTempRoot: prefix => {
+        madeStage = true;
+        return defaultLocalPackageStageOptions.makeTempRoot(prefix);
+      },
+    }, before)).toThrow(/before local package preparation/i);
+    expect(madeStage).toBe(false);
+  });
+
+  test("manifest drift during pack stays primary when stage cleanup also fails", () => {
+    const root = fixture();
+    const before = readFileSync(join(root, "package.json"), "utf8");
+    const cleanup = new Error("cleanup failed");
+    try {
+      prepareBundledLocalPackage(root, {
+        ...defaultLocalPackageStageOptions,
+        run: (command, cwd, env, options) => {
+          const result = defaultLocalPackageStageOptions.run(command, cwd, env, options);
+          if (command[0] === "npm" && command[1] === "pack") {
+            const changed = JSON.parse(before);
+            changed.dependencies.extra = "1.0.0";
+            writeFileSync(join(root, "package.json"), JSON.stringify(changed));
+          }
+          return result;
+        },
+        removeTree: () => { throw cleanup; },
+      }, before);
+      throw new Error("expected manifest drift");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError);
+      const errors = (error as AggregateError).errors;
+      expect((errors[0] as Error).message).toMatch(/root package.json changed during local package pack/i);
+      expect(errors[1]).toBe(cleanup);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("rejects a source link cycle inside a declared subtree", () => {
+    const root = fixture();
+    symlinkSync(".", join(root, "dist/cycle"));
+    expect(() => prepareBundledLocalPackage(root)).toThrow(/cycle/i);
+  });
+
+  test.skipIf(process.platform === "win32")("rejects a special file declared in the package surface", () => {
+    const root = fixture();
+    const fifo = join(root, "declared.fifo");
+    const result = Bun.spawnSync(["mkfifo", fifo]);
+    expect(result.exitCode).toBe(0);
+    const manifestPath = join(root, "package.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.files.push("declared.fifo");
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    expect(() => prepareBundledLocalPackage(root)).toThrow(/non-file|special/i);
+  });
+
+  test.skipIf(process.platform === "win32")("default runner rejects a large executable junk Bun binary", () => {
+    const root = fixture();
+    const manifestPath = join(root, "package.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.dependencies = { "fixture-dep": "1.0.0", bun: "1.0.0" };
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    write(join(root, "node_modules/bun/package.json"), JSON.stringify({
+      name: "bun",
+      version: "1.0.0",
+      bin: { bun: "bin/bun" },
+    }));
+    write(join(root, "node_modules/bun/bin/bun"), Buffer.alloc(1_100_000).toString("binary"), 0o755);
+    expect(() => prepareBundledLocalPackage(root)).toThrow(/execution probe|could not start|failed/i);
   });
 
   test("a missing current-platform Bun binary fails before global replacement", () => {

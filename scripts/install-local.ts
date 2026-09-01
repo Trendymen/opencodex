@@ -15,7 +15,12 @@ import {
   type ServiceInstallationProbe,
 } from "../src/service";
 import { statusWinswRaw, type WinswStatus } from "../src/lib/winsw";
-import { prepareBundledLocalPackage, type PreparedLocalPackage } from "./install-local-vendor";
+import {
+  assertRootManifestUnchanged,
+  defaultLocalPackageStageOptions,
+  prepareBundledLocalPackage,
+  type PreparedLocalPackage,
+} from "./install-local-vendor";
 
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const GUI_FONT_STACK = '--font-ui:"OpenAI Sans", "Noto Sans SC", "Microsoft YaHei UI"';
@@ -396,10 +401,6 @@ export function parsePackageIdentity(source: string): { name: string; version: s
   return { name: pkg.name, version: pkg.version };
 }
 
-function packageIdentity(): { name: string; version: string } {
-  return parsePackageIdentity(readFileSync(join(root, "package.json"), "utf8"));
-}
-
 function pathIsContained(rootPath: string, childPath: string): boolean {
   const child = relative(rootPath, childPath);
   return child.length > 0 && !child.startsWith("..") && !isAbsolute(child);
@@ -600,6 +601,68 @@ export function localGlobalInstallCommand(
   ];
 }
 
+export type LocalInstallSourcePreparationDeps = Readonly<{
+  readManifestBytes(): string;
+  build(): void;
+  patch(): { files: number; replacements: number };
+  prepare(expectedManifestBytes: string): PreparedLocalPackage;
+}>;
+
+export function prepareLocalInstallSource(
+  deps: LocalInstallSourcePreparationDeps,
+): Readonly<{
+  rootManifestBytes: string;
+  identity: { name: string; version: string };
+  fontPatch: { files: number; replacements: number };
+  preparedPackage: PreparedLocalPackage;
+}> {
+  const rootManifestBytes = deps.readManifestBytes();
+  const identity = parsePackageIdentity(rootManifestBytes);
+  deps.build();
+  if (deps.readManifestBytes() !== rootManifestBytes) {
+    throw new Error("root package.json changed during source preparation");
+  }
+  const fontPatch = deps.patch();
+  if (deps.readManifestBytes() !== rootManifestBytes) {
+    throw new Error("root package.json changed during built GUI patching");
+  }
+  const preparedPackage = deps.prepare(rootManifestBytes);
+  if (preparedPackage.rootManifestBytes !== rootManifestBytes
+    || deps.readManifestBytes() !== rootManifestBytes) {
+    const primary = new Error("root package.json changed while preparing the local package");
+    try {
+      preparedPackage.cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [primary, cleanupError],
+        "local source preparation failed and its staged package could not be removed",
+      );
+    }
+    throw primary;
+  }
+  return { rootManifestBytes, identity, fontPatch, preparedPackage };
+}
+
+export function finalizeLocalInstallCleanup(
+  preparedPackage: Pick<PreparedLocalPackage, "cleanup">,
+  lifecycleError?: unknown,
+): void {
+  let cleanupError: unknown;
+  try {
+    preparedPackage.cleanup();
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (lifecycleError !== undefined && cleanupError !== undefined) {
+    throw new AggregateError(
+      [lifecycleError, cleanupError],
+      "local install failed and its temporary tarball could not be removed",
+    );
+  }
+  if (lifecycleError !== undefined) throw lifecycleError;
+  if (cleanupError !== undefined) throw cleanupError;
+}
+
 export async function runLocalInstaller(args = process.argv.slice(2)): Promise<number> {
   const restart = args.length === 0 ? true : args.length === 1 && args[0] === "--no-restart" ? false : null;
   if (restart === null) {
@@ -607,15 +670,30 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
     return 2;
   }
 
-  const { name, version } = packageIdentity();
   console.log("==> Building GUI...");
-  run(["bun", "run", "build:gui"]);
-  console.log("==> Patching built GUI font stack...");
-  const fontPatch = patchBuiltGuiFontStack();
+  const source = prepareLocalInstallSource({
+    readManifestBytes: () => readFileSync(join(root, "package.json"), "utf8"),
+    build: () => run(["bun", "run", "build:gui"]),
+    patch: () => {
+      console.log("==> Patching built GUI font stack...");
+      return patchBuiltGuiFontStack();
+    },
+    prepare: expectedManifestBytes => {
+      console.log("==> Packing immutable local snapshot...");
+      return prepareBundledLocalPackage(
+        root,
+        defaultLocalPackageStageOptions,
+        expectedManifestBytes,
+      );
+    },
+  });
+  const { name, version } = source.identity;
+  const { fontPatch, preparedPackage, rootManifestBytes } = source;
   console.log(`    patched ${fontPatch.replacements} declaration(s) across ${fontPatch.files} CSS file(s)`);
-
-  console.log("==> Packing immutable local snapshot...");
-  const preparedPackage = prepareBundledLocalPackage(root);
+  const assertSourceManifest = (phase: string): void => {
+    assertRootManifestUnchanged(root, rootManifestBytes, phase);
+  };
+  assertSourceManifest("local install lifecycle admission");
 
   let lifecycleError: unknown;
   try {
@@ -640,8 +718,10 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         }
         const serviceDiagnostic = diagnoseService();
         assertNoRunningService(serviceDiagnostic);
+        assertSourceManifest("local install stop verification");
       },
       replace: () => {
+        assertSourceManifest("global package replacement admission");
         console.log("==> Replacing global package...");
         run(["npm", "uninstall", "-g", name], { allowFailure: true });
         // Every dependency ships inside the tarball (bundleDependencies), so
@@ -658,32 +738,22 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         localInstallAfterReplace(serviceWasInstalled, restart);
       },
       restart: () => {
+        assertSourceManifest("local install restart");
         console.log(serviceWasInstalled
           ? "==> Refreshing background service with packaged proxy..."
           : "==> Starting packaged proxy...");
         restartLocalInstall(serviceWasInstalled);
       },
       ready: () => {
+        assertSourceManifest("local install readiness check");
         run(["ocx", "ready", "--json", "--wait", "--timeout", "30"]);
       },
     });
+    assertSourceManifest("local install lifecycle completion");
   } catch (error) {
     lifecycleError = error;
   }
-  let cleanupError: unknown;
-  try {
-    preparedPackage.cleanup();
-  } catch (error) {
-    cleanupError = error;
-  }
-  if (lifecycleError !== undefined && cleanupError !== undefined) {
-    throw new AggregateError(
-      [lifecycleError, cleanupError],
-      "local install failed and its temporary tarball could not be removed",
-    );
-  }
-  if (lifecycleError !== undefined) throw lifecycleError;
-  if (cleanupError !== undefined) throw cleanupError;
+  finalizeLocalInstallCleanup(preparedPackage, lifecycleError);
 
   console.log("Done. Source edits will not affect this packaged runtime until you run this installer again.");
   return 0;
