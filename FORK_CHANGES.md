@@ -30,27 +30,30 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 审计日期 | 2026-08-31 |
-| 最新官方稳定 Release | [`v2.38.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.38.0) |
+| 审计日期 | 2026-09-01 |
+| 本轮官方维护基线 | [`v2.38.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.38.0) |
 | 官方 Tag commit | `ebb4d552e8f463bc1519ab5aab602342b0ba70dc` |
-| 审计时官方默认分支 | `upstream/main` 指向同一 commit，且 Tag 可从 `main` 到达 |
-| dev 候选实现 HEAD | `afcd6921a3a7ac6d2a7cb3140cad96c05ad2afca`（已从 `origin/dev` 的 `09fbd1453fa2c374d5d0e9cad9ae15cf86cf7e8f` 重放，并同步 v2.38 官方证据锚测试） |
-| Fork 包版本 | `2.38.0-ben.1` |
-| 本轮派生 Tag | `v2.38.0-ben.1`，在本文档末尾提交完成后创建 |
+| 当前上游最新稳定 Release | `v2.39.0`（`af6113a0381d6fff2e4dce587652825c7eeb6423`）；不属于本轮 v2.38 维护候选能力范围 |
+| dev 候选实现 HEAD | `3ea61a1b02a288a1123c78fcb02401afd087b7ef` |
+| Fork 包版本 | `2.38.0-ben.2` |
+| 本轮派生 Tag | `v2.38.0-ben.2`；当前仍 pending，只有完整验证与阻塞审查通过后才创建 |
 | 同步分支 | `sync/v2.38.0`，发布时与 `main`、`dev`、Fork Tag 指向同一 Release commit |
-| 已提交修改面 | 148 个文件，新增 22,049 行，删除 230 行（相对 `v2.38.0`，不含末尾文档提交） |
+| 已提交修改面 | 162 个文件，新增 26,149 行，删除 270 行（相对 `v2.38.0`，不含末尾文档提交） |
+| 最终本地门禁 | `bun run prepush` exit 0；主并行 suite 16,921 pass / 14 skip / 0 fail / 296,984 assertions；所有串行专项 0 fail；privacy PASS；React Doctor changed scope 无 finding |
+| 外部发布状态 | `v2.38.0-ben.2` annotated Tag、六成员 atomic push、GitHub Release 均尚未发生，等待最终三路审查 |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 
-本轮相对 `v2.38.0` 的实现短统计严格以本表的 `dev 候选实现 HEAD` 计算；最终文档
-提交不属于该实现快照。候选来自已提交且来源明确的 `dev`：本地 `dev` / `origin/dev`
-原候选为 `09fbd1453`，在官方 `v2.38.0` 之上重放并加入证据锚测试为 `afcd6921a`；该预期分叉将在发布时
-以显式 lease 收敛到同一 Release commit，而不是当作未知 drift。
+本轮相对 `v2.38.0` 的实现短统计严格以最终捕获的 `IMPLEMENTATION_HEAD` 计算；末尾
+`FORK_CHANGES.md` 文档提交不属于该实现快照。候选来自已提交且来源明确的 `dev`：原
+Fork 候选 `09fbd1453` 在官方 `v2.38.0` 之上完成重放，本轮从固定修复起点
+`94ed4ca95612c2f640127fb61ac1330449258dd6` 继续修复 Important finding。当前上游虽已发布
+`v2.39.0`，本轮仍是用户明确授权的 v2.38 同基线维护修订，不声称包含 v2.39 能力。
 
 本轮官方改动与 Fork 候选重叠 17 条路径，包含启动入口、9 个 GUI locale、package、
 catalog/config/management/update 接线与 transport 结构文档。实际内容冲突仅 `package.json`：
-官方 `2.38.0` 版本与 Fork `install:local` script 双方保留，并将 Fork 版本收敛为
-`2.38.0-ben.1`。其余 16 条路径自动合并；逐路径 blob 与三方自动合并树一致，当前源码
+官方 `2.38.0` 版本与 Fork `install:local` script 双方保留，并将本次维护版本收敛为
+`2.38.0-ben.2`。其余 16 条路径自动合并；逐路径 blob 与三方自动合并树一致，当前源码
 同时保留官方 v2.38 alias/entitlement/Windows 更新行为与 Fork recovery/progress/config/
 version-policy 行为，没有证据证明任何 Fork 差异可移除。
 
@@ -67,7 +70,7 @@ auto_merge_path_count=16
 overlap_paths=bin/ocx.mjs,gui/src/i18n/de.ts,gui/src/i18n/en.ts,gui/src/i18n/fr.ts,gui/src/i18n/ja.ts,gui/src/i18n/ko.ts,gui/src/i18n/ru.ts,gui/src/i18n/tr.ts,gui/src/i18n/zh-TW.ts,gui/src/i18n/zh.ts,package.json,src/codex/catalog/provider-fetch.ts,src/codex/catalog/sync.ts,src/config.ts,src/server/management/provider-routes.ts,src/update/index.ts,structure/04_transports-and-sidecars.md
 content_conflict_count=1
 content_conflicts=package.json
-decision_package_json=official=version 2.38.0；fork=install:local script；resolution=双方保留并收敛为 2.38.0-ben.1；tests=tests/release-version-line.test.ts,tests/fork-version-policy.test.ts
+decision_package_json=official=version 2.38.0；fork=install:local script；resolution=双方保留并收敛为 2.38.0-ben.2；tests=tests/release-version-line.test.ts,tests/fork-version-policy.test.ts
 dev_promotion=发布瞬间当前已验证 dev 与 main/sync/Fork Tag 收敛到 RELEASE_COMMIT；发布后 advanced dev 不得被自动重置回旧 RELEASE_COMMIT
 tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts,tests/fork-ci-official-baseline.test.ts
 <!-- v238-rebase:end -->
@@ -349,13 +352,16 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   schema。智谱 Codex 仅在 `openai-responses`、base URL 精确为
   `https://open.bigmodel.cn/api/v1` 且模型为 `glm-5.3` 或 `glm-5.3-flash` 时复用
   同一 provider-facing schema compiler；GLM 不写 Kimi schema catalog，也不触发
-  Kimi 专用 trace 或诊断字段。
-- **代码：** `src/fork/glm-kimi-compat.ts`（blob
-  `dd1fd17bd349`，`ben.5` 起含 trailing user turn 扩展与 GPT family gate 容错）；
+  Kimi 专用 trace 或诊断字段。对 Volcengine Agent Plan 的历史 assistant message，会在
+  trailing-user compatibility 之前移除空白、非字符串或全空 text content；保留 refusal、
+  非文本 part 和其他有效字段，避免把空 assistant 重放给上游。
+- **代码：** `src/fork/glm-kimi-compat.ts`（blob `64ce11986a7fc2391c7b8965256e55c16a2bfa72`）。
   最小接线位于 `src/adapters/openai-responses.ts` 和 `src/server/responses/core.ts`。
 - **测试：** `tests/fork-glm-kimi-compat.test.ts`、
   `tests/fork-kimi-schema-compiler.test.ts`、
-  `tests/fork-zhipu-glm-schema-lowering.test.ts`。39 工具测试是与已观察数量一致的
+  `tests/fork-zhipu-glm-schema-lowering.test.ts`；
+  `tests/fork-volcengine-empty-assistant-content.test.ts`（blob `95cfba92ac6e3ef6ee5fe27b62519f5a144b7862`）
+  固定空 assistant 清理、字段保真与非目标输入不变。39 工具测试是与已观察数量一致的
   合成目录，不等同于真实 Codex App fixture；智谱测试另覆盖顶层工具和 Responses
   Lite `additional_tools`。
 - **官方对比：** `v2.38.0:src/adapters/openai-responses.ts`（blob
@@ -363,10 +369,10 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `collectResponsesToolGroups`、`rewriteRoutedCustomToolsForUpstream` 等通用 Responses
   处理转发工具；其中没有 `applyGlmKimiOutboundCompatibility`、精确 Ark Plan endpoint
   gate 或 `$defs/$ref/oneOf/allOf` compiler。Fork 的
-  `src/fork/glm-kimi-compat.ts`（blob `dd1fd17bd349`）由
-  `727cb58ec725076ecb9f4958910ebe854e423009` 引入该精确 lowering/prefill 差异，并由上列
-  `fork-glm-kimi-compat`、`fork-kimi-schema-compiler`、`fork-zhipu-glm-schema-lowering`
-  tests 固定。
+  `src/fork/glm-kimi-compat.ts`（blob `64ce11986a7fc2391c7b8965256e55c16a2bfa72`）
+  保留精确 lowering/prefill 差异；`94ed4ca95612c2f640127fb61ac1330449258dd6`
+  在同一窄模块加入 Volcengine 空 assistant 修复。当前证据是合成/静态回归，不替代真实
+  Provider replay 与 Codex App terminal 验收。
 
 ### 原生 Responses message phase 推断
 
@@ -434,20 +440,45 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 ### Ark quota 在 Codex Desktop 中的展示
 
-- **状态：** Fork 独有——保留；存在已知缺口。
+- **状态：** Fork 独有——保留；本轮 weekly 兼容已修复。
 - **行为：** 识别到永久 Ark usage quota 429 时，改为不可重试的 HTTP 400
   `invalid_request_error`，code 为 `volcengine_usage_quota_exhausted`；完整保留 Ark
   原文并删除 `Retry-After`，避免 Codex Desktop 的通用 retry-limit 或 ChatGPT
-  订阅额度组件覆盖 Ark reset 时间。
-- **代码：** `src/fork/ark-quota-display.ts`，以及
+  订阅额度组件覆盖 Ark reset 时间。matcher 精确接受无窗口、数字 `N-hour` 与 `weekly`
+  三类 usage quota/limit 文案，同时继续要求完整 reset 时间与 `+0800 CST`；`monthly`、
+  `week`、`rolling-weekly`、malformed JSON、普通 overload 和 legacy
+  `usage_limit_reached` 均不转换。
+- **代码：** `src/fork/ark-quota-display.ts`（blob `a80fd68a576013788bce100179c5982e2adb63ba`），以及
   `src/server/responses/passthrough-error.ts` / `src/server/responses/core.ts` 的非 2xx
   边界。
-- **测试：** `tests/fork-latest-compat.test.ts`、`tests/retry-after-429.test.ts` 覆盖
-  已观察的 five-hour 形式。
-- **已知缺口：** Ark 还会返回 `weekly usage quota`。当前 matcher 只接受可选的数字
-  `N-hour` 窗口，因此 weekly 仍保持 429，Codex 会显示 `exceeded retry limit`。
+- **测试：** `tests/fork-ark-weekly-quota.test.ts`（blob `52e4b0b0d49438ffa5c14a12cba1c4f5eb704d35`）
+  覆盖三种正例、相邻词汇、reset/timezone、malformed body 与 Provider scope；既有
+  `tests/fork-latest-compat.test.ts`、`tests/fork-ark-quota-error.test.ts` 保留相邻回归。
 - **官方对比：** 官方有通用 passthrough error / Retry-After pipeline，但没有 Ark
-  专用客户端展示。
+  专用客户端展示；本轮基线仍为 `v2.38.0`。真实 weekly downstream 展示尚未执行，
+  focused test 不替代 live Provider/Codex App 证据。
+
+### 自定义模型配置、工具模式与公开投影
+
+- **状态：** Fork 独有——保留；本轮配置/API/CLI/隐私边界已闭环。
+- **行为：** `customModels` load-time 逐行 salvage 且读不写盘；strict whole-config write
+  拒绝 malformed row、invalid enum、stable-ID duplicate 与新增 routed/native identity
+  collision。历史 distinct stable-ID collision 在 load/guarded unrelated save 中保留，
+  歧义 routed selector fail closed，精确 stable-ID remove 仍可收缩 collision class。
+  reasoning efforts 规范为 canonical ladder；invalid optional field 局部省略；unknown
+  opaque keys 仅在内部配置保存/reload，所有管理 API、CLI、safe config/client export
+  都通过 known-field projection 排除。
+- **工具模式：** `/api/custom-models` POST omission 表示 inherit，PUT omission preserve、
+  enum set、`null` clear；invalid/null-on-create 在任何 persist/converge 前返回 400。
+  `/api/models` 与 CLI JSON/text 暴露 stored `codexToolMode`，不把 provider-effective 值
+  冒充用户存储；offline/live CLI 支持 `--tool-mode code_mode_only|shell|inherit`。
+- **代码：** `src/config/custom-models.ts`（blob `12a84dd14a674eda773a83a31f9923c740a0e213`）；
+  static roster 位于 `src/providers/known-model-ids.ts`，config/router、management、catalog
+  与 CLI 仅保留必要窄接线。
+- **测试：** `tests/fork-custom-model-config-schema.test.ts`（blob `3d4d45554e572bfdebec58c369c5dd8c42f3297c`）；
+  `tests/fork-custom-model-tool-mode-contract.test.ts`（blob `70d779ea7521a56846846d7abd96e43d3e94d779`）。
+- **官方对比：** 官方 `v2.38.0` 没有上述 Fork `customModels` schema、stored tool-mode
+  round trip 与 opaque-field public projection；因此保留新增窄模块和最小接线。
 
 ### Routed custom tool output 字符串化
 
@@ -599,21 +630,49 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 ### 本地源码包安装
 
 - **状态：** Fork 独有——与运行时兼容层分开保留。
-- **行为：** `bun run install:local` 构建 GUI，通过 `npm pack --json` 生成并校验仓库
-  根目录下唯一的 regular `.tgz`，安全停止现有安装、替换全局包，并恢复原服务模式。
-  服务状态未知或非 Scheduler 服务停止后仍运行时 fail closed。`ben.4` 起，pack 前
-  临时把全部 runtime dependencies 写入 `bundleDependencies`（结束后逐字节还原
-  package.json），tarball 自带完整依赖子树；全局替换使用 `npm install -g
-  --ignore-scripts`，安装期不解析 registry、不执行 bun postinstall 下载，launcher
-  保留 install.js 兜底。
-- **代码：** `scripts/install-local.ts`、`install:local` package script、Fork 包版本和
-  根目录包产物 ignore 规则；`ben.4` 新增 `scripts/install-local-vendor.ts`
-  （bundleDependencies 注入与字节级还原）。
-- **测试：** `tests/install-scripts.test.ts` 固定顺序、包路径与服务状态决策；
-  `tests/install-local-vendor.test.ts` 覆盖 bundle 列表排序、成功与抛错路径的字节级
-  还原；`tests/install-local.test.ts` 覆盖平台化 restart 行为。这些是
-  unit/static contract；安装器行为变化后仍需独立做真实全局替换和服务恢复验收。
-- **官方对比：** 官方稳定 Tag 与当前 upstream 开发分支没有同等本地源码安装器。
+- **行为：** `bun run install:local` 构建 GUI，但 tracked root `package.json` 全程只读。
+  owner-only 临时 stage 复制 package `files` 与经过 canonical containment 校验的完整
+  runtime dependency closure，只在 staged manifest 写入排序后的 `bundleDependencies`。
+  `npm pack --json --ignore-scripts` 产物必须是唯一 regular local tarball，并重新计算
+  SHA-512 SRI、SHA-1 shasum 和 pack file rows；dot/escape/duplicate/sensitive 路径、
+  非 allowlisted dependency、link/junction escape、cycle 与 special file 均 fail closed。
+  disposable validation 使用 owned empty cache、`--offline --ignore-scripts --no-audit
+  --no-fund --package-lock=false`，递归验证 main/bin/exports、runtime closure 和资源文件。
+  若包声明 Bun，则对隔离解包出的当前平台精确 binary 先做 size gate，再执行
+  `--version`（5 秒 timeout、exit 0、plausible semver），任何失败都发生在全局 replacement
+  前。最终 global install argv 复用同一 validated tarball/cache 与 offline/no-script 策略。
+- **代码：** `scripts/install-local-vendor.ts`（blob `4c12faf88274e676c77555a57be65913edf74bfc`）；
+  `scripts/install-local.ts`（blob `7a91d67b9809f99cc64533ff8e0be42352ac5a43`）。
+- **测试：** `tests/fork-install-local-staging.test.ts`（blob `ac21c0928e5725c923540370cd5df863f9f4bf83`）
+  覆盖 staging、offline closure、archive identity/integrity、link containment、Bun probe、
+  pure global argv 与 cleanup/error ordering；`tests/install-local-vendor.test.ts`、
+  `tests/install-local.test.ts` 保留相邻生命周期回归。这些仍是 isolated/unit/static 证据；
+  本轮未执行真实全局替换或 service stop/restart 恢复。
+- **官方对比：** 官方 `v2.38.0` 与当前 upstream 开发分支没有同等本地源码安装器。
+
+### GUI Logs/Debug 恢复标签与 sidecar 契约
+
+- **状态：** 官方已有页面能力；Fork 只保留 recovery label 增量，sidecar 回归与官方对齐。
+- **行为：** Logs/Debug tab、hash source of truth、lazy-mounted Debug 与 viewer 仍由官方
+  `v2.38.0` 页面能力提供；Fork 在 Logs attempt detail 增加
+  `agent-task-recovery`、`oauth-account-429`、`opaque-blob-rejection` 三种 recovery kind
+  映射，并为全部 9 个 locale 提供对应翻译。`Debug.tsx` 本身与官方相同，不宣称为 Fork
+  独有 runtime。sidecar 本轮只删除重复且与 vertical control-band 冲突的旧断言，生产
+  CSS 未修改。
+- **代码：** `gui/src/pages/Logs.tsx`（blob `c8f79494aff1df856466adc0d7718b6338e5473d`）；
+  `gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`，与官方 v2.38.0 相同）。
+- **9 locale：** `gui/src/i18n/de.ts`（blob `60502ed061b10ba6cc2b5303e3b01fbbf4b8a00b`）；
+  `gui/src/i18n/en.ts`（blob `9f4ed1948c4f3862a458623f68bae9ef38eeaf65`）；
+  `gui/src/i18n/fr.ts`（blob `77849e5fe9ca6ac2cc1b46806c9b07ca8c4b6b29`）；
+  `gui/src/i18n/ja.ts`（blob `aa80841cca96080a93f68e545c52e724171663d3`）；
+  `gui/src/i18n/ko.ts`（blob `49562e8a7b9c87070fdabd7c0bcb0be7dc1bcd26`）；
+  `gui/src/i18n/ru.ts`（blob `cafcd2687f40b36c48bf660aff8234d0b06ad64b`）；
+  `gui/src/i18n/tr.ts`（blob `1b3e23979f32f1fc7e2712c721214ee6025bd2da`）；
+  `gui/src/i18n/zh-TW.ts`（blob `b463b9e38c524808b799cbabd9ab6a0581dd4477`）；
+  `gui/src/i18n/zh.ts`（blob `4cbffe4401797b2e2ad21663efbc7da81e8dabed`）。
+- **sidecar：** `gui/tests/sidecar-layout.test.ts`（blob `e140a627260bbf952708e7f710874a5f76cc5b2b`，与官方 v2.38.0 相同）；
+  `gui/src/styles-dashboard-workspace.css` blob `2b854f57c1b66a9ad4cc0e53fef421f7cf14fc5f`
+  也与官方相同。提交 `1476108b3` 是测试契约修正，不是新 CSS 能力。
 
 ### install-local 默认开启 macOS provider debug
 
@@ -638,7 +697,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 - **状态：** Fork 独有——保留。
 - **包版本：** 官方稳定版 `X.Y.Z` 对应 Fork 包版本 `X.Y.Z-ben.N`。当前为
-  `2.37.0-ben.1`（`v2.35.0-ben.*`/`v2.36.0-ben.*` Tag 保留为历史不可变修订）。`N` 从 1 开始且必须是安全整数；
+  `2.38.0-ben.2`（`v2.38.0-ben.1` 及更早 Tag 保留为历史不可变修订）。`N` 从 1 开始且必须是安全整数；
   `ben.0`、前导零、超安全整数或其他 suffix 不属于该策略。
 - **更新语义：** 官方同基线稳定版与当前 Fork 等价，不允许显式 `ocx update` 用同基线
   官方包覆盖 Fork；registry target 无法解析时，`ben` build 在任何 cache/stop/install
@@ -646,15 +705,25 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 - **Tag 语义：** Git Tag 使用 `vX.Y.Z-ben.N`。必须存在对应官方 `vX.Y.Z` Tag；Fork
   对每个已 rebase 官方基线在 origin 保留同名、与固定官方仓库 type/raw/peeled 完全一致的
   official Tag。缺失只能在 atomic promotion 中以已验证 raw ref 补齐；已存在的任一字段
-  不一致即 fail closed，禁止 force、删除、重建或移动。Fork 基线不得落后于更高官方稳定版；
-  已有同名 Fork Tag 只有指向当前 commit 时才合法；已有更高 `ben.N` 时禁止回退。畸形 Tag
-  不参与 revision 比较。
-- **代码：** `src/fork/version-policy.mjs`、`src/fork/version-policy.d.mts`；
+  不一致即 fail closed，禁止 force、删除、重建或移动。严格 numbered `ben.N` 按精确官方
+  基线独立维护：更新官方 stable 不自动禁止用户明确授权的旧基线维护 revision，但必须
+  存在 exact base、不得低于完整本地/远端同基线最高有效 revision，已有同名 Fork Tag
+  只有指向当前 commit 时才合法。普通 stable/preview 继续遵守完整 Tag 集全局单调门禁。
+  畸形 Tag 不参与 revision 比较。
+- **发布竞态边界：** 创建本地 Tag 前、atomic push 紧邻前、确定/不确定 push 后及
+  GitHub Release 前，都按 phase-aware 规则枚举完整同基线 name/raw/peeled namespace；
+  late higher revision、对象身份或集合非预期漂移均阻塞。Git 无法 lease 尚不存在的不同
+  Tag 名称，最终复核到 push 仍是显式 TOCTOU 残余风险，依赖 single publisher；若 push
+  后发现更高 revision，保留不可变 lower Tag、停止 Release 并报告。
+- **代码：** `src/fork/version-policy.mjs`（blob `1c9351fea6dd28f5d70fb945c37e5ac46536a7b6`）、
+  `src/fork/version-policy.d.mts`；
   `src/update/notify.ts`、`src/update/index.ts` 和 `bin/ocx.mjs` 只保留窄接线。
-- **测试：** 新增 `tests/fork-version-policy.test.ts`；
+- **测试：** `tests/fork-version-policy.test.ts`（blob `40c1092241345b88c3c26756bca1d3d59586f501`）；
   `tests/release-version-line.test.ts` 只增加经用户批准的最小门禁调用。Node/Bun 策略、
-  package-shaped npm launcher、包清单与版本传播均验证通过；实现提交为 `5789a619f`。
-  `ben.4` 起，该测试不再硬编码当前包版本号，版本推进只改 `package.json`。
+  package-shaped npm launcher、same-base late `ben.3` 与 immutable current Tag 均覆盖；
+  本轮实现提交为 `3337a56f7`。该测试不硬编码当前包版本号，版本推进只改
+  `package.json`。
+- **官方对比：** 官方 `v2.38.0` 没有该 Fork ben 版本与 Tag 策略。
 - **前端边界：** 按用户要求不修改 `gui/src/App.tsx` 或 CSS。GUI 继续通过现有链路显示
   真实版本，视觉缩短仅来自实际包版本从 `2.34.1-trendymen.1` 改为 `ben` 系列。
 
@@ -662,7 +731,13 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 - **状态：** 官方部分覆盖——只保留剩余差异。
 - **Fork 剩余行为：** launcher/update 测试规避环境 runtime shim 与不支持的 PATH interception。`tests/server-auth.test.ts` 的 serial lane membership 与 watchdog 预算已按用户要求还原为官方行为。
-- **代码：** `tests/shutdown-launcher.test.ts`、`tests/update-stop-first.test.ts`。
+- **最终门禁修复：** 首次完整 prepush 暴露 `tests/cli-status-json.test.ts` 把 dead owner
+  PID 硬编码为 `4242`，而当前主机该 PID 正由 `playwright-mcp` 使用，导致两个 stale-process
+  E2E 正确返回 false。`3ea61a1b0` 改为在 fixture 建立时验证一个不可存活的高 PID 后再
+  写入记录，不改变 production status/doctor 行为；当前测试 blob 为
+  `e376768d7af62c07a036a0eb557c23d4dc48b890`。
+- **代码：** `tests/shutdown-launcher.test.ts`、`tests/update-stop-first.test.ts`、
+  `tests/cli-status-json.test.ts`。
 - **官方对比：** `v2.38.0:tests/update-stop-first.test.ts`（blob
   `0f7fd7ff55ec23cbdea4d157df61262bd9f8cd8e`，merge
   `fe063d16ef620a148ab425cfffe63a8936d00e52`）已包含 recovery PID cleanup、
@@ -712,17 +787,24 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 ## 当前已知缺口与验证边界
 
-1. **Ark weekly quota：** matcher 尚未识别 `weekly usage quota`，这是已确认 live 缺口。
-2. **Standalone web search：** 缺少绑定当前实现 SHA 的专门断言和不可变真实验收证据。
-3. **原生加密恢复：** 缺少真实 minted backend ciphertext + live recovery SSE 验收。
-4. **Provider debug：** 独立 `ocx service repair/install` 仍可能覆盖 install-local 写入的
+1. **Standalone web search：** 缺少绑定当前实现 SHA 的专门断言和不可变真实验收证据。
+2. **原生加密恢复：** 缺少真实 minted backend ciphertext + live recovery SSE 验收。
+3. **Provider debug：** 独立 `ocx service repair/install` 仍可能覆盖 install-local 写入的
    `OCX_DEBUG=1`。
-5. **安装器：** unit/static 通过不替代真实全局 package replacement 与服务模式恢复。
-6. **Windows：** package-shaped npm launcher 的 unresolved target 子进程测试在 Windows
+4. **安装器：** owner-only staging、offline archive validation 与 Bun probe 的
+   unit/static 通过不替代真实全局 package replacement 与服务模式恢复；Windows junction
+   containment 仍需平台实跑。
+5. **Windows：** package-shaped npm launcher 的 unresolved target 子进程测试在 Windows
    跳过，依赖 CI 覆盖。
-7. **外部 Provider：** focused test 和 HTTP success 与真实 Codex App terminal 分层记录；
+6. **外部 Provider：** weekly quota、empty-assistant 与 custom model focused test 和 HTTP
+   success 都不能替代真实 Provider/Codex App terminal 分层记录；
    相关能力变化后必须记录 Provider/模型、客户端终态与脱敏 outbound shape。
-8. **并行工作区：** 本清单只按 committed SHA 计算，绝不因工作区中恰好存在其他任务
+7. **同基线发布竞态：** 完整远端 ben namespace 的最终复核到 atomic push 之间无法对
+   尚不存在的 differently named future Tag 建立 wildcard lease；依赖 single publisher，
+   push 后必须在 GitHub Release 前复核，发现竞态时保留 immutable Tag 并停止 Release。
+8. **上游版本边界：** 当前 upstream 已发布 `v2.39.0`，本轮只发布用户明确授权的
+   `v2.38.0-ben.2` 维护修订，不包含或宣称官方 v2.39 能力。
+9. **并行工作区：** 本清单只按 committed SHA 计算，绝不因工作区中恰好存在其他任务
    文件而把它们混入提交或能力清单。
 
 ## Fork 版本、Tag 与 GitHub Release 规则
@@ -793,6 +875,24 @@ post_release_advanced_dev=must-not-reset
 sync_ancestry=EXPECTED_REMOTE_SYNC-absent-or-ancestor-of-RELEASE_COMMIT
 final_convergence=local-remote-main-dev-sync-fork-tag-equal-RELEASE_COMMIT
 <!-- fork-release-lifecycle:end -->
+
+<!-- same-base-ben-preflight:start -->
+scope=strict-local-and-remote-vX.Y.Z-ben.N
+snapshot=name-raw-peeled
+pre_local_tag=freeze-local-baseline-and-remote-baseline
+pre_push=local-baseline-plus-exact-target-and-remote-baseline
+post_push=remote-baseline-or-remote-baseline-plus-exact-target
+higher_revision=fail-closed-at-every-checkpoint
+other_drift=fail-closed
+post_success=required-before-github-release
+serialization=single-publisher-required
+toctou=final-recheck-to-push-window-is-residual-risk
+<!-- same-base-ben-preflight:end -->
+
+同基线 maintenance revision 还必须执行完整 local/origin `vX.Y.Z-ben.N` name/raw/peeled
+phase-aware preflight；pre-push 只允许本地精确目标 Tag 增量，post-push 只允许远端同一
+精确对象增量。每阶段重算最高 revision，其他漂移 fail closed；确定成功也必须在 GitHub
+Release 前复核。final recheck 到 push 的 future-name namespace 竞态作为残余风险保留。
 
 四个 branch 使用各自 exact lease；`main`、`dev` 与 marker 按发布策略允许 force，
 `sync/vX.Y.Z` 只允许普通 fast-forward；两个 Tag 均不使用 force 或 lease。确定失败时停止；
@@ -870,6 +970,24 @@ post_release_advanced_dev=must-not-reset
 sync_ancestry=EXPECTED_REMOTE_SYNC-absent-or-ancestor-of-RELEASE_COMMIT
 final_convergence=local-remote-main-dev-sync-fork-tag-equal-RELEASE_COMMIT
 <!-- fork-release-lifecycle:end -->
+
+<!-- same-base-ben-preflight:start -->
+scope=strict-local-and-remote-vX.Y.Z-ben.N
+snapshot=name-raw-peeled
+pre_local_tag=freeze-local-baseline-and-remote-baseline
+pre_push=local-baseline-plus-exact-target-and-remote-baseline
+post_push=remote-baseline-or-remote-baseline-plus-exact-target
+higher_revision=fail-closed-at-every-checkpoint
+other_drift=fail-closed
+post_success=required-before-github-release
+serialization=single-publisher-required
+toctou=final-recheck-to-push-window-is-residual-risk
+<!-- same-base-ben-preflight:end -->
+
+同基线 maintenance revision 还必须执行完整 local/origin `vX.Y.Z-ben.N` name/raw/peeled
+phase-aware preflight；pre-push 只允许本地精确目标 Tag 增量，post-push 只允许远端同一
+精确对象增量。每阶段重算最高 revision，其他漂移 fail closed；确定成功也必须在 GitHub
+Release 前复核。final recheck 到 push 的 future-name namespace 竞态作为残余风险保留。
 
 四个 branch 使用各自 exact lease；`main`、`dev` 与 marker 按发布策略允许 force，
 `sync/vX.Y.Z` 只允许普通 fast-forward；两个 Tag 均不使用 force 或 lease。确定失败即停止；
