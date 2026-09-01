@@ -62,6 +62,27 @@ serialization=single-publisher-required
 toctou=final-recheck-to-push-window-is-residual-risk
 <!-- same-base-ben-preflight:end -->
 
+<!-- local-ref-cas-transaction:start -->
+transport=git-update-ref-stdin
+transaction=start-prepare-commit
+main_update=refs/heads/main RELEASE_COMMIT EXPECTED_OLD_LOCAL_MAIN
+marker_update=refs/heads/upstream-release OFFICIAL_COMMIT EXPECTED_OLD_LOCAL_MARKER
+atomicity=all-or-none
+sequential_updates=forbidden
+<!-- local-ref-cas-transaction:end -->
+
+远端 atomic push 成功后的本地引用收敛必须等价于下列单事务输入；两个 `update` 都携带
+发布前捕获的 expected-old OID，任一比较失败时 `prepare`/`commit` 不得让另一条 ref
+单独生效：
+
+```text
+start
+update refs/heads/main RELEASE_COMMIT EXPECTED_OLD_LOCAL_MAIN
+update refs/heads/upstream-release OFFICIAL_COMMIT EXPECTED_OLD_LOCAL_MARKER
+prepare
+commit
+```
+
 四个 branch 使用各自精确 expected-SHA lease；`main`、`dev` 与 marker 允许按发布策略 force，`sync/vX.Y.Z` 只能普通 fast-forward。两个 Tag 都不 force、不使用 lease。任何 mismatch、atomic 不支持或不确定失败都 fail closed，禁止拆分推送。
 
 同基线维护发布还必须枚举本地与 origin 远端完整的 `refs/tags/vX.Y.Z-ben.*` 名称空间，
@@ -124,7 +145,10 @@ FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维�
 
 - 实现、最终验证或末尾文档提交未完成：只恢复当前 ben.N 剩余收尾；不重新 rebase、不递增 revision。工作树不干净、来源不明或证据不足时登记未完成并 fail closed。
 - `RELEASE_COMMIT` 完成但 Fork Tag 缺失：验证 package/document 一致、其父提交等于此前捕获的 `IMPLEMENTATION_HEAD`、该提交只含 `FORK_CHANGES.md`，再按 annotated Tag 与六成员 atomic leased push 流程补齐；不得生成 ben.(N+1)。
-- 远端 push 完成但本地 main / upstream-release 未对齐：用捕获的本地旧 OID 做 compare-and-swap 对齐；不得移动已验证的 sync branch。
+- 远端 push 完成但本地 main / upstream-release 未对齐：严格按 `local-ref-cas-transaction`
+  使用一个带 `start` / `prepare` / `commit` 的 `git update-ref --stdin` transaction，同时用
+  捕获的两个本地旧 OID 做 compare-and-swap；任一 CAS 失败时两条 ref 都不得更新。不得移动
+  已验证的 sync branch，禁止把两条 update 拆成顺序执行的命令。
 - Tag 存在但 GitHub Release 缺失或元数据不合格：只创建或幂等修正同名 Release，不移动 Tag、不递增 revision。Release 须满足 tagName 精确、name 等于 Tag、isDraft=false、isPrerelease=false，中文 body 至少含官方基线、Fork 修改点、验证结果、已知缺口与 commit。
 
 `dev` 可以在已发布 `main` 之上有自由的已提交开发内容；这不是 drift。只有候选来源、远端 `dev` 预期 SHA、或其重写权限无法确定时才 fail closed。
@@ -149,7 +173,13 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 10. 执行双审门禁（见上）。未通过前禁止后续 push、Tag、Release。
 11. 双审通过后创建中文注释 annotated Tag vX.Y.Z-ben.N；raw 类型必须是 tag，peeled 等于 `RELEASE_COMMIT`。远端已存在时核对 OID，否则 fail closed。禁止 force Tag。
 12. 先执行 sync ancestry guard 并重新读取全部 expected OID，再按“提交术语与唯一原子集合”的六成员 refset 执行一次 `git push --atomic`：`main`、`dev`、`sync/vX.Y.Z` 与 Fork Tag 指向 `RELEASE_COMMIT`，marker 与官方 Tag 指向 `OFFICIAL_COMMIT`。`main`、`dev`、marker 使用各自 ref-scoped force lease；sync 使用普通 refspec及其 exact lease，且不得省略 ancestry guard。任一 lease 漂移、冲突或失败都 fail closed；禁止无 lease force、blanket force 和拆分推送。
-13. push 成功后、Release API 前，用旧 OID compare-and-swap 对齐本地 main / upstream-release；dev 已是候选 checkout，不重写到其他内容；fetch 核对。Release 失败也保持 branch 收敛。
+13. push 成功后、Release API 前，严格按 `local-ref-cas-transaction` 使用一个带
+    `start` / `prepare` / `commit` 的 `git update-ref --stdin` transaction，把本地
+    `refs/heads/main` 与 `refs/heads/upstream-release` 同时 compare-and-swap 到
+    `RELEASE_COMMIT` / `OFFICIAL_COMMIT`；两行分别携带发布前捕获的
+    `EXPECTED_OLD_LOCAL_MAIN` / `EXPECTED_OLD_LOCAL_MARKER`，任一失败则两者都不更新。
+    禁止顺序执行两个 update；dev 已是候选 checkout，不重写到其他内容；随后 fetch 核对。
+    Release 失败也保持 branch 收敛。
 14. 创建或核对同名 GitHub Release：ben.N 为正式修订，非 prerelease 非 draft；标题等于 Tag；中文 Notes 含官方基线、修改点、验证、已知缺口、commit。默认仅 source archive。后验查询元数据；不合格只幂等修正。失败保留 Tag，任务标未完成，下次只收敛 Release。
 15. 终验：发布瞬间本地/远端 `main`、`dev`、`sync/vX.Y.Z` 与 Fork Tag peeled commit 全部等于 `RELEASE_COMMIT`；Fork Tag 为 annotated；`upstream-release` 等于 `OFFICIAL_COMMIT`；官方基线 Tag 在 origin；Release 公开指向 Fork Tag。发布后 `dev` 可以继续领先 `main`，后续自动化不得把 advanced dev 重置回该旧 `RELEASE_COMMIT`。报告官方 Tag、修改点、冲突摘要、双审结论、验证、commit、push、Release URL 与残余风险。
 

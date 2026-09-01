@@ -180,6 +180,22 @@ const EXPECTED_SAME_BASE_TAG_PREFLIGHT = {
   serialization: "single-publisher-required",
   toctou: "final-recheck-to-push-window-is-residual-risk",
 } as const;
+const EXPECTED_LOCAL_REF_CAS_KEYS = [
+  "transport",
+  "transaction",
+  "main_update",
+  "marker_update",
+  "atomicity",
+  "sequential_updates",
+] as const;
+const EXPECTED_LOCAL_REF_CAS = {
+  transport: "git-update-ref-stdin",
+  transaction: "start-prepare-commit",
+  main_update: "refs/heads/main RELEASE_COMMIT EXPECTED_OLD_LOCAL_MAIN",
+  marker_update: "refs/heads/upstream-release OFFICIAL_COMMIT EXPECTED_OLD_LOCAL_MARKER",
+  atomicity: "all-or-none",
+  sequential_updates: "forbidden",
+} as const;
 
 const EXPECTED_V236_CONFLICT_PATHS = [
   "package.json",
@@ -282,6 +298,18 @@ function strictSameBaseTagPreflight(source: string): Record<string, string> {
   );
   if (JSON.stringify(parsed) !== JSON.stringify(EXPECTED_SAME_BASE_TAG_PREFLIGHT)) {
     throw new Error("same-base ben preflight values differ from the exact contract");
+  }
+  return parsed;
+}
+
+function strictLocalRefCas(source: string): Record<string, string> {
+  const parsed = strictKeyValueBlock(
+    source,
+    "local-ref-cas-transaction",
+    EXPECTED_LOCAL_REF_CAS_KEYS,
+  );
+  if (JSON.stringify(parsed) !== JSON.stringify(EXPECTED_LOCAL_REF_CAS)) {
+    throw new Error("local ref CAS transaction differs from the exact contract");
   }
   return parsed;
 }
@@ -613,6 +641,20 @@ describe("Fork maintenance truth", () => {
     expect(() => strictSameBaseTagPreflight(automation.replace(
       "local-baseline-plus-exact-target-and-remote-baseline",
       "local-baseline-plus-any-target-and-remote-baseline",
+    ))).toThrow();
+  });
+
+  test("updates local main and upstream-release atomically with their captured old OIDs", () => {
+    expect(strictLocalRefCas(automation)).toEqual(EXPECTED_LOCAL_REF_CAS);
+    expect([...automation.matchAll(/严格按 `local-ref-cas-transaction`/g)]).toHaveLength(2);
+
+    expect(() => strictLocalRefCas(automation.replace(
+      "transaction=start-prepare-commit",
+      "transaction=sequential-updates",
+    ))).toThrow();
+    expect(() => strictLocalRefCas(automation.replace(
+      "refs/heads/upstream-release OFFICIAL_COMMIT EXPECTED_OLD_LOCAL_MARKER",
+      "refs/heads/upstream-release OFFICIAL_COMMIT",
     ))).toThrow();
   });
 
