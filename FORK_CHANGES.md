@@ -34,13 +34,13 @@
 | 本轮官方维护基线 | [`v2.39.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.39.0) |
 | 官方 Tag commit | `af6113a0381d6fff2e4dce587652825c7eeb6423` |
 | 当前上游最新稳定 Release | `v2.39.0`（`af6113a0381d6fff2e4dce587652825c7eeb6423`），即本轮 rebase 基线 |
-| 当前 ben.2 `IMPLEMENTATION_HEAD` | `5a8f227ba4e78a38e8f46a23808c4d982f7ac2e3`；包含 ben.1 发布后的 CI fixture/dev 版本解耦、维护真源收敛与 `2.39.0-ben.2` 版本推进 |
+| 当前 ben.2 `IMPLEMENTATION_HEAD` | `dcfd2001268e05744a1f9d7f50819138ac096669`；包含 ben.1 发布后的 CI fixture/dev 版本解耦、维护真源收敛、`2.39.0-ben.2` 版本推进与本地双 ref 单事务 CAS 契约修复 |
 | Fork 包版本 | `2.39.0-ben.2` |
 | 本轮派生 Tag | `v2.39.0-ben.2`；创建本地 Tag 前快照中本地与 origin 均不存在，完整同基线 namespace 只有不可变 `v2.39.0-ben.1` |
 | 同步分支 | 本地与 origin `sync/v2.39.0` 当前均为 ben.1 Release commit `419a1bc7b327cf1183c05e73e9c9559fea221600`；ben.2 发布时只允许 fast-forward 到新的 `RELEASE_COMMIT` |
-| ben.2 实现修改面 | 170 个文件，新增 27,526 行，删除 579 行（相对 `v2.39.0`，不含本轮后续末尾文档提交） |
-| ben.2 最终本地门禁 | 固定 `IMPLEMENTATION_HEAD=5a8f227ba` 且本文档已更新时，`bun run prepush` 退出 0：主套件 17,157 pass / 14 skip / 0 fail / 393,952 assertions（1055 files），全部 serial lanes、typecheck、privacy scan 通过；无 GUI 变化，条件 GUI 门禁按规则跳过 |
-| 外部发布状态 | [`v2.39.0-ben.1`](https://github.com/Trendymen/opencodex/releases/tag/v2.39.0-ben.1) 保持不可变且已闭环；ben.2 的双审、annotated Tag、六成员 atomic push 与 GitHub Release 尚未执行 |
+| ben.2 实现修改面 | 170 个文件，新增 27,643 行，删除 579 行（相对 `v2.39.0`，不含本轮后续末尾文档提交） |
+| ben.2 最终本地门禁 | 固定 `IMPLEMENTATION_HEAD=dcfd20012` 且本文档已重写时，第二次 `bun run prepush` 退出 0：主套件 17,158 pass / 14 skip / 0 fail / 402,749 assertions（1055 files），全部 serial lanes、typecheck、privacy scan 通过；无 GUI 变化，条件 GUI 门禁按规则跳过；旧 `5a8f227ba` 的 PASS 已作废 |
+| 外部发布状态 | [`v2.39.0-ben.1`](https://github.com/Trendymen/opencodex/releases/tag/v2.39.0-ben.1) 保持不可变且已闭环；ben.2 初轮双审与第一次 `RE_REVIEW` 已执行，CAS finding 已关闭，当前维护真源状态 finding 修复后等待第二次 `RE_REVIEW`；annotated Tag、六成员 atomic push 与 GitHub Release 尚未执行 |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 | origin 官方历史 Tag | `v2.33.0` 至 `v2.39.0` 各已 rebase 稳定基线均存在，且 type/raw/peeled 与 upstream 对应官方 Tag 完全一致；2026-09-01 heartbeat 以普通非 force push 补齐此前缺失的 `v2.33.0` |
@@ -142,15 +142,26 @@ tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts
 `af6113a0381d6fff2e4dce587652825c7eeb6423`，本修订不执行新的上游 rebase，也不声称包含
 上游 `v2.39.0` 之后尚未进入正式稳定 Release 的开发分支能力。
 
-- **实现提交：** `5a8f227ba4e78a38e8f46a23808c4d982f7ac2e3` 是本轮固定且不得
-  重赋值的 `IMPLEMENTATION_HEAD`。它在 ben.1 Release commit
-  `419a1bc7b327cf1183c05e73e9c9559fea221600` 之后包含三笔提交：
+- **实现提交：** `dcfd2001268e05744a1f9d7f50819138ac096669` 是 reviewer finding
+  修复后重新固定且不得再重赋值的 `IMPLEMENTATION_HEAD`。它在 ben.1 Release commit
+  `419a1bc7b327cf1183c05e73e9c9559fea221600` 之后包含五笔提交：
   `d5833e9d5` 修复 Cross-platform CI auth fixture 并解除普通 `dev` 与 Release version line
   的强耦合；`aafdf8716` 收敛 v2.39 发布与官方历史 Tag 真源；`5a8f227ba` 只把
-  `package.json` 推进为 `2.39.0-ben.2`。
-- **修改面：** 相对官方 `v2.39.0` 为 170 个文件、`+27,526/-579`；相对不可变 ben.1
-  Release 为 11 个文件、`+260/-313`。ben.1 后没有新增生产 runtime、Provider、adapter、
-  GUI 或公共 API 能力；新增内容限定为测试 fixture、CI/version-bump 治理、维护文档和版本行。
+  `package.json` 推进为 `2.39.0-ben.2`；`4b484aa74` 是双审前的候选维护文档提交；
+  `dcfd20012` 修复权威发布规则中本地 `main` / `upstream-release` 必须在同一个
+  `git update-ref --stdin` transaction 内 compare-and-swap 的契约与机械门禁。旧的
+  `5a8f227ba` 不再是本轮发布实现 SHA。
+- **修改面：** 相对官方 `v2.39.0` 为 170 个文件、`+27,643/-579`；相对不可变 ben.1
+  Release 为 12 个文件、`+381/-317`。ben.1 后没有新增生产 runtime、Provider、adapter、
+  GUI 或公共 API 能力；新增内容限定为测试 fixture、CI/version-bump 治理、发布规则与
+  机械门禁、维护文档和版本行。
+- **审查 finding 修复：** 初轮 `SPEC_COMPLIANCE` PASS；`CODE_QUALITY` 指出权威
+  `docs/fork-sync-automation.md` 只要求对本地 main/marker 做 CAS，未绑定成 all-or-none
+  transaction，可能在第二个 expected-old OID 失败时留下部分本地收敛。新增测试先因缺失
+  `local-ref-cas-transaction` machine block 稳定 RED；`dcfd20012` 增加精确
+  `start` / 两条携带 expected-old OID 的 `update` / `prepare` / `commit` 契约，在幂等恢复
+  与发布第 13 步各引用一次，并禁止顺序执行；focused GREEN 为 18 pass / 0 fail /
+  416 assertions。
 - **目标 Tag：** `v2.39.0-ben.2`。创建 Tag 前必须再次确认本地与 origin 的严格
   `v2.39.0-ben.*` namespace 只有 ben.1，且 ben.1 的 raw/peeled 身份仍为
   `a6cad328d74e3a5e49a46efe4de05167f002693e` /
@@ -163,20 +174,23 @@ tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts
 - **官方覆盖证据：** 官方 `v2.39.0` 不包含 `d5833e9d5` 的 Fork 测试/治理修复；上游
   `33d32b6a3`、`c8c8dc338`、`523efb84e`、`ecf51c67f` 是 Tag 之后的开发分支证据，不能
   当作新的正式稳定基线，也不能触发本轮 rebase。
-- **验证结果：** 版本策略与 dev-bump 定向测试在版本提交前为 19 pass / 0 fail；本节存在且
-  `IMPLEMENTATION_HEAD` 已固定后，workflow/版本/维护真源 172 pass / 0 fail /
-  1,866 assertions，auth focused 2 pass / 0 fail / 13 assertions。Fork changed 门禁以
-  `origin/dev=aafdf8716` 为 merge base，识别 2 个变化文件但模块图选中 0 tests；没有把该
-  结果单独当作绿灯，而是补跑上述 read-as-data/subprocess focused 和完整 prepush。最终
-  `bun run prepush` 为 17,157 pass / 14 skip / 0 fail / 393,952 assertions（1055 files），
+- **验证结果：** 旧实现 `5a8f227ba` 的全部 PASS 已作废。绑定 `dcfd20012` 的
+  local-ref CAS 测试先因缺少 machine block 得到 0 pass / 1 fail，修复后定向 1 pass /
+  0 fail / 13 assertions、维护真源 18 pass / 0 fail / 416 assertions；workflow/版本/维护
+  真源合计 173 pass / 0 fail / 1,879 assertions，auth focused 2 pass / 0 fail /
+  13 assertions。Fork changed 门禁以 `origin/dev=aafdf8716` 为 merge base，识别 4 个变化
+  文件并选中维护真源测试，18 pass / 0 fail / 416 assertions。第二次完整
+  `bun run prepush` 为 17,158 pass / 14 skip / 0 fail / 402,749 assertions（1055 files），
   全部 serial lanes、typecheck、privacy scan 通过；无 GUI 变化，条件 GUI 门禁按规则跳过。
-  旧 ben.1 PASS 未沿用。
 - **已知缺口：** 外部 Provider/Codex App/Windows 真机等既有缺口继续保留；macOS
   Cross-platform CI 首次 attempt 的 launcher SIGTERM 启动抖动在失败 job rerun 和本地
   30 场景压力复测中未复现，不能冒充 launcher 隔离修复。Tag namespace 最终复核到 atomic
   push 之间仍有无法对 future name 建立 wildcard lease 的 TOCTOU 残余风险。
-- **发布边界：** 当前仅完成实现提交；双审、Tag、六成员 atomic push、本地 main/marker CAS、
-  GitHub Release 与最终远端后验均在后续门禁中，任何一步失败都不得移动或复用 ben.1。
+- **发布边界：** 新实现提交、绑定新实现的完整重验和末尾文档候选均已完成。初轮双审与
+  第一次 `RE_REVIEW` 已执行：CAS Important 已关闭，两位 reviewer 新报的维护真源状态
+  Important 已在本候选修复，当前只等待原 reviewer 第二次 `RE_REVIEW`。双审最终通过前，
+  Tag、六成员 atomic push、本地 main/marker 单事务 CAS、GitHub Release 与最终远端后验
+  均不得执行；任何一步失败都不得移动或复用 ben.1。
 
 <!-- v238-rebase:start -->
 official_old=v2.37.0
@@ -959,7 +973,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
    尚不存在的 differently named future Tag 建立 wildcard lease；依赖 single publisher，
    push 后必须在 GitHub Release 前复核，发现竞态时保留 immutable Tag 并停止 Release。
 8. **上游版本边界：** 官方 `v2.39.0` 的 `v2.39.0-ben.1` 已闭环且保持不可变；用户已
-   明确授权同基线 `v2.39.0-ben.2`，当前固定 `IMPLEMENTATION_HEAD=5a8f227ba`，但在新的
+   明确授权同基线 `v2.39.0-ben.2`，当前固定 `IMPLEMENTATION_HEAD=dcfd20012`，但在新的
    annotated Tag、六成员 atomic push 与 GitHub Release 后验完成前不得宣称 ben.2 已发布。
    本维护修订不执行上游 rebase；未来新官方稳定版仍必须从发布后的最新已提交 `dev` 候选
    继续，不得重置回 ben.1。
