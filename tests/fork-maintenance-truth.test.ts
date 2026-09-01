@@ -571,9 +571,10 @@ describe("Fork maintenance truth", () => {
       ],
       "本地源码包安装": [
         "`scripts/install-local-vendor.ts`（blob `6eccd1c64fd823e9189d19f89169b4ffb8d15a93`）",
-        "`scripts/install-local.ts`（blob `93cb375c1621ef82fc25f8642f4746da144aef1a`）",
+        "`scripts/install-local.ts`（blob `e1f8f8d97db8cbeab97807c7733c5829cafb1276`）",
         "`tests/fork-install-local-staging.test.ts`（blob `2ab483349ae32e81b3dacc64a222dce3c18f69c5`）",
         "`tests/fork-install-local-manifest-lifecycle.test.ts`（blob `aa9580f645df7bf27ed71062cb6eb2265d3c2274`）",
+        "`tests/fork-install-local-guard-recovery.test.ts`（blob `05d24eb1b37ab7bf70c5a52d3adf261bba51c50e`）",
       ],
       "GUI Logs/Debug 恢复标签与 sidecar 契约": [
         "`gui/src/pages/Logs.tsx`（blob `c8f79494aff1df856466adc0d7718b6338e5473d`）",
@@ -606,6 +607,8 @@ describe("Fork maintenance truth", () => {
       "默认测试 runner 与负载敏感隔离": [
         "`v2.38.0:tests/update-stop-first.test.ts`（blob `0f7fd7ff55ec23cbdea4d157df61262bd9f8cd8e`，merge `fe063d16ef620a148ab425cfffe63a8936d00e52`）",
         "Fork PATH-precedence guard（`a1e35b13db14a1686ef0033685d7214184c37743`）",
+        "`src/responses/state.ts`（blob `35540a0ee7210d6cd1c6a2fd377a8a1837501e4e`）",
+        "`tests/responses-state.test.ts`（blob `5836f31c6883c98b2acc6361788c7599e5ceaa96`）",
         "`fe063d16ef620a148ab425cfffe63a8936d00e52`",
       ],
       "Prepush 与 GitHub CI": [],
