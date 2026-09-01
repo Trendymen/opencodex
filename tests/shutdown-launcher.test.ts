@@ -86,6 +86,15 @@ describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
         const port = await freePort();
         const identity = claimTempHome(home);
 
+        // `ocx start` probes the configured port before binding, even when the
+        // caller supplies --port. Keep that ownership probe inside this fixture;
+        // otherwise a real proxy on the default 10100 makes the launcher exit
+        // before this test reaches the signal-forwarding behavior.
+        writeFileSync(join(home, "config.json"), JSON.stringify({
+          port,
+          hostname: "127.0.0.1",
+        }));
+
         // Seed a native Codex config so the proxy actually injects on start (injectCodexConfig
         // no-ops when no config.toml exists) — this lets us prove the config is RESTORED.
         const codexConfig = join(home, "config.toml");
