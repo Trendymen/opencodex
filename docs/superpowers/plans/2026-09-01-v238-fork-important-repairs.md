@@ -446,6 +446,7 @@ Run Task 4 `SPEC_COMPLIANCE` and `CODE_QUALITY` review. Treat public DTO/privacy
 ```ts
 export type PreparedLocalPackage = Readonly<{
   tarball: string;
+  npmCache: string;
   rootManifestBytes: string;
   cleanup(): void;
 }>;
@@ -457,11 +458,20 @@ export function prepareBundledLocalPackage(
 
 export type LocalPackageStageOptions = Readonly<{
   makeTempRoot(prefix: string): string;
-  run(command: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Readonly<{
-    exitCode: number;
-    stdout: string;
-  }>;
+  run(
+    command: readonly string[],
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+    options?: LocalPackageRunOptions,
+  ): LocalPackageRunResult;
   removeTree(path: string): void;
+}>;
+
+export type LocalPackageRunOptions = Readonly<{ timeoutMs?: number }>;
+export type LocalPackageRunResult = Readonly<{
+  exitCode: number;
+  stdout: string;
+  timedOut: boolean;
 }>;
 ```
 
@@ -478,11 +488,14 @@ root package.json bytes never change
 stage manifest differs only by sorted bundleDependencies
 pack uses ignore-scripts
 contained links materialize; escaping links fail closed
+ancestor links and in-repository links escaping a declared subtree fail closed
 archive install resolves bundled direct/transitive dependencies offline
 undeclared/secret files are absent
 name/version/bin/main/exports/modes/assets survive
+actual SHA-512/SHA-1 equal npm integrity/shasum and file rows match the allowed archive surface
 primary errors remain primary when cleanup also fails
 an incomplete bundle fails offline instead of contacting a registry
+missing, large-junk, nonzero, spawn-failing, or timeout Bun binaries fail before replacement
 pack/validation failure cleans the internally owned stage before throwing
 ```
 
@@ -498,14 +511,19 @@ Expected: old helper mutates the fixture manifest and lacks staging/archive vali
 
 Use Node/Bun fs APIs only. Create stage and validation directories with `mkdtempSync()` and restrictive modes. Copy every declared `files` path and the installed `node_modules` tree. Walk with `lstatSync`; resolve links/junctions with `realpathSync`; require containment within source `node_modules`; materialize regular files/directories; reject devices, sockets, cycles, and escapes. Preserve executable mode bits where supported.
 
+Canonicalize every source before dispatching on type. Reject a declared root `files` entry that is a
+link; nested links inside a declared directory must remain inside that declared subtree. Add ancestor
+symlink/junction and in-repository excluded-secret regressions.
+
 Write the staged semantic manifest with sorted top-level runtime dependencies in `bundleDependencies`. Run:
 
 ```text
 npm pack --json --ignore-scripts
 ```
 
-with cwd at the staged package root. Validate npm JSON identity, integrity fields, one regular tarball,
-and file manifest. Install the tarball with the exact command shape below:
+with cwd at the staged package root. Recompute the tarball SHA-512 SRI and SHA-1, validate npm JSON
+identity/integrity, one regular tarball, and every file row against the declared/bundled surface;
+reject duplicates, escapes, dot segments, and sensitive entries. Install with the exact command:
 
 ```text
 npm install --ignore-scripts --offline --no-audit --no-fund --package-lock=false \
@@ -518,9 +536,20 @@ from the installed package, then walk installed runtime dependencies and present
 dependencies to prove their transitive packages resolve. Verify package entrypoints/generated assets
 from the installed archive, not staging.
 
+Validate every declared root `files` entry plus all local string/object/array/conditional targets in
+`main`, `bin`, and `exports`; require contained existing regular targets.
+
+If the root package depends on `bun`, first apply the existing real-binary size check, then execute
+the exact extracted validation-prefix binary with `--version`, `timeoutMs: 5000`, exit 0, and a
+plausible Bun semver line. Expose this through the injected `run` seam and add success/nonzero/spawn/
+timeout/large-junk tests. Never call `bun/install.js` or allow the launcher to repair the fixture.
+Production calls the seam with exactly `{ timeoutMs: 5000 }`; `timedOut: true`, a thrown spawn error,
+or nonzero exit is a fixed fail-closed preparation error. Tests assert the exact binary path,
+`--version` argument, and timeout option.
+
 - [ ] **Step 4: Integrate with `runLocalInstaller()`**
 
-Keep the validated tarball inside the stage. Pass its absolute path to the existing global replacement
+Keep the validated tarball and cache inside the stage. Pass both to the existing global replacement
 lifecycle. Before `prepareBundledLocalPackage()` returns successfully, it owns and cleans the stage on
 preparation, copy, pack, archive-validation, or offline-install failure. After success,
 `PreparedLocalPackage.cleanup()` owns removal. Never invoke the old manifest mutation helper. Root
@@ -535,6 +564,15 @@ new AggregateError([primaryError, cleanupError],
 
 Lifecycle cleanup uses `[lifecycleError, cleanupError]`; cleanup-only failure is thrown directly.
 The returned object never transfers cleanup ownership before preparation fully succeeds.
+
+The production replacement command is exactly:
+
+```text
+npm install -g --ignore-scripts --offline --no-audit --no-fund --package-lock=false \
+  --cache <prepared.npmCache> <prepared.tarball>
+```
+
+Add a pure command-argument assertion and never execute it against the real global prefix in tests.
 
 - [ ] **Step 5: Run GREEN and packaging regressions**
 
