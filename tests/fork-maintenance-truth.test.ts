@@ -564,13 +564,16 @@ describe("Fork maintenance truth", () => {
       ],
       "自定义模型配置、工具模式与公开投影": [
         "`src/config/custom-models.ts`（blob `12a84dd14a674eda773a83a31f9923c740a0e213`）",
-        "`tests/fork-custom-model-config-schema.test.ts`（blob `3d4d45554e572bfdebec58c369c5dd8c42f3297c`）",
-        "`tests/fork-custom-model-tool-mode-contract.test.ts`（blob `70d779ea7521a56846846d7abd96e43d3e94d779`）",
+        "`src/config.ts`（blob `78480720f3b54fa80390504b89230f62f697f513`）",
+        "`src/server/management/model-routes.ts`（blob `70cd881de52bcfe99cf56ce44509872445b92fd5`）",
+        "`tests/fork-custom-model-config-schema.test.ts`（blob `269586b983374d4bd88c678a074ec975a3152bd7`）",
+        "`tests/fork-custom-model-tool-mode-contract.test.ts`（blob `a69dc95ff93c61e4fa4be4be1ec701f87797dfb8`）",
       ],
       "本地源码包安装": [
-        "`scripts/install-local-vendor.ts`（blob `4c12faf88274e676c77555a57be65913edf74bfc`）",
-        "`scripts/install-local.ts`（blob `7a91d67b9809f99cc64533ff8e0be42352ac5a43`）",
-        "`tests/fork-install-local-staging.test.ts`（blob `ac21c0928e5725c923540370cd5df863f9f4bf83`）",
+        "`scripts/install-local-vendor.ts`（blob `6eccd1c64fd823e9189d19f89169b4ffb8d15a93`）",
+        "`scripts/install-local.ts`（blob `f6e58bab3b0add21ca3fb5ca9b62217b94c689f2`）",
+        "`tests/fork-install-local-staging.test.ts`（blob `93b6d65fb6a4dff0ecc447102a97c440d066b848`）",
+        "`tests/fork-install-local-manifest-lifecycle.test.ts`（blob `a61f9350f95aa345ba8c560e4af61975be0778be`）",
       ],
       "GUI Logs/Debug 恢复标签与 sidecar 契约": [
         "`gui/src/pages/Logs.tsx`（blob `c8f79494aff1df856466adc0d7718b6338e5473d`）",
