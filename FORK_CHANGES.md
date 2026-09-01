@@ -34,12 +34,12 @@
 | 本轮官方维护基线 | [`v2.39.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.39.0) |
 | 官方 Tag commit | `af6113a0381d6fff2e4dce587652825c7eeb6423` |
 | 当前上游最新稳定 Release | `v2.39.0`（`af6113a0381d6fff2e4dce587652825c7eeb6423`），即本轮 rebase 基线 |
-| dev 候选实现 HEAD | `12c483b112b41427c91609280241c714223f7932`（rebase 完成并锁定 v2.39 台账与当前 blob 锚） |
+| dev 候选实现 HEAD | `a26596f3bb63dd3d36f3ad462b2ad2c972374129`（rebase 完成并锁定 v2.39 台账、当前 blob 与决策语义） |
 | Fork 包版本 | `2.39.0-ben.1` |
 | 本轮派生 Tag | `v2.39.0-ben.1`；本轮只执行 rebase，未授权创建 Tag 或 Release |
 | 同步分支 | `sync/v2.39.0` 尚未建立；只在后续发布候选完整验证后建立 |
-| 已提交修改面 | 165 个文件，新增 27,246 行，删除 291 行（相对 `v2.39.0`，不含末尾文档提交） |
-| 最终本地门禁 | rebase 后 typecheck 与 privacy scan 通过；8 个聚焦文件 310 pass / 1 skip / 0 fail / 1,309 assertions；本轮不发布，完整 prepush 尚未执行 |
+| 已提交修改面 | 165 个文件，新增 27,256 行，删除 291 行（相对 `v2.39.0`，不含末尾文档提交） |
+| 最终本地门禁 | rebase 后 typecheck 与 privacy scan 通过；8 个聚焦文件 310 pass / 1 skip / 0 fail / 1,323 assertions；本轮不发布，完整 prepush 尚未执行 |
 | 外部发布状态 | 未发生：`main`、`origin/dev`、`upstream-release`、Tag 与 Release 均未修改 |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
