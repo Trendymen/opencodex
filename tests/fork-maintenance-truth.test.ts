@@ -571,9 +571,9 @@ describe("Fork maintenance truth", () => {
       ],
       "本地源码包安装": [
         "`scripts/install-local-vendor.ts`（blob `6eccd1c64fd823e9189d19f89169b4ffb8d15a93`）",
-        "`scripts/install-local.ts`（blob `f6e58bab3b0add21ca3fb5ca9b62217b94c689f2`）",
+        "`scripts/install-local.ts`（blob `93cb375c1621ef82fc25f8642f4746da144aef1a`）",
         "`tests/fork-install-local-staging.test.ts`（blob `93b6d65fb6a4dff0ecc447102a97c440d066b848`）",
-        "`tests/fork-install-local-manifest-lifecycle.test.ts`（blob `a61f9350f95aa345ba8c560e4af61975be0778be`）",
+        "`tests/fork-install-local-manifest-lifecycle.test.ts`（blob `aa9580f645df7bf27ed71062cb6eb2265d3c2274`）",
       ],
       "GUI Logs/Debug 恢复标签与 sidecar 契约": [
         "`gui/src/pages/Logs.tsx`（blob `c8f79494aff1df856466adc0d7718b6338e5473d`）",
