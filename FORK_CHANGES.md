@@ -34,12 +34,12 @@
 | 本轮官方维护基线 | [`v2.39.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.39.0) |
 | 官方 Tag commit | `af6113a0381d6fff2e4dce587652825c7eeb6423` |
 | 当前上游最新稳定 Release | `v2.39.0`（`af6113a0381d6fff2e4dce587652825c7eeb6423`），即本轮 rebase 基线 |
-| dev 候选实现 HEAD | `6835e7ea163144c52d520231ed6df2830a9dac5d`（rebase 完成并同步 v2.39 官方证据锚） |
+| dev 候选实现 HEAD | `12c483b112b41427c91609280241c714223f7932`（rebase 完成并锁定 v2.39 台账与当前 blob 锚） |
 | Fork 包版本 | `2.39.0-ben.1` |
 | 本轮派生 Tag | `v2.39.0-ben.1`；本轮只执行 rebase，未授权创建 Tag 或 Release |
 | 同步分支 | `sync/v2.39.0` 尚未建立；只在后续发布候选完整验证后建立 |
-| 已提交修改面 | 165 个文件，新增 27,132 行，删除 291 行（相对 `v2.39.0`，不含后续证据锚与末尾文档提交） |
-| 最终本地门禁 | rebase 后 typecheck 已通过；维护真源测试已更新为 v2.39 并 14 pass / 0 fail；本轮不发布，完整 prepush 尚未执行 |
+| 已提交修改面 | 165 个文件，新增 27,246 行，删除 291 行（相对 `v2.39.0`，不含末尾文档提交） |
+| 最终本地门禁 | rebase 后 typecheck 与 privacy scan 通过；8 个聚焦文件 310 pass / 1 skip / 0 fail / 1,309 assertions；本轮不发布，完整 prepush 尚未执行 |
 | 外部发布状态 | 未发生：`main`、`origin/dev`、`upstream-release`、Tag 与 Release 均未修改 |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
@@ -702,17 +702,17 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   映射，并为全部 9 个 locale 提供对应翻译。`Debug.tsx` 本身与官方相同，不宣称为 Fork
   独有 runtime。sidecar 本轮只删除重复且与 vertical control-band 冲突的旧断言，生产
   CSS 未修改。
-- **代码：** `gui/src/pages/Logs.tsx`（blob `c8f79494aff1df856466adc0d7718b6338e5473d`）；
+- **代码：** `gui/src/pages/Logs.tsx`（blob `3cd4c4684b86a0506e154388aa5d82686b1db674`）；
   `gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`，与官方 v2.39.0 相同）。
-- **9 locale：** `gui/src/i18n/de.ts`（blob `60502ed061b10ba6cc2b5303e3b01fbbf4b8a00b`）；
-  `gui/src/i18n/en.ts`（blob `9f4ed1948c4f3862a458623f68bae9ef38eeaf65`）；
-  `gui/src/i18n/fr.ts`（blob `77849e5fe9ca6ac2cc1b46806c9b07ca8c4b6b29`）；
-  `gui/src/i18n/ja.ts`（blob `aa80841cca96080a93f68e545c52e724171663d3`）；
-  `gui/src/i18n/ko.ts`（blob `49562e8a7b9c87070fdabd7c0bcb0be7dc1bcd26`）；
-  `gui/src/i18n/ru.ts`（blob `cafcd2687f40b36c48bf660aff8234d0b06ad64b`）；
-  `gui/src/i18n/tr.ts`（blob `1b3e23979f32f1fc7e2712c721214ee6025bd2da`）；
-  `gui/src/i18n/zh-TW.ts`（blob `b463b9e38c524808b799cbabd9ab6a0581dd4477`）；
-  `gui/src/i18n/zh.ts`（blob `4cbffe4401797b2e2ad21663efbc7da81e8dabed`）。
+- **9 locale：** `gui/src/i18n/de.ts`（blob `f106b6cefbc25608ddb06c6a6ddb93ce47b6a51b`）；
+  `gui/src/i18n/en.ts`（blob `6d16305d9e9bb009e12bd7ec6338a3de8f084850`）；
+  `gui/src/i18n/fr.ts`（blob `964e57e8cff18422c280411a8b05fe16e452ffb7`）；
+  `gui/src/i18n/ja.ts`（blob `2d0b91b729254c9ff354b8dc18a91234f9a73d54`）；
+  `gui/src/i18n/ko.ts`（blob `c7e3e90b9acdd0537f1c0d60b87bae09ce47f040`）；
+  `gui/src/i18n/ru.ts`（blob `59a18905097d085ba7cc1712b2cf12a152bf6403`）；
+  `gui/src/i18n/tr.ts`（blob `8a02bb70d8d13dc02d0746fdb8e1dd9df86a3ec4`）；
+  `gui/src/i18n/zh-TW.ts`（blob `f0c61d157d573cff890a929103bb7e1ed631b4ac`）；
+  `gui/src/i18n/zh.ts`（blob `84f1bf3ea9f3b9cfb5802ad142362612859afa7f`）。
 - **sidecar：** `gui/tests/sidecar-layout.test.ts`（blob `e140a627260bbf952708e7f710874a5f76cc5b2b`，与官方 v2.39.0 相同）；
   `gui/src/styles-dashboard-workspace.css` blob `2b854f57c1b66a9ad4cc0e53fef421f7cf14fc5f`
   也与官方相同。提交 `1476108b3` 是测试契约修正，不是新 CSS 能力。
@@ -784,8 +784,8 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `sweepAbandonedResponseStateTemps()` 继续保持严格无参并固定 `maxEntries`、`maxCleanups`、
   `deadlineMs`，测试通过预先探测的极大 dead PID 消除共享 runner PID 复用噪声，同时用
   hostile runtime argument 证明调用者不能覆盖周期预算。当前
-  `src/responses/state.ts`（blob `35540a0ee7210d6cd1c6a2fd377a8a1837501e4e`）、
-  `tests/responses-state.test.ts`（blob `5836f31c6883c98b2acc6361788c7599e5ceaa96`）。
+  `src/responses/state.ts`（blob `b95a1fa2c6d36b9b43269af60d51f5a64e6754ec`）、
+  `tests/responses-state.test.ts`（blob `335bff1d733ee12897153fd1b2ab14eac2b420a3`）。
 - **代码：** `tests/shutdown-launcher.test.ts`、`tests/update-stop-first.test.ts`、
   `tests/cli-status-json.test.ts`。
 - **官方对比：** `v2.39.0:tests/update-stop-first.test.ts`（blob
