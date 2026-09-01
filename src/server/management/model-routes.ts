@@ -11,6 +11,17 @@ import { readFileSync } from "node:fs";
  * already refuses it. Validate at ingress so all three paths agree.
  */
 const ALLOWED_INPUT_MODALITIES = new Set(["text", "image", "audio"]);
+const CUSTOM_MODEL_TOOL_MODES = new Set(["code_mode_only", "shell"]);
+
+function readPostedCustomModelToolMode(
+  body: Record<string, unknown>,
+): { value?: "code_mode_only" | "shell"; error?: string } {
+  if (!Object.hasOwn(body, "codexToolMode")) return {};
+  if (typeof body.codexToolMode !== "string" || !CUSTOM_MODEL_TOOL_MODES.has(body.codexToolMode)) {
+    return { error: "codexToolMode must be code_mode_only or shell" };
+  }
+  return { value: body.codexToolMode as "code_mode_only" | "shell" };
+}
 
 function readInputModalities(raw: unknown): { values?: string[]; error?: string } {
   if (raw === undefined) return {};
@@ -102,6 +113,7 @@ import { deriveProviderPresets } from "../../providers/derive";
 import { providerCodexAccountMode } from "../../providers/registry";
 import { encodedModelIdCollides, routedSlug, slugEquals } from "../../providers/slug-codec";
 import { knownModelIdsForProvider } from "../../router";
+import { knownCustomModelProjection } from "../../config/custom-models";
 import { effectiveModelAliases, MODEL_ALIAS_PATTERN } from "../../providers/default-aliases";
 import { isValidModelDiscoveryModelId } from "../../providers/model-discovery-limits";
 import { comboPublicModelId } from "../../combos/types";
@@ -642,7 +654,7 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
   }
 
   if (url.pathname === "/api/custom-models" && req.method === "GET") {
-    return jsonResponse(config.customModels ?? []);
+    return jsonResponse((config.customModels ?? []).map(knownCustomModelProjection));
   }
 
   if (url.pathname === "/api/custom-models" && req.method === "POST") {
@@ -665,6 +677,8 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
     if (reasoning.error) return jsonResponse({ error: reasoning.error }, 400);
     const defaultEffort = readDefaultReasoningEffort(body.defaultReasoningEffort, reasoning.values);
     if (defaultEffort.error) return jsonResponse({ error: defaultEffort.error }, 400);
+    const toolMode = readPostedCustomModelToolMode(body);
+    if (toolMode.error) return jsonResponse({ error: toolMode.error }, 400);
     const existing = config.customModels ?? [];
     const newSlug = routedSlug(provider, modelId);
     if (existing.some(cm => routedSlug(cm.provider, cm.modelId) === newSlug)) {
@@ -683,12 +697,13 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
       ...(inputModalities && inputModalities.length > 0 ? { inputModalities } : {}),
       ...(reasoning.values !== undefined ? { reasoningEfforts: reasoning.values } : {}),
       ...(defaultEffort.value ? { defaultReasoningEffort: defaultEffort.value } : {}),
+      ...(toolMode.value ? { codexToolMode: toolMode.value } : {}),
       addedAt: new Date().toISOString(),
     };
     config.customModels = [...existing, entry];
     persistConfig(config);
     const catalogRefresh = await convergeCodexCatalog();
-    return jsonResponse({ ...entry, catalogRefresh }, 201);
+    return jsonResponse({ ...knownCustomModelProjection(entry), catalogRefresh }, 201);
   }
 
   const customPutMatch = url.pathname.match(/^\/api\/custom-models\/([^/]+)$/);
@@ -736,6 +751,15 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
       if (edited.error) return jsonResponse({ error: edited.error }, 400);
       cm.defaultReasoningEffort = edited.value;
     }
+    if (Object.hasOwn(body, "codexToolMode")) {
+      if (body.codexToolMode === null) {
+        delete cm.codexToolMode;
+      } else if (typeof body.codexToolMode === "string" && CUSTOM_MODEL_TOOL_MODES.has(body.codexToolMode)) {
+        cm.codexToolMode = body.codexToolMode as "code_mode_only" | "shell";
+      } else {
+        return jsonResponse({ error: "codexToolMode must be code_mode_only, shell, or null" }, 400);
+      }
+    }
     // Mirror of the POST invariant: a default only survives as a member of the final ladder.
     // Without this, a ladder shrink/clear on a row that was created with a default leaves a
     // stale default that re-applies itself onto the inherited ladder in the generated catalog
@@ -746,21 +770,24 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
         cm.defaultReasoningEffort = undefined;
       }
     }
-    const updatedSlug = routedSlug(cm.provider, cm.modelId);
-    if (list.some((other, i) => i !== idx && routedSlug(other.provider, other.modelId) === updatedSlug)) {
-      return jsonResponse({ error: "duplicate model" }, 409);
-    }
-    const known = knownModelIdsForProvider(cm.provider, config.providers[cm.provider], {
-      customModels: list.filter((_, i) => i !== idx),
-    });
-    if (encodedModelIdCollides(cm.modelId, known)) {
-      return jsonResponse({ error: "ambiguous model id" }, 409);
+    const identityChanged = cm.modelId !== list[idx]!.modelId;
+    if (identityChanged) {
+      const updatedSlug = routedSlug(cm.provider, cm.modelId);
+      if (list.some((other, i) => i !== idx && routedSlug(other.provider, other.modelId) === updatedSlug)) {
+        return jsonResponse({ error: "duplicate model" }, 409);
+      }
+      const known = knownModelIdsForProvider(cm.provider, config.providers[cm.provider], {
+        customModels: list.filter((_, i) => i !== idx),
+      });
+      if (encodedModelIdCollides(cm.modelId, known)) {
+        return jsonResponse({ error: "ambiguous model id" }, 409);
+      }
     }
     list[idx] = cm;
     config.customModels = list;
     persistConfig(config);
     const catalogRefresh = await convergeCodexCatalog();
-    return jsonResponse({ ...cm, catalogRefresh });
+    return jsonResponse({ ...knownCustomModelProjection(cm), catalogRefresh });
   }
 
   const customDelMatch = url.pathname.match(/^\/api\/custom-models\/([^/]+)$/);

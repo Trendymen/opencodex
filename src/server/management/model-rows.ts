@@ -137,6 +137,7 @@ export async function listManagementModelRows(
       // full edit state; the GUI has no default-effort control today, but dropping it here
       // would make any future PUT-based edit lose it silently.
       ...(cm.defaultReasoningEffort ? { defaultReasoningEffort: cm.defaultReasoningEffort } : {}),
+      ...(cm.codexToolMode ? { codexToolMode: cm.codexToolMode } : {}),
     };
   });
   const publicModels = uniqueCatalogModelsForPublicList(models);
