@@ -2707,13 +2707,30 @@ describe("Responses previous_response_id state", () => {
     for (const path of [stale, young]) writeFileSync(path, "private state");
     utimesSync(stale, old, old);
 
-    const removed = sweepAbandonedResponseStateTemps({
-      isProcessAlive: pid => pid !== deadPid,
-    });
+    const removed = sweepAbandonedResponseStateTemps();
 
     expect(removed).toBe(1);
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(young)).toBe(true);
+  });
+
+  test("periodic reclaim ignores caller attempts to override its fixed budgets", () => {
+    const old = new Date(Date.now() - 60 * 60 * 1_000);
+    const deadPid = findDeadPid();
+    const stale = join(home, `responses-state.json.ocx.${deadPid}.7.tmp`);
+    writeFileSync(stale, "private state");
+    utimesSync(stale, old, old);
+
+    const invokeWithUntrustedArgument = sweepAbandonedResponseStateTemps as unknown as
+      (options: { maxEntries: number; maxCleanups: number; deadlineMs: number }) => number;
+    const removed = invokeWithUntrustedArgument({
+      maxEntries: 0,
+      maxCleanups: 0,
+      deadlineMs: 0,
+    });
+
+    expect(removed).toBe(1);
+    expect(existsSync(stale)).toBe(false);
   });
 
   test("boot floor reclaims a pre-boot temp whose pid has been reused", () => {

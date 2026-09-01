@@ -340,11 +340,11 @@ export async function runLocalInstallLifecycleWithManifestGuard(
   assertManifest("local install stop admission");
   await runLocalInstallLifecycle(restart, {
     stop: deps.stop,
-    verifyStopped: async () => {
-      await deps.verifyStopped();
-      assertManifest("local install stop verification");
-    },
+    verifyStopped: deps.verifyStopped,
     replace: async () => {
+      // The service is already confirmed stopped at this point. Classify this guard as a
+      // pre-replacement failure so the base lifecycle restores the previous proxy mode.
+      assertManifest("local install stop verification");
       assertManifest("global package replacement admission");
       await deps.replace();
     },
