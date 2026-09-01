@@ -141,8 +141,23 @@ esac
       .toContain("behind existing ben.2");
     expect(validate("2.34.0-ben.1", [...baseTags, "v2.34.0-ben.02"], () => false)).toBeNull();
     expect(validate("2.35.0-ben.1", baseTags, () => false)).toContain("no official v2.35.0");
-    expect(validate("2.34.0-ben.2", [...baseTags, "v2.35.0"], () => false))
-      .toContain("behind v2.35.0");
+    expect(validate("2.34.0-ben.2", [...baseTags, "v2.34.0-ben.1", "v2.35.0"], () => false))
+      .toBeNull();
+    const taskEightLocalSnapshot = ["v2.38.0", "v2.38.0-ben.1", "v2.39.0"];
+    expect(validate("2.38.0-ben.2", taskEightLocalSnapshot, () => false)).toBeNull();
+    const taskNineRemoteSnapshot = [...taskEightLocalSnapshot, "v2.38.0-ben.3"];
+    expect(validate("2.38.0-ben.2", taskNineRemoteSnapshot, () => false))
+      .toContain("behind existing ben.3");
+    expect(validate(
+      "2.38.0-ben.2",
+      ["v2.38.0", "v2.38.0-ben.2", "v2.39.0"],
+      (tag) => tag === "v2.38.0-ben.2",
+    )).toBeNull();
+    expect(validate(
+      "2.38.0-ben.2",
+      ["v2.38.0", "v2.38.0-ben.2", "v2.39.0"],
+      () => false,
+    )).toContain("already tagged on another commit");
     expect(validate("2.34.0", baseTags, () => false)).toBeUndefined();
   });
 

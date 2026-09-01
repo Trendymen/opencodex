@@ -15,7 +15,10 @@
 - Start from `94ed4ca95612c2f640127fb61ac1330449258dd6` on the current `dev` workspace; preserve unrelated concurrent/user edits.
 - Official comparison refs are `v2.37.0=54e2274c`, `v2.38.0=ebb4d552e`, and pre-rebase Fork `09fbd1453`.
 - Do not reuse, cherry-pick, or restore discarded candidates `01917463f` or `ee4a6f56f`.
-- Do not create a worktree, tag, push, move refs, publish a Release, install/replace global OpenCodex, or restart/repair a service.
+- Do not create a worktree. Before all final validation and review gates pass, do not create a tag,
+  push, move refs, or publish a Release. The user has explicitly authorized the final
+  `v2.38.0-ben.2` annotated Tag, atomic push, local ref convergence, and GitHub Release after those
+  gates. Do not install/replace global OpenCodex or restart/repair a service.
 - Keep official v2.38 behavior and every verified Fork behavior unless current source and tests prove equivalent official coverage.
 - New Fork behavior uses dedicated new `tests/fork-*.test.ts` files. Existing tests may be edited only where the confirmed defect is in that test or the contract itself must change.
 - Production and test changes precede the final `IMPLEMENTATION_HEAD`; the trailing `RELEASE_COMMIT` changes only `FORK_CHANGES.md`.
@@ -642,6 +645,88 @@ Run Task 6 `SPEC_COMPLIANCE` and `CODE_QUALITY` review.
 
 ---
 
+### Task 6.5: Permit explicitly authorized same-base Fork maintenance revisions
+
+**Files:**
+- Modify: `src/fork/version-policy.mjs`
+- Modify: `tests/fork-version-policy.test.ts`
+- Modify: `tests/fork-maintenance-truth.test.ts`
+- Modify: `docs/fork-sync-automation.md`
+- Modify: this approved Spec and Plan clarification
+
+**Interfaces:**
+- Consumes: `forkVersionTagError(version, tags, pointsAtHead)`.
+- Produces: per-official-base `ben.N` monotonicity while retaining official-base existence and Tag
+  immutability; ordinary stable/preview global monotonicity remains unchanged.
+
+- [ ] **Step 1: Record the environment-driven RED**
+
+Run the current version gates with upstream `v2.39.0` present:
+
+```bash
+bun test --isolate tests/release-version-line.test.ts tests/fork-version-policy.test.ts
+```
+
+Expected: current `2.38.0-ben.1` fails because `forkVersionTagError()` rejects a Fork base older
+than the newest official stable. Also evaluate `2.38.0-ben.2` directly against the complete local
+tag set and record the same failure.
+
+- [ ] **Step 2: Add the revised contract test first**
+
+In `tests/fork-version-policy.test.ts`, change the existing cross-base expectation so a valid
+`2.34.0-ben.2` is accepted even when `v2.35.0` exists. Retain and extend assertions proving:
+
+```text
+missing exact official base -> rejected
+revision below existing same-base ben.N -> rejected
+existing same revision on another commit -> rejected
+existing same revision on this commit -> accepted
+malformed ben tags -> ignored
+ordinary non-Fork versions -> handled by the unchanged global monotonic path
+```
+
+Run the focused test and require the new old-base maintenance case to fail before production code
+changes.
+
+- [ ] **Step 3: Implement the minimal policy change**
+
+Remove only the cross-base stable comparison from `forkVersionTagError()`. Keep exact base-tag
+existence, same-base highest-revision comparison, exact current-tag identity, and non-Fork
+`undefined` behavior unchanged. Do not change updater semantics or generic release-tag ordering.
+
+- [ ] **Step 4: Run the truthful GREEN, commit, and review**
+
+```bash
+bun test --isolate tests/fork-version-policy.test.ts
+# The combined version-line command remains expected RED only because package.json is still the
+# immutable, already-published 2.38.0-ben.1. Record that exact remaining error; Task 7 owns the bump.
+bun test --isolate tests/release-version-line.test.ts tests/fork-version-policy.test.ts
+git diff --check
+git add src/fork/version-policy.mjs tests/fork-version-policy.test.ts \
+  tests/fork-maintenance-truth.test.ts \
+  docs/fork-sync-automation.md \
+  docs/superpowers/specs/2026-09-01-v238-fork-important-repairs-design.md \
+  docs/superpowers/plans/2026-09-01-v238-fork-important-repairs.md
+test "$(git diff --cached --name-only)" = "$(printf '%s\n' \
+  docs/fork-sync-automation.md \
+  docs/superpowers/plans/2026-09-01-v238-fork-important-repairs.md \
+  docs/superpowers/specs/2026-09-01-v238-fork-important-repairs-design.md \
+  src/fork/version-policy.mjs \
+  tests/fork-maintenance-truth.test.ts \
+  tests/fork-version-policy.test.ts)"
+git diff --cached --check
+git commit -m "fix(fork): 允许旧基线 ben 维护发布"
+```
+
+The focused policy test must be GREEN. The combined command must now fail only with
+`fork version 2.38.0-ben.1 is already tagged on another commit`; any cross-base error or different
+failure blocks. Task 7 Step 1 changes the package version and is the first point where both files
+must be GREEN.
+
+Run independent `SPEC_COMPLIANCE`, `CODE_QUALITY`, and security-focused `CODE_QUALITY` review.
+
+---
+
 ### Task 7: Create the final `2.38.0-ben.2` implementation snapshot and maintenance truth
 
 **Files:**
@@ -650,7 +735,7 @@ Run Task 6 `SPEC_COMPLIANCE` and `CODE_QUALITY` review.
 - Modify: `FORK_CHANGES.md`
 
 **Interfaces:**
-- Consumes: all approved Task 1–6 commits and current blob hashes.
+- Consumes: all approved Task 1–6.5 commits and current blob hashes.
 - Produces: immutable `IMPLEMENTATION_HEAD`, final current-capability evidence, pending-release `RELEASE_COMMIT`.
 
 - [ ] **Step 1: Advance the package version**
@@ -667,7 +752,9 @@ Run:
 bun test --isolate tests/release-version-line.test.ts tests/fork-version-policy.test.ts
 ```
 
-Expected: the prior deterministic “ben.1 is already tagged on another commit” failure disappears.
+Expected: the prior deterministic “ben.1 is already tagged on another commit” failure disappears;
+the newer official `v2.39.0` tag no longer blocks this explicitly authorized same-base Fork
+maintenance revision.
 
 - [ ] **Step 2: Update current capability assertions before the implementation commit**
 
@@ -768,7 +855,7 @@ test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = "FORK_CHANGES.md"
 git diff --check HEAD^ HEAD
 ```
 
-This commit is `RELEASE_COMMIT`. Do not tag or push it in this task.
+This commit is `RELEASE_COMMIT`. Do not tag or push until Task 8 reviews pass.
 
 ---
 
@@ -856,6 +943,171 @@ FIX_DIFF: exact scoped diff
 VERIFICATION_EVIDENCE: fresh attributable output
 ```
 
-- [ ] **Step 7: Report completion without external release actions**
+- [ ] **Step 7: Record the approved release package**
 
-Report final SHAs, changed files by functional boundary, test counts, full prepush result, review verdicts, platform-specific gaps, and residual risks. State explicitly that Tag/push/Release/global install/service operations remain unperformed.
+Record final SHAs, changed files by functional boundary, test counts, full prepush result, review
+verdicts, platform-specific gaps, residual risks, and exact expected local/remote ref OIDs for the
+authorized publication transaction. Confirm Tag/push/Release remain unperformed until Task 9.
+
+---
+
+### Task 9: Publish `v2.38.0-ben.2`
+
+**Files:**
+- No source edits. Release Notes are created through GitHub after Git publication.
+
+**Interfaces:**
+- Consumes: approved `IMPLEMENTATION_HEAD`, `RELEASE_COMMIT`, `OFFICIAL_COMMIT`, exact remote OIDs,
+  and all Task 8 review verdicts.
+- Produces: annotated Fork Tag, six-member atomic remote convergence, local compare-and-swap
+  convergence, and public non-draft/non-prerelease GitHub Release.
+
+- [ ] **Step 1: Re-read and freeze publication state**
+
+Require a clean tree and re-read local/raw/peeled and remote OIDs for `main`, `dev`,
+`sync/v2.38.0`, `upstream-release`, official `v2.38.0`, and prospective
+`v2.38.0-ben.2`. Also freeze raw and peeled identities for immutable `v2.38.0-ben.1` locally and
+remotely; it must remain unchanged before and after publication.
+
+Classify the complete six-ref remote state before mutation:
+
+1. all refs equal the frozen old OIDs: publication has not happened; refresh every OID and proceed
+   once with the complete atomic set;
+2. all six refs equal their final targets: Git publication already completed; do not repush, and
+   continue only with local CAS and Release convergence;
+3. mixed old/final or any unrelated value: fail closed for investigation and never split the set;
+4. a local-only ben.2 Tag is acceptable only when it is the exact captured annotated object peeling
+   to `RELEASE_COMMIT`;
+5. after an uncertain push result, reread all six remote refs and re-enter this classification
+   before considering any retry.
+
+The six-ref state is necessary but not sufficient for a same-base maintenance revision. Enforce
+this identical machine contract here and in `docs/fork-sync-automation.md`:
+
+<!-- same-base-ben-preflight:start -->
+scope=strict-local-and-remote-vX.Y.Z-ben.N
+snapshot=name-raw-peeled
+pre_local_tag=freeze-local-baseline-and-remote-baseline
+pre_push=local-baseline-plus-exact-target-and-remote-baseline
+post_push=remote-baseline-or-remote-baseline-plus-exact-target
+higher_revision=fail-closed-at-every-checkpoint
+other_drift=fail-closed
+post_success=required-before-github-release
+serialization=single-publisher-required
+toctou=final-recheck-to-push-window-is-residual-risk
+<!-- same-base-ben-preflight:end -->
+
+At each checkpoint, enumerate local tags and the complete remote namespace:
+
+```bash
+git tag --list 'v2.38.0-ben.*'
+git ls-remote --tags origin 'refs/tags/v2.38.0-ben.*'
+```
+
+Strictly parse only canonical safe-integer `v2.38.0-ben.N` names, pair every annotated raw ref with
+its `^{}` peeled row, and capture the sorted `(name, raw OID, peeled OID)` maps. Feed every complete
+valid name set into the same version-policy contract and recompute the highest revision at each
+checkpoint.
+
+- Before local Tag creation, freeze `LOCAL_BASELINE` and `REMOTE_BASELINE`; reject a higher revision
+  or an existing target whose raw/peeled identity is incompatible with this candidate.
+- Immediately before atomic push, local state must equal `LOCAL_BASELINE` or exactly
+  `LOCAL_BASELINE + { v2.38.0-ben.2: (LOCAL_TARGET_RAW, RELEASE_COMMIT) }`; remote state must equal
+  `REMOTE_BASELINE` byte-for-byte.
+- After a definite success or an uncertain result, local state must remain unchanged. Remote state
+  may only equal `REMOTE_BASELINE` or exactly `REMOTE_BASELINE +` the target whose raw OID equals
+  `LOCAL_TARGET_RAW` and peeled OID equals `RELEASE_COMMIT`. Use the six branch/Tag ref results to
+  distinguish a completed atomic push from a no-op or failure.
+- Any other name addition/deletion, object replacement, raw/peeled drift, or higher valid revision
+  fails closed. A late `ben.3` blocks `ben.2`, even when the target itself was absent at Task 8.
+
+Only one publisher may execute this release. The complete Tag namespace has no atomic Git lease, so
+the interval between the final remote recheck and push is an explicit TOCTOU residual risk; record
+it in the final release report and do not claim the six-member leases protect differently named
+future revisions. Run the complete remote namespace check after a reported successful push as well
+as after an uncertain result and before GitHub Release creation. If a higher revision appeared in
+the race window after the lower immutable Tag was published, do not delete or move the Tag; stop
+before creating the Release and report the violated single-publisher assumption.
+
+Require remote sync to be absent or an ancestor of `RELEASE_COMMIT`; re-read it immediately before
+push. Prepare the local audit ref before Tag creation with exact compare-and-swap:
+
+```bash
+EXPECTED_LOCAL_SYNC=$(git rev-parse -q --verify refs/heads/sync/v2.38.0 || true)
+if test -n "$EXPECTED_LOCAL_SYNC"; then
+  git merge-base --is-ancestor "$EXPECTED_LOCAL_SYNC" "$RELEASE_COMMIT"
+fi
+git update-ref refs/heads/sync/v2.38.0 "$RELEASE_COMMIT" "$EXPECTED_LOCAL_SYNC"
+test "$(git rev-parse refs/heads/sync/v2.38.0)" = "$RELEASE_COMMIT"
+```
+
+- [ ] **Step 2: Create the immutable annotated Tag locally**
+
+Create Chinese annotated `v2.38.0-ben.2`; require raw type `tag` and peeled commit equal to
+`RELEASE_COMMIT`. If the Tag exists, accept only the exact same raw/peeled identity; never replace
+or force it.
+
+- [ ] **Step 3: Perform the single atomic publication push**
+
+Push exactly the six canonical members in one `git push --atomic`: leased-force `main`, `dev`, and
+`upstream-release`; leased-fast-forward `sync/v2.38.0`; unforced/unleased official and Fork Tags.
+Use exact per-ref expected OIDs and an ordinary non-`+` sync refspec. Do not split or retry a partial
+set. Immediately before the transaction, reread remote sync, require it still equals
+`EXPECTED_REMOTE_SYNC`, and rerun its ancestry guard when nonempty. The exact transaction is:
+
+```bash
+git push --atomic origin \
+  --force-with-lease="refs/heads/main:${EXPECTED_REMOTE_MAIN}" \
+  --force-with-lease="refs/heads/dev:${EXPECTED_REMOTE_DEV}" \
+  --force-with-lease="refs/heads/sync/v2.38.0:${EXPECTED_REMOTE_SYNC}" \
+  --force-with-lease="refs/heads/upstream-release:${EXPECTED_REMOTE_MARKER}" \
+  "${RELEASE_COMMIT}:refs/heads/main" \
+  "${RELEASE_COMMIT}:refs/heads/dev" \
+  "${RELEASE_COMMIT}:refs/heads/sync/v2.38.0" \
+  "${OFFICIAL_COMMIT}:refs/heads/upstream-release" \
+  "refs/tags/v2.38.0:refs/tags/v2.38.0" \
+  "refs/tags/v2.38.0-ben.2:refs/tags/v2.38.0-ben.2"
+```
+
+`EXPECTED_REMOTE_SYNC` is the empty string when the remote ref is absent, so the exact lease string
+ends in `:` and asserts nonexistence. None of the six refspecs has a leading `+`; only the three
+release-pointer branches and marker receive their explicitly listed lease capability, while sync's
+lease is backed by the separate ancestry guard. No tag receives a force or lease option.
+
+After confirmed success, update local `main` and `upstream-release` only through their captured old
+OIDs. If either is already final, accept it; otherwise require exact compare-and-swap. Fetch and
+verify remote-tracking refs. If all six remote refs are already final after an uncertain result, do
+not repush.
+
+- [ ] **Step 4: Create and verify the GitHub Release**
+
+Create or idempotently converge public `v2.38.0-ben.2` with name equal to the Tag, `draft=false`,
+`prerelease=false`, and Chinese notes containing the official v2.38.0 base, Fork changes,
+verification, known platform gaps, and `RELEASE_COMMIT`. Use source archives only unless separately
+authorized. Use these metadata operations:
+
+```bash
+gh release view v2.38.0-ben.2 --repo Trendymen/opencodex \
+  --json tagName,name,isDraft,isPrerelease,targetCommitish,body,url
+
+# When absent:
+gh release create v2.38.0-ben.2 --repo Trendymen/opencodex --verify-tag \
+  --title v2.38.0-ben.2 --notes-file "$RELEASE_NOTES_FILE"
+
+# When present but only mutable metadata differs:
+gh release edit v2.38.0-ben.2 --repo Trendymen/opencodex \
+  --title v2.38.0-ben.2 --notes-file "$RELEASE_NOTES_FILE" \
+  --draft=false --prerelease=false
+```
+
+After create/edit, rerun the exact `gh release view` query and require the exact tag/name, public
+non-prerelease flags, expected target commitish/Tag association, required Chinese note sections, and
+nonempty URL. If Git refs are final but the Release is absent or metadata differs, change only this
+same Tag's Release; never move refs or increment ben.N.
+
+- [ ] **Step 5: Verify final convergence**
+
+Require local/remote `main`, `dev`, `sync/v2.38.0`, and the Fork Tag peeled commit to equal
+`RELEASE_COMMIT`; require local/remote `upstream-release` and official Tag to equal
+`OFFICIAL_COMMIT`; require the Fork Tag raw object to remain annotated and the GitHub Release to be
+public at that exact Tag. Do not globally install or restart any service.
