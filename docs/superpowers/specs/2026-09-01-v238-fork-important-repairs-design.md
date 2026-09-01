@@ -409,6 +409,13 @@ exist in the current installation are copied; absent optional packages remain ab
 `bundleDependencies` packlist then selects only declared runtime dependencies and their resolvable
 transitive closure, not unrelated dev packages.
 
+Every source entry is canonicalized before its type is consumed, so an ancestor symlink or Windows
+junction cannot bypass containment. A root `files` entry that is itself a link is rejected. Links
+encountered inside a declared directory may be materialized only when their target remains inside
+that declared directory's canonical subtree, not merely elsewhere in the repository. `node_modules`
+links remain bounded to the canonical root `node_modules` tree because Bun/npm hoisting links are part
+of the installed dependency topology.
+
 The sequence is:
 
 1. create a temporary directory with restrictive permissions;
@@ -422,8 +429,8 @@ The sequence is:
 7. install the tarball with `--ignore-scripts` into the owned validation prefix without registry
    access, then verify package identity, bin/main/exports targets, generated artifacts, every declared
    bundled direct dependency, and their runtime-resolvable transitive dependencies;
-8. keep the validated tarball inside the staging directory and pass its absolute path to the existing
-   local-install lifecycle, avoiding a cross-volume transfer entirely;
+8. keep the validated tarball and owned npm cache inside the staging directory and pass both to the
+   existing local-install lifecycle, avoiding a cross-volume transfer entirely;
 9. remove validation and staging ownership after lifecycle success or failure without masking the
    primary error.
 
@@ -447,6 +454,30 @@ enters the package, identity/bin/main/exports/generated assets remain correct, a
 bytes survive preparation, pack failure, validation failure, lifecycle failure, and cleanup failure.
 When cleanup and another phase both fail, the earlier phase remains the primary error and cleanup is
 reported as an aggregate/secondary failure.
+
+Pack evidence is exact: recompute SHA-512 SRI and SHA-1 from accepted tarball bytes and compare them
+with non-empty, strictly formatted `npm pack --json` values. Parse every returned file row, reject
+duplicates, absolute/dot-segment/sensitive entries, and require each row to belong to the declared
+package surface or npm-selected bundled dependency closure. The disposable installed result must
+contain every declared root `files` entry and every local target reachable from string/object/array/
+conditional `main`, `bin`, and `exports` metadata; targets must remain inside the installed package.
+
+The final global install uses the same owned cache and fail-closed network policy as validation:
+
+```text
+npm install -g --ignore-scripts --offline --no-audit --no-fund --package-lock=false \
+  --cache <owned-stage-cache> <absolute-tarball>
+```
+
+It never retries without `--offline`, so the destructive replacement consumes the exact
+self-contained artifact already validated rather than registry/cache additions outside the stage.
+
+Before preparation succeeds, the Bun dependency extracted into the disposable validation prefix
+must pass both the existing non-placeholder size check and a bounded current-platform execution
+probe: invoke that exact extracted binary with `--version`, enforce a 5-second timeout, require exit
+status 0, and require a plausible semantic Bun version line. Spawn errors, timeouts, nonzero exits,
+large junk files, or incompatible-platform binaries fail before global uninstall. The probe is an
+injectable seam for tests and never invokes the launcher's network-capable `install.js` fallback.
 
 ## GUI sidecar test and active Logs evidence
 
