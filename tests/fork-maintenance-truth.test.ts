@@ -117,6 +117,10 @@ const EXPECTED_V239_KEYS = [
   "external_actions",
   "tests",
 ] as const;
+const EXPECTED_V239_BIN_DECISION = "official=hasPendingTeardownIn；fork=forkUpdateDecision；resolution=双方 import 与调用链均保留；tests=tests/release-version-line.test.ts,tests/update-stop-first.test.ts";
+const EXPECTED_V239_PACKAGE_DECISION = "official=version 2.39.0 与 package 表面；fork=install:local 与 ben 版本策略；resolution=保留官方表面并收敛为 2.39.0-ben.1；tests=tests/fork-version-policy.test.ts,tests/release-version-line.test.ts";
+const EXPECTED_V239_EXTERNAL_ACTIONS = "none；本轮未授权 Tag、push、main/dev/sync promotion 或 GitHub Release";
+const EXPECTED_V239_TESTS = "tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts,tests/release-version-line.test.ts";
 const EXPECTED_RELEASE_LIFECYCLE = [
   "rebase_branch=dev",
   "sync_role=audit-release-ref",
@@ -442,23 +446,29 @@ describe("Fork maintenance truth", () => {
     expect(new Set(overlapPaths).size).toBe(19);
     expect(rows.content_conflicts?.split(",")).toEqual(EXPECTED_V239_CONFLICT_PATHS);
     for (const path of EXPECTED_V239_CONFLICT_PATHS) expect(overlapPaths).toContain(path);
-    for (const decision of [rows.decision_bin_ocx_mjs, rows.decision_package_json]) {
-      expect(decision).toContain("official=");
-      expect(decision).toContain("fork=");
-      expect(decision).toContain("resolution=");
-      expect(decision).toContain("tests=");
-    }
-    expect(rows.external_actions).toContain("none");
-    expect(rows.external_actions).toContain("未授权");
+    expect(rows.decision_bin_ocx_mjs).toBe(EXPECTED_V239_BIN_DECISION);
+    expect(rows.decision_package_json).toBe(EXPECTED_V239_PACKAGE_DECISION);
+    expect(rows.external_actions).toBe(EXPECTED_V239_EXTERNAL_ACTIONS);
+    expect(rows.tests).toBe(EXPECTED_V239_TESTS);
   });
 
   test("rejects ambiguous or incomplete v2.39 rebase machine blocks", () => {
     const valid = machineBlock(changes, "v239-rebase");
     const wrap = (block: string) => `<!-- v239-rebase:start -->\n${block}\n<!-- v239-rebase:end -->`;
+    const assertSemantics = (source: string) => {
+      const rows = strictKeyValueBlock(source, "v239-rebase", EXPECTED_V239_KEYS);
+      expect(rows.decision_bin_ocx_mjs).toBe(EXPECTED_V239_BIN_DECISION);
+      expect(rows.decision_package_json).toBe(EXPECTED_V239_PACKAGE_DECISION);
+      expect(rows.external_actions).toBe(EXPECTED_V239_EXTERNAL_ACTIONS);
+      expect(rows.tests).toBe(EXPECTED_V239_TESTS);
+    };
     expect(() => strictKeyValueBlock(wrap(`${valid}\nofficial_old=v2.38.0`), "v239-rebase", EXPECTED_V239_KEYS)).toThrow();
     expect(() => strictKeyValueBlock(wrap(`${valid}\nunknown=value`), "v239-rebase", EXPECTED_V239_KEYS)).toThrow();
     expect(() => strictKeyValueBlock(wrap(valid.replace(/^tests=.+$/m, "")), "v239-rebase", EXPECTED_V239_KEYS)).toThrow();
     expect(() => strictKeyValueBlock(`${wrap(valid)}\n${wrap(valid)}`, "v239-rebase", EXPECTED_V239_KEYS)).toThrow();
+    expect(() => assertSemantics(wrap(valid.replace(EXPECTED_V239_BIN_DECISION, EXPECTED_V239_BIN_DECISION.replace("双方 import 与调用链均保留", "只保留官方"))))).toThrow();
+    expect(() => assertSemantics(wrap(valid.replace(EXPECTED_V239_EXTERNAL_ACTIONS, "none；未授权 Tag，但 push 已发生")))).toThrow();
+    expect(() => assertSemantics(wrap(valid.replace(EXPECTED_V239_TESTS, "tests/fork-maintenance-truth.test.ts")))).toThrow();
   });
 
   test("records the ben.3 39-to-5 squash boundary and pending external gates", () => {
