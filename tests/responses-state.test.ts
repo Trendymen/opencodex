@@ -2707,7 +2707,9 @@ describe("Responses previous_response_id state", () => {
     for (const path of [stale, young]) writeFileSync(path, "private state");
     utimesSync(stale, old, old);
 
-    const removed = sweepAbandonedResponseStateTemps();
+    const removed = sweepAbandonedResponseStateTemps({
+      isProcessAlive: pid => pid !== deadPid,
+    });
 
     expect(removed).toBe(1);
     expect(existsSync(stale)).toBe(false);

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -20,6 +20,10 @@ import {
 import { localGlobalInstallCommand } from "../scripts/install-local";
 
 const roots: string[] = [];
+
+// This file intentionally runs real npm pack + offline install loops for hostile archive
+// mutations. Loaded parallel CI hosts can exceed Bun's 5s default without hanging.
+setDefaultTimeout(30_000);
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
