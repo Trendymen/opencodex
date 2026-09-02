@@ -34,12 +34,12 @@
 | 本轮官方维护基线 | [`v2.40.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.40.0) |
 | 官方 Tag commit | `35ff3a462e786bd5efc394dfb1a8a5cc946e454f` |
 | 当前上游最新稳定 Release | `v2.40.0`（`35ff3a462e786bd5efc394dfb1a8a5cc946e454f`），即本轮 rebase 基线 |
-| 当前 ben.1 `IMPLEMENTATION_HEAD` | `21fa726f2f2eb54130825fb8ecd2087fa59c4390`；包含完整 v2.40 rebase、冲突 union、`2.40.0-ben.1` 版本、维护真源门禁及经用户授权的 catalog 组合字段断言 |
+| 当前 ben.1 `IMPLEMENTATION_HEAD` | `df73ecba72a50739e4060133928d5cb16d15bf4f`；包含完整 v2.40 rebase、冲突 union、`2.40.0-ben.1` 版本、维护真源门禁、用户授权的 catalog 断言与初轮双审 Important 修复 |
 | Fork 包版本 | `2.40.0-ben.1` |
 | 本轮派生 Tag | `v2.40.0-ben.1`；本地与 origin 当前均不存在，必须在最终双审后创建中文 annotated Tag |
 | 同步分支 | 本地与 origin `sync/v2.40.0` 当前均不存在；发布时从既有审计历史 fast-forward 到新的 `RELEASE_COMMIT` |
-| ben.1 实现修改面 | 170 个文件，新增 27,740 行，删除 604 行（相对 `v2.40.0`，不含本轮后续末尾文档提交） |
-| ben.1 最终本地门禁 | 冲突相关 focused 986 pass / 0 fail / 108,542 assertions；首轮 prepush 的 prompt-probe 负载竞态单独复跑通过，catalog 组合字段断言经用户授权修正后 focused 1 pass / 0 fail；绑定 `IMPLEMENTATION_HEAD=21fa726f2` 的第二次完整 `bun run prepush` 退出 0，typecheck、GUI lint、全量 parallel/serial 测试、privacy scan 与 React Doctor 均完成 |
+| ben.1 实现修改面 | 171 个文件，新增 27,927 行，删除 605 行（相对 `v2.40.0`，不含本轮后续末尾文档提交） |
+| ben.1 最终本地门禁 | 绑定 `IMPLEMENTATION_HEAD=df73ecba7`：三项 reviewer finding 与维护真源 focused 84 pass / 0 fail / 1,153 assertions；完整 `bun run prepush` 首次仅有未修改 Issue #702 用例撞到 5 秒负载超时，单独复跑 1 pass / 0 fail；第二次完整 prepush 退出 0，parallel 主套件 17,665 pass / 14 skip / 0 fail / 398,488 assertions，全部 serial lanes、typecheck、GUI lint、privacy scan 与 React Doctor 完成 |
 | 外部发布状态 | [`v2.39.0-ben.2`](https://github.com/Trendymen/opencodex/releases/tag/v2.39.0-ben.2) 保持不可变且闭环；v2.40 ben.1 尚未执行最终双审、Tag、atomic push 或 GitHub Release |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
@@ -51,16 +51,24 @@
 `git rebase --onto 35ff3a462 af6113a03 dev` 完整重放，rebase 完成点为
 `91ae57de114dae18842e44067563db4493525b30`，随后新增 v2.40 维护真源机械门禁提交
 `0f9fc0daa584592eeab78f507ed68882aeb2192d`，以
-`3611064cc2bf68e2613010a33475770fe8fb2584` 更新 rebase 后变化的活跃 blob 锚点，最终以
-`21fa726f2f2eb54130825fb8ecd2087fa59c4390` 记录用户明确授权的 catalog 组合字段断言。
+`3611064cc2949101472883334e181ea0349dbe9b` 更新 rebase 后变化的活跃 blob 锚点，最终以
+`21fa726f2f2eb54130825fb8ecd2087fa59c4390` 记录用户明确授权的 catalog 组合字段断言；
+初轮双审后以 `df73ecba72a50739e4060133928d5cb16d15bf4f` 修复 combo 最终投影、one-shot
+body ceiling、稀疏显式 phase 顺序与 v2.40 重叠账本。
 
-官方 v2.40 改动与 Fork 候选重叠 43 条路径，12 条路径发生内容冲突。解决原则不是覆盖一侧：
+官方 v2.40 改动与 Fork 候选重叠 44 条路径，12 条路径发生内容冲突。解决原则不是覆盖一侧：
 保留官方 remote hub、Cursor Fast、retainModels/model display、keychain、authless Desktop、
 outbound body ceiling、self-named namespace scrub 与 dead-PID helper，同时保留 Fork
 message-phase、nested exec、routed progress、standalone web search、one-shot recovery、
 customModels 和发布治理。包版本固定为 `2.40.0-ben.1`。官方 v2.40 已覆盖 auth fixture 的
 clock/quota/network 基础修复；Fork 继续保留 listener-before-send 与精确 namespace 回归，
 不能把名称相似误判为全部覆盖。
+
+初轮双审发现并修复以下 Important：重叠账本补入 `tests/cli-status-json.test.ts` 并收敛为
+44 overlap / 32 auto-merge / 12 conflict；修正活跃 blob 锚点提交 SHA；combo 最终 catalog
+投影禁止把未显式合格的组合回退为第三方；one-shot recovery 明文重建超限时只释放候选请求、
+不取消原始 native failure；稀疏 SSE 的显式 phase 消息到达前先按顺序释放 pending 消息。
+三项行为修复均完成 RED→GREEN，且以新实现 SHA 重新跑过完整发布门禁。
 
 历史 v2.39.0 及更早轮次记录保留在专用区块，仅用于追溯，不能作为本轮结论。
 
@@ -70,9 +78,9 @@ official_new=v2.40.0
 candidate_branch=dev
 candidate_before=b5d4694b1de65c9c2faf9adc063ed8b5719fb9a9
 candidate_after=91ae57de114dae18842e44067563db4493525b30
-overlap_path_count=43
-auto_merge_path_count=31
-overlap_paths=.github/workflows/dev-version-bump.yml,docs-site/src/content/docs/guides/codex-integration.md,docs-site/src/content/docs/reference/configuration/providers.md,docs-site/src/content/docs/reference/proxy-formats.md,docs-site/src/content/docs/zh-cn/guides/codex-integration.md,docs-site/src/content/docs/zh-cn/reference/configuration/providers.md,gui/src/i18n/de.ts,gui/src/i18n/en.ts,gui/src/i18n/fr.ts,gui/src/i18n/ja.ts,gui/src/i18n/ko.ts,gui/src/i18n/ru.ts,gui/src/i18n/tr.ts,gui/src/i18n/zh-TW.ts,gui/src/i18n/zh.ts,package.json,src/adapters/cursor/request-builder.ts,src/adapters/openai-chat.ts,src/adapters/openai-responses.ts,src/cli/models-runtime.ts,src/cli/models.ts,src/codex/catalog/aggregation.ts,src/codex/catalog/provider-fetch.ts,src/codex/inject.ts,src/config.ts,src/providers/registry.ts,src/router.ts,src/server/auth-cors.ts,src/server/management/model-routes.ts,src/server/management/model-rows.ts,src/server/management/provider-routes.ts,src/server/responses/agent-task-recovery.ts,src/server/responses/core.ts,src/types/provider.ts,src/usage/log.ts,structure/04_transports-and-sidecars.md,tests/bump-dev-version.test.ts,tests/openai-responses-passthrough.test.ts,tests/project-config-warnings.test.ts,tests/responses-state.test.ts,tests/server-auth.test.ts,tests/shutdown-launcher.test.ts,tests/update-stop-first.test.ts
+overlap_path_count=44
+auto_merge_path_count=32
+overlap_paths=.github/workflows/dev-version-bump.yml,docs-site/src/content/docs/guides/codex-integration.md,docs-site/src/content/docs/reference/configuration/providers.md,docs-site/src/content/docs/reference/proxy-formats.md,docs-site/src/content/docs/zh-cn/guides/codex-integration.md,docs-site/src/content/docs/zh-cn/reference/configuration/providers.md,gui/src/i18n/de.ts,gui/src/i18n/en.ts,gui/src/i18n/fr.ts,gui/src/i18n/ja.ts,gui/src/i18n/ko.ts,gui/src/i18n/ru.ts,gui/src/i18n/tr.ts,gui/src/i18n/zh-TW.ts,gui/src/i18n/zh.ts,package.json,src/adapters/cursor/request-builder.ts,src/adapters/openai-chat.ts,src/adapters/openai-responses.ts,src/cli/models-runtime.ts,src/cli/models.ts,src/codex/catalog/aggregation.ts,src/codex/catalog/provider-fetch.ts,src/codex/inject.ts,src/config.ts,src/providers/registry.ts,src/router.ts,src/server/auth-cors.ts,src/server/management/model-routes.ts,src/server/management/model-rows.ts,src/server/management/provider-routes.ts,src/server/responses/agent-task-recovery.ts,src/server/responses/core.ts,src/types/provider.ts,src/usage/log.ts,structure/04_transports-and-sidecars.md,tests/bump-dev-version.test.ts,tests/cli-status-json.test.ts,tests/openai-responses-passthrough.test.ts,tests/project-config-warnings.test.ts,tests/responses-state.test.ts,tests/server-auth.test.ts,tests/shutdown-launcher.test.ts,tests/update-stop-first.test.ts
 content_conflict_count=12
 content_conflicts=docs-site/src/content/docs/reference/configuration/providers.md,package.json,src/adapters/cursor/request-builder.ts,src/codex/catalog/provider-fetch.ts,src/codex/inject.ts,src/config.ts,src/server/auth-cors.ts,src/server/management/provider-routes.ts,src/server/responses/core.ts,tests/cli-status-json.test.ts,tests/responses-state.test.ts,tests/server-auth.test.ts
 conflict_resolution=官方 v2.40.0 新能力与 Fork 专属兼容能力逐项 union；版本收敛为 2.40.0-ben.1，测试 fixture 使用官方 helper 并保留 Fork listener/namespace 边界
@@ -990,7 +998,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
    push 后必须在 GitHub Release 前复核，发现竞态时保留 immutable Tag 并停止 Release。
 8. **上游版本边界：** 官方 `v2.39.0` 的 `v2.39.0-ben.1` 与 `v2.39.0-ben.2` 均保持不可变；
    当前候选已 rebase 到官方 `v2.40.0`，固定
-   `IMPLEMENTATION_HEAD=21fa726f2f2eb54130825fb8ecd2087fa59c4390`，目标为
+   `IMPLEMENTATION_HEAD=df73ecba72a50739e4060133928d5cb16d15bf4f`，目标为
    `v2.40.0-ben.1`。双审、Tag、atomic push 与 Release 后验完成前不得宣称 v2.40 Fork
    Release 已发布。
 9. **并行工作区：** 本清单只按 committed SHA 计算，绝不因工作区中恰好存在其他任务
