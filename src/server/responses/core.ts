@@ -4107,6 +4107,7 @@ async function handleResponsesInner(
     const refuseOversizedOutboundBody = (
       builtRequest: AdapterRequest,
       refusalAuthCtx: CodexAuthContext = authCtx,
+      preserveOriginalResponse = false,
     ): Response | undefined => {
       const result = checkOutboundBodySize(builtRequest.body, config.maxUpstreamBodyBytes);
       if (result.admitted) return undefined;
@@ -4114,6 +4115,13 @@ async function handleResponsesInner(
       // This returns before the surrounding fetch/finally owns the observation, so release
       // it here or one refused body holds translator budget for the process lifetime.
       builtRequest.releaseBodyObservation?.();
+      if (preserveOriginalResponse) {
+        return formatErrorResponse(
+          413,
+          "outbound_body_too_large",
+          describeOutboundBodyRefusal(result),
+        );
+      }
       upstream.abort();
       releaseUpstreamHostAdmission(hostAdmissionLease);
       hostAdmissionLease = null;
@@ -4264,7 +4272,7 @@ async function handleResponsesInner(
         retryAdapter.name,
         logCtx.accountLogLabel,
       );
-      const rebuiltBodyRefusal = refuseOversizedOutboundBody(request);
+      const rebuiltBodyRefusal = refuseOversizedOutboundBody(request, authCtx, oneShot);
       if (rebuiltBodyRefusal) return { failed: rebuiltBodyRefusal };
       const refetch = (innerRecovery?: "connection-reset" | "transient-5xx"): Promise<Response> => {
         noteAttemptSend(logCtx.activeAttempt, passthroughEstimate, innerRecovery ?? recovery);

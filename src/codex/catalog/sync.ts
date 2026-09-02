@@ -294,8 +294,11 @@ export function deriveEntry(
 ): RawEntry {
   const shouldApplyRoutedProgressContract = model !== undefined
     && model.codexForwardNativeCapabilityAlias !== true
-    && (model.routedProgressContractEligible
-      ?? (model.provider !== OPENAI_CODEX_PROVIDER_ID && model.provider !== OPENAI_API_PROVIDER_ID));
+    && (model.routedProgressContractEligible === true
+      || (model.routedProgressContractEligible === undefined
+        && model.provider !== COMBO_NAMESPACE
+        && model.provider !== OPENAI_CODEX_PROVIDER_ID
+        && model.provider !== OPENAI_API_PROVIDER_ID));
   const preserveExact = isExactComboCatalogModel(model, exactComboSlugs);
   const codexForwardNativeCapabilityAlias = model?.codexForwardNativeCapabilityAlias === true
     ? upstreamNativeEntry(model.id)

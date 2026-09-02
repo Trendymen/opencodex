@@ -409,6 +409,39 @@ describe("native Responses message-phase repair", () => {
     ]);
   });
 
+  test("flushes and labels a pending message before a later explicit-phase message", () => {
+    const rewrite = createResponsesMessagePhaseBlockRewrite();
+    const pending = {
+      type: "message",
+      id: "msg_pending_before_explicit",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: "先说明一下。" }],
+    };
+    const explicit = {
+      type: "message",
+      id: "msg_explicit_after_pending",
+      role: "assistant",
+      status: "completed",
+      phase: "final_answer",
+      content: [{ type: "output_text", text: "最终答案。" }],
+    };
+
+    expect(rewrite(sse({ type: "response.output_item.done", output_index: 0, item: pending }))).toEqual([]);
+    expect(payloads(rewrite(sse({ type: "response.output_item.done", output_index: 1, item: explicit })))).toEqual([
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: { ...pending, phase: "commentary" },
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 1,
+        item: explicit,
+      },
+    ]);
+  });
+
   test("forgets buffered state when the relay disposes the rewrite", () => {
     const rewrite = createResponsesMessagePhaseBlockRewrite();
     const message = {

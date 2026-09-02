@@ -254,6 +254,16 @@ export function createResponsesMessagePhaseBlockRewrite(budget?: TranslatorBudge
     const explicit = assistantMessageWithExplicitPhase(payload);
     if (explicit) {
       rememberPhase(explicit.id, explicit.phase, "upstream");
+      if (pending) {
+        const held = pending;
+        if (!rememberPhase(held.itemId, "commentary", "inferred_work")) return [...releasePending(), block];
+        const commentaryPayload = parsePayload(held.block);
+        const pendingBlock = commentaryPayload
+          ? replaceSseDataPayload(held.block, JSON.stringify(stampItemPhase(commentaryPayload, "commentary")))
+          : held.block;
+        releasePending();
+        return [pendingBlock, block];
+      }
       return [block];
     }
     const message = assistantMessageWithoutPhase(payload);

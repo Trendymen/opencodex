@@ -353,6 +353,53 @@ describe("fork routed progress contract", () => {
     expect(allThirdParty?.routedProgressContractEligible).toBe(true);
   });
 
+  test("mixed combo final catalog projection does not restore routed progress guidance", () => {
+    const comboModel = deriveComboCatalogModel("mixed", {
+      strategy: "failover",
+      stickyLimit: 1,
+      defaultEffort: null,
+      imageInput: "auto",
+      alias: null,
+      nativeAlias: false,
+      displayName: null,
+      targets: [
+        { provider: "official", model: "model-a", weight: 1 },
+        { provider: "third-party", model: "model-b", weight: 1 },
+      ],
+    } as never, [
+      {
+        provider: "official",
+        id: "model-a",
+        contextWindow: 128_000,
+        inputModalities: ["text"],
+        reasoningEfforts: ["medium"],
+        routedProgressContractEligible: false,
+      },
+      {
+        provider: "third-party",
+        id: "model-b",
+        contextWindow: 128_000,
+        inputModalities: ["text"],
+        reasoningEfforts: ["medium"],
+        routedProgressContractEligible: true,
+      },
+    ]);
+    const [projected] = buildCatalogEntries({
+      slug: "gpt-5.5",
+      display_name: "GPT-5.5",
+      description: "Native GPT model",
+      shell_type: "shell_command",
+      visibility: "list",
+      supported_in_api: true,
+      priority: 1,
+      base_instructions: `${CODEX_GPT5_IDENTITY_LINE}\n\nNative instructions.`,
+      supported_reasoning_levels: [{ effort: "medium", description: "medium" }],
+    }, [], [comboModel!]);
+
+    expect(comboModel?.routedProgressContractEligible).toBeUndefined();
+    expect(projected?.base_instructions).not.toContain(PROGRESS_SENTENCE);
+  });
+
   test("third-party Responses wire instructions receive the contract idempotently", () => {
     const first = buildResponsesBody(routedProvider(), "Existing caller instructions.");
     const firstInstructions = first.instructions;

@@ -159,6 +159,7 @@ const EXPECTED_V240_OVERLAP_PATHS = [
   "src/usage/log.ts",
   "structure/04_transports-and-sidecars.md",
   "tests/bump-dev-version.test.ts",
+  "tests/cli-status-json.test.ts",
   "tests/openai-responses-passthrough.test.ts",
   "tests/project-config-warnings.test.ts",
   "tests/responses-state.test.ts",
@@ -583,8 +584,8 @@ describe("Fork maintenance truth", () => {
     expect(rows.candidate_branch).toBe("dev");
     expect(rows.candidate_before).toBe("b5d4694b1de65c9c2faf9adc063ed8b5719fb9a9");
     expect(rows.candidate_after).toBe("91ae57de114dae18842e44067563db4493525b30");
-    expect(rows.overlap_path_count).toBe("43");
-    expect(rows.auto_merge_path_count).toBe("31");
+    expect(rows.overlap_path_count).toBe("44");
+    expect(rows.auto_merge_path_count).toBe("32");
     expect(rows.content_conflict_count).toBe("12");
     expect(rows.overlap_paths?.split(",")).toEqual(EXPECTED_V240_OVERLAP_PATHS);
     expect(rows.content_conflicts?.split(",")).toEqual(EXPECTED_V240_CONFLICT_PATHS);
