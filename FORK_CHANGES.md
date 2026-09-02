@@ -30,48 +30,55 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 审计日期 | 2026-09-01 |
-| 本轮官方维护基线 | [`v2.39.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.39.0) |
-| 官方 Tag commit | `af6113a0381d6fff2e4dce587652825c7eeb6423` |
-| 当前上游最新稳定 Release | `v2.39.0`（`af6113a0381d6fff2e4dce587652825c7eeb6423`），即本轮 rebase 基线 |
-| 当前 ben.2 `IMPLEMENTATION_HEAD` | `dcfd2001268e05744a1f9d7f50819138ac096669`；包含 ben.1 发布后的 CI fixture/dev 版本解耦、维护真源收敛、`2.39.0-ben.2` 版本推进与本地双 ref 单事务 CAS 契约修复 |
-| Fork 包版本 | `2.39.0-ben.2` |
-| 本轮派生 Tag | `v2.39.0-ben.2`；annotated Tag raw object 为 `43361f9b2a93617fd144558a5a590cd7196f4a58`，peeled commit 为 `5f72ca85064898d660373af9e182d226e3c1d650` |
-| 同步分支 | 本地与 origin `sync/v2.39.0` 均已从 ben.1 fast-forward 到 ben.2 Release commit `5f72ca85064898d660373af9e182d226e3c1d650` |
-| ben.2 实现修改面 | 170 个文件，新增 27,643 行，删除 579 行（相对 `v2.39.0`，不含本轮后续末尾文档提交） |
-| ben.2 最终本地门禁 | 固定 `IMPLEMENTATION_HEAD=dcfd20012` 且本文档已重写时，第二次 `bun run prepush` 退出 0：主套件 17,158 pass / 14 skip / 0 fail / 402,749 assertions（1055 files），全部 serial lanes、typecheck、privacy scan 通过；无 GUI 变化，条件 GUI 门禁按规则跳过；旧 `5a8f227ba` 的 PASS 已作废 |
-| 外部发布状态 | [`v2.39.0-ben.1`](https://github.com/Trendymen/opencodex/releases/tag/v2.39.0-ben.1) 保持不可变；[`v2.39.0-ben.2`](https://github.com/Trendymen/opencodex/releases/tag/v2.39.0-ben.2) 已通过双审、六成员 atomic push、本地双 ref 单事务 CAS、公开 GitHub Release 与 exact commit CI 后验，正式闭环 |
+| 审计日期 | 2026-09-02 |
+| 本轮官方维护基线 | [`v2.40.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.40.0) |
+| 官方 Tag commit | `35ff3a462e786bd5efc394dfb1a8a5cc946e454f` |
+| 当前上游最新稳定 Release | `v2.40.0`（`35ff3a462e786bd5efc394dfb1a8a5cc946e454f`），即本轮 rebase 基线 |
+| 当前 ben.1 `IMPLEMENTATION_HEAD` | `21fa726f2f2eb54130825fb8ecd2087fa59c4390`；包含完整 v2.40 rebase、冲突 union、`2.40.0-ben.1` 版本、维护真源门禁及经用户授权的 catalog 组合字段断言 |
+| Fork 包版本 | `2.40.0-ben.1` |
+| 本轮派生 Tag | `v2.40.0-ben.1`；本地与 origin 当前均不存在，必须在最终双审后创建中文 annotated Tag |
+| 同步分支 | 本地与 origin `sync/v2.40.0` 当前均不存在；发布时从既有审计历史 fast-forward 到新的 `RELEASE_COMMIT` |
+| ben.1 实现修改面 | 170 个文件，新增 27,740 行，删除 604 行（相对 `v2.40.0`，不含本轮后续末尾文档提交） |
+| ben.1 最终本地门禁 | 冲突相关 focused 986 pass / 0 fail / 108,542 assertions；首轮 prepush 的 prompt-probe 负载竞态单独复跑通过，catalog 组合字段断言经用户授权修正后 focused 1 pass / 0 fail；绑定 `IMPLEMENTATION_HEAD=21fa726f2` 的第二次完整 `bun run prepush` 退出 0，typecheck、GUI lint、全量 parallel/serial 测试、privacy scan 与 React Doctor 均完成 |
+| 外部发布状态 | [`v2.39.0-ben.2`](https://github.com/Trendymen/opencodex/releases/tag/v2.39.0-ben.2) 保持不可变且闭环；v2.40 ben.1 尚未执行最终双审、Tag、atomic push 或 GitHub Release |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
-| origin 官方历史 Tag | `v2.33.0` 至 `v2.39.0` 各已 rebase 稳定基线均存在，且 type/raw/peeled 与 upstream 对应官方 Tag 完全一致；2026-09-01 heartbeat 以普通非 force push 补齐此前缺失的 `v2.33.0` |
+| origin 官方历史 Tag | `v2.33.0` 至 `v2.39.0` 各已 rebase 稳定基线均存在且与 upstream 对应官方 Tag 一致；`v2.40.0` 将在本轮六成员 atomic push 中以未经修改的官方 ref 补齐 |
 
-本轮相对 `v2.39.0` 的实现短统计严格以最终捕获的 `IMPLEMENTATION_HEAD` 计算；末尾
-`FORK_CHANGES.md` 文档提交不属于实现快照。候选来自已提交且来源明确的 `dev`：
-`v2.38.0-ben.2` Release commit `1092cfb48` 在官方 `v2.39.0` 之上重放为临时候选
-`ff3653f0a`。本轮 rebase 按完整发布闭环执行，不再单独等待 Tag、push 或 GitHub Release 授权；
-只有用户明确叫停才停在中间门禁。
+本轮相对 `v2.40.0` 的实现短统计严格以固定 `IMPLEMENTATION_HEAD` 计算；末尾
+`FORK_CHANGES.md` 文档提交不属于实现快照。候选来自已提交且来源明确的
+`dev=b5d4694b1de65c9c2faf9adc063ed8b5719fb9a9`，按
+`git rebase --onto 35ff3a462 af6113a03 dev` 完整重放，rebase 完成点为
+`91ae57de114dae18842e44067563db4493525b30`，随后新增 v2.40 维护真源机械门禁提交
+`0f9fc0daa584592eeab78f507ed68882aeb2192d`，以
+`3611064cc2bf68e2613010a33475770fe8fb2584` 更新 rebase 后变化的活跃 blob 锚点，最终以
+`21fa726f2f2eb54130825fb8ecd2087fa59c4390` 记录用户明确授权的 catalog 组合字段断言。
 
-官方 v2.39 改动与 Fork 候选重叠 19 条路径。内容冲突 2 条：`bin/ocx.mjs` 同时保留
-官方 pending-teardown 检查与 Fork version policy import；`package.json` 同时保留官方
-v2.39 package 表面、Fork `install:local`，并将候选版本收敛为 `2.39.0-ben.1`。
-其余 17 条路径自动合并；range-diff 显示 Fork 主体提交等价重放，v2.38 ben.2 版本提交
-仅按新官方基线调整版本。
+官方 v2.40 改动与 Fork 候选重叠 43 条路径，12 条路径发生内容冲突。解决原则不是覆盖一侧：
+保留官方 remote hub、Cursor Fast、retainModels/model display、keychain、authless Desktop、
+outbound body ceiling、self-named namespace scrub 与 dead-PID helper，同时保留 Fork
+message-phase、nested exec、routed progress、standalone web search、one-shot recovery、
+customModels 和发布治理。包版本固定为 `2.40.0-ben.1`。官方 v2.40 已覆盖 auth fixture 的
+clock/quota/network 基础修复；Fork 继续保留 listener-before-send 与精确 namespace 回归，
+不能把名称相似误判为全部覆盖。
 
-首次完整 `bun run prepush` 在全量主套件得到 17,153 pass / 14 skip 后，唯一失败面是
-`tests/shutdown-launcher.test.ts` 的三个信号场景都在启动门禁前退出。诊断证明官方
-`0ef04e640` 新增的 configured-port ownership probe 会先探测默认 `10100`；测试只传
-`--port`、未把临时 `config.json` 的端口同步到该测试端口，因此误认真实运行中的代理为
-当前 fixture owner。`99bc343f8` 只补齐测试配置隔离，不修改生产探测语义或延长超时；
-独立复测三个信号场景 3 pass / 0 fail；随后完整 prepush 与 GUI build 均退出 0。
+历史 v2.39.0 及更早轮次记录保留在专用区块，仅用于追溯，不能作为本轮结论。
 
-CODE_QUALITY 复审随后发现维护真源仍把修复前 launcher 测试 blob 标为 current，而动态
-blob 门禁只覆盖原有 12 个路径。`3231b9e5d` 将
-`tests/shutdown-launcher.test.ts` 纳入 `currentGitBlob()` 动态集合，并把 active 锚点更新为
-当前 blob `781712cb24756d0d2d4dab19039dc7b701d4c3a2`。该门禁修复先在旧文档上稳定得到
-1 fail，再更新锚点恢复为 17 pass / 0 fail；随后绑定 `3231b9e5d` 重跑完整 prepush 与
-GUI build，均退出 0。
-
-历史 v2.38.0 及更早轮次账户保留在专用区块，仅用于追溯，不能作为本轮结论。
+<!-- v240-rebase:start -->
+official_old=v2.39.0
+official_new=v2.40.0
+candidate_branch=dev
+candidate_before=b5d4694b1de65c9c2faf9adc063ed8b5719fb9a9
+candidate_after=91ae57de114dae18842e44067563db4493525b30
+overlap_path_count=43
+auto_merge_path_count=31
+overlap_paths=.github/workflows/dev-version-bump.yml,docs-site/src/content/docs/guides/codex-integration.md,docs-site/src/content/docs/reference/configuration/providers.md,docs-site/src/content/docs/reference/proxy-formats.md,docs-site/src/content/docs/zh-cn/guides/codex-integration.md,docs-site/src/content/docs/zh-cn/reference/configuration/providers.md,gui/src/i18n/de.ts,gui/src/i18n/en.ts,gui/src/i18n/fr.ts,gui/src/i18n/ja.ts,gui/src/i18n/ko.ts,gui/src/i18n/ru.ts,gui/src/i18n/tr.ts,gui/src/i18n/zh-TW.ts,gui/src/i18n/zh.ts,package.json,src/adapters/cursor/request-builder.ts,src/adapters/openai-chat.ts,src/adapters/openai-responses.ts,src/cli/models-runtime.ts,src/cli/models.ts,src/codex/catalog/aggregation.ts,src/codex/catalog/provider-fetch.ts,src/codex/inject.ts,src/config.ts,src/providers/registry.ts,src/router.ts,src/server/auth-cors.ts,src/server/management/model-routes.ts,src/server/management/model-rows.ts,src/server/management/provider-routes.ts,src/server/responses/agent-task-recovery.ts,src/server/responses/core.ts,src/types/provider.ts,src/usage/log.ts,structure/04_transports-and-sidecars.md,tests/bump-dev-version.test.ts,tests/openai-responses-passthrough.test.ts,tests/project-config-warnings.test.ts,tests/responses-state.test.ts,tests/server-auth.test.ts,tests/shutdown-launcher.test.ts,tests/update-stop-first.test.ts
+content_conflict_count=12
+content_conflicts=docs-site/src/content/docs/reference/configuration/providers.md,package.json,src/adapters/cursor/request-builder.ts,src/codex/catalog/provider-fetch.ts,src/codex/inject.ts,src/config.ts,src/server/auth-cors.ts,src/server/management/provider-routes.ts,src/server/responses/core.ts,tests/cli-status-json.test.ts,tests/responses-state.test.ts,tests/server-auth.test.ts
+conflict_resolution=官方 v2.40.0 新能力与 Fork 专属兼容能力逐项 union；版本收敛为 2.40.0-ben.1，测试 fixture 使用官方 helper 并保留 Fork listener/namespace 边界
+external_actions=full_release；rebase 默认要求完成验证、双审、annotated Fork Tag、六成员 atomic push 与 GitHub Release；仅用户明确叫停时中止
+tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts
+<!-- v240-rebase:end -->
 
 <!-- v239-rebase:start -->
 official_old=v2.38.0
@@ -831,15 +838,15 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   CSS 未修改。
 - **代码：** `gui/src/pages/Logs.tsx`（blob `3cd4c4684b86a0506e154388aa5d82686b1db674`）；
   `gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`，与官方 v2.39.0 相同）。
-- **9 locale：** `gui/src/i18n/de.ts`（blob `f106b6cefbc25608ddb06c6a6ddb93ce47b6a51b`）；
-  `gui/src/i18n/en.ts`（blob `6d16305d9e9bb009e12bd7ec6338a3de8f084850`）；
-  `gui/src/i18n/fr.ts`（blob `964e57e8cff18422c280411a8b05fe16e452ffb7`）；
-  `gui/src/i18n/ja.ts`（blob `2d0b91b729254c9ff354b8dc18a91234f9a73d54`）；
-  `gui/src/i18n/ko.ts`（blob `c7e3e90b9acdd0537f1c0d60b87bae09ce47f040`）；
-  `gui/src/i18n/ru.ts`（blob `59a18905097d085ba7cc1712b2cf12a152bf6403`）；
-  `gui/src/i18n/tr.ts`（blob `8a02bb70d8d13dc02d0746fdb8e1dd9df86a3ec4`）；
-  `gui/src/i18n/zh-TW.ts`（blob `f0c61d157d573cff890a929103bb7e1ed631b4ac`）；
-  `gui/src/i18n/zh.ts`（blob `84f1bf3ea9f3b9cfb5802ad142362612859afa7f`）。
+- **9 locale：** `gui/src/i18n/de.ts`（blob `9bfe68212c4c6903d68a8a1c7ddba68eec700d0b`）；
+  `gui/src/i18n/en.ts`（blob `d8888146b824876177c8ca0a391ec50dbecdb88e`）；
+  `gui/src/i18n/fr.ts`（blob `daf41357d9829568cf927d3571f7fabe1c617b68`）；
+  `gui/src/i18n/ja.ts`（blob `f23b0a209a6c2b6171e7edfc6c6ce8f7b5e2ba94`）；
+  `gui/src/i18n/ko.ts`（blob `ceed436976c8a79c449468e1213f02314550cb03`）；
+  `gui/src/i18n/ru.ts`（blob `a1d6d15c3481eb95a108c94d92df83b792c9a687`）；
+  `gui/src/i18n/tr.ts`（blob `116549be44eacaf9a65494cf89b51cb54163dd04`）；
+  `gui/src/i18n/zh-TW.ts`（blob `6b7cb7dc6c663ffcc5b0f2c7a690631ce0e23b2a`）；
+  `gui/src/i18n/zh.ts`（blob `60228bcddf5df7442414d9b1a934a4f6f7b5c281`）。
 - **sidecar：** `gui/tests/sidecar-layout.test.ts`（blob `e140a627260bbf952708e7f710874a5f76cc5b2b`，与官方 v2.39.0 相同）；
   `gui/src/styles-dashboard-workspace.css` blob `2b854f57c1b66a9ad4cc0e53fef421f7cf14fc5f`
   也与官方相同。提交 `1476108b3` 是测试契约修正，不是新 CSS 能力。
@@ -914,7 +921,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `deadlineMs`，测试通过预先探测的极大 dead PID 消除共享 runner PID 复用噪声，同时用
   hostile runtime argument 证明调用者不能覆盖周期预算。当前
   `src/responses/state.ts`（blob `b95a1fa2c6d36b9b43269af60d51f5a64e6754ec`）、
-  `tests/responses-state.test.ts`（blob `335bff1d733ee12897153fd1b2ab14eac2b420a3`）。
+  `tests/responses-state.test.ts`（blob `1a4d0a253b4d5991c332de114b34127dd6f30cf3`）。
 - **代码：** `tests/shutdown-launcher.test.ts`、`tests/update-stop-first.test.ts`、
   `tests/cli-status-json.test.ts`。
 - **官方对比：** `v2.39.0:tests/update-stop-first.test.ts`（blob
@@ -922,7 +929,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `fe063d16ef620a148ab425cfffe63a8936d00e52`）已包含 recovery PID cleanup、
   `UPDATE_SPAWN_TIMEOUT_MS`/`PROXY_READY_TIMEOUT_MS` 派生预算，以及 cleanup 后才
   `rmSync` 的防 orphan 顺序。该官方文件不含 `nodeExecutable`；该 token 只出现在当前
-  Fork `tests/shutdown-launcher.test.ts`（blob `781712cb24756d0d2d4dab19039dc7b701d4c3a2`）
+  Fork `tests/shutdown-launcher.test.ts`（blob `c576243cb4fd92829ebb812c98ee254c42942183`）
   明确以 `process.execPath` 绕开
   version-manager shim。Fork 在 `tests/update-stop-first.test.ts` 保留的唯一 host guard
   是 PATH-precedence：Fork PATH-precedence guard（`a1e35b13db14a1686ef0033685d7214184c37743`）
@@ -981,16 +988,17 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 7. **同基线发布竞态：** 完整远端 ben namespace 的最终复核到 atomic push 之间无法对
    尚不存在的 differently named future Tag 建立 wildcard lease；依赖 single publisher，
    push 后必须在 GitHub Release 前复核，发现竞态时保留 immutable Tag 并停止 Release。
-8. **上游版本边界：** 官方 `v2.39.0` 的 `v2.39.0-ben.1` 与 `v2.39.0-ben.2` 均已闭环且
-   保持不可变；ben.2 固定 `IMPLEMENTATION_HEAD=dcfd20012`、
-   `RELEASE_COMMIT=5f72ca85064898d660373af9e182d226e3c1d650`。本维护修订未执行新的
-   上游 rebase；未来新官方稳定版仍必须从发布后的最新已提交 `dev` 候选继续，不得重置回
-   ben.1 或 ben.2 Release commit。
+8. **上游版本边界：** 官方 `v2.39.0` 的 `v2.39.0-ben.1` 与 `v2.39.0-ben.2` 均保持不可变；
+   当前候选已 rebase 到官方 `v2.40.0`，固定
+   `IMPLEMENTATION_HEAD=21fa726f2f2eb54130825fb8ecd2087fa59c4390`，目标为
+   `v2.40.0-ben.1`。双审、Tag、atomic push 与 Release 后验完成前不得宣称 v2.40 Fork
+   Release 已发布。
 9. **并行工作区：** 本清单只按 committed SHA 计算，绝不因工作区中恰好存在其他任务
    文件而把它们混入提交或能力清单。
-10. **React Doctor：** `prepush` 对 changed GUI 的诊断报告官方 `v2.39.0` 已存在的
-    `gui/tests/provider-marks-assets.test.ts:2` unused `readdirSync`；该文件不在 Fork 相对官方
-    的 diff 中，`lint:gui` 与 `build:gui` 均通过，因此本轮按最小修改面不混入修复。
+10. **React Doctor：** `prepush` 对 changed GUI 报告 3 个官方 `v2.40.0` 测试文件中的
+    `eslint/no-unused-vars`：`tests/codex-stale-banner.test.ts:11`、
+    `tests/connect-pairing.test.ts:1`、`tests/provider-capacity-shell.test.tsx:300`。三者均不在
+    Fork 相对官方的 diff 中，GUI lint 已通过，因此本轮按最小修改面不混入修复。
 
 ## Fork 版本、Tag 与 GitHub Release 规则
 
