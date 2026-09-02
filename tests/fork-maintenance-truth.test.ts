@@ -121,6 +121,80 @@ const EXPECTED_V239_BIN_DECISION = "official=hasPendingTeardownIn；fork=forkUpd
 const EXPECTED_V239_PACKAGE_DECISION = "official=version 2.39.0 与 package 表面；fork=install:local 与 ben 版本策略；resolution=保留官方表面并收敛为 2.39.0-ben.1；tests=tests/fork-version-policy.test.ts";
 const EXPECTED_V239_EXTERNAL_ACTIONS = "full_release；rebase 默认要求完成验证、双审、annotated Fork Tag、六成员 atomic push 与 GitHub Release；仅用户明确叫停时中止";
 const EXPECTED_V239_TESTS = "tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts";
+const EXPECTED_V240_OVERLAP_PATHS = [
+  ".github/workflows/dev-version-bump.yml",
+  "docs-site/src/content/docs/guides/codex-integration.md",
+  "docs-site/src/content/docs/reference/configuration/providers.md",
+  "docs-site/src/content/docs/reference/proxy-formats.md",
+  "docs-site/src/content/docs/zh-cn/guides/codex-integration.md",
+  "docs-site/src/content/docs/zh-cn/reference/configuration/providers.md",
+  "gui/src/i18n/de.ts",
+  "gui/src/i18n/en.ts",
+  "gui/src/i18n/fr.ts",
+  "gui/src/i18n/ja.ts",
+  "gui/src/i18n/ko.ts",
+  "gui/src/i18n/ru.ts",
+  "gui/src/i18n/tr.ts",
+  "gui/src/i18n/zh-TW.ts",
+  "gui/src/i18n/zh.ts",
+  "package.json",
+  "src/adapters/cursor/request-builder.ts",
+  "src/adapters/openai-chat.ts",
+  "src/adapters/openai-responses.ts",
+  "src/cli/models-runtime.ts",
+  "src/cli/models.ts",
+  "src/codex/catalog/aggregation.ts",
+  "src/codex/catalog/provider-fetch.ts",
+  "src/codex/inject.ts",
+  "src/config.ts",
+  "src/providers/registry.ts",
+  "src/router.ts",
+  "src/server/auth-cors.ts",
+  "src/server/management/model-routes.ts",
+  "src/server/management/model-rows.ts",
+  "src/server/management/provider-routes.ts",
+  "src/server/responses/agent-task-recovery.ts",
+  "src/server/responses/core.ts",
+  "src/types/provider.ts",
+  "src/usage/log.ts",
+  "structure/04_transports-and-sidecars.md",
+  "tests/bump-dev-version.test.ts",
+  "tests/openai-responses-passthrough.test.ts",
+  "tests/project-config-warnings.test.ts",
+  "tests/responses-state.test.ts",
+  "tests/server-auth.test.ts",
+  "tests/shutdown-launcher.test.ts",
+  "tests/update-stop-first.test.ts",
+] as const;
+const EXPECTED_V240_CONFLICT_PATHS = [
+  "docs-site/src/content/docs/reference/configuration/providers.md",
+  "package.json",
+  "src/adapters/cursor/request-builder.ts",
+  "src/codex/catalog/provider-fetch.ts",
+  "src/codex/inject.ts",
+  "src/config.ts",
+  "src/server/auth-cors.ts",
+  "src/server/management/provider-routes.ts",
+  "src/server/responses/core.ts",
+  "tests/cli-status-json.test.ts",
+  "tests/responses-state.test.ts",
+  "tests/server-auth.test.ts",
+] as const;
+const EXPECTED_V240_KEYS = [
+  "official_old",
+  "official_new",
+  "candidate_branch",
+  "candidate_before",
+  "candidate_after",
+  "overlap_path_count",
+  "auto_merge_path_count",
+  "overlap_paths",
+  "content_conflict_count",
+  "content_conflicts",
+  "conflict_resolution",
+  "external_actions",
+  "tests",
+] as const;
 const EXPECTED_RELEASE_LIFECYCLE = [
   "rebase_branch=dev",
   "rebase_request=full_steps_1_to_15_unless_user_explicitly_stops",
@@ -500,6 +574,24 @@ describe("Fork maintenance truth", () => {
     expect(() => assertSemantics(wrap(valid.replace(EXPECTED_V239_BIN_DECISION, EXPECTED_V239_BIN_DECISION.replace("双方 import 与调用链均保留", "只保留官方"))))).toThrow();
     expect(() => assertSemantics(wrap(valid.replace(EXPECTED_V239_EXTERNAL_ACTIONS, "none；未授权 Tag，但 push 已发生")))).toThrow();
     expect(() => assertSemantics(wrap(valid.replace(EXPECTED_V239_TESTS, "tests/fork-maintenance-truth.test.ts")))).toThrow();
+  });
+
+  test("records the complete current v2.40 overlap and conflict account", () => {
+    const rows = strictKeyValueBlock(changes, "v240-rebase", EXPECTED_V240_KEYS);
+    expect(rows.official_old).toBe("v2.39.0");
+    expect(rows.official_new).toBe("v2.40.0");
+    expect(rows.candidate_branch).toBe("dev");
+    expect(rows.candidate_before).toBe("b5d4694b1de65c9c2faf9adc063ed8b5719fb9a9");
+    expect(rows.candidate_after).toBe("91ae57de114dae18842e44067563db4493525b30");
+    expect(rows.overlap_path_count).toBe("43");
+    expect(rows.auto_merge_path_count).toBe("31");
+    expect(rows.content_conflict_count).toBe("12");
+    expect(rows.overlap_paths?.split(",")).toEqual(EXPECTED_V240_OVERLAP_PATHS);
+    expect(rows.content_conflicts?.split(",")).toEqual(EXPECTED_V240_CONFLICT_PATHS);
+    expect(rows.conflict_resolution).toContain("官方 v2.40.0");
+    expect(rows.conflict_resolution).toContain("Fork");
+    expect(rows.external_actions).toBe(EXPECTED_V239_EXTERNAL_ACTIONS);
+    expect(rows.tests).toBe(EXPECTED_V239_TESTS);
   });
 
   test("records the ben.3 39-to-5 squash boundary and pending external gates", () => {
