@@ -13,11 +13,12 @@ const originalFetch = globalThis.fetch;
 
 const BASE_SETTINGS: DebugSettings = {
   enabled: false,
+  providerText: false,
   usage: false,
   injection: false,
   claude: false,
   runtimeOverride: {},
-  env: { debug: false, usage: false, injection: false, claude: false },
+  env: { debug: false, providerText: false, usage: false, injection: false, claude: false },
 };
 
 function installLayoutStubs(win: Window): void {

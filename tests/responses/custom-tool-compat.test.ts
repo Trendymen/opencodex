@@ -142,10 +142,12 @@ describe("routed custom-tool compatibility", () => {
   test("converted exec preserves the JavaScript input contract", () => {
     const description = convertedInputDescription("exec");
     expect(description).toContain("JavaScript");
-    expect(description).toContain("tools.exec_command");
+    expect(description).toContain("await tools.<name>(...)");
     expect(description).toContain("text(...)");
-    expect(description).toContain("do not provide a bare shell command");
+    expect(description).toContain("Never emit nested tool names");
   });
+
+
 
   test("other converted custom tools keep the generic raw-input contract", () => {
     expect(convertedInputDescription("review_patch"))

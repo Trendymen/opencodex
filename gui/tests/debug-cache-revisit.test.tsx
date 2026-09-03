@@ -18,11 +18,12 @@ const CACHE_KEY = `ocx.debug.settings.v1:${API_BASE}`;
 
 const BASE_SETTINGS: DebugSettings = {
   enabled: true,
+  providerText: false,
   usage: false,
   injection: false,
   claude: false,
   runtimeOverride: {},
-  env: { debug: true, usage: false, injection: false, claude: false },
+  env: { debug: true, providerText: false, usage: false, injection: false, claude: false },
 };
 
 function installLayoutStubs(win: Window): void {

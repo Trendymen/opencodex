@@ -71,6 +71,7 @@ describe("management API /api/debug", () => {
       const body = await res.json();
       expect(body).toMatchObject({
         enabled: false,
+        providerText: false,
         usage: false,
         injection: false,
       });
@@ -88,10 +89,10 @@ describe("management API /api/debug", () => {
       const on = await fetch(new URL("/api/debug", server.url), {
         method: "PUT",
         headers: { "content-type": "application/json", origin },
-        body: JSON.stringify({ debug: true, usage: true, injection: true }),
+        body: JSON.stringify({ debug: true, providerText: true, usage: true, injection: true }),
       });
       expect(on.status).toBe(200);
-      expect(await on.json()).toMatchObject({ enabled: true, usage: true, injection: true });
+      expect(await on.json()).toMatchObject({ enabled: true, providerText: true, usage: true, injection: true });
 
       const reset = await fetch(new URL("/api/debug", server.url), {
         method: "PUT",
@@ -99,7 +100,7 @@ describe("management API /api/debug", () => {
         body: JSON.stringify({ reset: true }),
       });
       expect(reset.status).toBe(200);
-      expect(await reset.json()).toMatchObject({ enabled: false, usage: false, injection: false });
+      expect(await reset.json()).toMatchObject({ enabled: false, providerText: false, usage: false, injection: false });
     } finally {
       await server.stop(true);
     }
