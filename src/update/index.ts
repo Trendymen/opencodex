@@ -17,6 +17,7 @@ import {
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "./tray-update-plan.mjs";
 import { withProcessRuntimeProvenance } from "../lib/bun-runtime";
 import { selfLaunchArgv } from "../lib/self-launch-argv";
+import { forkUpdateDecision } from "../fork/version-policy.mjs";
 
 /**
  * A `codex-history-backup-*.json` surviving a stop means the native-history restore was
@@ -171,9 +172,14 @@ export async function runUpdate(): Promise<void> {
   }
 
   const latest = latestVersion(tag);
-  if (latest && latest === current) {
+  const forkDecision = forkUpdateDecision(latest, current);
+  if (forkDecision === "same") {
     console.log(`Already on the latest ${tag} version (v${latest}).`);
     return;
+  }
+  if (forkDecision === "unresolved") {
+    console.error("⚠️  Could not resolve the registry version for this fork build; aborting before stopping the proxy.");
+    process.exit(1);
   }
 
   // Pre-flight integrity metadata check — runs BEFORE the proxy is stopped so an

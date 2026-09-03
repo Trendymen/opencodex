@@ -16,6 +16,7 @@ import { enrichProviderFromRegistry, shouldCaseFoldMetadataModelId } from "../..
 import { applyProviderContextCap, providerContextCap } from "../../providers/context-cap";
 import { routedSlug, slugEquals, slugEquivalenceKey, slugsEquivalent } from "../../providers/slug-codec";
 import { identifyRoutedModel } from "../../adapters/identity";
+import { finalizeRoutedToolPrompt } from "../../fork/routed-progress-contract";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
 import { fetchCursorUsableModels } from "../../adapters/cursor/live-models";
 import {
@@ -29,7 +30,7 @@ import type { NormalizedComboConfig } from "../../combos/types";
 import { providerDestinationResolvedError } from "../../lib/destination-policy";
 import { redactSecretString } from "../../lib/redact";
 import upstreamModelsSnapshot from "../data/upstream-models.json";
-import { OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
+import { OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
 import { providerCodexAccountMode } from "../../providers/registry";
 import { codexAccountNamespaceEntries, isMainCodexAccountTarget } from "../account-namespaces";
 import { MAIN_CODEX_ACCOUNT_ID } from "../main-account";
@@ -291,6 +292,13 @@ export function deriveEntry(
   exactComboSlugs: ReadonlySet<string> = new Set(),
   contextCap?: NativeContextLimitsInput,
 ): RawEntry {
+  const shouldApplyRoutedProgressContract = model !== undefined
+    && model.codexForwardNativeCapabilityAlias !== true
+    && (model.routedProgressContractEligible === true
+      || (model.routedProgressContractEligible === undefined
+        && model.provider !== COMBO_NAMESPACE
+        && model.provider !== OPENAI_CODEX_PROVIDER_ID
+        && model.provider !== OPENAI_API_PROVIDER_ID));
   const preserveExact = isExactComboCatalogModel(model, exactComboSlugs);
   const codexForwardNativeCapabilityAlias = model?.codexForwardNativeCapabilityAlias === true
     ? upstreamNativeEntry(model.id)
@@ -330,7 +338,10 @@ export function deriveEntry(
       if (typeof e.base_instructions === "string") {
         // Proxy-neutral: keep the GPT-5/OpenAI disclaimer but never advertise the opencodex proxy
         // (leaking that into base_instructions is a non-first-party signature → ToS risk).
-        e.base_instructions = identifyRoutedModel(e.base_instructions, modelName);
+        const identified = identifyRoutedModel(e.base_instructions, modelName);
+        e.base_instructions = shouldApplyRoutedProgressContract
+          ? finalizeRoutedToolPrompt(identified)
+          : identified;
       }
       applyReasoningLevels(
         e,
@@ -385,6 +396,9 @@ export function deriveEntry(
       : {}),
   };
   if (isRouted) {
+    if (shouldApplyRoutedProgressContract) {
+      entry.base_instructions = finalizeRoutedToolPrompt(String(entry.base_instructions ?? ""));
+    }
     applyRoutedCodexToolMode(entry, model?.codexToolMode);
     applyReasoningLevels(entry, model?.reasoningEfforts, model?.defaultReasoningEffort, preserveExact);
   }
