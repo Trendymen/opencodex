@@ -104,7 +104,7 @@ Authorization: Bearer <admin-token>
 | 方法和路径 | 用途 | 典型错误 |
 | --- | --- | --- |
 | `GET /api/logs` | 查询经过过滤的内存请求日志 | — |
-| `GET, PUT /api/debug` | 读取调试标志；设置、清除或重置捕获类别 | 400 无效或空更新 |
+| `GET, PUT /api/debug` | 读取或更新 `debug`、默认关闭的 `providerText`、`usage`、`injection` 与 `claude`；`providerText` 单独授权持久化有界的响应／推理文本样本 | 400 无效或空更新 |
 | `GET /api/debug/logs` | 读取有上限的 provider/debug 日志条目 | — |
 | `GET /api/debug/usage-logs` | 读取有上限的 usage-debug 条目 | — |
 | `GET /api/debug/injection-logs` | 读取有上限的 guidance-injection 调试条目 | — |

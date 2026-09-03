@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { IncomingMeta, ProviderAdapter } from "./base";
-import { namespacedToolName, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
+import { namespacedToolName, toolChoiceToolPredicate, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
 import { catalogModelSupportsReasoningSummaries } from "../codex/catalog";
 import { COMPACT_PROMPT, compactionItemToText, decodeCompactionSummary, isCompactionItemType } from "../responses/compaction";
 import { collectResponsesToolGroups } from "../responses/tool-groups";
@@ -22,6 +22,11 @@ import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-t
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "./xai-web-search";
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "./empty-tool-output-annotation";
+import { CODE_MODE_RESULT_ECHO_SENTENCE, normalizeEmptyExecToolResultText } from "./exec-tool-result-normalize";
+import { isBareShellBridgeTool, isCodexCodeModeExecTool } from "./tool-catalog-nudge";
+import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../fork/glm-kimi-compat";
+import { applyRoutedProgressContractToResponsesBody } from "../fork/routed-progress-contract";
+import { debugResponsesOutboundShape } from "../fork/outbound-debug";
 import {
   isXaiSchemaTarget,
   normalizeXaiToolParameters,
@@ -68,6 +73,7 @@ export function sanitizeReasoningInputContent(
     preserveRawReasoningContent?: boolean;
     dropNullContentChannel?: boolean;
     stripEncryptedContent?: boolean;
+    stripRawContentBackedEncryptedContent?: boolean;
   },
 ): unknown {
   if (!body || typeof body !== "object" || Array.isArray(body)) return body;
@@ -80,13 +86,27 @@ export function sanitizeReasoningInputContent(
     const rec = item as Record<string, unknown>;
     if (rec.type !== "reasoning") return item;
     const hasRawContent = Array.isArray(rec.content) && rec.content.length > 0;
+    const hasRawReasoningText = Array.isArray(rec.content)
+      && rec.content.some(part => part && typeof part === "object" && !Array.isArray(part)
+        && (part as Record<string, unknown>).type === "reasoning_text");
     // ocxr1 envelopes are proxy-minted (Anthropic signatures), not OpenAI encryption — the native
     // backend cannot decrypt them and would reject the request. Strip regardless of content shape.
     const hasOcxEnvelope = typeof rec.encrypted_content === "string" && rec.encrypted_content.startsWith(OCX_REASONING_PREFIX);
     const hasOutputStatus = Object.prototype.hasOwnProperty.call(rec, "status");
     const hasEncryptedContent = Object.prototype.hasOwnProperty.call(rec, "encrypted_content");
     const stripEncryptedContent = hasOcxEnvelope
-      || (opts?.stripEncryptedContent === true && hasEncryptedContent);
+      || (opts?.stripEncryptedContent === true && hasEncryptedContent)
+      // A third-party Responses turn can be interrupted after it has emitted raw reasoning but
+      // before it records a terminal route identity. A later native GPT replay must not carry
+      // that provider's opaque continuation token alongside the raw content it came with. Native
+      // OpenAI reasoning items are summary-only on replay, so this leaves their own opaque blobs
+      // intact while dropping the observed cross-provider shape.
+      || (
+        opts?.stripRawContentBackedEncryptedContent === true
+        && hasRawReasoningText
+        && hasEncryptedContent
+        && !(typeof rec.encrypted_content === "string" && rec.encrypted_content.startsWith("gAAAA"))
+      );
     // Codex serializes an absent reasoning content channel as `"content": null`. The field is
     // optional and null carries nothing, but a strict gateway rejects the item on its declared type
     // — xAI answers `Could not decode the compaction blob`, naming the sibling `encrypted_content`
@@ -894,6 +914,21 @@ function repairOversizedReplayCallIds(body: unknown): unknown {
   return changed ? { ...body, input } : body;
 }
 
+function isRoutedCodeModeExecOutputGuardEligible(
+  parsed: OcxParsedRequest,
+  body: unknown,
+  provider: OcxProviderConfig,
+): boolean {
+  if (parsed._compactionRequest === true) return false;
+  if (isOpenAiOperatedResponsesDestination(provider)) return false;
+  if (!isPlainObject(body) || typeof body.instructions !== "string") return false;
+
+  const tools = parsed.context.tools ?? [];
+  const visible = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
+  return visible.some(isCodexCodeModeExecTool)
+    && !visible.some(isBareShellBridgeTool);
+}
+
 /** Flatten a Responses tool-output `output` value (string or content-part array) to plain text. */
 function toolOutputText(output: unknown): string {
   if (typeof output === "string") return output;
@@ -904,6 +939,82 @@ function toolOutputText(output: unknown): string {
     if (part.type === "refusal" && typeof part.refusal === "string") return `[refusal] ${part.refusal}`;
     return "";
   }).filter(Boolean).join("\n");
+}
+
+/** Preserve invalid call-ID-less tool results as truthful text carriers for strict Responses APIs. */
+function repairCallIdlessToolOutputs(
+  body: unknown,
+  options?: { omitInputImages?: boolean },
+): unknown {
+  if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!isPlainObject(item)) return item;
+    if (item.type !== "function_call_output" && item.type !== "custom_tool_call_output") return item;
+    if (typeof item.call_id === "string" && item.call_id.trim().length > 0) return item;
+
+    changed = true;
+    const toolName = typeof item.name === "string" && item.name.trim().length > 0
+      ? item.name.trim()
+      : "unknown tool";
+    const output = options?.omitInputImages === true
+      ? stripInputImagesDeep(item.output)
+      : item.output;
+    return {
+      type: "message",
+      role: "user",
+      content: [{
+        type: "input_text",
+        text: `[unlinked tool output from ${toolName}; original call_id missing]\n${toolOutputText(output)}`,
+      }],
+    };
+  });
+  return changed ? { ...body, input } : body;
+}
+
+type CustomCallOccurrence = {
+  count: number;
+  call: Record<string, unknown>;
+};
+
+function normalizePairedCodeModeExecOutputs(body: unknown): unknown {
+  if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
+
+  const calls = new Map<string, CustomCallOccurrence>();
+  for (const item of body.input) {
+    if (!isPlainObject(item) || item.type !== "custom_tool_call") continue;
+    if (typeof item.call_id !== "string" || item.call_id.trim().length === 0) continue;
+    const occurrence = calls.get(item.call_id);
+    if (occurrence) occurrence.count += 1;
+    else calls.set(item.call_id, { count: 1, call: item });
+  }
+
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!isPlainObject(item) || item.type !== "custom_tool_call_output") return item;
+    if (typeof item.call_id !== "string" || item.call_id.trim().length === 0) return item;
+    if (typeof item.output !== "string") return item;
+
+    const occurrence = calls.get(item.call_id);
+    if (!occurrence || occurrence.count !== 1) return item;
+    if (occurrence.call.name !== "exec" || occurrence.call.namespace !== undefined) return item;
+
+    const normalized = normalizeEmptyExecToolResultText(item.output, { toolName: "exec" });
+    if (normalized === undefined || normalized === item.output) return item;
+    changed = true;
+    return { ...item, output: normalized };
+  });
+
+  return changed ? { ...body, input } : body;
+}
+
+function appendCodeModeResultEchoSentence(body: unknown): unknown {
+  if (!isPlainObject(body) || typeof body.instructions !== "string") return body;
+  if (body.instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)) return body;
+  const instructions = body.instructions.length > 0
+    ? `${body.instructions}\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}`
+    : CODE_MODE_RESULT_ECHO_SENTENCE;
+  return { ...body, instructions };
 }
 
 /** True when a Responses tool output item is present but carries no usable content. */
@@ -1275,6 +1386,7 @@ function normalizeResponsesToolResultAdjacency(body: unknown): unknown {
  *   strictly better even when the local replay state missed. API-key mode keeps the field on
  *   unexpanded requests: the platform `/v1/responses` supports real server-side storage.
  */
+
 function stripPreviousResponseId(body: unknown, strip: boolean): unknown {
   if (!strip || !isPlainObject(body) || !Object.prototype.hasOwnProperty.call(body, "previous_response_id")) return body;
   const { previous_response_id: _previousResponseId, ...rest } = body;
@@ -2159,6 +2271,11 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       outBody = applyTierDecisionToResponsesBody(outBody, parsed.options?.tierDecision);
       const stateless = provider.statelessResponses === true;
       if (stateless) outBody = stripStatefulResponsesParams(outBody);
+      const codeModeExecOutputGuardEligible = isRoutedCodeModeExecOutputGuardEligible(
+        parsed,
+        outBody,
+        provider,
+      );
       // A replay miss can leave a function_call_output whose paired function_call sat
       // in the prefix that was never expanded. A stateless upstream cannot resolve the
       // pair from its own storage either, so it needs the same repair the forward
@@ -2166,6 +2283,13 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // reaches the wire is unparseable.
       if (provider.annotateEmptyToolOutputs === true) {
         outBody = annotateEmptyResponsesToolOutputs(outBody, true);
+      }
+      outBody = repairCallIdlessToolOutputs(outBody, {
+        omitInputImages: parsed._compactionRequest === true
+          && !isCanonicalOpenAiForwardProvider(provider),
+      });
+      if (codeModeExecOutputGuardEligible) {
+        outBody = normalizePairedCodeModeExecOutputs(outBody);
       }
       if (forward || stateless) {
         outBody = repairOrphanedInputItems(outBody, unexpandedMiss, stateless && !forward);
@@ -2249,6 +2373,20 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (parsed._compactionRequest === true && !isCanonicalOpenAiForwardProvider(provider)) {
         outBody = buildRoutedCompactionBody(outBody);
       }
+      if (codeModeExecOutputGuardEligible) {
+        outBody = appendCodeModeResultEchoSentence(outBody);
+      }
+      if (parsed._compactionRequest !== true && !isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = applyRoutedProgressContractToResponsesBody(outBody);
+      }
+      const glmKimiCompatibility = applyGlmKimiOutboundCompatibility({
+        body: outBody,
+        provider,
+        modelId: parsed.modelId,
+        threadId: incoming.headers.get("thread-id") ?? incoming.headers.get("thread_id"),
+        url,
+      });
+      outBody = glmKimiCompatibility.body;
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       const sanitizedBody = normalizeToolSchemas(
         stripSparkCompatibility(
@@ -2266,6 +2404,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
                       preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
                       dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
                       stripEncryptedContent: threadServingIdentityChanged,
+                      stripRawContentBackedEncryptedContent: isOpenAiOperatedResponsesDestination(provider),
                     },
                   ),
                 ),
@@ -2294,9 +2433,29 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         actualServiceTier,
       );
       const body = JSON.stringify(finalBody);
+      const bodyBytes = new TextEncoder().encode(body).byteLength;
+      persistKimiToolSchemaCatalog({
+        body: finalBody,
+        provider,
+        modelId: parsed.modelId,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+        url,
+      });
+      debugResponsesOutboundShape({
+        url,
+        provider,
+        model: parsed.modelId,
+        body: finalBody,
+        bodyBytes,
+        convertedCustomToolNames: convertedRoutedCustomToolNames,
+        convertedToolSearchNames: convertedRoutedToolSearchNames,
+        convertedNamespaceAliases: convertedRoutedNamespaceToolAliases,
+        kimiToolSchemaLowering: glmKimiCompatibility.kimiToolSchemaLowering,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+      });
       const releaseBodyObservation = translatorBudget.observeExternallyCapped(
         "passthrough_serialization",
-        new TextEncoder().encode(body).byteLength,
+        bodyBytes,
       );
       return {
         url,
@@ -2304,6 +2463,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         headers,
         body,
         releaseBodyObservation,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
         ...(convertedRoutedCustomToolNames ? { convertedRoutedCustomToolNames } : {}),
         ...(routedCustomToolRepairNames ? { routedCustomToolRepairNames } : {}),
         ...(convertedRoutedToolSearchNames ? { convertedRoutedToolSearchNames } : {}),

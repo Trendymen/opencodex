@@ -701,6 +701,11 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
     "omitReasoningEffortWithToolsModels",
   );
   if (toolReasoningOptOutError) return `provider ${name} ${toolReasoningOptOutError}`;
+  const messagePhaseInferenceError = nonBlankStringArrayConfigError(
+    raw.inferResponsesMessagePhaseModels,
+    "inferResponsesMessagePhaseModels",
+  );
+  if (messagePhaseInferenceError) return `provider ${name} ${messagePhaseInferenceError}`;
   const openRouterError = openRouterRoutingConfigError(typed);
   if (openRouterError) return `provider ${name} ${openRouterError}`;
   const vercelError = vercelGatewayRoutingConfigError(typed);
@@ -799,6 +804,7 @@ export function safeConfigDTO(config: OcxConfig): unknown {
       "upstreamHttpVersion",
       "autoToolChoiceOnlyModels",
       "preserveReasoningContentModels",
+      "inferResponsesMessagePhaseModels",
       "requiresReasoningPlaceholderModels",
       "escapeBuiltinToolNames",
     ] as const) {

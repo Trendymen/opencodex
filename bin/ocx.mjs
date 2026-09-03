@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";
 import { npmInvocation } from "../src/update/npm-invocation.mjs";
 import { hasPendingTeardownIn } from "../src/config/pending-teardown-names.mjs";
+import { forkUpdateDecision } from "../src/fork/version-policy.mjs";
 import {
   npmCachePreflightFailureMessage,
   runNpmCachePreflight,
@@ -144,9 +145,18 @@ function runNpmSelfUpdate() {
   const latest = latestResult.status === 0 ? latestResult.stdout.trim() : "";
 
   console.log(`opencodex v${current} (installed via npm, tag ${tag})`);
-  if (latest && latest === current) {
+  const forkDecision = forkUpdateDecision(latest || null, current, tag);
+  if (forkDecision === "same") {
     console.log(`Already on the latest ${tag} version (v${latest}).`);
     process.exit(0);
+  }
+  if (forkDecision === "unresolved") {
+    console.error("opencodex: could not resolve the registry version for this fork build; aborting before stopping the proxy.");
+    process.exit(1);
+  }
+  if (forkDecision === "older") {
+    console.error(`opencodex: registry target v${latest} is older than this fork build; refusing to downgrade this fork build.`);
+    process.exit(1);
   }
 
   const cachePreflight = runNpmCachePreflight();
@@ -586,6 +596,8 @@ if (!codexCliUpdateInspection && isNodeModulesInstall() && !isBunGlobalInstall()
     const probe = bootRestoreProbe(resolve(here, ".."));
     if (probe.action === "restored") {
       console.warn(`opencodex: previous update left a broken install — restored the backup from ${probe.from}.`);
+    } else if (probe.action === "aborted") {
+      console.warn("opencodex: cleared a completed or abandoned package transaction marker.");
     } else if (probe.action === "failed") {
       console.warn(`opencodex: a backup from a failed update exists but could not be restored automatically: ${probe.error}`);
     }

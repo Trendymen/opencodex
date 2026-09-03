@@ -15,7 +15,7 @@ export function DebugSettingsPanel({
   debug: DebugSettings;
   debugBusy: boolean;
   stream: LogStream;
-  onSetFlag: (flag: "debug" | "usage" | "injection" | "claude", enabled: boolean) => void;
+  onSetFlag: (flag: "debug" | "providerText" | "usage" | "injection" | "claude", enabled: boolean) => void;
   onReset: () => void;
   onStreamChange: (stream: LogStream) => void;
 }) {
@@ -25,7 +25,7 @@ export function DebugSettingsPanel({
     <div className="card" style={{ marginBottom: 16, padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-          {(["debug", "usage", "injection", "claude"] as const).map(flag => {
+          {(["debug", "providerText", "usage", "injection", "claude"] as const).map(flag => {
             const checked = isDebugFlagEnabled(debug, flag);
             return (
               <div key={flag} style={{ display: "inline-flex", alignItems: "center", gap: 10, minWidth: 220 }}>

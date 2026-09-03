@@ -11,6 +11,17 @@ import { readFileSync } from "node:fs";
  * already refuses it. Validate at ingress so all three paths agree.
  */
 const ALLOWED_INPUT_MODALITIES = new Set(["text", "image", "audio"]);
+const CUSTOM_MODEL_TOOL_MODES = new Set(["code_mode_only", "shell"]);
+
+function readPostedCustomModelToolMode(
+  body: Record<string, unknown>,
+): { value?: "code_mode_only" | "shell"; error?: string } {
+  if (!Object.hasOwn(body, "codexToolMode")) return {};
+  if (typeof body.codexToolMode !== "string" || !CUSTOM_MODEL_TOOL_MODES.has(body.codexToolMode)) {
+    return { error: "codexToolMode must be code_mode_only or shell" };
+  }
+  return { value: body.codexToolMode as "code_mode_only" | "shell" };
+}
 
 function readInputModalities(raw: unknown): { values?: string[]; error?: string } {
   if (raw === undefined) return {};
@@ -20,14 +31,16 @@ function readInputModalities(raw: unknown): { values?: string[]; error?: string 
   // answering 200 — the opposite of the contract this validator exists to state. An empty
   // array stays valid: that is how `ocx models edit --modalities -` clears the field.
   const rejected: string[] = [];
+  const values: string[] = [];
   for (const value of raw) {
     if (typeof value !== "string") return { error: "inputModalities must contain only strings" };
     if (!ALLOWED_INPUT_MODALITIES.has(value)) rejected.push(value);
+    else if (!values.includes(value)) values.push(value);
   }
   if (rejected.length > 0) {
     return { error: `unsupported input modality: ${rejected.join(", ")} (allowed: text, image, audio)` };
   }
-  return { values: raw as string[] };
+  return { values };
 }
 
 /**
@@ -55,9 +68,17 @@ function readReasoningEfforts(raw: unknown): { values?: string[]; error?: string
 }
 
 /** Default effort must be a ladder member that the declared ladder actually includes. */
-function readDefaultReasoningEffort(raw: unknown, efforts: string[] | undefined): { value?: string; error?: string } {
+function readDefaultReasoningEffort(
+  raw: unknown,
+  efforts: string[] | undefined,
+  allowNullClear = false,
+): { value?: string; error?: string } {
   if (raw === undefined) return {};
-  if (raw === null) return { value: undefined };
+  if (raw === null) {
+    return allowNullClear
+      ? { value: undefined }
+      : { error: "defaultReasoningEffort must be one of: none, minimal, low, medium, high, xhigh, max, ultra" };
+  }
   if (typeof raw !== "string" || !isDeclaredReasoningEffort(raw)) {
     return { error: "defaultReasoningEffort must be one of: none, minimal, low, medium, high, xhigh, max, ultra" };
   }
@@ -102,6 +123,7 @@ import { deriveProviderPresets } from "../../providers/derive";
 import { providerCodexAccountMode } from "../../providers/registry";
 import { encodedModelIdCollides, routedSlug, slugEquals } from "../../providers/slug-codec";
 import { knownModelIdsForProvider } from "../../router";
+import { customModelsCandidateError, knownCustomModelProjection } from "../../config/custom-models";
 import { effectiveModelAliases, MODEL_ALIAS_PATTERN } from "../../providers/default-aliases";
 import { isValidModelDiscoveryModelId } from "../../providers/model-discovery-limits";
 import { comboPublicModelId } from "../../combos/types";
@@ -642,7 +664,7 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
   }
 
   if (url.pathname === "/api/custom-models" && req.method === "GET") {
-    return jsonResponse(config.customModels ?? []);
+    return jsonResponse((config.customModels ?? []).map(knownCustomModelProjection));
   }
 
   if (url.pathname === "/api/custom-models" && req.method === "POST") {
@@ -650,14 +672,30 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
     try { parsedBody = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     if (!isPlainRecord(parsedBody)) return jsonResponse({ error: "invalid JSON body" }, 400);
     const body = parsedBody;
-    const provider = typeof body.provider === "string" ? body.provider.trim() : "";
-    const modelId = typeof body.modelId === "string" ? body.modelId.trim() : "";
-    if (!provider || !modelId) return jsonResponse({ error: "provider and modelId are required" }, 400);
+    if (typeof body.provider !== "string" || body.provider.length === 0 || body.provider !== body.provider.trim()
+      || typeof body.modelId !== "string" || body.modelId.length === 0 || body.modelId !== body.modelId.trim()) {
+      return jsonResponse({ error: "provider and modelId must be non-empty trimmed strings" }, 400);
+    }
+    const provider = body.provider;
+    const modelId = body.modelId;
     if (!isValidProviderName(provider)) return jsonResponse({ error: "invalid provider name" }, 400);
     if (!hasOwnProvider(config.providers, provider)) return jsonResponse({ error: "provider not configured" }, 404);
-    const displayName = typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : undefined;
-    if (displayName?.includes("/")) return jsonResponse({ error: "displayName must not contain /" }, 400);
-    const contextWindow = typeof body.contextWindow === "number" && body.contextWindow > 0 ? Math.floor(body.contextWindow) : undefined;
+    let displayName: string | undefined;
+    if (Object.hasOwn(body, "displayName")) {
+      if (typeof body.displayName !== "string" || body.displayName.length === 0
+        || body.displayName !== body.displayName.trim() || body.displayName.includes("/")) {
+        return jsonResponse({ error: "displayName must be a non-empty trimmed string without /" }, 400);
+      }
+      displayName = body.displayName;
+    }
+    let contextWindow: number | undefined;
+    if (Object.hasOwn(body, "contextWindow")) {
+      if (typeof body.contextWindow !== "number" || !Number.isFinite(body.contextWindow)
+        || !Number.isInteger(body.contextWindow) || body.contextWindow <= 0) {
+        return jsonResponse({ error: "contextWindow must be a positive integer" }, 400);
+      }
+      contextWindow = body.contextWindow;
+    }
     const modalities = readInputModalities(body.inputModalities);
     if (modalities.error) return jsonResponse({ error: modalities.error }, 400);
     const inputModalities = modalities.values;
@@ -665,6 +703,8 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
     if (reasoning.error) return jsonResponse({ error: reasoning.error }, 400);
     const defaultEffort = readDefaultReasoningEffort(body.defaultReasoningEffort, reasoning.values);
     if (defaultEffort.error) return jsonResponse({ error: defaultEffort.error }, 400);
+    const toolMode = readPostedCustomModelToolMode(body);
+    if (toolMode.error) return jsonResponse({ error: toolMode.error }, 400);
     const existing = config.customModels ?? [];
     const newSlug = routedSlug(provider, modelId);
     if (existing.some(cm => routedSlug(cm.provider, cm.modelId) === newSlug)) {
@@ -683,12 +723,15 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
       ...(inputModalities && inputModalities.length > 0 ? { inputModalities } : {}),
       ...(reasoning.values !== undefined ? { reasoningEfforts: reasoning.values } : {}),
       ...(defaultEffort.value ? { defaultReasoningEffort: defaultEffort.value } : {}),
+      ...(toolMode.value ? { codexToolMode: toolMode.value } : {}),
       addedAt: new Date().toISOString(),
     };
+    const entryError = customModelsCandidateError([entry]);
+    if (entryError) return jsonResponse({ error: entryError }, 400);
     config.customModels = [...existing, entry];
     persistConfig(config);
     const catalogRefresh = await convergeCodexCatalog();
-    return jsonResponse({ ...entry, catalogRefresh }, 201);
+    return jsonResponse({ ...knownCustomModelProjection(entry), catalogRefresh }, 201);
   }
 
   const customPutMatch = url.pathname.match(/^\/api\/custom-models\/([^/]+)$/);
@@ -703,16 +746,31 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
     const idx = list.findIndex(cm => cm.id === id);
     if (idx === -1) return jsonResponse({ error: "not found" }, 404);
     const cm = { ...list[idx] };
-    if (typeof body.modelId === "string" && body.modelId.trim()) {
-      cm.modelId = body.modelId.trim();
+    if (Object.hasOwn(body, "modelId")) {
+      if (typeof body.modelId !== "string" || body.modelId.length === 0 || body.modelId !== body.modelId.trim()) {
+        return jsonResponse({ error: "modelId must be a non-empty trimmed string" }, 400);
+      }
+      cm.modelId = body.modelId;
     }
-    if (body.displayName !== undefined) {
-      const dn = typeof body.displayName === "string" ? body.displayName.trim() : "";
-      if (dn.includes("/")) return jsonResponse({ error: "displayName must not contain /" }, 400);
-      cm.displayName = dn || undefined;
+    if (Object.hasOwn(body, "displayName")) {
+      if (body.displayName === "") {
+        cm.displayName = undefined;
+      } else if (typeof body.displayName !== "string" || body.displayName !== body.displayName.trim()
+        || body.displayName.includes("/")) {
+        return jsonResponse({ error: "displayName must be a trimmed string without /, or empty to clear" }, 400);
+      } else {
+        cm.displayName = body.displayName;
+      }
     }
-    if (body.contextWindow !== undefined) {
-      cm.contextWindow = typeof body.contextWindow === "number" && body.contextWindow > 0 ? Math.floor(body.contextWindow) : undefined;
+    if (Object.hasOwn(body, "contextWindow")) {
+      if (body.contextWindow === null) {
+        cm.contextWindow = undefined;
+      } else if (typeof body.contextWindow !== "number" || !Number.isFinite(body.contextWindow)
+        || !Number.isInteger(body.contextWindow) || body.contextWindow <= 0) {
+        return jsonResponse({ error: "contextWindow must be a positive integer, or null to clear" }, 400);
+      } else {
+        cm.contextWindow = body.contextWindow;
+      }
     }
     if (body.inputModalities !== undefined) {
       const edited = readInputModalities(body.inputModalities);
@@ -732,9 +790,18 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
       }
     }
     if (body.defaultReasoningEffort !== undefined) {
-      const edited = readDefaultReasoningEffort(body.defaultReasoningEffort, cm.reasoningEfforts);
+      const edited = readDefaultReasoningEffort(body.defaultReasoningEffort, cm.reasoningEfforts, true);
       if (edited.error) return jsonResponse({ error: edited.error }, 400);
       cm.defaultReasoningEffort = edited.value;
+    }
+    if (Object.hasOwn(body, "codexToolMode")) {
+      if (body.codexToolMode === null) {
+        delete cm.codexToolMode;
+      } else if (typeof body.codexToolMode === "string" && CUSTOM_MODEL_TOOL_MODES.has(body.codexToolMode)) {
+        cm.codexToolMode = body.codexToolMode as "code_mode_only" | "shell";
+      } else {
+        return jsonResponse({ error: "codexToolMode must be code_mode_only, shell, or null" }, 400);
+      }
     }
     // Mirror of the POST invariant: a default only survives as a member of the final ladder.
     // Without this, a ladder shrink/clear on a row that was created with a default leaves a
@@ -746,21 +813,26 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
         cm.defaultReasoningEffort = undefined;
       }
     }
-    const updatedSlug = routedSlug(cm.provider, cm.modelId);
-    if (list.some((other, i) => i !== idx && routedSlug(other.provider, other.modelId) === updatedSlug)) {
-      return jsonResponse({ error: "duplicate model" }, 409);
-    }
-    const known = knownModelIdsForProvider(cm.provider, config.providers[cm.provider], {
-      customModels: list.filter((_, i) => i !== idx),
-    });
-    if (encodedModelIdCollides(cm.modelId, known)) {
-      return jsonResponse({ error: "ambiguous model id" }, 409);
+    const rowError = customModelsCandidateError([cm]);
+    if (rowError) return jsonResponse({ error: rowError }, 400);
+    const identityChanged = cm.modelId !== list[idx]!.modelId;
+    if (identityChanged) {
+      const updatedSlug = routedSlug(cm.provider, cm.modelId);
+      if (list.some((other, i) => i !== idx && routedSlug(other.provider, other.modelId) === updatedSlug)) {
+        return jsonResponse({ error: "duplicate model" }, 409);
+      }
+      const known = knownModelIdsForProvider(cm.provider, config.providers[cm.provider], {
+        customModels: list.filter((_, i) => i !== idx),
+      });
+      if (encodedModelIdCollides(cm.modelId, known)) {
+        return jsonResponse({ error: "ambiguous model id" }, 409);
+      }
     }
     list[idx] = cm;
     config.customModels = list;
     persistConfig(config);
     const catalogRefresh = await convergeCodexCatalog();
-    return jsonResponse({ ...cm, catalogRefresh });
+    return jsonResponse({ ...knownCustomModelProjection(cm), catalogRefresh });
   }
 
   const customDelMatch = url.pathname.match(/^\/api\/custom-models\/([^/]+)$/);

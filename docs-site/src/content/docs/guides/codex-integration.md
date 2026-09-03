@@ -307,6 +307,20 @@ The selected provider must support function/tool calling. A text-only provider w
 support cannot use `exec`, Browser, or Computer Use. Native OpenAI rows keep their upstream tool
 mode unchanged.
 
+For a tool-enabled third-party route, opencodex also adds provider-neutral progress guidance. It
+asks the model to send a short ordinary assistant message before the first tool call, at meaningful
+milestones, before long operations, after no more than four consecutive tool-only responses, and
+promptly after a new user message. Before adding the guidance, opencodex rewrites the known
+GPT-specific channel overview, intermediate-update section, compaction wording, and skill notices
+into ordinary-assistant language. The resulting routed prompt uses no Codex-specific phase or channel names and
+honors an explicit user request for silence or a different cadence. Native ChatGPT and public
+OpenAI Responses prompts remain unchanged. When the task is complete, the model is asked to send
+one self-contained ordinary assistant response that clearly states the result.
+
+This is model guidance, not fabricated output: opencodex never synthesizes an assistant progress
+message. When provider debug is enabled, the outbound shape reports only the instruction byte count
+and `routedProgressContractPresent`; it does not log the instruction text.
+
 After `ocx sync` changes this metadata, restart Codex App and open a fresh task. Existing app-server
 processes and tasks may retain the catalog and tool plan they loaded at startup.
 
