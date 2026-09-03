@@ -105,6 +105,16 @@ when a maintainer steps down.
   version and `mode=repair`, then merge the repair pull request. Design:
   `devlog/_plan/260904_release_version_line/`.
 
+- `dev` may continue receiving ordinary commits after a Fork Release without changing
+  its package version; sharing the latest immutable Release version does not make those
+  later commits another published artifact. Actual publication still requires a new,
+  unused immutable Tag and the applicable release gates.
+
+  `.github/workflows/dev-version-bump.yml` remains an optional convenience for ordinary
+  upstream stable/preview releases. Fork `ben.N` releases are explicit no-ops and never
+  force an unrelated `dev` bump. The workflow runs from the default branch and can only
+  open a reviewed pull request; it never pushes directly to protected `dev`.
+
 ## The retired `dev2-go` line
 
 `dev2-go` was a parallel integration line that rebuilt the runtime as a Go
