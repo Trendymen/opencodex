@@ -35,13 +35,13 @@
 | 官方 Tag commit | `35ff3a462e786bd5efc394dfb1a8a5cc946e454f` |
 | 当前上游最新稳定 Release | `v2.40.0`（`35ff3a462e786bd5efc394dfb1a8a5cc946e454f`），即本轮 rebase 基线 |
 | 当前 ben.1 `IMPLEMENTATION_HEAD` | `df73ecba72a50739e4060133928d5cb16d15bf4f`；包含完整 v2.40 rebase、冲突 union、`2.40.0-ben.1` 版本、维护真源门禁、用户授权的 catalog 断言与初轮双审 Important 修复 |
-| 当前 ben.2 `IMPLEMENTATION_HEAD` | `6ed25164b01145978c9fcecfc725482b78e72b88`；以用户最终指示恢复同基线单一 `sync/v2.40.0` 指针、精确 lease 强推与本地三 ref CAS；旧 `0117262ef90170e515b69f0ef513b01140e73bb4` 的 revision-specific 方案不再是发布候选 |
+| 当前 ben.2 `IMPLEMENTATION_HEAD` | `6f46b90155d65b543f8c16e9b16030c19ff0a1c4`；在单一 `sync/v2.40.0` leased-force 规则上补齐两个活跃流程、本地三 ref CAS 契约与最小审计命令；旧 revision-specific 方案不再是发布候选 |
 | Fork 包版本 | `2.40.0-ben.2` |
 | 本轮派生 Tag | `v2.40.0-ben.2`（目标）；仅在最终验证与双审通过后创建新的中文 annotated Tag，不移动 `v2.40.0-ben.1` |
 | 同步分支 | 每个官方基线只使用一个可移动 Release 指针；本轮以精确 expected-OID lease 将既有 `sync/v2.40.0=f219dc999012c56ecf3b74e1fe66f4f89311d25b` 强制更新到 ben.2 `RELEASE_COMMIT`，禁止创建 `sync/v2.40.0-ben.2` |
 | ben.1 实现修改面 | 171 个文件，新增 27,927 行，删除 605 行（相对 `v2.40.0`，不含本轮后续末尾文档提交） |
-| ben.2 实现修改面 | 固定 `IMPLEMENTATION_HEAD=6ed25164b01145978c9fcecfc725482b78e72b88`：相对官方 `v2.40.0` 为 171 个文件、`+28,701/-605`；相对压缩后候选为 5 个文件、`+235/-82` |
-| ben.2 最终本地门禁 | 绑定 `IMPLEMENTATION_HEAD=6ed25164b01145978c9fcecfc725482b78e72b88`：focused 27 pass / 0 fail / 668 expect calls；完整 `bun run prepush` 退出 0，parallel 主套件 17,667 pass / 14 skip / 0 fail / 399,471 expect calls，全部 serial lanes、typecheck 与 privacy scan 完成；GUI 无改动，lint/doctor 按规则跳过 |
+| ben.2 实现修改面 | 固定 `IMPLEMENTATION_HEAD=6f46b90155d65b543f8c16e9b16030c19ff0a1c4`：相对官方 `v2.40.0` 为 171 个文件、`+28,761/-605`；相对压缩后候选为 5 个文件、`+299/-86` |
+| ben.2 最终本地门禁 | 绑定 `IMPLEMENTATION_HEAD=6f46b90155d65b543f8c16e9b16030c19ff0a1c4`：focused 27 pass / 0 fail / 696 expect calls；完整 `bun run prepush` 退出 0，parallel 17,667 pass / 14 skip / 0 fail / 244,389 expect calls，全部 serial lanes、typecheck 与 privacy scan 完成；GUI 无改动，lint/doctor 按规则跳过 |
 | ben.1 最终本地门禁 | 绑定 `IMPLEMENTATION_HEAD=df73ecba7`：三项 reviewer finding 与维护真源 focused 84 pass / 0 fail / 1,153 assertions；完整 `bun run prepush` 首次仅有未修改 Issue #702 用例撞到 5 秒负载超时，单独复跑 1 pass / 0 fail；第二次完整 prepush 退出 0，parallel 主套件 17,665 pass / 14 skip / 0 fail / 398,488 assertions，全部 serial lanes、typecheck、GUI lint、privacy scan 与 React Doctor 完成 |
 | 外部发布状态 | [`v2.40.0-ben.1`](https://github.com/Trendymen/opencodex/releases/tag/v2.40.0-ben.1) 保持不可变且已闭环；`v2.40.0-ben.2` 已获用户明确授权，当前仅处于本地候选准备阶段，尚未创建 Tag、push 或 GitHub Release |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
@@ -176,25 +176,30 @@ release_refs=main-sync-tags-release-immutable
   `f219dc999012c56ecf3b74e1fe66f4f89311d25b`，atomic push 使用该 ref 的精确
   expected-OID lease 与 `+RELEASE_COMMIT:refs/heads/sync/v2.40.0` 强制更新；不要求
   fast-forward 或 ancestry，但 lease 漂移仍 fail closed。
-- **修改范围：** 固定 `IMPLEMENTATION_HEAD=6ed25164b01145978c9fcecfc725482b78e72b88`。
+- **修改范围：** 固定 `IMPLEMENTATION_HEAD=6f46b90155d65b543f8c16e9b16030c19ff0a1c4`。
   本轮不新增 runtime、Provider、adapter、GUI 或公共 API 行为；相对压缩后候选只修改
   `AGENTS.local.md`、`FORK_CHANGES.md`、`docs/fork-sync-automation.md`、`package.json` 和
-  `tests/fork-maintenance-truth.test.ts`，合计 `+235/-82`。相对官方基线仍为 171 个文件、
-  `+28,701/-605`。
+  `tests/fork-maintenance-truth.test.ts`，合计 `+299/-86`。相对官方基线仍为 171 个文件、
+  `+28,761/-605`。
 - **TDD 证据：** 单一可移动 sync 指针契约先在旧 revision-specific 正文上得到
   18 pass / 3 fail，失败精确命中六成员 refset、`sync-audit-ref-policy` 与旧 ancestry 门禁；
   实现后 `bun test tests/fork-maintenance-truth.test.ts` 为 21 pass / 0 fail /
   630 expect calls，`git diff --check` 通过。
 - **双审状态：** R1 两位 reviewer 的 FAIL 针对已被用户撤销的 revision-specific sync 方案；
   新方案不以修补该方案继续，而是按用户最终规则恢复单一 sync 指针强推。R2 仍须复用原
-  reviewer，携带完整 PRIOR_FINDINGS、用户规则取代说明、新 diff 与新验证证据重新判定。
-- **最终验证：** 绑定 `IMPLEMENTATION_HEAD=6ed25164b01145978c9fcecfc725482b78e72b88` 的
-  focused gate 为 27 pass / 0 fail / 668 expect calls；完整 `bun run prepush` 退出 0：parallel
-  主套件 17,667 pass / 14 skip / 0 fail / 399,471 expect calls，全部 serial lanes、typecheck
-  与 privacy scan 通过；GUI 无改动，lint/doctor 按规则跳过。未沿用旧
-  `0117262ef90170e515b69f0ef513b01140e73bb4` 的验证。
-- **发布状态：** 当前已固定新规则实现 SHA并通过完整门禁；本提交作为只修改
-  `FORK_CHANGES.md` 的 R2 docs-only `RELEASE_COMMIT` 候选，尚待复用原 reviewer 复审。未创建本地
+  reviewer，携带完整 PRIOR_FINDINGS、用户规则取代说明、新 diff 与新验证证据重新判定。R2
+  `SPEC_COMPLIANCE` 又发现一个 Important：automation 已有三 ref 本地 CAS，但
+  `FORK_CHANGES.md` 幂等入口、最小审计和跨文档机械门禁不完整；R3 已补齐。
+- **R3 TDD：** 新跨文档 CAS 契约在 R2 上得到 19 pass / 2 fail / 591 expect calls，失败精确
+  命中两个活跃流程缺少 `local-ref-cas-transaction`；补齐幂等恢复、两个机器块和最小审计后，
+  `bun test tests/fork-maintenance-truth.test.ts` 为 21 pass / 0 fail / 658 expect calls，
+  `git diff --check` 通过。
+- **最终验证：** 绑定 `IMPLEMENTATION_HEAD=6f46b90155d65b543f8c16e9b16030c19ff0a1c4` 的
+  focused gate 为 27 pass / 0 fail / 696 expect calls；完整 `bun run prepush` 退出 0：parallel
+  17,667 pass / 14 skip / 0 fail / 244,389 expect calls，全部 serial lanes、typecheck 与
+  privacy scan 通过；GUI 无改动，lint/doctor 按规则跳过。未沿用 R2 PASS。
+- **发布状态：** 当前已固定 R3 实现 SHA并通过完整验证；本提交作为只修改
+  `FORK_CHANGES.md` 的 R3 docs-only `RELEASE_COMMIT` 候选，尚待复用原 reviewer 复审。未创建本地
   `v2.40.0-ben.2` Tag，未执行 atomic push，未创建或修改 GitHub Release。后续状态只按实际
   双审和外部 API 结果更新。
 
@@ -206,7 +211,7 @@ fork_tag=v2.40.0-ben.2
 release_sync_ref=refs/heads/sync/v2.40.0
 release_sync_expected_old=f219dc999012c56ecf3b74e1fe66f4f89311d25b
 release_sync_update=exact-oid-leased-force
-implementation_head=6ed25164b01145978c9fcecfc725482b78e72b88
+implementation_head=6f46b90155d65b543f8c16e9b16030c19ff0a1c4
 release_commit=docs-only-current-head
 verification=pass-prepush-17667-pass-14-skip-0-fail
 review=re-review-required
