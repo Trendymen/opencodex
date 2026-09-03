@@ -199,6 +199,17 @@ Codex 显示的模型来自一个磁盘上的 catalog（默认是 `$CODEX_HOME/o
 所选 provider 必须支持 function/tool calling。不支持 tool call 的 text-only provider 无法使用 `exec`、
 Browser 或 Computer Use。原生 OpenAI 条目会保持其上游 tool mode 不变。
 
+对于启用了工具的第三方路由，opencodex 还会加入 provider-neutral 的进度引导：要求模型在首次工具调用前、
+重要里程碑后、长操作前、最多连续四个纯工具响应后，以及收到新的用户消息后，先发送一条简短的普通
+assistant 文本。加入引导前，opencodex 会把已知 GPT 专属 channel 总览、中间更新段、compaction 措辞和
+skill 通知精确改写为普通 assistant 语义；最终 routed prompt 不使用 Codex 专属的 phase 或 channel 名称，
+并且会尊重用户明确提出的静默或其他
+回复节奏。原生 ChatGPT 与公共 OpenAI Responses 的提示保持不变。任务完成后，模型还应通过一条自包含的
+普通 assistant 响应清楚说明结果。
+
+这只是模型引导，不是伪造输出：opencodex 不会合成 assistant 进度消息。启用 provider debug 后，outbound
+shape 只记录 instruction 字节数与 `routedProgressContractPresent`，不会记录 instruction 正文。
+
 `ocx sync` 修改这些 metadata 后，请重启 Codex App 并打开一个新任务。现有 app-server process 和任务可能仍会
 保留它们在启动时加载的 catalog 和 tool plan。
 

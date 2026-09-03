@@ -134,20 +134,26 @@ separately, and requests with no matching price row are counted as
 ocx usage --range today --provider xai
 ```
 
-### `ocx debug <provider|usage|injection|claude> <on|off|status|reset|logs [-f]>`
+### `ocx debug <provider|provider-text|usage|injection|claude> <on|off|status|reset|logs [-f]>`
 
 Read or change runtime debug overrides through the running proxy's management API.
 
 ```bash
 ocx debug provider on|off|status|reset
 ocx debug provider logs [-f|--follow]
+ocx debug provider-text on|off|status|reset
 ocx debug usage on|off|status|reset
 ocx debug usage logs [-f|--follow]
 ```
 
 With no scope, `ocx debug` prints usage and, when the proxy is stopped, the next-start environment
 defaults. Provider debug defaults from `OCX_DEBUG=1` (legacy `OCX_DEBUG_FRAMES=1` also works); usage
-debug defaults from `OPENCODEX_USAGE_DEBUG=1`.
+debug defaults from `OPENCODEX_USAGE_DEBUG=1`. Provider debug is structural and text-free by default.
+Persisting bounded response/reasoning samples requires the separate `provider-text` switch or
+`OCX_PROVIDER_TEXT_DEBUG=1`; the dashboard exposes the same independent switch. Samples live below
+`$OPENCODEX_HOME/provider-debug-artifacts`. Each file is capped at 4 MiB, and provider debug storage
+is capped at 16 MiB, 256 files, and seven days. Turn the switch off to stop capture; after stopping the
+proxy, remove `provider-debug-artifacts` to delete retained text samples.
 
 ## API access
 

@@ -17,8 +17,9 @@
  *   <scopeDir>/.ocx-recovery.json             double-fault marker with a one-line restore
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 
 /** Verification manifest for a staged (or live) package tree. */
 export function verifyInstallTree(packageDir, expectedVersion) {
@@ -106,21 +107,260 @@ function recoveryMarkerPath(scopeDir) {
   return join(scopeDir, ".ocx-recovery.json");
 }
 
+function pendingMarkerPath(scopeDir) {
+  return join(scopeDir, ".ocx-transaction.json");
+}
+
+function normalizePathIdentity(path, platform = process.platform) {
+  const normalized = resolve(path);
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function pathIdentity(path, deps = {}) {
+  const realpath = deps.realpath ?? realpathSync;
+  const platform = deps.platform ?? process.platform;
+  const suffix = [];
+  let existing = resolve(path);
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) break;
+    suffix.unshift(basename(existing));
+    existing = parent;
+  }
+  let canonical;
+  try { canonical = resolve(realpath(existing), ...suffix); } catch { canonical = resolve(path); }
+  return normalizePathIdentity(canonical, platform);
+}
+
+function readPendingMarker(scopeDir) {
+  if (!existsSync(pendingMarkerPath(scopeDir))) return { state: "absent" };
+  try {
+    const parsed = JSON.parse(readFileSync(pendingMarkerPath(scopeDir), "utf8"));
+    if (!parsed || parsed.state !== "pending" || typeof parsed.id !== "string" || parsed.id.length === 0
+      || !Number.isSafeInteger(parsed.ownerPid) || parsed.ownerPid <= 0
+      || typeof parsed.live !== "string" || typeof parsed.backup !== "string") return { state: "invalid" };
+    return { state: "pending", id: parsed.id, ownerPid: parsed.ownerPid, live: parsed.live, backup: parsed.backup };
+  } catch {
+    return { state: "invalid" };
+  }
+}
+
+function pendingMarkerMatches(marker, transaction) {
+  return marker.state === "pending"
+    && marker.id === transaction.id
+    && marker.ownerPid === transaction.ownerPid
+    && pathIdentity(marker.live) === pathIdentity(transaction.live)
+    && pathIdentity(marker.backup) === pathIdentity(transaction.backup);
+}
+
+function safeBackupIdentity(scopeDir, backupPath, deps = {}) {
+  const realpath = deps.realpath ?? realpathSync;
+  const platform = deps.platform ?? process.platform;
+  const scope = pathIdentity(scopeDir, deps);
+  const requestedBackup = resolve(backupPath);
+  const requestedRoot = dirname(requestedBackup);
+  if (pathIdentity(dirname(requestedRoot), deps) !== scope
+    || !basename(requestedRoot).startsWith(".ocx-backup-")
+    || basename(backupPath) !== "opencodex"
+    || requestedBackup !== resolve(requestedRoot, "opencodex")) return null;
+  try {
+    const rootStat = lstatSync(requestedRoot);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
+    const canonicalRoot = realpath(requestedRoot);
+    const canonicalName = platform === "win32" ? basename(canonicalRoot).toLowerCase() : basename(canonicalRoot);
+    const requestedName = platform === "win32" ? basename(requestedRoot).toLowerCase() : basename(requestedRoot);
+    if (normalizePathIdentity(dirname(canonicalRoot), platform) !== scope
+      || canonicalName !== requestedName) return null;
+    const canonicalBackup = resolve(canonicalRoot, "opencodex");
+    if (existsSync(requestedBackup)) {
+      const backupStat = lstatSync(requestedBackup);
+      if (!backupStat.isDirectory() || backupStat.isSymbolicLink()) return null;
+    }
+    return canonicalBackup;
+  } catch {
+    return null;
+  }
+}
+
+function writePendingMarker(scopeDir, transaction, deps) {
+  const markerPath = pendingMarkerPath(scopeDir);
+  const temporaryPath = join(scopeDir, `.ocx-transaction-${transaction.id}.tmp`);
+  try {
+    if (existsSync(markerPath)) throw new Error("pending transaction marker already exists");
+    deps.writeFile(temporaryPath, JSON.stringify({ state: "pending", ...transaction }, null, 2), {
+      flag: "wx",
+      mode: 0o600,
+    });
+    deps.linkMarker(temporaryPath, markerPath);
+    deps.remove(temporaryPath, { force: true });
+    const written = readPendingMarker(scopeDir);
+    if (!pendingMarkerMatches(written, transaction)) {
+      throw new Error("pending transaction marker failed readback verification");
+    }
+    return { written: true };
+  } catch (error) {
+    try { deps.remove(temporaryPath, { force: true }); } catch { /* best effort */ }
+    return { written: false, error: error?.message ?? String(error) };
+  }
+}
+
+function writeRecoveryMarker(scopeDir, payload, deps = {}) {
+  const writeFile = deps.writeFile ?? writeFileSync;
+  const linkMarker = deps.linkMarker ?? linkSync;
+  const remove = deps.remove ?? rmSync;
+  const markerPath = recoveryMarkerPath(scopeDir);
+  const temporaryPath = join(scopeDir, `.ocx-recovery-${randomUUID()}.tmp`);
+  try {
+    if (existsSync(markerPath)) throw new Error("recovery marker already exists");
+    writeFile(temporaryPath, JSON.stringify(payload, null, 2), { flag: "wx", mode: 0o600 });
+    linkMarker(temporaryPath, markerPath);
+    remove(temporaryPath, { force: true });
+    const written = lstatSync(markerPath);
+    if (!written.isFile() || written.isSymbolicLink()) throw new Error("recovery marker is not a regular file");
+    return { written: true };
+  } catch (error) {
+    try { remove(temporaryPath, { force: true }); } catch { /* best effort */ }
+    return { written: false, error: error?.message ?? String(error) };
+  }
+}
+
+function directoryIdentity(path) {
+  try {
+    const stat = lstatSync(path, { bigint: true });
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
+    return { dev: stat.dev, ino: stat.ino };
+  } catch {
+    return null;
+  }
+}
+
+function sameDirectoryIdentity(path, expected) {
+  const current = directoryIdentity(path);
+  return current !== null && expected !== null
+    && current.dev === expected.dev
+    && current.ino === expected.ino;
+}
+
 /** Startup probe: restore a backup when the live tree is broken (D4 power-loss rows). */
 export function bootRestoreProbe(packageDir, deps = {}) {
   const rename = deps.rename ?? renameSync;
+  const remove = deps.remove ?? rmSync;
+  const readDirectory = deps.readDirectory ?? readdirSync;
+  const pathDeps = { realpath: deps.realpath ?? realpathSync, platform: deps.platform ?? process.platform };
+  const isProcessAlive = deps.isProcessAlive ?? ((pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return error?.code !== "ESRCH";
+    }
+  });
   const scopeDir = dirname(packageDir);
+  const pending = readPendingMarker(scopeDir);
+  const recovery = (() => {
+    try { return JSON.parse(readFileSync(recoveryMarkerPath(scopeDir), "utf8")); } catch { return null; }
+  })();
+  const oldPackageAlreadyRestored = recovery?.error === "previous package restored but pending marker cleanup failed";
   let backups = [];
   try {
-    backups = readdirSync(scopeDir).filter(name => name.startsWith(".ocx-backup-")).sort();
-  } catch {
-    return { action: "none" };
+    backups = readDirectory(scopeDir).filter(name => name.startsWith(".ocx-backup-")).sort();
+  } catch (error) {
+    return { action: "failed", error: "package scope could not be enumerated: " + (error?.message ?? String(error)) };
   }
-  if (backups.length === 0) return { action: "none" };
+  for (const name of backups) {
+    if (safeBackupIdentity(scopeDir, join(scopeDir, name, "opencodex"), pathDeps) === null) {
+      return { action: "failed", error: "package scope contains an unsafe transactional backup" };
+    }
+  }
+  if (pending.state === "invalid") return { action: "failed", error: "pending transaction marker is invalid" };
+  if (pending.state === "pending" && pathIdentity(pending.live, pathDeps) !== pathIdentity(packageDir, pathDeps)) {
+    return { action: "failed", error: "pending transaction marker does not match this package and backup set" };
+  }
+  if (pending.state === "pending" && isProcessAlive(pending.ownerPid)) {
+    const markedBackup = safeBackupIdentity(scopeDir, pending.backup, pathDeps);
+    return markedBackup !== null
+      ? { action: "pending", from: markedBackup }
+      : { action: "failed", error: "pending transaction marker does not match this package and backup set" };
+  }
+  if (backups.length === 0) {
+    if (pending.state !== "pending") return { action: "none" };
+    const liveOk = existsSync(join(packageDir, "package.json")) && verifyInstallTree(packageDir).ok;
+    if (!liveOk) return { action: "failed", error: "pending transaction backup is missing" };
+    if (!oldPackageAlreadyRestored && existsSync(dirname(pathIdentity(pending.backup)))) {
+      return { action: "failed", error: "pending transaction backup is missing" };
+    }
+    try {
+      remove(pendingMarkerPath(scopeDir), { force: true });
+      const preparedBackup = safeBackupIdentity(scopeDir, pending.backup, pathDeps);
+      if (preparedBackup !== null) {
+        try { remove(dirname(preparedBackup), { recursive: true, force: true }); } catch { /* empty prepared backup root only */ }
+      }
+      if (oldPackageAlreadyRestored) {
+        try { remove(recoveryMarkerPath(scopeDir), { force: true }); } catch { /* stale diagnostic only */ }
+      }
+      return { action: "aborted" };
+    } catch (error) {
+      return { action: "failed", error: "dead prepared transaction marker could not be removed: " + (error?.message ?? String(error)) };
+    }
+  }
   const liveOk = existsSync(join(packageDir, "package.json"))
     && verifyInstallTree(packageDir).ok;
+  if (pending.state === "pending" && recovery?.reason === "restored-backup-verification-failed") {
+    return { action: "failed", error: "pending transaction backup failed verification during rollback" };
+  }
+  if (pending.state === "pending"
+    && liveOk
+    && !oldPackageAlreadyRestored
+    && existsSync(join(pending.backup, "package.json"))) {
+    return {
+      action: "failed",
+      error: "pending transaction owner exited after a complete live package landed; refusing to overwrite it automatically",
+    };
+  }
   const newestBackup = join(scopeDir, backups[backups.length - 1], "opencodex");
-  if (liveOk) {
+  let restoreBackup = newestBackup;
+  if (pending.state === "pending") {
+    const markedBackup = safeBackupIdentity(scopeDir, pending.backup, pathDeps);
+    if (markedBackup === null) {
+      return { action: "failed", error: "pending transaction marker does not match this package and backup set" };
+    }
+    const belongsToBackups = backups.some(name =>
+      pathIdentity(join(scopeDir, name, "opencodex"), pathDeps) === pathIdentity(markedBackup, pathDeps));
+    if (!belongsToBackups) {
+      if (liveOk) {
+        try {
+          remove(pendingMarkerPath(scopeDir), { force: true });
+          return { action: "aborted" };
+        } catch (error) {
+          return { action: "failed", error: "restored transaction marker could not be removed: " + (error?.message ?? String(error)) };
+        }
+      }
+      return { action: "failed", error: "pending transaction backup is missing" };
+    }
+    if (!existsSync(join(markedBackup, "package.json"))) {
+      if (liveOk && recovery?.error === "previous package restored but pending marker cleanup failed") {
+        try {
+          remove(pendingMarkerPath(scopeDir), { force: true });
+          try { remove(recoveryMarkerPath(scopeDir), { force: true }); } catch { /* stale diagnostic only */ }
+          return { action: "aborted" };
+        } catch (error) {
+          return { action: "failed", error: "restored transaction marker could not be removed: " + (error?.message ?? String(error)) };
+        }
+      }
+      if (liveOk) {
+        try {
+          remove(pendingMarkerPath(scopeDir), { force: true });
+          try { remove(dirname(markedBackup), { recursive: true, force: true }); } catch { /* empty prepared backup root only */ }
+          return { action: "aborted" };
+        } catch (error) {
+          return { action: "failed", error: "dead prepared transaction marker could not be removed: " + (error?.message ?? String(error)) };
+        }
+      }
+      return { action: "failed", error: "pending transaction backup is missing" };
+    }
+    restoreBackup = markedBackup;
+  }
+  if (liveOk && pending.state !== "pending") {
     // Live is healthy: the backups are leftovers from a completed swap. Reap them.
     for (const name of backups) {
       try { rmSync(join(scopeDir, name), { recursive: true, force: true }); } catch { /* keep */ }
@@ -128,11 +368,27 @@ export function bootRestoreProbe(packageDir, deps = {}) {
     try { rmSync(recoveryMarkerPath(scopeDir), { force: true }); } catch { /* keep */ }
     return { action: "reaped", count: backups.length };
   }
-  if (!existsSync(join(newestBackup, "package.json"))) return { action: "none" };
+  if (!existsSync(join(restoreBackup, "package.json"))) return { action: "none" };
+  let backupCheck;
+  try {
+    backupCheck = verifyInstallTree(restoreBackup);
+  } catch (error) {
+    backupCheck = { ok: false, failures: [error?.message ?? String(error)] };
+  }
+  if (!backupCheck.ok) {
+    return {
+      action: "failed",
+      error: "pending transaction backup failed verification: " + backupCheck.failures.join("; "),
+    };
+  }
   try {
     try { rmSync(packageDir, { recursive: true, force: true }); } catch { /* may not exist */ }
-    rename(newestBackup, packageDir);
-    return { action: "restored", from: newestBackup };
+    rename(restoreBackup, packageDir);
+    if (pending.state === "pending") {
+      remove(pendingMarkerPath(scopeDir), { force: true });
+      try { remove(dirname(restoreBackup), { recursive: true, force: true }); } catch { /* empty backup root only */ }
+    }
+    return { action: "restored", from: restoreBackup };
   } catch (error) {
     return { action: "failed", error: error?.message ?? String(error) };
   }
@@ -147,12 +403,27 @@ export function transactionalNpmUpdate({
   pkgName,
   targetVersion,
   tag,
+  packageSpec,
+  installArgs,
   runNpm,
+  verifyStage = verifyInstallTree,
+  verifyLive = verifyInstallTree,
+  verifyRollback = verifyInstallTree,
   log = () => {},
+  deferCommit = false,
   deps = {},
 }) {
   const rename = deps.rename ?? renameSync;
+  const linkMarker = deps.linkMarker ?? linkSync;
+  const realpath = deps.realpath ?? realpathSync;
+  const remove = deps.remove ?? rmSync;
+  const writeFile = deps.writeFile ?? writeFileSync;
+  const writeRecoveryFile = deps.writeRecoveryFile ?? writeFile;
   const scopeDir = dirname(packageDir);
+  const preexistingPending = readPendingMarker(scopeDir);
+  if (preexistingPending.state !== "absent") {
+    return { ok: false, phase: "pending-existing", recoveryUnsafe: true, error: "an earlier package transaction still requires recovery" };
+  }
   const stageRoot = join(scopeDir, stampedName(".ocx-staging"));
   // GLOBAL-style staging (-g --prefix): npm nests the package's dependencies INSIDE the
   // package dir, exactly like the live global tree this stage will replace. A local-style
@@ -174,7 +445,7 @@ export function transactionalNpmUpdate({
   } catch (error) {
     return { ok: false, phase: "stage", error: "could not create staging directory: " + (error?.message ?? String(error)) };
   }
-  const spec = pkgName + "@" + (targetVersion || tag);
+  const spec = packageSpec || pkgName + "@" + (targetVersion || tag);
   log("Staging " + spec + " into " + stageRoot);
   // npm 12 blocks lifecycle scripts by default. Bun's postinstall copies the selected
   // @oven/bun-* executable into bun/bin, so a successful npm exit without this narrow
@@ -182,7 +453,8 @@ export function transactionalNpmUpdate({
   // whose executable the manifest verifies below; never broaden this to all scripts.
   const install = runNpm([
     "install", "-g", "--prefix", stageRoot,
-    "--allow-scripts=bun", "--no-audit", "--no-fund", spec,
+    ...(installArgs || ["--allow-scripts=bun", "--no-audit", "--no-fund"]),
+    spec,
   ]);
   if (install.status !== 0) {
     try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
@@ -195,7 +467,12 @@ export function transactionalNpmUpdate({
   }
 
   // D2: verify INSIDE the stage. Live is still untouched on any failure here.
-  const staged = verifyInstallTree(stagedPackage, targetVersion || undefined);
+  let staged;
+  try {
+    staged = verifyStage(stagedPackage, targetVersion || undefined);
+  } catch (error) {
+    staged = { ok: false, failures: [error?.message ?? String(error)] };
+  }
   if (!staged.ok) {
     try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
     return { ok: false, phase: "verify", error: "staged tree failed verification: " + staged.failures.join("; ") };
@@ -204,63 +481,381 @@ export function transactionalNpmUpdate({
   // D3: swap. live -> backup, stage -> live, re-verify live, rollback on failure.
   const backupRoot = join(scopeDir, stampedName(".ocx-backup"));
   const backupPackage = join(backupRoot, "opencodex");
+  let pendingTransaction;
   try {
     mkdirSync(backupRoot, { recursive: true });
   } catch (error) {
     try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
     return { ok: false, phase: "swap-backup", error: "could not create backup directory: " + (error?.message ?? String(error)) };
   }
+  pendingTransaction = {
+    id: randomUUID(),
+    ownerPid: process.pid,
+    live: pathIdentity(packageDir),
+    backup: pathIdentity(backupPackage),
+  };
+  const marker = writePendingMarker(scopeDir, pendingTransaction, { writeFile, linkMarker, remove });
+  if (!marker.written) {
+    const onDisk = readPendingMarker(scopeDir);
+    if (onDisk.state !== "absent") {
+      return {
+        ok: false,
+        phase: "pending-marker",
+        recoveryUnsafe: true,
+        error: "could not record a trustworthy pending transaction: " + marker.error,
+      };
+    }
+    try { remove(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
+    try { remove(backupRoot, { recursive: true, force: true }); } catch { /* best effort */ }
+    return { ok: false, phase: "pending-marker", error: "could not record pending transaction: " + marker.error };
+  }
   try {
     renameWithRetry(rename, packageDir, backupPackage);
   } catch (error) {
-    try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
-    try { rmSync(backupRoot, { recursive: true, force: true }); } catch { /* best effort */ }
-    return { ok: false, phase: "swap-backup", error: "could not move live tree aside: " + (error?.message ?? String(error)) };
+    let markerCleanupError;
+    if (pendingTransaction) {
+      try { remove(pendingMarkerPath(scopeDir), { force: true }); } catch (cleanupError) { markerCleanupError = cleanupError; }
+    }
+    try { remove(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
+    try { remove(backupRoot, { recursive: true, force: true }); } catch { /* best effort */ }
+    return markerCleanupError === undefined
+      ? { ok: false, phase: "swap-backup", error: "could not move live tree aside: " + (error?.message ?? String(error)) }
+      : {
+        ok: false,
+        phase: "double-fault",
+        recoveryUnsafe: true,
+        markerCleanupFailed: true,
+        error: "live tree stayed intact but pending marker cleanup failed: " + (markerCleanupError?.message ?? String(markerCleanupError)),
+      };
+  }
+  const backupIdentity = {
+    root: directoryIdentity(backupRoot),
+    package: directoryIdentity(backupPackage),
+  };
+  let canonicalBackup;
+  try {
+    if (backupIdentity.root === null || backupIdentity.package === null) {
+      throw new Error("backup object identity could not be recorded");
+    }
+    canonicalBackup = realpath(backupPackage);
+  } catch (error) {
+    const rollback = rollbackPackageSwap({
+      packageDir,
+      backupPackage,
+      backupRoot,
+      scopeDir,
+      rename,
+      writeRecoveryFile,
+      linkMarker,
+      remove,
+      pendingTransaction,
+      backupIdentity,
+      verifyRollback,
+    });
+    return rollback.ok
+      ? {
+          ok: false,
+          phase: "post-verify",
+          rolledBack: true,
+          error: "canonical backup lookup failed after package swap: " + (error?.message ?? String(error)),
+        }
+      : rollback;
   }
   try {
     renameWithRetry(rename, stagedPackage, packageDir);
   } catch (error) {
-    // Rollback: reverse the first rename. Double fault leaves the recovery marker.
-    try {
-      renameWithRetry(rename, backupPackage, packageDir);
-      try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
-      try { rmSync(backupRoot, { recursive: true, force: true }); } catch { /* best effort */ }
-      return { ok: false, phase: "swap-live", rolledBack: true, error: "could not place staged tree: " + (error?.message ?? String(error)) };
-    } catch (rollbackError) {
-      writeFileSync(recoveryMarkerPath(scopeDir), JSON.stringify({
-        at: new Date().toISOString(),
-        backup: backupPackage,
-        live: packageDir,
-        restore: 'move "' + backupPackage + '" back to "' + packageDir + '"',
-        error: String(error?.message ?? error),
-        rollbackError: String(rollbackError?.message ?? rollbackError),
-      }, null, 2));
-      return { ok: false, phase: "double-fault", rolledBack: false, error: "swap and rollback both failed; recovery marker written at " + recoveryMarkerPath(scopeDir) };
-    }
+    const rollback = rollbackPackageSwap({
+      packageDir,
+      backupPackage,
+      backupRoot,
+      scopeDir,
+      rename,
+      writeRecoveryFile,
+      linkMarker,
+      remove,
+      pendingTransaction,
+      backupIdentity,
+      verifyRollback,
+    });
+    return rollback.ok
+      ? { ok: false, phase: "swap-live", rolledBack: true, error: "could not place staged tree: " + (error?.message ?? String(error)) }
+      : rollback;
   }
-  const liveCheck = verifyInstallTree(packageDir, targetVersion || undefined);
+  let liveCheck;
+  try {
+    liveCheck = verifyLive(packageDir, targetVersion || undefined);
+  } catch (error) {
+    liveCheck = { ok: false, failures: [error?.message ?? String(error)] };
+  }
   if (!liveCheck.ok) {
-    try {
-      rmSync(packageDir, { recursive: true, force: true });
-      rename(backupPackage, packageDir);
-      try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
-      try { rmSync(backupRoot, { recursive: true, force: true }); } catch { /* best effort */ }
-      return { ok: false, phase: "post-verify", rolledBack: true, error: "live tree failed post-swap verification: " + liveCheck.failures.join("; ") };
-    } catch (rollbackError) {
-      writeFileSync(recoveryMarkerPath(scopeDir), JSON.stringify({
-        at: new Date().toISOString(),
-        backup: backupPackage,
-        live: packageDir,
-        restore: 'move "' + backupPackage + '" back to "' + packageDir + '"',
-        error: "post-swap verification failed: " + liveCheck.failures.join("; "),
-        rollbackError: String(rollbackError?.message ?? rollbackError),
-      }, null, 2));
-      return { ok: false, phase: "double-fault", rolledBack: false, error: "post-verify rollback failed; recovery marker written" };
-    }
+    const rollback = rollbackPackageSwap({
+      packageDir,
+      backupPackage,
+      backupRoot,
+      scopeDir,
+      rename,
+      writeRecoveryFile,
+      linkMarker,
+      remove,
+      pendingTransaction,
+      backupIdentity,
+      verifyRollback,
+    });
+    return rollback.ok
+      ? { ok: false, phase: "post-verify", rolledBack: true, error: "live tree failed post-swap verification: " + liveCheck.failures.join("; ") }
+      : rollback;
   }
   // Success: stage scaffolding is disposable now; the backup stays until the next
   // healthy boot reaps it (bootRestoreProbe) — the process that spawned this update may
   // still hold the old cwd.
   try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
+  if (deferCommit) {
+    let state = "pending";
+    const verifyOwnership = () => {
+      const marker = readPendingMarker(scopeDir);
+      return pendingMarkerMatches(marker, pendingTransaction)
+        ? { ok: true }
+        : { ok: false, phase: "pending-owner", recoveryUnsafe: true, error: "pending transaction marker is missing or belongs to another transaction" };
+    };
+    const verifyBackupObject = () => safeBackupIdentity(scopeDir, backupPackage) !== null
+      && sameDirectoryIdentity(backupRoot, backupIdentity.root)
+      && sameDirectoryIdentity(backupPackage, backupIdentity.package)
+      ? { ok: true }
+      : { ok: false, phase: "pending-owner", recoveryUnsafe: true, error: "transactional backup object identity changed" };
+    const commit = () => {
+      if (state === "committed") return { ok: true, phase: "committed" };
+      if (state !== "pending") return { ok: false, phase: state, error: "transaction is no longer pending" };
+      const ownership = verifyOwnership();
+      if (!ownership.ok) return ownership;
+      const backupObject = verifyBackupObject();
+      if (!backupObject.ok) return backupObject;
+      try {
+        remove(pendingMarkerPath(scopeDir), { force: true });
+        state = "committed";
+        try { remove(backupRoot, { recursive: true, force: true }); } catch { /* next healthy probe can reap */ }
+        try { remove(recoveryMarkerPath(scopeDir), { force: true }); } catch { /* best effort */ }
+        return { ok: true, phase: "committed" };
+      } catch (error) {
+        return { ok: false, phase: "commit", error: error?.message ?? String(error) };
+      }
+    };
+    const rollback = () => {
+      if (state === "rolled-back") return { ok: true, phase: "rolled-back" };
+      if (state !== "pending") return { ok: false, phase: state, error: "transaction is no longer pending" };
+      const ownership = verifyOwnership();
+      if (!ownership.ok) return ownership;
+      const result = rollbackPackageSwap({
+        packageDir,
+        backupPackage,
+        backupRoot,
+        scopeDir,
+        rename,
+        writeRecoveryFile,
+        linkMarker,
+        remove,
+        pendingTransaction,
+        backupIdentity,
+        verifyRollback,
+      });
+      if (result.ok) state = "rolled-back";
+      return result;
+    };
+    return { ok: true, phase: "pending", backup: canonicalBackup, commit, rollback };
+  }
+  if (!pendingMarkerMatches(readPendingMarker(scopeDir), pendingTransaction)) {
+    return { ok: false, phase: "pending-owner", recoveryUnsafe: true, backup: backupPackage, error: "pending transaction marker is missing or belongs to another transaction" };
+  }
+  try {
+    remove(pendingMarkerPath(scopeDir), { force: true });
+  } catch (error) {
+    return { ok: false, phase: "commit", recoveryUnsafe: true, backup: backupPackage, error: "completed package swap but could not clear pending marker: " + (error?.message ?? String(error)) };
+  }
   return { ok: true, phase: "done", backup: backupPackage };
+}
+
+function rollbackPackageSwap({
+  packageDir,
+  backupPackage,
+  backupRoot,
+  scopeDir,
+  rename,
+  writeRecoveryFile,
+  linkMarker,
+  remove,
+  pendingTransaction,
+  backupIdentity,
+  verifyRollback,
+}) {
+  if (pendingTransaction && !pendingMarkerMatches(readPendingMarker(scopeDir), pendingTransaction)) {
+    return {
+      ok: false,
+      phase: "pending-owner",
+      recoveryUnsafe: true,
+      error: "pending transaction marker is missing or belongs to another transaction",
+    };
+  }
+  const recoveryMarker = payload => writeRecoveryMarker(scopeDir, payload, {
+    writeFile: writeRecoveryFile,
+    linkMarker,
+    remove,
+  });
+  const backupObjectMatches = () => backupIdentity
+    && safeBackupIdentity(scopeDir, backupPackage) !== null
+    && sameDirectoryIdentity(backupRoot, backupIdentity.root)
+    && sameDirectoryIdentity(backupPackage, backupIdentity.package);
+  const failedLive = join(scopeDir, stampedName(".ocx-failed-live"));
+  let quarantinedLive = false;
+  const restoreQuarantinedLive = () => {
+    if (!quarantinedLive) return { ok: true };
+    try {
+      if (existsSync(packageDir)) {
+        throw new Error("live package path is occupied; refusing to delete it while restoring quarantined live");
+      }
+      renameWithRetry(rename, failedLive, packageDir);
+      quarantinedLive = false;
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error?.message ?? String(error) };
+    }
+  };
+  if (!backupObjectMatches()) {
+    const marker = recoveryMarker({
+      at: new Date().toISOString(),
+      backup: backupPackage,
+      live: packageDir,
+      error: "transactional backup object identity changed before rollback",
+    });
+    return {
+      ok: false,
+      phase: "double-fault",
+      rolledBack: false,
+      recoveryUnsafe: true,
+      markerWriteFailed: !marker.written,
+      error: marker.written
+        ? "transactional backup object identity changed; recovery marker written"
+        : "transactional backup object identity changed; recovery marker could not be written: " + marker.error,
+    };
+  }
+  try {
+    if (existsSync(packageDir)) {
+      renameWithRetry(rename, packageDir, failedLive);
+      quarantinedLive = true;
+    }
+    if (!backupObjectMatches()) {
+      const restoredLive = restoreQuarantinedLive();
+      const marker = recoveryMarker({
+        at: new Date().toISOString(),
+        backup: backupPackage,
+        live: packageDir,
+        error: "transactional backup object identity changed during rollback",
+        failedLive: restoredLive.ok ? undefined : failedLive,
+        liveRestoreError: restoredLive.ok ? undefined : restoredLive.error,
+      });
+      return {
+        ok: false,
+        phase: "double-fault",
+        rolledBack: false,
+        recoveryUnsafe: true,
+        markerWriteFailed: !marker.written,
+        error: restoredLive.ok
+          ? "transactional backup object identity changed during rollback"
+          : "transactional backup object identity changed and failed live could not be restored: " + restoredLive.error,
+      };
+    }
+    renameWithRetry(rename, backupPackage, packageDir);
+    let restored;
+    try {
+      restored = verifyRollback(packageDir);
+    } catch (error) {
+      restored = { ok: false, failures: [error?.message ?? String(error)] };
+    }
+    if (!restored.ok) {
+      let backupPreserveError;
+      try {
+        if (existsSync(backupPackage)) {
+          throw new Error("transactional backup path was unexpectedly occupied");
+        }
+        renameWithRetry(rename, packageDir, backupPackage);
+        if (!backupObjectMatches()) {
+          throw new Error("restored backup object identity changed while preserving it");
+        }
+      } catch (error) {
+        backupPreserveError = error?.message ?? String(error);
+      }
+      const restoredLive = restoreQuarantinedLive();
+      const marker = recoveryMarker({
+        at: new Date().toISOString(),
+        reason: "restored-backup-verification-failed",
+        backup: backupPackage,
+        live: packageDir,
+        error: "restored package failed verification: " + restored.failures.join("; "),
+        backupPreserveError,
+        failedLive: restoredLive.ok ? undefined : failedLive,
+        liveRestoreError: restoredLive.ok ? undefined : restoredLive.error,
+      });
+      return {
+        ok: false,
+        phase: "double-fault",
+        rolledBack: false,
+        recoveryUnsafe: true,
+        markerWriteFailed: !marker.written,
+        error: backupPreserveError
+          ? "restored package failed verification and could not be preserved at its backup path: " + backupPreserveError
+          : marker.written
+            ? "restored package failed verification; recovery marker written"
+            : "restored package failed verification; recovery marker could not be written: " + marker.error,
+      };
+    }
+    if (quarantinedLive) {
+      try { remove(failedLive, { recursive: true, force: true }); } catch { /* verified old live already restored */ }
+      quarantinedLive = false;
+    }
+    if (pendingTransaction) {
+      try {
+        remove(pendingMarkerPath(scopeDir), { force: true });
+      } catch (error) {
+        const marker = recoveryMarker({
+          at: new Date().toISOString(),
+          backup: backupPackage,
+          live: packageDir,
+          error: "previous package restored but pending marker cleanup failed",
+          markerCleanupError: String(error?.message ?? error),
+        });
+        return {
+          ok: false,
+          phase: "double-fault",
+          rolledBack: true,
+          recoveryUnsafe: true,
+          markerCleanupFailed: true,
+          markerWriteFailed: !marker.written,
+          error: marker.written
+            ? "previous package restored but pending marker cleanup failed; recovery marker written"
+            : "previous package restored but pending and recovery marker cleanup failed: " + marker.error,
+        };
+      }
+    }
+    try { remove(backupRoot, { recursive: true, force: true }); } catch { /* best effort */ }
+    return { ok: true, phase: "rolled-back" };
+  } catch (rollbackError) {
+    const restoredLive = restoreQuarantinedLive();
+    const marker = recoveryMarker({
+      at: new Date().toISOString(),
+      backup: backupPackage,
+      live: packageDir,
+      restore: 'move "' + backupPackage + '" back to "' + packageDir + '"',
+      rollbackError: String(rollbackError?.message ?? rollbackError),
+      failedLive: restoredLive.ok ? undefined : failedLive,
+      liveRestoreError: restoredLive.ok ? undefined : restoredLive.error,
+    });
+    return {
+      ok: false,
+      phase: "double-fault",
+      rolledBack: false,
+      recoveryUnsafe: true,
+      markerWriteFailed: !marker.written,
+      error: marker.written
+        ? "deferred rollback failed; recovery marker written"
+        : "deferred rollback failed; recovery marker could not be written: " + marker.error,
+    };
+  }
 }
