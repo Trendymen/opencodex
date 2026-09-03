@@ -48,6 +48,7 @@
     "generate:model-metadata": "bun scripts/generate-model-metadata.ts",
     "build:gui": "cd gui && bun install --frozen-lockfile && bun run build && cd .. && bun run prepare:package",
     "prepare:package": "bun scripts/prepare-package.ts",
+    "install:local": "bun scripts/install-local.ts",
     "prepack": "bun run prepare:package",
     "prepublishOnly": "bun run audit:high && bun run typecheck && bun run build:gui",
     "release": "bun scripts/release.ts",

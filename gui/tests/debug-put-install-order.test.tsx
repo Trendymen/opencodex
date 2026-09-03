@@ -16,11 +16,12 @@ const originalFetch = globalThis.fetch;
 
 const BASE_SETTINGS: DebugSettings = {
   enabled: false,
+  providerText: false,
   usage: false,
   injection: false,
   claude: false,
   runtimeOverride: {},
-  env: { debug: false, usage: false, injection: false, claude: false },
+  env: { debug: false, providerText: false, usage: false, injection: false, claude: false },
 };
 
 function installLayoutStubs(win: Window): void {
@@ -170,6 +171,8 @@ test("the PUT response is installed before controls re-enable", async () => {
     );
   });
   await waitFor(() => container.querySelector('button.switch[aria-label="Usage extraction"]') != null);
+  expect(container.querySelector('button.switch[aria-label="Response/reasoning text (persisted)"]')
+    ?.getAttribute("aria-pressed")).toBe("false");
 
   const usageSwitch = () => container.querySelector<HTMLButtonElement>('button.switch[aria-label="Usage extraction"]');
   expect(usageSwitch()?.getAttribute("aria-pressed")).toBe("false");

@@ -1844,7 +1844,7 @@ describe("provider discovered model display names", () => {
     modelDisplayNames: { "grok-4.6": "Grok 4.6" },
   };
 
-  test("an exact provider model id receives the configured display name without losing catalog metadata", () => {
+  test("an exact provider model id receives the configured display name without losing catalog metadata or Fork route hint", () => {
     const discovered = {
       provider: "xai",
       id: "grok-4.6",
@@ -1871,6 +1871,7 @@ describe("provider discovered model display names", () => {
       ...beforeIdentity,
       maxOutputTokens: 500_000,
       supportsServiceTier: false,
+      routedProgressContractEligible: true,
     });
     expect(catalogModelSlug(output)).toBe("xai/grok-4.6");
   });

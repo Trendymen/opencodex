@@ -21,8 +21,9 @@ import { removeTreeWithRetry } from "./helpers/remove-tree";
  */
 
 const BIN_OCX = join(import.meta.dir, "..", "bin", "ocx.mjs");
-const nodeAvailable = !spawnSync("node", ["--version"], { stdio: "ignore" }).error;
-const runnable = process.platform !== "win32" && nodeAvailable;
+const nodeProbe = spawnSync("node", ["-p", "process.execPath"], { encoding: "utf8" });
+const nodeExecutable = nodeProbe.status === 0 ? nodeProbe.stdout.trim() : "";
+const runnable = process.platform !== "win32" && nodeExecutable.length > 0;
 
 const spawned: ChildProcess[] = [];
 const tmpHomes: string[] = [];
@@ -102,21 +103,26 @@ describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
         const port = await freePort();
         const identity = claimTempHome(home);
 
+        // `ocx start` probes the configured port before binding, even when the
+        // caller supplies --port. Keep that ownership probe inside this fixture;
+        // otherwise a real proxy on the default 10100 makes the launcher exit
+        // before this test reaches the signal-forwarding behavior.
+        writeFileSync(join(home, "config.json"), JSON.stringify({
+          port,
+          hostname: "127.0.0.1",
+        }));
+
         // Seed a native Codex config so the proxy actually injects on start (injectCodexConfig
         // no-ops when no config.toml exists) — this lets us prove the config is RESTORED.
         const codexConfig = join(home, "config.toml");
         writeFileSync(codexConfig, 'model = "gpt-5.1"\n');
 
-        // stdout/stderr are CAPTURED, not discarded.
-        //
-        // This test failed twice on the v2.41.0 promotion at exactly 20s -- the
-        // startup deadline below, not the shutdown path this test is named for.
-        // With `stdio: "ignore"` the failure said only `expect(up).toBe(true)`:
-        // no proxy log, no exit code, no way to tell a slow runner from a real
-        // startup regression. Locally the same spawn is healthy in ~800ms, so a
-        // 25x margin is already generous and the missing evidence was the actual
-        // problem.
-        const child = spawn("node", [BIN_OCX, "start", "--port", String(port)], {
+        // `node` can be a version-manager shim (Volta/asdf). Signalling the shim PID lets the
+        // real Node launcher survive as an orphan, which makes this test report the product bug
+        // it is meant to prevent. Probe process.execPath once and launch that executable directly.
+        const child = spawn(nodeExecutable, [BIN_OCX, "start", "--port", String(port)], {
+          // Keep launcher diagnostics when the startup deadline expires. The
+          // actual no-orphan assertion remains the later port-release check.
           stdio: ["ignore", "pipe", "pipe"],
           env: {
             ...process.env,

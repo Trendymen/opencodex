@@ -39,6 +39,61 @@ function count(text: string, fragment: string): number {
   return text.split(fragment).length - 1;
 }
 
+function workflowExpressions(source: string): string[] {
+  const expressions: string[] = [];
+  let offset = 0;
+  while (offset < source.length) {
+    const start = source.indexOf("${{", offset);
+    if (start === -1) break;
+    let quoted = false;
+    let end = source.length;
+    for (let index = start + 3; index < source.length - 1; index++) {
+      if (source[index] === "'") {
+        if (quoted && source[index + 1] === "'") {
+          index++;
+          continue;
+        }
+        quoted = !quoted;
+        continue;
+      }
+      if (!quoted && source[index] === "}" && source[index + 1] === "}") {
+        end = index + 2;
+        break;
+      }
+    }
+    expressions.push(source.slice(start, end));
+    offset = end;
+  }
+  return expressions;
+}
+
+function unsafeWorkflowContextExpressions(source: string): string[] {
+  return workflowExpressions(source)
+    .filter(expression => {
+      if (/\bsecrets\b/i.test(expression)) return true;
+      for (const match of expression.matchAll(/\bgithub\b/gi)) {
+        const reference = expression.slice(match.index);
+        if (!/^github\s*\.\s*(?:ref|event_name)\b(?!\s*(?:\.|\[))/i.test(reference)) {
+          return true;
+        }
+      }
+      return false;
+    });
+}
+
+function workflowActionUses(document: unknown): string[] {
+  if (Array.isArray(document)) return document.flatMap(workflowActionUses);
+  if (!document || typeof document !== "object") return [];
+  return Object.entries(document).flatMap(([key, value]) => [
+    ...(key === "uses" && typeof value === "string" ? [value] : []),
+    ...workflowActionUses(value),
+  ]);
+}
+
+function localWorkflowActionUses(document: unknown): string[] {
+  return workflowActionUses(document).filter(value => value.startsWith("./"));
+}
+
 /** Match an executable shell line, not a fragment that could appear in echo or a comment. */
 function hasExactShellCommand(run: string | undefined, expected: string): boolean {
   return (run ?? "")
@@ -85,6 +140,41 @@ function expectSecureLinuxKeyringBootstrap(workflow: string): void {
 }
 
 describe("GitHub Actions hardening", () => {
+  test("workflow security scanners reject context objects and comment-hidden local actions", () => {
+    const unsafeExpressions = [
+      "${{ secrets.NAME }}",
+      "${{ secrets['NAME'] }}",
+      "${{ toJSON(secrets) }}",
+      "${{ format('{{Hello {0}}}', secrets.NAME) }}",
+      "${{ github.token }}",
+      "${{ github['token'] }}",
+      "${{ toJSON(github) }}",
+      "${{ format('{{Hello {0}}}', github['token']) }}",
+    ];
+    expect(unsafeWorkflowContextExpressions(unsafeExpressions.join("\n")))
+      .toEqual(unsafeExpressions);
+    expect(unsafeWorkflowContextExpressions("${{ github.ref }}\n${{ github.event_name }}"))
+      .toEqual([]);
+
+    const annotatedLocalAction = Bun.YAML.parse(`
+jobs:
+  probe:
+    steps:
+      - uses: ./.github/actions/unreviewed # local helper
+`);
+    expect(localWorkflowActionUses(annotatedLocalAction))
+      .toEqual(["./.github/actions/unreviewed"]);
+
+    const nestedCompositeAction = Bun.YAML.parse(`
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/nested # local helper
+`);
+    expect(localWorkflowActionUses(nestedCompositeAction))
+      .toEqual(["./.github/actions/nested"]);
+  });
+
   test("cross-platform CI keeps bounded jobs and immutable action references", async () => {
     const workflow = await readText(".github/workflows/ci.yml");
     const ci = Bun.YAML.parse(workflow) as {
@@ -138,11 +228,82 @@ describe("GitHub Actions hardening", () => {
     // exist — it just lives in the composite action now, and this workflow
     // must reference that local action rather than a third-party one.
     expect(workflow).toContain("./.github/actions/setup-project-bun");
-    expect(await readText(".github/actions/setup-project-bun/action.yml"))
+    const setupProjectBunActionSource = await readText(".github/actions/setup-project-bun/action.yml");
+    const setupProjectBunAction = Bun.YAML.parse(setupProjectBunActionSource);
+    expect(setupProjectBunActionSource)
       .toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
     expect(workflow).toContain("actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e");
     expect(workflow).toContain("bun test --isolate tests");
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
+
+    const actionSources = [workflow, setupProjectBunActionSource];
+    const externalUseLines = actionSources.flatMap(source => source.split(/\r?\n/)
+      .filter(line => /^\s*uses:\s+/.test(line) && !/^\s*uses:\s+\.\//.test(line)));
+    expect(externalUseLines.length).toBeGreaterThan(0);
+    for (const line of externalUseLines) {
+      expect(line).toMatch(/^\s*uses:\s+[^\s@]+@[0-9a-f]{40}\s+#\s+\S.*$/);
+    }
+    expect(externalUseLines.some(line => line.includes("dorny/paths-filter@"))).toBe(true);
+
+    const externalUses = [ci, setupProjectBunAction]
+      .flatMap(workflowActionUses)
+      .filter(value => !value.startsWith("./"));
+    expect(externalUses.length).toBe(externalUseLines.length);
+    for (const value of externalUses) {
+      expect(value).toMatch(/^[^\s@]+@[0-9a-f]{40}$/);
+    }
+
+    const jobs = ci.jobs as Record<string, {
+      permissions?: Record<string, string>;
+      "runs-on"?: string;
+      strategy?: { matrix?: { os?: string[]; include?: Array<{ name: string; runner: string }> } };
+    }>;
+    expect(Object.keys(jobs).sort()).toEqual([
+      "api-usage",
+      "changes",
+      "ci",
+      "gates",
+      "keyring-smoke",
+      "npm-global-smoke",
+      "platform-macos",
+      "platform-windows",
+      "select-windows-runner",
+      "storage-policy",
+      "test",
+    ]);
+    for (const [name, job] of Object.entries(jobs)) {
+      if (name === "changes") {
+        expect(job.permissions).toEqual({ contents: "read", "pull-requests": "read" });
+      } else {
+        expect(`${name}:${String(job.permissions)}`).toBe(`${name}:undefined`);
+      }
+    }
+    expect(unsafeWorkflowContextExpressions(workflow)).toEqual([]);
+    expect(workflow).not.toMatch(/\bGITHUB_TOKEN\b/);
+
+    const localUses = localWorkflowActionUses(ci);
+    expect([...new Set(localUses)]).toEqual(["./.github/actions/setup-project-bun"]);
+    expect(localWorkflowActionUses(setupProjectBunAction)).toEqual([]);
+
+    const fixedRunners = {
+      "select-windows-runner": "ubuntu-latest",
+      changes: "ubuntu-latest",
+      test: "ubuntu-latest",
+      "storage-policy": "ubuntu-latest",
+      "api-usage": "ubuntu-latest",
+      gates: "ubuntu-latest",
+      "platform-macos": "macos-latest",
+      ci: "ubuntu-latest",
+    } as const;
+    for (const [name, runner] of Object.entries(fixedRunners)) {
+      expect(jobs[name]?.["runs-on"]).toBe(runner);
+    }
+    expect(jobs["platform-windows"]?.["runs-on"])
+      .toBe("${{ fromJSON(needs.select-windows-runner.outputs.runner) }}");
+    expect(jobs["keyring-smoke"]?.["runs-on"]).toBe("${{ matrix.runner }}");
+    expect(jobs["npm-global-smoke"]?.["runs-on"]).toBe("${{ matrix.os }}");
+    expect(jobs["npm-global-smoke"]?.strategy?.matrix?.os)
+      .toEqual(["ubuntu-latest", "windows-latest", "macos-latest"]);
 
     // Sharding is only safe while the shards tile the suite exactly. If the
     // matrix and the divisor drift apart, some files stop running and CI stays
@@ -152,14 +313,9 @@ describe("GitHub Actions hardening", () => {
     expect(linuxShards).toEqual([1, 2, 3, 4]);
     expect(workflow).toContain(`--shard=\${{ matrix.shard }}/${linuxShards.length}`);
 
-    // Every job that runs tests/ must fetch tags, because one of those tests reads
-    // them. tests/release-version-line.test.ts compares package.json against the
-    // newest release tag, and actions/checkout brings no tags by default: git is
-    // present, `git tag --list` exits 0, and stdout is empty. The check then has an
-    // empty set, cannot fail, and a version regression rides through green. That is
-    // how the first cut of that test shipped, so pin the flag rather than trusting a
-    // comment. Asserted per job so a future edit cannot drop it from one leg while
-    // the other still carries it.
+    // Every test job verifies the exact Fork official baseline Tag before running.
+    // actions/checkout omits tags by default, so pin fetch-tags per job rather than
+    // trusting one leg to cover provenance for the others.
     for (const jobName of ["test", "platform-macos", "platform-windows"]) {
       const steps = (ci.jobs?.[jobName] as { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> })?.steps ?? [];
       const checkout = steps.find(step => typeof step.uses === "string" && step.uses.includes("actions/checkout"));
@@ -396,13 +552,14 @@ describe("GitHub Actions hardening", () => {
     // branch into that path.
     const ci = Bun.YAML.parse(await readText(".github/workflows/ci.yml")) as {
       on?: {
-        push?: { branches?: string[]; paths?: string[] };
+        push?: { branches?: string[]; paths?: string[]; "paths-ignore"?: string[] };
         pull_request?: { branches?: string[]; paths?: string[] };
       };
       jobs?: Record<string, Record<string, unknown> | undefined>;
     };
     expect([...(ci.on?.push?.branches ?? [])].sort())
       .toEqual(["dev", "main", "preview"]);
+    expect(Object.keys(ci.on?.push ?? {}).sort()).toEqual(["branches"]);
 
     // The PR trigger must carry NO base-branch filter, and the two triggers
     // differ on purpose. GitHub matches `branches:` against the BASE ref, so
@@ -421,9 +578,9 @@ describe("GitHub Actions hardening", () => {
     expect(ci.on?.pull_request?.branches).toBeUndefined();
     expect(ci.on?.pull_request?.paths).toBeUndefined();
 
-    // The push trigger and pull-request `changes` job share one expensive-CI
-    // allowlist. PRs always create the workflow and aggregate check; this list
-    // decides whether the costly jobs run. Pin the entire list on both paths.
+    // `changes` is a pull-request cost filter only. Push is branch-only and
+    // every producer runs regardless of changed paths; this list scopes only
+    // the expensive jobs for pull requests.
     const ciPaths = [
       ".gitattributes",
       ".github/workflows/ci.yml",
@@ -443,7 +600,8 @@ describe("GitHub Actions hardening", () => {
       "tests/**",
       "tsconfig.json",
     ];
-    expect([...(ci.on?.push?.paths ?? [])].sort()).toEqual(ciPaths);
+    expect(ci.on?.push?.paths).toBeUndefined();
+    expect(ci.on?.push?.["paths-ignore"]).toBeUndefined();
 
     const filterStep = (ci.jobs?.changes as {
       steps?: { with?: Record<string, string> }[];
@@ -509,20 +667,70 @@ describe("GitHub Actions hardening", () => {
     const gateSteps = (ci.jobs?.gates as {
       steps?: { name?: string; if?: string }[];
     })?.steps ?? [];
+    const pushOrGuiChanged = "github.event_name != 'pull_request' || needs.changes.outputs.gui == 'true'";
     for (const stepName of ["GUI lint", "GUI build"]) {
       const step = gateSteps.find(candidate => candidate.name === stepName);
       expect(`${stepName}:${step === undefined}`).toBe(`${stepName}:false`);
-      expect(step?.if).toBe("needs.changes.outputs.gui == 'true'");
+      expect(step?.if).toBe(pushOrGuiChanged);
+    }
+
+    const npmGlobal = ci.jobs?.["npm-global-smoke"] as { if?: string } | undefined;
+    expect(npmGlobal?.if).toBe(
+      "github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.outputs.packaging == 'true'",
+    );
+
+    const aggregate = ci.jobs?.ci as {
+      steps?: Array<{ env?: Record<string, string>; run?: string }>;
+    } | undefined;
+    const assertion = aggregate?.steps?.find(step => step.run?.includes("needed job(s) did not pass"));
+    expect(assertion?.env?.EVENT_NAME).toBe("${{ github.event_name }}");
+    expect(assertion?.run).toContain('if [ "$EVENT_NAME" = "push" ]; then');
+    expect(assertion?.run).toContain('.key != "platform-windows"');
+    expect(assertion?.run).toContain('.value.result != "success"');
+    expect([...(assertion?.run ?? "").matchAll(/\.key !=/g)]).toHaveLength(1);
+
+    const aggregateScript = assertion?.run ?? "";
+    const needs = (ci.jobs?.ci as { needs?: string[] })?.needs ?? [];
+    const allSuccess = Object.fromEntries(needs.map(name => [name, { result: "success" }]));
+    const runAggregate = (results: Record<string, { result?: string }>): number | null => Bun.spawnSync(
+      ["bash", "-c", aggregateScript],
+      {
+        env: { ...process.env, EVENT_NAME: "push", RESULTS: JSON.stringify(results) },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    ).exitCode;
+    let aggregateToolsAvailable = false;
+    try {
+      aggregateToolsAvailable = Bun.spawnSync(
+        ["bash", "-c", "command -v jq >/dev/null 2>&1"],
+        { stdout: "ignore", stderr: "ignore" },
+      ).exitCode === 0;
+    } catch {
+      aggregateToolsAvailable = false;
+    }
+    if (!aggregateToolsAvailable) {
+      expect(process.env.GITHUB_ACTIONS === "true" && process.platform === "linux").toBe(false);
+      console.warn("aggregate push truth table skipped: bash+jq unavailable outside the required GitHub Linux lane");
+    } else {
+      for (const name of needs) {
+        const results = structuredClone(allSuccess);
+        results[name] = { result: "skipped" };
+        expect(`${name}:${runAggregate(results)}`).toBe(`${name}:${name === "platform-windows" ? 0 : 1}`);
+      }
+      for (const result of ["failure", "cancelled", "unknown"]) {
+        expect(runAggregate({ ...allSuccess, changes: { result } })).not.toBe(0);
+      }
+      expect(runAggregate({ ...allSuccess, changes: {} })).not.toBe(0);
     }
 
     const filterStep = (ci.jobs?.changes as {
       steps?: { with?: Record<string, string> }[];
     })?.steps?.find(step => step.with?.filters);
 
-    // `base` is not cosmetic. Unset, paths-filter diffs a `dev` push against the
-    // repository default branch (`main`), so everything changed since the last
-    // promotion still reads as changed and the scoped jobs run anyway — the
-    // filter would look correct, stay green, and save nothing.
+    // `base` keeps branch-push diagnostics relative to the preceding branch
+    // commit instead of the older default-branch release. Push producers ignore
+    // these outputs; only pull-request cost scoping is authoritative.
     expect(filterStep?.with?.base).toBe("${{ github.ref }}");
 
     // paths-filter cannot read a PR's file list without this, and a filter that
@@ -553,9 +761,9 @@ describe("GitHub Actions hardening", () => {
       "src/**",
     ].sort());
 
-    // Every packaging pattern that names a real path must also appear in the
-    // shared expensive-CI filter. Otherwise the workflow records a cheap green
-    // aggregate while silently skipping the packaging verification.
+    // Every packaging pattern that names a real path must also appear in the PR
+    // expensive-CI filter. Push runs packaging unconditionally; this guard keeps
+    // scoped pull requests from recording a cheap green aggregate.
     const ciPatterns = (Bun.YAML.parse(filters) as { ci?: string[] }).ci ?? [];
     for (const pattern of packaging) {
       if (pattern === "scripts/prepare-package.ts") continue; // covered by scripts/**
@@ -5269,5 +5477,24 @@ describe("gui exhaustive-deps suppression stays scoped and effective", () => {
     // react/react-compiler penalises a component merely for carrying suppressions. If one
     // reappears, the config route has been misunderstood.
     expect(models).not.toContain("react-doctor-disable-next-line");
+  });
+
+  test("Fork ben releases do not couple dev CI to a published version line", async () => {
+    const workflow = await readText(".github/workflows/dev-version-bump.yml");
+    const parsed = Bun.YAML.parse(workflow) as {
+      jobs?: Record<string, { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> }>;
+    };
+    const checkout = parsed.jobs?.["open-bump-pr"]?.steps?.find(step =>
+      step.uses?.startsWith("actions/checkout@")
+    );
+
+    // Existing candidate branches are validated with an origin/dev...origin/<branch>
+    // merge-base diff, so a depth-1 checkout can make recovery fail before the no-op
+    // Fork version policy is even reached.
+    expect(checkout?.with?.ref).toBe("dev");
+    expect(checkout?.with?.["fetch-depth"]).toBe(0);
+    expect(workflow).toContain('bun scripts/bump-dev-version.ts "${RELEASED_VERSION}" package.json');
+    expect(workflow).not.toContain("release-version-line.test.ts");
+    expect(workflow).not.toContain("Prove the chosen version is unused");
   });
 });

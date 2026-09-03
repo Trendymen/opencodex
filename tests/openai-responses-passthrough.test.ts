@@ -1596,7 +1596,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     });
   });
 
-  test("keeps a native blob while blanking its raw reasoning content", () => {
+  test("keeps an OpenAI-issued blob while blanking its raw reasoning content", () => {
     const adapter = createResponsesPassthroughAdapter(provider);
     const request = adapter.buildRequest({
       modelId: "gpt-5.6-sol",
@@ -1609,7 +1609,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
           type: "reasoning",
           status: "completed",
           summary: [],
-          encrypted_content: "native-backend-blob",
+          encrypted_content: "gAAAA-openai-issued-blob",
           content: [{ type: "reasoning_text", text: "raw routed reasoning" }],
         }],
       },
@@ -1619,7 +1619,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(body.input[0]).toEqual({
       type: "reasoning",
       summary: [],
-      encrypted_content: "native-backend-blob",
+      encrypted_content: "gAAAA-openai-issued-blob",
       content: [],
     });
   });
