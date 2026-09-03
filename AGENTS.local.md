@@ -7,7 +7,7 @@
 - 每小时上游稳定版同步自动化（含官方 Tag 保留、双审门禁、幂等收敛与完整发布流程）的规则真源见 docs/fork-sync-automation.md；该自动化相关任务必须先读取并遵循该文档。
 - 分支职责以该文档为准：main 只指向最新已发布 Fork Release；dev 是自由开发线，同时是上游稳定版 rebase、候选验证、双审和 Release 发布的候选来源。同步不得把 dev 仅当作只读证据。
 - rebase 冲突审查必须执行该文档规定的逐冲突证据账本、固定 SHA 独立机械重算、三层 diff、命名风险清单与高风险升级；只给汇总计数、总括性解决说明或测试通过结论均不够。
-- sync 审计 ref 按 Fork revision 不可变分层：`ben.1` 使用 `sync/vX.Y.Z`，同基线 `ben.N (N>=2)` 使用 `sync/vX.Y.Z-ben.N`；不得为了压缩后的维护发布 force 改写旧 sync ref。
+- 每个官方基线只使用一个 `sync/vX.Y.Z` Release 指针；同基线 `ben.N` 发布时允许在六成员 atomic push 中用该 ref 的精确 expected-OID lease 强制更新，禁止创建 `sync/vX.Y.Z-ben.N`。Fork Tag 仍不可变，sync 的可移动性不得放宽 Tag 规则。
 
 ## 测试文件隔离
 

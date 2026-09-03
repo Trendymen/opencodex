@@ -200,10 +200,10 @@ const EXPECTED_V240_KEYS = [
 const EXPECTED_RELEASE_LIFECYCLE = [
   "rebase_branch=dev",
   "rebase_request=full_steps_1_to_15_unless_user_explicitly_stops",
-  "sync_role=immutable-first-and-maintenance-revision-audit-refs",
+  "sync_role=single-mutable-release-pointer-per-official-baseline",
   "release_instant_dev=must-equal-RELEASE_COMMIT",
   "post_release_advanced_dev=must-not-reset",
-  "sync_ancestry=RELEASE_SYNC_REF-absent-or-ancestor-of-RELEASE_COMMIT",
+  "sync_update=exact-oid-leased-force-to-RELEASE_COMMIT",
   "final_convergence=local-remote-main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT",
 ].join("\n");
 const EXPECTED_RELEASE_LIFECYCLE_KEYS = [
@@ -212,44 +212,42 @@ const EXPECTED_RELEASE_LIFECYCLE_KEYS = [
   "sync_role",
   "release_instant_dev",
   "post_release_advanced_dev",
-  "sync_ancestry",
+  "sync_update",
   "final_convergence",
 ] as const;
 const EXPECTED_RELEASE_LIFECYCLE_RECORD = {
   rebase_branch: "dev",
   rebase_request: "full_steps_1_to_15_unless_user_explicitly_stops",
-  sync_role: "immutable-first-and-maintenance-revision-audit-refs",
+  sync_role: "single-mutable-release-pointer-per-official-baseline",
   release_instant_dev: "must-equal-RELEASE_COMMIT",
   post_release_advanced_dev: "must-not-reset",
-  sync_ancestry: "RELEASE_SYNC_REF-absent-or-ancestor-of-RELEASE_COMMIT",
+  sync_update: "exact-oid-leased-force-to-RELEASE_COMMIT",
   final_convergence: "local-remote-main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT",
 } as const;
 const EXPECTED_ATOMIC_REFSET = [
   ["branch", "main", "leased-force", "RELEASE_COMMIT:refs/heads/main"],
   ["branch", "dev", "leased-force", "RELEASE_COMMIT:refs/heads/dev"],
-  ["branch", "sync", "leased-create-or-fast-forward", "RELEASE_COMMIT:RELEASE_SYNC_REF"],
+  ["branch", "sync", "leased-force", "RELEASE_COMMIT:refs/heads/sync/vX.Y.Z"],
   ["branch", "marker", "leased-force", "OFFICIAL_COMMIT:refs/heads/upstream-release"],
   ["tag", "official", "no-force-no-lease", "refs/tags/vX.Y.Z:refs/tags/vX.Y.Z"],
   ["tag", "fork", "no-force-no-lease", "refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N"],
 ] as const;
 const EXPECTED_SYNC_AUDIT_POLICY_KEYS = [
-  "target_selection",
-  "first_revision_ref",
-  "maintenance_revision_ref",
-  "historical_refs",
-  "target_precondition",
-  "absent_creation",
+  "ref_scope",
+  "release_sync_ref",
+  "revision_specific_ref",
+  "initial_creation",
   "existing_update",
+  "ancestry_requirement",
   "release_instant",
 ] as const;
 const EXPECTED_SYNC_AUDIT_POLICY = {
-  target_selection: "ben.1:first-revision-ref;ben.N>=2:maintenance-revision-ref",
-  first_revision_ref: "refs/heads/sync/vX.Y.Z",
-  maintenance_revision_ref: "refs/heads/sync/vX.Y.Z-ben.N",
-  historical_refs: "immutable-never-force-never-delete",
-  target_precondition: "absent-or-ancestor-of-RELEASE_COMMIT",
-  absent_creation: "expected-absent-lease-and-no-force",
-  existing_update: "exact-oid-lease-fast-forward-only",
+  ref_scope: "single-mutable-ref-per-official-baseline",
+  release_sync_ref: "refs/heads/sync/vX.Y.Z",
+  revision_specific_ref: "forbidden",
+  initial_creation: "expected-absent-lease",
+  existing_update: "exact-oid-leased-force-allowed",
+  ancestry_requirement: "none",
   release_instant: "main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT",
 } as const;
 const EXPECTED_SAME_BASE_TAG_PREFLIGHT_KEYS = [
@@ -280,6 +278,7 @@ const EXPECTED_LOCAL_REF_CAS_KEYS = [
   "transport",
   "transaction",
   "main_update",
+  "sync_update",
   "marker_update",
   "atomicity",
   "sequential_updates",
@@ -288,6 +287,7 @@ const EXPECTED_LOCAL_REF_CAS = {
   transport: "git-update-ref-stdin",
   transaction: "start-prepare-commit",
   main_update: "refs/heads/main RELEASE_COMMIT EXPECTED_OLD_LOCAL_MAIN",
+  sync_update: "refs/heads/sync/vX.Y.Z RELEASE_COMMIT EXPECTED_OLD_LOCAL_SYNC",
   marker_update: "refs/heads/upstream-release OFFICIAL_COMMIT EXPECTED_OLD_LOCAL_MARKER",
   atomicity: "all-or-none",
   sequential_updates: "forbidden",
@@ -940,23 +940,29 @@ describe("Fork maintenance truth", () => {
     }
   });
 
-  test("keeps earlier sync audit refs immutable across same-base maintenance releases", () => {
+  test("uses one leased-force sync pointer for every release on an official baseline", () => {
     expect(strictSyncAuditPolicy(automation)).toEqual(EXPECTED_SYNC_AUDIT_POLICY);
-    expect(automation).toContain("`sync/vX.Y.Z-ben.N`");
-    expect(automation).toContain("expected-absent lease");
-    expect(automation).toContain("旧 sync ref");
+    expect(automation).toContain("`sync/vX.Y.Z`");
+    expect(automation).toContain("精确 expected-OID lease");
+    expect(automation).toContain("允许 non-fast-forward");
+    expect(automation).not.toContain("maintenance_revision_ref=refs/heads/sync/vX.Y.Z-ben.N");
+    expect(localRules).toContain("禁止创建 `sync/vX.Y.Z-ben.N`");
+    expect(changes).not.toContain("release_sync_ref=refs/heads/sync/v2.40.0-ben.2");
+    expect(machineBlock(changes, "v240-ben2-candidate")).toContain(
+      "release_sync_ref=refs/heads/sync/v2.40.0",
+    );
 
     expect(() => strictSyncAuditPolicy(automation.replace(
-      "historical_refs=immutable-never-force-never-delete",
-      "historical_refs=leased-force-rewrite",
+      "revision_specific_ref=forbidden",
+      "revision_specific_ref=allowed",
     ))).toThrow();
     expect(() => strictSyncAuditPolicy(automation.replace(
-      "maintenance_revision_ref=refs/heads/sync/vX.Y.Z-ben.N",
-      "maintenance_revision_ref=refs/heads/sync/vX.Y.Z",
+      "existing_update=exact-oid-leased-force-allowed",
+      "existing_update=fast-forward-only",
     ))).toThrow();
     expect(() => strictSyncAuditPolicy(automation.replace(
-      "absent_creation=expected-absent-lease-and-no-force",
-      "absent_creation=unleased-create",
+      "ancestry_requirement=none",
+      "ancestry_requirement=required",
     ))).toThrow();
   });
 
@@ -980,7 +986,7 @@ describe("Fork maintenance truth", () => {
     ))).toThrow();
   });
 
-  test("updates local main and upstream-release atomically with their captured old OIDs", () => {
+  test("updates local main, sync, and upstream-release atomically with captured old OIDs", () => {
     expect(strictLocalRefCas(automation)).toEqual(EXPECTED_LOCAL_REF_CAS);
     expect([...automation.matchAll(/严格按 `local-ref-cas-transaction`/g)]).toHaveLength(2);
 
@@ -991,6 +997,10 @@ describe("Fork maintenance truth", () => {
     expect(() => strictLocalRefCas(automation.replace(
       "refs/heads/upstream-release OFFICIAL_COMMIT EXPECTED_OLD_LOCAL_MARKER",
       "refs/heads/upstream-release OFFICIAL_COMMIT",
+    ))).toThrow();
+    expect(() => strictLocalRefCas(automation.replace(
+      "refs/heads/sync/vX.Y.Z RELEASE_COMMIT EXPECTED_OLD_LOCAL_SYNC",
+      "refs/heads/sync/vX.Y.Z RELEASE_COMMIT",
     ))).toThrow();
   });
 
@@ -1085,7 +1095,7 @@ describe("Fork maintenance truth", () => {
     expect(automation).not.toContain("git rebase --onto <new-tag-sha> <old-upstream-release-sha> sync/vX.Y.Z");
     expect(automation).toContain("RELEASE_COMMIT");
     expect(automation).toContain("OFFICIAL_COMMIT");
-    expect(automation).toContain('git merge-base --is-ancestor "$EXPECTED_REMOTE_RELEASE_SYNC" "$RELEASE_COMMIT"');
+    expect(automation).not.toContain('git merge-base --is-ancestor "$EXPECTED_REMOTE_RELEASE_SYNC" "$RELEASE_COMMIT"');
     expect(automation).toContain("本地/远端 `main`、`dev`、`RELEASE_SYNC_REF`");
     expect(automation).toContain("post_release_advanced_dev=must-not-reset");
   });
