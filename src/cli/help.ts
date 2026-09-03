@@ -49,7 +49,7 @@ Usage:
                               Reclaim abandoned response-state temp files (works without a running proxy)
   ocx doctor --recover-zero-byte-coordinator --yes
                               Back up a proven zero-byte Codex coordinator after stopping the proxy
-  ocx debug <scope>           provider/usage/injection/claude on|off|status|reset
+  ocx debug <scope>           provider/provider-text/usage/injection/claude on|off|status|reset
   ocx login <provider>        OAuth or API-key provider login
   ocx logout <provider>       Remove a stored OAuth login
   ocx gui [pair --origin <browser-origin> [--json]]

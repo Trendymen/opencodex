@@ -177,7 +177,7 @@ by the current window size.
 | Method and path | Purpose | Notable errors |
 | --- | --- | --- |
 | `GET /api/logs` | Query filtered in-memory request logs | — |
-| `GET, PUT /api/debug` | Read debug flags; set, clear, or reset capture categories | 400 invalid or empty update |
+| `GET, PUT /api/debug` | Read or update `debug`, default-off `providerText`, `usage`, `injection`, and `claude`; `providerText` separately authorizes bounded persisted response/reasoning samples | 400 invalid or empty update |
 | `GET /api/debug/logs` | Read bounded provider/debug log entries | — |
 | `GET /api/debug/usage-logs` | Read bounded usage-debug entries | — |
 | `GET /api/debug/injection-logs` | Read bounded guidance-injection debug entries | — |
