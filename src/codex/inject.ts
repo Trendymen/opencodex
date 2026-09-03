@@ -317,6 +317,7 @@ function buildProviderTableBlockForTarget(
     'wire_api = "responses"',
     // false only in the authless Desktop opt-in (#1107); true keeps the App/TUI account gate.
     `requires_openai_auth = ${target.desktopAuthless === true ? "false" : "true"}`,
+    "supports_standalone_web_search = true",
   ];
   if (target.requiresAdmissionToken) {
     // codex-cli 0.146+ contract (#2073): env_key sends Authorization: Bearer $VAR and

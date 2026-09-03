@@ -62,12 +62,17 @@ export type EagerRelayHooks = {
   disposeInspection?: () => void;
   /** True once inspection has reported a protocol terminal (inspector.reported). */
   sawTerminal: () => boolean;
-  /** Record a synthetic terminal (caller decides incomplete vs failed-502). */
-  onSynthetic: (kind: "incomplete" | "failed") => void;
+  /** Record a synthetic terminal (clean upstream errors are distinct from read-reset failed-502). */
+  onSynthetic: (kind: "incomplete" | "failed" | "upstream-error", httpStatusOverride?: number) => void;
   /** Client cancelled and NO terminal arrived within the drain bounds. */
   onClientCancel: () => void;
   /** Exactly once, after the producer fully stops (unregisterTurn parity). */
   onDone: () => void;
+  /**
+   * Observe client-bound bytes AFTER inline block rewrites (phase inference,
+   * call restore). Unlike inspectChunk, this sees what Codex actually receives.
+   */
+  onClientChunk?: (chunk: Uint8Array) => void;
 };
 
 export type EagerRelayOptions = {
@@ -160,15 +165,21 @@ export function relaySseEagerBounded(
     }
     return rewriteEncoder!.encode(out);
   };
+  const observeClientBytes = (value: Uint8Array): void => {
+    if (!hooks.onClientChunk) return;
+    try { hooks.onClientChunk(value); } catch { /* diagnostics must not break relaying */ }
+  };
   /** Flush any trailing partial block at upstream end (rewrite applied, matching the pull relay). */
   const flushRewriteTail = (): Uint8Array => {
     if (!activeRewrite) return new Uint8Array(0);
     // Decoder-flushed bytes logically follow everything already decoded.
     let tail = frameBuffer + rewriteDecoder!.decode();
-    const rewritten = activeRewrite(tail);
-    // Multiple emitted blocks must stay separately framed (#893 review);
-    // join places the delimiter only between blocks, never after the last.
-    tail = rewritten.join(tail.includes("\r\n") ? "\r\n\r\n" : "\n\n");
+    const rewritten = tail.length > 0 ? activeRewrite(tail) : [];
+    const flushed = activeRewrite.flush?.() ?? [];
+    const delimiter = tail.includes("\r\n") ? "\r\n\r\n" : "\n\n";
+    const rewrittenText = rewritten.join(delimiter);
+    const flushedText = flushed.map(block => block + delimiter).join("");
+    tail = rewrittenText + (rewrittenText && flushedText ? delimiter : "") + flushedText;
     frameBuffer = "";
     if (rewriteBudget && frameBufferBytes > 0) {
       rewriteBudget.releaseRetained(frameBufferBytes, { kind: "live_transient" });
@@ -218,7 +229,8 @@ export function relaySseEagerBounded(
   };
 
   const producer = async () => {
-    let syntheticKind: "incomplete" | "failed" | null = null;
+    let syntheticKind: "incomplete" | "failed" | "upstream-error" | null = null;
+    let syntheticHttpStatus: number | undefined;
     let deliveryFallbackSent = false;
     let priorRewriteFailure = false;
     let priorRewriteError: unknown;
@@ -264,6 +276,7 @@ export function relaySseEagerBounded(
             const safeTail = encodeFailedTail(rewriteError);
             if (safeTail && !cancelled && !upstream.signal.aborted) {
               if (!hooks.sawTerminal()) syntheticKind = "failed";
+              observeClientBytes(safeTail);
               queuedBytes += safeTail.byteLength;
               try { controllerRef?.enqueue(safeTail); } catch { /* client already torn down */ }
               try { controllerRef?.close(); } catch { /* client already gone */ }
@@ -271,23 +284,32 @@ export function relaySseEagerBounded(
             break;
           }
           if (clientTail.byteLength > 0 && !cancelled) {
+            observeClientBytes(clientTail);
             queuedBytes += clientTail.byteLength;
             try { controllerRef?.enqueue(clientTail); } catch { /* client already gone */ }
           }
           if (terminalBoundary.terminalSeen()) {
             if (!terminalBoundary.doneSeen() && !cancelled) {
+              observeClientBytes(terminalSentinel);
               queuedBytes += terminalSentinel.byteLength;
               try { controllerRef?.enqueue(terminalSentinel); } catch { /* client already gone */ }
             }
           } else if (!hooks.sawTerminal() && !cancelled && !upstream.signal.aborted) {
-            // A clean 200 EOF without a Responses terminal must be visible to
-            // Codex as one incomplete turn, followed by the normal sentinel.
-            queuedBytes += adapterEofFrame.byteLength + terminalSentinel.byteLength;
+            // A clean 200 EOF without a Responses terminal preserves a usable
+            // upstream error as failed; a bare EOF remains incomplete.
+            const errorFrame = terminalBoundary.pendingCleanEofFailure();
+            const terminalFrame = errorFrame
+              ? terminalEncoder.encode(`event: response.failed\ndata: ${errorFrame.payload}\n\n`)
+              : adapterEofFrame;
+            queuedBytes += terminalFrame.byteLength + terminalSentinel.byteLength;
             try {
-              controllerRef?.enqueue(adapterEofFrame);
+              observeClientBytes(terminalFrame);
+              controllerRef?.enqueue(terminalFrame);
+              observeClientBytes(terminalSentinel);
               controllerRef?.enqueue(terminalSentinel);
             } catch { /* client already gone */ }
-            syntheticKind = "incomplete";
+            syntheticKind = errorFrame ? "upstream-error" : "incomplete";
+            syntheticHttpStatus = errorFrame?.httpStatus;
           }
           break;
         }
@@ -317,6 +339,7 @@ export function relaySseEagerBounded(
           outbound = terminalBounded;
         }
         if (outbound.byteLength > 0) {
+          observeClientBytes(outbound);
           queuedBytes += outbound.byteLength;
           try {
             controllerRef?.enqueue(outbound);
@@ -333,6 +356,7 @@ export function relaySseEagerBounded(
           // gateway keeps its HTTP connection alive. Add the conventional
           // sentinel and stop the single-reader relay at that protocol boundary.
           if (!terminalBoundary.doneSeen()) {
+            observeClientBytes(terminalSentinel);
             queuedBytes += terminalSentinel.byteLength;
             try { controllerRef?.enqueue(terminalSentinel); } catch { /* client already gone */ }
           }
@@ -352,11 +376,13 @@ export function relaySseEagerBounded(
       let boundedTail: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
       let tailTerminal = false;
       let tailDone = false;
+      let pendingReadError: Uint8Array | null = null;
       try { hooks.finishInspection(); } catch { /* preserve the original read failure */ }
       try {
         boundedTail = terminalBoundary.finish();
         tailTerminal = terminalBoundary.terminalSeen();
         tailDone = terminalBoundary.doneSeen();
+        if (!tailTerminal) pendingReadError = terminalBoundary.pendingReadErrorFrame();
       } catch {
         // A near-cap ambiguous delimiter tail may itself overflow at EOF.
         // Preserve the original read/framing failure and continue emitting
@@ -380,6 +406,7 @@ export function relaySseEagerBounded(
         }
       }
       if (clientTail.byteLength > 0 && !cancelled && !upstream.signal.aborted) {
+        observeClientBytes(clientTail);
         queuedBytes += clientTail.byteLength;
         try { controllerRef?.enqueue(clientTail); } catch { /* client already torn down */ }
       }
@@ -393,12 +420,14 @@ export function relaySseEagerBounded(
         if (safeTail && !cancelled && !upstream.signal.aborted) {
           if (!hooks.sawTerminal()) syntheticKind = "failed";
           deliveryFallbackSent = true;
+          observeClientBytes(safeTail);
           queuedBytes += safeTail.byteLength;
           try { controllerRef?.enqueue(safeTail); } catch { /* client already torn down */ }
           try { controllerRef?.close(); } catch { /* client already gone */ }
         }
       } else if (tailTerminal && !cancelled && !upstream.signal.aborted) {
         if (!tailDone) {
+          observeClientBytes(terminalSentinel);
           queuedBytes += terminalSentinel.byteLength;
           try { controllerRef?.enqueue(terminalSentinel); } catch { /* client already gone */ }
         }
@@ -409,14 +438,25 @@ export function relaySseEagerBounded(
         // committing to the synthetic terminal (adversarial review blocker).
         const tail = encodeFailedTail(err);
         if (tail && !cancelled && !upstream.signal.aborted) {
-          // Inspection and client framing have separate bounded parsers. If
-          // inspection resynchronized after an oversized frame and observed a
-          // later real terminal, it still must not suppress a terminal delivery
-          // to the client. Only accounting remains tied to the inspected result.
+          // Flush any held phase/nested rewrite output before the safe failure tail.
+          const retainedTail = activeRewrite ? flushRewriteTail() : new Uint8Array(0);
+          // Inspection and client framing have separate bounded parsers. A later
+          // inspected terminal never suppresses the client's required delivery tail.
           if (!hooks.sawTerminal()) syntheticKind = "failed";
           deliveryFallbackSent = true;
-          queuedBytes += tail.byteLength;
-          try { controllerRef?.enqueue(tail); } catch { /* client already torn down */ }
+          queuedBytes += retainedTail.byteLength + (pendingReadError?.byteLength ?? 0) + tail.byteLength;
+          try {
+            if (retainedTail.byteLength > 0) {
+              observeClientBytes(retainedTail);
+              controllerRef?.enqueue(retainedTail);
+            }
+            if (pendingReadError) {
+              observeClientBytes(pendingReadError);
+              controllerRef?.enqueue(pendingReadError);
+            }
+            observeClientBytes(tail);
+            controllerRef?.enqueue(tail);
+          } catch { /* client already torn down */ }
           try { controllerRef?.close(); } catch { /* client already torn down */ }
         }
       }
@@ -429,7 +469,7 @@ export function relaySseEagerBounded(
         frameBufferBytes = 0;
       }
       terminalBoundary.dispose();
-      if (syntheticKind) hooks.onSynthetic(syntheticKind);
+      if (syntheticKind) hooks.onSynthetic(syntheticKind, syntheticHttpStatus);
       if (cancelled && !hooks.sawTerminal()) {
         hooks.onClientCancel();
       }

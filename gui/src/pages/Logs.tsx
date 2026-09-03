@@ -97,12 +97,15 @@ interface LogDisplayMetrics {
  */
 type AttemptRecoveryKind =
   | "transient-5xx"
+  | "agent-task-recovery"
   | "connection-reset"
   | "oauth-401"
   | "key-429"
   | "rate-limit-429"
   | "anthropic-oauth-429"
+  | "oauth-account-429"
   | "image-413"
+  | "opaque-blob-rejection"
   | "empty-completion";
 
 interface LogAttempt {
@@ -281,12 +284,15 @@ const ESTIMATE_REASON_KEYS = {
  */
 const RECOVERY_KIND_KEYS = {
   "transient-5xx": "logs.detail.attempt.recovery.transient5xx",
+  "agent-task-recovery": "logs.detail.attempt.recovery.agentTaskRecovery",
   "connection-reset": "logs.detail.attempt.recovery.connectionReset",
   "oauth-401": "logs.detail.attempt.recovery.oauth401",
   "key-429": "logs.detail.attempt.recovery.key429",
   "rate-limit-429": "logs.detail.attempt.recovery.rateLimit429",
   "anthropic-oauth-429": "logs.detail.attempt.recovery.anthropicOauth429",
+  "oauth-account-429": "logs.detail.attempt.recovery.oauthAccount429",
   "image-413": "logs.detail.attempt.recovery.image413",
+  "opaque-blob-rejection": "logs.detail.attempt.recovery.opaqueBlobRejection",
   "empty-completion": "logs.detail.attempt.recovery.emptyCompletion",
 } as const satisfies Record<AttemptRecoveryKind, string>;
 

@@ -19,7 +19,8 @@ const USAGE = `Usage:
   ocx models edit <custom-id> [--model-id <id>] [--display-name <name|->]
       [--context-window <tokens|0>] [--modalities <text,image,audio|->]
       [--reasoning-efforts <none,minimal,low,medium,high,xhigh,max,ultra|->]
-      [--default-reasoning-effort <level|->] [--json]
+      [--default-reasoning-effort <level|->]
+      [--tool-mode <code_mode_only|shell|inherit>] [--json]
   ocx models <enable|disable> <provider/model|native-model> [--native] [--json]
   ocx models provider <name> <on|off> [--json]
   ocx models selected <provider> [--set <id,id...>|--clear] [--json]
@@ -66,6 +67,7 @@ async function edit(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const modalitiesRaw = takeOption(args, "--modalities");
   const reasoningEffortsRaw = takeOption(args, "--reasoning-efforts");
   const defaultEffortRaw = takeOption(args, "--default-reasoning-effort");
+  const toolModeRaw = takeOption(args, "--tool-mode");
   rejectArgs(args, USAGE);
   if (modelId !== undefined) patch.modelId = modelId;
   if (displayName !== undefined) patch.displayName = displayName === "-" ? "" : displayName;
@@ -92,6 +94,11 @@ async function edit(argv: string[], deps: RuntimeApiDeps): Promise<void> {
     }
   }
   if (defaultEffortRaw !== undefined) patch.defaultReasoningEffort = defaultEffortRaw === "-" ? null : defaultEffortRaw;
+  if (toolModeRaw !== undefined) {
+    if (toolModeRaw === "inherit") patch.codexToolMode = null;
+    else if (toolModeRaw === "code_mode_only" || toolModeRaw === "shell") patch.codexToolMode = toolModeRaw;
+    else throw new CliUsageError("--tool-mode must be code_mode_only, shell, or inherit", USAGE);
+  }
   if (Object.keys(patch).length === 0) throw new CliUsageError("at least one edit option is required", USAGE);
   const result = await runtimeRequest(`/api/custom-models/${encodeURIComponent(id)}`, {
     method: "PUT",

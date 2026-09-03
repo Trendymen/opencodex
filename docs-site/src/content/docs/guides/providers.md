@@ -257,6 +257,10 @@ attestation values, thread/session ids, turn metadata, or request bodies; the ta
 change after every proxy restart. Use `ocx debug provider logs -f` while
 reproducing the two requests, then run `ocx debug provider off`. This capture is observation-only and
 does not strip metadata, retry a request, switch accounts, reset a thread, or otherwise affect routing.
+Provider debug remains structural and text-free unless the operator separately enables
+`ocx debug provider-text on` (or the matching dashboard switch / `OCX_PROVIDER_TEXT_DEBUG=1`). That
+separate switch persists bounded response and reasoning samples under
+`$OPENCODEX_HOME/provider-debug-artifacts`; use `provider-text off` immediately after reproduction.
 
 **Diagnostics and reauth.** Human `ocx status` prints an OAuth health block (redacted account ids,
 no tokens). `ocx doctor` adds an OAuth reliability section with writable-store / single-flight checks

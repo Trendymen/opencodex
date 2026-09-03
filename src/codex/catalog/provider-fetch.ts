@@ -50,7 +50,7 @@ import { CODEX_GPT5_IDENTITY_LINE } from "../../adapters/identity";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
 import { fetchCursorUsableModels } from "../../adapters/cursor/live-models";
 import { recordLiveCursorClaudeModels, recordLiveCursorMaxModeModels } from "../../adapters/cursor/catalog";
-import { isCanonicalOpenAiForwardProvider, OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
+import { isCanonicalOpenAiForwardProvider, isOpenAiOperatedResponsesDestination, OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
 import {
   COMBO_NAMESPACE,
   comboModelId,
@@ -730,6 +730,7 @@ export function applyProviderConfigHints(
   metadataModelIdCaseFold?: boolean,
 ): CatalogModel {
   const displayName = configuredModelDisplayName(prov, model.id);
+  const progressProvider = withCanonicalOpenAiForwardAuthDefault(name, prov);
   const configuredCap = configuredContextWindow(prov, model.id);
   const configuredMaxInput = configuredMaxInputTokens(prov, model.id);
   const maxOutputTokens = routedMaxOutputTokens(name, prov, model, model.id, metadataModelIdCaseFold);
@@ -767,6 +768,7 @@ export function applyProviderConfigHints(
   const hinted = {
     ...modelWithoutServiceTier,
     ...(displayName !== undefined ? { displayName } : {}),
+    routedProgressContractEligible: !isOpenAiOperatedResponsesDestination(progressProvider),
     ...(hintedWindow !== undefined ? { contextWindow: hintedWindow } : {}),
     ...(inputModalities ? { inputModalities } : {}),
     ...(reasoningEfforts !== undefined ? { reasoningEfforts } : {}),
@@ -2187,6 +2189,9 @@ async function gatherRoutedModelsUncached(
     const providerForCanonicalCheck = rawProvider
       ? withCanonicalOpenAiForwardAuthDefault(cm.provider, rawProvider)
       : undefined;
+    const progressProvider = cm.provider === OPENAI_CODEX_PROVIDER_ID
+      ? (providerForCanonicalCheck ?? effectiveProvider)
+      : effectiveProvider;
     const codexForwardNativeCapabilityAlias = cm.provider === OPENAI_CODEX_PROVIDER_ID
       && providerForCanonicalCheck !== undefined
       && isCanonicalOpenAiForwardProvider(providerForCanonicalCheck)
@@ -2249,6 +2254,9 @@ async function gatherRoutedModelsUncached(
       id: cm.modelId,
       provider: cm.provider,
       catalogKind: CODEX_CUSTOM_MODEL_CATALOG_KIND,
+      ...(progressProvider
+        ? { routedProgressContractEligible: !isOpenAiOperatedResponsesDestination(progressProvider) }
+        : {}),
       // Display-only label: never feeds routing (customModels are keyed by routedSlug below).
       ...(cm.displayName
         ? { displayName: cm.displayName }
@@ -2331,6 +2339,10 @@ async function gatherRoutedModelsUncached(
       ...(base.supportsReasoningSummaries === undefined && replaced.supportsReasoningSummaries !== undefined ? { supportsReasoningSummaries: replaced.supportsReasoningSummaries } : {}),
       ...(base.codexToolMode === undefined && replaced.codexToolMode !== undefined ? { codexToolMode: replaced.codexToolMode } : {}),
       ...(base.capabilities === undefined && replaced.capabilities !== undefined ? { capabilities: replaced.capabilities } : {}),
+      ...(base.routedProgressContractEligible === undefined
+        && replaced.routedProgressContractEligible !== undefined
+        ? { routedProgressContractEligible: replaced.routedProgressContractEligible }
+        : {}),
     } : base;
     // Vision-sidecar coverage only: when the enriched provider's shared predicate matches
     // noVisionModels or text-without-image modelInputModalities, advertise image input so the

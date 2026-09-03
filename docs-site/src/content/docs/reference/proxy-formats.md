@@ -80,8 +80,10 @@ that terminal are dropped rather than replacing the completed turn with a transp
 :::note
 For native passthrough, a Responses terminal event is authoritative. A premature `data: [DONE]` is
 held until that event. On the ordinary native path, a clean HTTP 200 EOF without a parsed terminal
-emits one `response.incomplete` with `incomplete_details.reason: "adapter_eof"`, followed by one
-`data: [DONE]`; syntactically valid delimiter-less terminal JSON is accepted exactly once, while
+preserves a preceding ordinary top-level `error` as one `response.failed`, including its bounded
+type, code, and redacted message. If no usable error arrived, the proxy emits one
+`response.incomplete` with `incomplete_details.reason: "adapter_eof"`. Either outcome is followed by
+one `data: [DONE]`; syntactically valid delimiter-less terminal JSON is accepted exactly once, while
 malformed or truncated JSON remains incomplete. For providers opted into model-scoped terminal
 repair, unframed terminal-like suffixes and a premature `data: [DONE]` at EOF fail closed with
 `missing_terminal_event` when no complete lifecycle candidate can be promoted; a complete candidate
