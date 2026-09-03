@@ -937,6 +937,7 @@ describe("Fork maintenance truth", () => {
       expect(parseAtomicRefset(block)).toEqual(EXPECTED_ATOMIC_REFSET);
       expect(strictReleaseLifecycle(flow)).toBe(EXPECTED_RELEASE_LIFECYCLE);
       expect(strictSyncAuditPolicy(flow)).toEqual(EXPECTED_SYNC_AUDIT_POLICY);
+      expect(strictLocalRefCas(flow)).toEqual(EXPECTED_LOCAL_REF_CAS);
     }
   });
 
@@ -987,7 +988,14 @@ describe("Fork maintenance truth", () => {
   });
 
   test("updates local main, sync, and upstream-release atomically with captured old OIDs", () => {
-    expect(strictLocalRefCas(automation)).toEqual(EXPECTED_LOCAL_REF_CAS);
+    const flows = [
+      majorSection("没有新官方版本时的幂等收敛"),
+      majorSection("每次稳定版 rebase 的强制流程"),
+      automation,
+    ];
+    for (const flow of flows) {
+      expect(strictLocalRefCas(flow)).toEqual(EXPECTED_LOCAL_REF_CAS);
+    }
     expect([...automation.matchAll(/严格按 `local-ref-cas-transaction`/g)]).toHaveLength(2);
 
     expect(() => strictLocalRefCas(automation.replace(
@@ -1002,6 +1010,13 @@ describe("Fork maintenance truth", () => {
       "refs/heads/sync/vX.Y.Z RELEASE_COMMIT EXPECTED_OLD_LOCAL_SYNC",
       "refs/heads/sync/vX.Y.Z RELEASE_COMMIT",
     ))).toThrow();
+
+    const audit = majorSection("最小可复现审计命令");
+    expect(audit).toContain("update refs/heads/main RELEASE_COMMIT EXPECTED_OLD_LOCAL_MAIN");
+    expect(audit).toContain("update refs/heads/sync/vX.Y.Z RELEASE_COMMIT EXPECTED_OLD_LOCAL_SYNC");
+    expect(audit).toContain("update refs/heads/upstream-release OFFICIAL_COMMIT EXPECTED_OLD_LOCAL_MARKER");
+    expect(audit).toContain("git rev-parse refs/heads/upstream-release");
+    expect(audit).toContain("git ls-remote origin refs/heads/upstream-release");
   });
 
   test("requires a mechanically recomputable, conflict-by-conflict rebase review package", () => {

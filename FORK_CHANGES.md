@@ -1234,6 +1234,16 @@ ancestry_requirement=none
 release_instant=main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT
 <!-- sync-audit-ref-policy:end -->
 
+<!-- local-ref-cas-transaction:start -->
+transport=git-update-ref-stdin
+transaction=start-prepare-commit
+main_update=refs/heads/main RELEASE_COMMIT EXPECTED_OLD_LOCAL_MAIN
+sync_update=refs/heads/sync/vX.Y.Z RELEASE_COMMIT EXPECTED_OLD_LOCAL_SYNC
+marker_update=refs/heads/upstream-release OFFICIAL_COMMIT EXPECTED_OLD_LOCAL_MARKER
+atomicity=all-or-none
+sequential_updates=forbidden
+<!-- local-ref-cas-transaction:end -->
+
 <!-- same-base-ben-preflight:start -->
 scope=strict-local-and-remote-vX.Y.Z-ben.N
 snapshot=name-raw-peeled
@@ -1265,10 +1275,15 @@ sync 的 force 权限只属于当前发布动作：远端已存在时，atomic p
 lease；首次不存在时重证 absent 并使用 expected-absent lease。禁止 ancestry/fast-forward
 门禁覆盖该维护版强推，也禁止 blanket force/lease 代替逐 ref CAS。
 
-3. 若 Tag 已存在但 Release 缺失或元数据不合格，则只创建或修正同名 Release；必须确认
+3. 若远端 atomic push 已完成但本地 `main`、`sync/vX.Y.Z`、`upstream-release` 任一尚未
+   对齐，必须严格按 `local-ref-cas-transaction` 在一个带 `start` / `prepare` / `commit` 的
+   `git update-ref --stdin` transaction 中执行三 ref CAS；三个 update 分别携带
+   `EXPECTED_OLD_LOCAL_MAIN`、`EXPECTED_OLD_LOCAL_SYNC`、`EXPECTED_OLD_LOCAL_MARKER`，任一
+   比较失败都不得部分更新，禁止拆成顺序命令。
+4. 若 Tag 已存在但 Release 缺失或元数据不合格，则只创建或修正同名 Release；必须确认
    `isDraft=false`、`isPrerelease=false`、标题等于 Tag，且中文 Notes 含官方基线、Fork
    修改点、验证结果、已知缺口与 commit。
-4. 只有上述状态全部满足，且没有更新的官方稳定 Release，才允许记录“无需同步”。
+5. 只有上述状态全部满足，且没有更新的官方稳定 Release，才允许记录“无需同步”。
 
 ## 每次稳定版 rebase 的强制流程
 
@@ -1345,6 +1360,16 @@ ancestry_requirement=none
 release_instant=main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT
 <!-- sync-audit-ref-policy:end -->
 
+<!-- local-ref-cas-transaction:start -->
+transport=git-update-ref-stdin
+transaction=start-prepare-commit
+main_update=refs/heads/main RELEASE_COMMIT EXPECTED_OLD_LOCAL_MAIN
+sync_update=refs/heads/sync/vX.Y.Z RELEASE_COMMIT EXPECTED_OLD_LOCAL_SYNC
+marker_update=refs/heads/upstream-release OFFICIAL_COMMIT EXPECTED_OLD_LOCAL_MARKER
+atomicity=all-or-none
+sequential_updates=forbidden
+<!-- local-ref-cas-transaction:end -->
+
 <!-- same-base-ben-preflight:start -->
 scope=strict-local-and-remote-vX.Y.Z-ben.N
 snapshot=name-raw-peeled
@@ -1411,6 +1436,16 @@ git diff --shortstat <official-tag>...$IMPLEMENTATION_HEAD
 git diff --check <official-tag>...$IMPLEMENTATION_HEAD
 git diff --check HEAD^ HEAD
 
+# 远端 atomic push 成功后，以发布前捕获的三个本地旧 OID 做单事务 CAS。
+git update-ref --stdin <<'EOF'
+start
+update refs/heads/main RELEASE_COMMIT EXPECTED_OLD_LOCAL_MAIN
+update refs/heads/sync/vX.Y.Z RELEASE_COMMIT EXPECTED_OLD_LOCAL_SYNC
+update refs/heads/upstream-release OFFICIAL_COMMIT EXPECTED_OLD_LOCAL_MARKER
+prepare
+commit
+EOF
+
 # Fork Tag 与 Release。
 test "$(git cat-file -t refs/tags/<fork-tag>)" = "tag"
 git rev-parse refs/tags/<fork-tag>
@@ -1419,7 +1454,9 @@ git ls-remote origin refs/tags/<fork-tag> refs/tags/<fork-tag>^{}
 git rev-parse refs/heads/main
 git rev-parse refs/heads/dev
 git rev-parse refs/heads/sync/<official-version>
+git rev-parse refs/heads/upstream-release
 git ls-remote origin refs/heads/main refs/heads/dev refs/heads/sync/<official-version>
+git ls-remote origin refs/heads/upstream-release
 gh release view <fork-tag> --repo Trendymen/opencodex \
   --json tagName,name,body,isDraft,isPrerelease,url
 ```
