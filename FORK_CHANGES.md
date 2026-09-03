@@ -35,12 +35,13 @@
 | 官方 Tag commit | `35ff3a462e786bd5efc394dfb1a8a5cc946e454f` |
 | 当前上游最新稳定 Release | `v2.40.0`（`35ff3a462e786bd5efc394dfb1a8a5cc946e454f`），即本轮 rebase 基线 |
 | 当前 ben.1 `IMPLEMENTATION_HEAD` | `df73ecba72a50739e4060133928d5cb16d15bf4f`；包含完整 v2.40 rebase、冲突 union、`2.40.0-ben.1` 版本、维护真源门禁、用户授权的 catalog 断言与初轮双审 Important 修复 |
-| Fork 包版本 | `2.40.0-ben.1` |
-| 本轮派生 Tag | `v2.40.0-ben.1`；annotated Tag raw object 为 `b5b15cdcc9bde298d40ae65e2c888e8529034e6e`，peeled commit 为 `f219dc999012c56ecf3b74e1fe66f4f89311d25b` |
-| 同步分支 | 本地与 origin `sync/v2.40.0` 均指向 Release commit `f219dc999012c56ecf3b74e1fe66f4f89311d25b` |
+| 当前 ben.2 `IMPLEMENTATION_HEAD` | 准备中；以压缩后 `dev=666cf1291d97a1f4756384ee162444d27788d576` 为候选，完成规则、版本与验证提交后固定 |
+| Fork 包版本 | `2.40.0-ben.2` |
+| 本轮派生 Tag | `v2.40.0-ben.2`（目标）；仅在最终验证与双审通过后创建新的中文 annotated Tag，不移动 `v2.40.0-ben.1` |
+| 同步分支 | `sync/v2.40.0` 永久保留 ben.1 Release commit `f219dc999012c56ecf3b74e1fe66f4f89311d25b`；本轮目标为新建 `sync/v2.40.0-ben.2` |
 | ben.1 实现修改面 | 171 个文件，新增 27,927 行，删除 605 行（相对 `v2.40.0`，不含本轮后续末尾文档提交） |
 | ben.1 最终本地门禁 | 绑定 `IMPLEMENTATION_HEAD=df73ecba7`：三项 reviewer finding 与维护真源 focused 84 pass / 0 fail / 1,153 assertions；完整 `bun run prepush` 首次仅有未修改 Issue #702 用例撞到 5 秒负载超时，单独复跑 1 pass / 0 fail；第二次完整 prepush 退出 0，parallel 主套件 17,665 pass / 14 skip / 0 fail / 398,488 assertions，全部 serial lanes、typecheck、GUI lint、privacy scan 与 React Doctor 完成 |
-| 外部发布状态 | [`v2.39.0-ben.2`](https://github.com/Trendymen/opencodex/releases/tag/v2.39.0-ben.2) 保持不可变；[`v2.40.0-ben.1`](https://github.com/Trendymen/opencodex/releases/tag/v2.40.0-ben.1) 已通过最终双审、六成员 atomic push、本地双 ref 单事务 CAS、公开 GitHub Release 与 refs 后验；exact Release commit 的 `main` Cross-platform CI run `33628156986` 和 `dev` run `33628157296` 均成功，正式闭环 |
+| 外部发布状态 | [`v2.40.0-ben.1`](https://github.com/Trendymen/opencodex/releases/tag/v2.40.0-ben.1) 保持不可变且已闭环；`v2.40.0-ben.2` 已获用户明确授权，当前仅处于本地候选准备阶段，尚未创建 Tag、push 或 GitHub Release |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 发布后维护规则增强 | `dev` 提交 `3f5d1dd264d2b1f2f954d0a5069fa9d6ec932034` 已加入逐冲突 ledger、独立路径重算、主/影 rebase 对账、审查轮次 SHA 生命周期、三层 diff、命名风险与高风险升级契约；不改变 `2.40.0-ben.1` runtime、Tag 或 Release |
 | dev 全量历史压缩 | 以官方 `v2.40.0` 为父提交，将压缩前 `dev=d6ee37bea6e5d5c966564bfe1e1ba48ef64d28b2` 的 66 个 commits 重建为 4 个语义 commits；C3 tree 与压缩前 tree 均为 `5024beedc022c974df7d7614cff0cdd194841f84`，C4 只更新本文档 |
@@ -156,6 +157,43 @@ release_refs=main-sync-tags-release-immutable
 `v2.40.0-ben.1` annotated Tag 和 GitHub Release 全部保持不可变。本轮不把包版本推进为
 `2.40.0-ben.2`，也不把压缩后的自由开发提交宣称为已包含在现有 `v2.40.0-ben.1` Release 中。
 远端只允许以压缩前 `origin/dev` 的精确 OID 为 lease 更新 `refs/heads/dev`；lease 漂移即停止。
+
+### v2.40.0-ben.2 同基线维护发布候选
+
+用户在完成 `v2.40.0..dev` 的 66→4 全量压缩后明确要求发布 `v2.40.0-ben.2`，因此本节取代
+上一节“本轮不把包版本推进为 `2.40.0-ben.2`”的旧任务边界。官方基线仍为
+`v2.40.0=35ff3a462e786bd5efc394dfb1a8a5cc946e454f`，本轮不执行新的上游 rebase，也不声称包含
+`v2.40.0` 之后的 upstream 开发分支能力。
+
+- **候选来源：** 已提交且本地/远端一致的压缩后
+  `dev=666cf1291d97a1f4756384ee162444d27788d576`；其相对官方基线恰好 4 个语义 commits。
+- **版本与 Tag：** package 目标为 `2.40.0-ben.2`，Fork Tag 目标为新的
+  `v2.40.0-ben.2` annotated Tag。`v2.40.0-ben.1` raw/peeled 对象和 GitHub Release 保持不可变。
+- **审计 ref：** `sync/v2.40.0` 是 ben.1 的不可变审计 ref，不能 fast-forward 到压缩后历史。
+  本轮 `RELEASE_SYNC_REF=refs/heads/sync/v2.40.0-ben.2`；发布前要求本地/远端均不存在，
+  atomic push 使用不带 `+` 的普通 refspec和 expected-absent lease创建。若并发出现同名 ref，
+  fail closed；不得改写旧 `sync/v2.40.0`。
+- **修改范围：** 本轮不新增 runtime、Provider、adapter、GUI 或公共 API 行为；实现变化只包含
+  package 版本、revision-specific sync 发布治理、机械契约与维护真源。
+- **发布状态：** 当前尚未固定最终 `IMPLEMENTATION_HEAD` / `RELEASE_COMMIT`，未创建本地
+  `v2.40.0-ben.2` Tag，未执行 atomic push，未创建或修改 GitHub Release。后续状态只按实际
+  验证、双审和外部 API 结果更新。
+
+<!-- v240-ben2-candidate:start -->
+official_base=35ff3a462e786bd5efc394dfb1a8a5cc946e454f
+candidate_dev=666cf1291d97a1f4756384ee162444d27788d576
+package_version=2.40.0-ben.2
+fork_tag=v2.40.0-ben.2
+historical_sync_ref=refs/heads/sync/v2.40.0
+historical_sync_commit=f219dc999012c56ecf3b74e1fe66f4f89311d25b
+release_sync_ref=refs/heads/sync/v2.40.0-ben.2
+release_sync_precondition=local-and-remote-absent
+implementation_head=pending
+release_commit=pending
+tag_state=pending
+atomic_push=pending
+github_release=pending
+<!-- v240-ben2-candidate:end -->
 
 历史 v2.39.0 及更早轮次记录保留在专用区块，仅用于追溯，不能作为本轮结论。
 
@@ -1101,9 +1139,10 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 2. 同一同步任务重复执行必须幂等；不得因 heartbeat 重跑自动生成 `ben.2`。
 3. `ben.2`、`ben.3` 等只在用户明确要求同一官方基线再做一次 Fork 修订时创建；每次
    revision 都必须更新包版本、本文档、Tag 与 Release。
-4. 发布瞬间，`main`、`dev`、`sync/vX.Y.Z` 和最新 `vX.Y.Z-ben.N` 的 peeled commit
-   必须完全等于 `RELEASE_COMMIT`；`upstream-release` 始终等于未经修改的
-   `OFFICIAL_COMMIT`。发布后若 `dev` 已有新开发提交，自动化不得把它重置回旧 Release。
+4. 发布瞬间，`main`、`dev`、本轮 `RELEASE_SYNC_REF` 和最新 `vX.Y.Z-ben.N` 的 peeled
+   commit 必须完全等于 `RELEASE_COMMIT`；`ben.1` 使用 `sync/vX.Y.Z`，同基线后续 revision
+   使用 `sync/vX.Y.Z-ben.N`。所有旧 sync ref 保持不可变；`upstream-release` 始终等于未经
+   修改的 `OFFICIAL_COMMIT`。发布后若 `dev` 已有新开发提交，自动化不得把它重置回旧 Release。
 5. 每个已经 rebase 的官方 `vX.Y.Z` Tag 都必须在 `Trendymen/opencodex` 保留同名 Tag，
    并与固定官方仓库的 type、raw OID 和 peeled commit 逐项完全一致。promotion 前只允许
    缺失或 exact，promotion 后必须 exact；不一致时 fail closed，禁止 force、删除、重建或移动。
@@ -1148,7 +1187,7 @@ official Tag absent-or-exact preflight 必须确认当前 `refs/tags/vX.Y.Z` 不
 <!-- official-atomic-refset:start -->
 branch|main|leased-force|RELEASE_COMMIT:refs/heads/main
 branch|dev|leased-force|RELEASE_COMMIT:refs/heads/dev
-branch|sync|leased-fast-forward|RELEASE_COMMIT:refs/heads/sync/vX.Y.Z
+branch|sync|leased-create-or-fast-forward|RELEASE_COMMIT:RELEASE_SYNC_REF
 branch|marker|leased-force|OFFICIAL_COMMIT:refs/heads/upstream-release
 tag|official|no-force-no-lease|refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
 tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
@@ -1157,12 +1196,23 @@ tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
 <!-- fork-release-lifecycle:start -->
 rebase_branch=dev
 rebase_request=full_steps_1_to_15_unless_user_explicitly_stops
-sync_role=audit-release-ref
+sync_role=immutable-first-and-maintenance-revision-audit-refs
 release_instant_dev=must-equal-RELEASE_COMMIT
 post_release_advanced_dev=must-not-reset
-sync_ancestry=EXPECTED_REMOTE_SYNC-absent-or-ancestor-of-RELEASE_COMMIT
-final_convergence=local-remote-main-dev-sync-fork-tag-equal-RELEASE_COMMIT
+sync_ancestry=RELEASE_SYNC_REF-absent-or-ancestor-of-RELEASE_COMMIT
+final_convergence=local-remote-main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT
 <!-- fork-release-lifecycle:end -->
+
+<!-- sync-audit-ref-policy:start -->
+target_selection=ben.1:first-revision-ref;ben.N>=2:maintenance-revision-ref
+first_revision_ref=refs/heads/sync/vX.Y.Z
+maintenance_revision_ref=refs/heads/sync/vX.Y.Z-ben.N
+historical_refs=immutable-never-force-never-delete
+target_precondition=absent-or-ancestor-of-RELEASE_COMMIT
+absent_creation=expected-absent-lease-and-no-force
+existing_update=exact-oid-lease-fast-forward-only
+release_instant=main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT
+<!-- sync-audit-ref-policy:end -->
 
 <!-- same-base-ben-preflight:start -->
 scope=strict-local-and-remote-vX.Y.Z-ben.N
@@ -1183,13 +1233,14 @@ phase-aware preflight；pre-push 只允许本地精确目标 Tag 增量，post-p
 Release 前复核。final recheck 到 push 的 future-name namespace 竞态作为残余风险保留。
 
 四个 branch 使用各自 exact lease；`main`、`dev` 与 marker 按发布策略允许 force，
-`sync/vX.Y.Z` 只允许普通 fast-forward；两个 Tag 均不使用 force 或 lease。确定失败时停止；
+`RELEASE_SYNC_REF` 只允许普通创建或 fast-forward；目标不存在时使用 expected-absent lease，
+已存在时使用 exact-OID lease 和 ancestry guard。所有旧 sync ref 保持 immutable；两个 Tag 均不使用 force 或 lease。确定失败时停止；
 uncertain 只允许以相同完整 refset 重试，且必须重新读取 branch lease 与两个 Tag 的
 raw/peeled/type。
 
-远端 sync 存在时，atomic push 紧邻前必须通过
-`git merge-base --is-ancestor "$EXPECTED_REMOTE_SYNC" "$RELEASE_COMMIT"` 并重新读取远端
-sync 仍等于 expected OID。sync refspec 不带 `+`；exact lease 只拒绝并发漂移，ancestry
+远端 `RELEASE_SYNC_REF` 存在时，atomic push 紧邻前必须通过
+`git merge-base --is-ancestor "$EXPECTED_REMOTE_RELEASE_SYNC" "$RELEASE_COMMIT"` 并重新读取远端
+目标仍等于 expected OID；目标不存在时必须重证 absent。sync refspec 不带 `+`；exact lease 只拒绝并发漂移，ancestry
 guard 才禁止 audit ref 非 fast-forward 重写。`main`、`dev`、marker 使用各自 ref-scoped
 force lease，禁止对四个 branch 使用 blanket force/lease 代替逐 ref 策略。
 
@@ -1203,13 +1254,14 @@ force lease，禁止对四个 branch 使用 blanket force/lease 代替逐 ref �
 1. 查询 GitHub Releases，只接受非 draft、非 prerelease 的官方稳定 Release；确认 Tag
    commit 可从 upstream `main` 到达。
 2. 要求工作树、索引干净且没有进行中的 Git 操作。记录本地/远端 `main`、`dev`、
-   `upstream-release`、`sync/vX.Y.Z` 和目标 Fork Tag 的现有 SHA。
+   `upstream-release`、全部同基线 sync refs 和目标 Fork Tag 的现有 SHA；按 revision 固定
+   本轮 `RELEASE_SYNC_REF`。
 3. 保护已有候选历史：远端 dev 与 sync 存在时必须 fetch 并记录 lease；候选固定为来源明确、
    已提交且干净的 `dev`。远端独有、分叉来源不明或 lease 无法固定时停止。
 4. 在 `dev` 上执行等价于
    `git rebase --onto <new-tag-sha> <old-upstream-release-sha> dev`；rebase 阶段不得移动
-   `main`，不得在 detached HEAD 上验证，也不得在 `sync/vX.Y.Z` 上 rebase。完成最终验证
-   和末尾文档提交后，本地 sync 才可准备为同一 `RELEASE_COMMIT`。
+   `main`，不得在 detached HEAD 上验证，也不得在任何 sync ref 上 rebase。完成最终验证
+   和末尾文档提交后，才可准备本轮 `RELEASE_SYNC_REF` 指向同一 `RELEASE_COMMIT`。
 5. 逐项对照本文档与新官方源码/测试：完整覆盖则删除本地补丁并保留历史记录；部分覆盖
    只移除被替代部分；未覆盖则保留能力与 focused test。语义不明或需要放弃能力时请求
    用户决策。
@@ -1244,7 +1296,7 @@ peeled commit，existing mismatch 阻塞。pre absent/exact，post exact：缺�
 <!-- official-atomic-refset:start -->
 branch|main|leased-force|RELEASE_COMMIT:refs/heads/main
 branch|dev|leased-force|RELEASE_COMMIT:refs/heads/dev
-branch|sync|leased-fast-forward|RELEASE_COMMIT:refs/heads/sync/vX.Y.Z
+branch|sync|leased-create-or-fast-forward|RELEASE_COMMIT:RELEASE_SYNC_REF
 branch|marker|leased-force|OFFICIAL_COMMIT:refs/heads/upstream-release
 tag|official|no-force-no-lease|refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
 tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
@@ -1253,12 +1305,23 @@ tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
 <!-- fork-release-lifecycle:start -->
 rebase_branch=dev
 rebase_request=full_steps_1_to_15_unless_user_explicitly_stops
-sync_role=audit-release-ref
+sync_role=immutable-first-and-maintenance-revision-audit-refs
 release_instant_dev=must-equal-RELEASE_COMMIT
 post_release_advanced_dev=must-not-reset
-sync_ancestry=EXPECTED_REMOTE_SYNC-absent-or-ancestor-of-RELEASE_COMMIT
-final_convergence=local-remote-main-dev-sync-fork-tag-equal-RELEASE_COMMIT
+sync_ancestry=RELEASE_SYNC_REF-absent-or-ancestor-of-RELEASE_COMMIT
+final_convergence=local-remote-main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT
 <!-- fork-release-lifecycle:end -->
+
+<!-- sync-audit-ref-policy:start -->
+target_selection=ben.1:first-revision-ref;ben.N>=2:maintenance-revision-ref
+first_revision_ref=refs/heads/sync/vX.Y.Z
+maintenance_revision_ref=refs/heads/sync/vX.Y.Z-ben.N
+historical_refs=immutable-never-force-never-delete
+target_precondition=absent-or-ancestor-of-RELEASE_COMMIT
+absent_creation=expected-absent-lease-and-no-force
+existing_update=exact-oid-lease-fast-forward-only
+release_instant=main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT
+<!-- sync-audit-ref-policy:end -->
 
 <!-- same-base-ben-preflight:start -->
 scope=strict-local-and-remote-vX.Y.Z-ben.N
@@ -1279,27 +1342,29 @@ phase-aware preflight；pre-push 只允许本地精确目标 Tag 增量，post-p
 Release 前复核。final recheck 到 push 的 future-name namespace 竞态作为残余风险保留。
 
 四个 branch 使用各自 exact lease；`main`、`dev` 与 marker 按发布策略允许 force，
-`sync/vX.Y.Z` 只允许普通 fast-forward；两个 Tag 均不使用 force 或 lease。确定失败即停止；
+`RELEASE_SYNC_REF` 只允许普通创建或 fast-forward；目标不存在时使用 expected-absent lease，
+已存在时使用 exact-OID lease 和 ancestry guard。所有旧 sync ref 保持 immutable；两个 Tag 均不使用 force 或 lease。确定失败即停止；
 uncertain 只允许以相同完整 refset 重试，并且先重新证明所有 branch leases 和两个 Tag 的
 type/raw/peeled。
 
-远端 sync 存在时，atomic push 紧邻前必须通过
-`git merge-base --is-ancestor "$EXPECTED_REMOTE_SYNC" "$RELEASE_COMMIT"` 并重新读取远端
-sync 仍等于 expected OID。sync refspec 不带 `+`；exact lease 只拒绝并发漂移，ancestry
+远端 `RELEASE_SYNC_REF` 存在时，atomic push 紧邻前必须通过
+`git merge-base --is-ancestor "$EXPECTED_REMOTE_RELEASE_SYNC" "$RELEASE_COMMIT"` 并重新读取远端
+目标仍等于 expected OID；目标不存在时必须重证 absent。sync refspec 不带 `+`；exact lease 只拒绝并发漂移，ancestry
 guard 才禁止 audit ref 非 fast-forward 重写。`main`、`dev`、marker 使用各自 ref-scoped
 force lease，禁止 blanket force/lease。
 12. 远端 atomic push 成功后、调用 GitHub Release API 前，使用之前捕获的本地旧 OID
     作为 compare-and-swap 条件，在一个 `git update-ref --stdin` transaction 中把本地
     `main` 对齐末尾文档 commit、把本地 `upstream-release` 对齐官方 Tag commit；不得
-    切换或移动已验证的当前 sync branch。随后刷新/核对 remote-tracking refs。即使后续
+    切换或移动已验证的 `RELEASE_SYNC_REF` 或任何历史 sync ref。随后刷新/核对 remote-tracking refs。即使后续
     Release 创建失败，本地/远端 branch 状态也必须保持已收敛。
 13. Git 引用与本地 branch 收敛后，创建或核对同名 GitHub Release。必须查询并验证 `tagName`、
     `name`、`body`、`isDraft=false`、`isPrerelease=false` 和 URL；元数据不合格时只做
     幂等 Release 修正。创建或修正失败时保留已经推送的不可变 Tag，任务标记未完成，
     下次重试只处理 Release。
-14. 最终确认发布瞬间本地/远端 `main`、`dev`、`sync/vX.Y.Z` 和 Fork Tag peeled commit
-    全部等于 `RELEASE_COMMIT`，`upstream-release` 等于 `OFFICIAL_COMMIT`，GitHub Release
-    指向该 Fork Tag；发布后 advanced dev 不得被自动重置回该旧 `RELEASE_COMMIT`。
+14. 最终确认发布瞬间本地/远端 `main`、`dev`、本轮 `RELEASE_SYNC_REF` 和 Fork Tag peeled
+    commit 全部等于 `RELEASE_COMMIT`，所有历史 sync ref 保持发布前对象，`upstream-release`
+    等于 `OFFICIAL_COMMIT`，GitHub Release 指向该 Fork Tag；发布后 advanced dev 不得被自动
+    重置回该旧 `RELEASE_COMMIT`。
 
 ## 最小可复现审计命令
 

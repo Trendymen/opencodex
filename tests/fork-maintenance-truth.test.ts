@@ -200,11 +200,11 @@ const EXPECTED_V240_KEYS = [
 const EXPECTED_RELEASE_LIFECYCLE = [
   "rebase_branch=dev",
   "rebase_request=full_steps_1_to_15_unless_user_explicitly_stops",
-  "sync_role=audit-release-ref",
+  "sync_role=immutable-first-and-maintenance-revision-audit-refs",
   "release_instant_dev=must-equal-RELEASE_COMMIT",
   "post_release_advanced_dev=must-not-reset",
-  "sync_ancestry=EXPECTED_REMOTE_SYNC-absent-or-ancestor-of-RELEASE_COMMIT",
-  "final_convergence=local-remote-main-dev-sync-fork-tag-equal-RELEASE_COMMIT",
+  "sync_ancestry=RELEASE_SYNC_REF-absent-or-ancestor-of-RELEASE_COMMIT",
+  "final_convergence=local-remote-main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT",
 ].join("\n");
 const EXPECTED_RELEASE_LIFECYCLE_KEYS = [
   "rebase_branch",
@@ -218,20 +218,40 @@ const EXPECTED_RELEASE_LIFECYCLE_KEYS = [
 const EXPECTED_RELEASE_LIFECYCLE_RECORD = {
   rebase_branch: "dev",
   rebase_request: "full_steps_1_to_15_unless_user_explicitly_stops",
-  sync_role: "audit-release-ref",
+  sync_role: "immutable-first-and-maintenance-revision-audit-refs",
   release_instant_dev: "must-equal-RELEASE_COMMIT",
   post_release_advanced_dev: "must-not-reset",
-  sync_ancestry: "EXPECTED_REMOTE_SYNC-absent-or-ancestor-of-RELEASE_COMMIT",
-  final_convergence: "local-remote-main-dev-sync-fork-tag-equal-RELEASE_COMMIT",
+  sync_ancestry: "RELEASE_SYNC_REF-absent-or-ancestor-of-RELEASE_COMMIT",
+  final_convergence: "local-remote-main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT",
 } as const;
 const EXPECTED_ATOMIC_REFSET = [
   ["branch", "main", "leased-force", "RELEASE_COMMIT:refs/heads/main"],
   ["branch", "dev", "leased-force", "RELEASE_COMMIT:refs/heads/dev"],
-  ["branch", "sync", "leased-fast-forward", "RELEASE_COMMIT:refs/heads/sync/vX.Y.Z"],
+  ["branch", "sync", "leased-create-or-fast-forward", "RELEASE_COMMIT:RELEASE_SYNC_REF"],
   ["branch", "marker", "leased-force", "OFFICIAL_COMMIT:refs/heads/upstream-release"],
   ["tag", "official", "no-force-no-lease", "refs/tags/vX.Y.Z:refs/tags/vX.Y.Z"],
   ["tag", "fork", "no-force-no-lease", "refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N"],
 ] as const;
+const EXPECTED_SYNC_AUDIT_POLICY_KEYS = [
+  "target_selection",
+  "first_revision_ref",
+  "maintenance_revision_ref",
+  "historical_refs",
+  "target_precondition",
+  "absent_creation",
+  "existing_update",
+  "release_instant",
+] as const;
+const EXPECTED_SYNC_AUDIT_POLICY = {
+  target_selection: "ben.1:first-revision-ref;ben.N>=2:maintenance-revision-ref",
+  first_revision_ref: "refs/heads/sync/vX.Y.Z",
+  maintenance_revision_ref: "refs/heads/sync/vX.Y.Z-ben.N",
+  historical_refs: "immutable-never-force-never-delete",
+  target_precondition: "absent-or-ancestor-of-RELEASE_COMMIT",
+  absent_creation: "expected-absent-lease-and-no-force",
+  existing_update: "exact-oid-lease-fast-forward-only",
+  release_instant: "main-dev-RELEASE_SYNC_REF-fork-tag-equal-RELEASE_COMMIT",
+} as const;
 const EXPECTED_SAME_BASE_TAG_PREFLIGHT_KEYS = [
   "scope",
   "snapshot",
@@ -549,6 +569,18 @@ function strictLocalRefCas(source: string): Record<string, string> {
   );
   if (JSON.stringify(parsed) !== JSON.stringify(EXPECTED_LOCAL_REF_CAS)) {
     throw new Error("local ref CAS transaction differs from the exact contract");
+  }
+  return parsed;
+}
+
+function strictSyncAuditPolicy(source: string): Record<string, string> {
+  const parsed = strictKeyValueBlock(
+    source,
+    "sync-audit-ref-policy",
+    EXPECTED_SYNC_AUDIT_POLICY_KEYS,
+  );
+  if (JSON.stringify(parsed) !== JSON.stringify(EXPECTED_SYNC_AUDIT_POLICY)) {
+    throw new Error("sync audit ref policy differs from the exact contract");
   }
   return parsed;
 }
@@ -904,7 +936,28 @@ describe("Fork maintenance truth", () => {
       const block = machineBlock(flow, "official-atomic-refset");
       expect(parseAtomicRefset(block)).toEqual(EXPECTED_ATOMIC_REFSET);
       expect(strictReleaseLifecycle(flow)).toBe(EXPECTED_RELEASE_LIFECYCLE);
+      expect(strictSyncAuditPolicy(flow)).toEqual(EXPECTED_SYNC_AUDIT_POLICY);
     }
+  });
+
+  test("keeps earlier sync audit refs immutable across same-base maintenance releases", () => {
+    expect(strictSyncAuditPolicy(automation)).toEqual(EXPECTED_SYNC_AUDIT_POLICY);
+    expect(automation).toContain("`sync/vX.Y.Z-ben.N`");
+    expect(automation).toContain("expected-absent lease");
+    expect(automation).toContain("旧 sync ref");
+
+    expect(() => strictSyncAuditPolicy(automation.replace(
+      "historical_refs=immutable-never-force-never-delete",
+      "historical_refs=leased-force-rewrite",
+    ))).toThrow();
+    expect(() => strictSyncAuditPolicy(automation.replace(
+      "maintenance_revision_ref=refs/heads/sync/vX.Y.Z-ben.N",
+      "maintenance_revision_ref=refs/heads/sync/vX.Y.Z",
+    ))).toThrow();
+    expect(() => strictSyncAuditPolicy(automation.replace(
+      "absent_creation=expected-absent-lease-and-no-force",
+      "absent_creation=unleased-create",
+    ))).toThrow();
   });
 
   test("freezes the complete same-base Fork Tag namespace before maintenance publication", () => {
@@ -1032,8 +1085,8 @@ describe("Fork maintenance truth", () => {
     expect(automation).not.toContain("git rebase --onto <new-tag-sha> <old-upstream-release-sha> sync/vX.Y.Z");
     expect(automation).toContain("RELEASE_COMMIT");
     expect(automation).toContain("OFFICIAL_COMMIT");
-    expect(automation).toContain('git merge-base --is-ancestor "$EXPECTED_REMOTE_SYNC" "$RELEASE_COMMIT"');
-    expect(automation).toContain("本地/远端 `main`、`dev`、`sync/vX.Y.Z`");
+    expect(automation).toContain('git merge-base --is-ancestor "$EXPECTED_REMOTE_RELEASE_SYNC" "$RELEASE_COMMIT"');
+    expect(automation).toContain("本地/远端 `main`、`dev`、`RELEASE_SYNC_REF`");
     expect(automation).toContain("post_release_advanced_dev=must-not-reset");
   });
 
