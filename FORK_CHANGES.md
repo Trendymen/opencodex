@@ -35,11 +35,13 @@
 | 官方 Tag commit | `35ff3a462e786bd5efc394dfb1a8a5cc946e454f` |
 | 当前上游最新稳定 Release | `v2.40.0`（`35ff3a462e786bd5efc394dfb1a8a5cc946e454f`），即本轮 rebase 基线 |
 | 当前 ben.1 `IMPLEMENTATION_HEAD` | `df73ecba72a50739e4060133928d5cb16d15bf4f`；包含完整 v2.40 rebase、冲突 union、`2.40.0-ben.1` 版本、维护真源门禁、用户授权的 catalog 断言与初轮双审 Important 修复 |
-| 当前 ben.2 `IMPLEMENTATION_HEAD` | 准备中；以压缩后 `dev=666cf1291d97a1f4756384ee162444d27788d576` 为候选，完成规则、版本与验证提交后固定 |
+| 当前 ben.2 `IMPLEMENTATION_HEAD` | `0117262ef90170e515b69f0ef513b01140e73bb4`；以压缩后 `dev=666cf1291d97a1f4756384ee162444d27788d576` 为父，包含 revision-specific sync 规则、机械门禁、维护真源与 `2.40.0-ben.2` 版本 |
 | Fork 包版本 | `2.40.0-ben.2` |
 | 本轮派生 Tag | `v2.40.0-ben.2`（目标）；仅在最终验证与双审通过后创建新的中文 annotated Tag，不移动 `v2.40.0-ben.1` |
 | 同步分支 | `sync/v2.40.0` 永久保留 ben.1 Release commit `f219dc999012c56ecf3b74e1fe66f4f89311d25b`；本轮目标为新建 `sync/v2.40.0-ben.2` |
 | ben.1 实现修改面 | 171 个文件，新增 27,927 行，删除 605 行（相对 `v2.40.0`，不含本轮后续末尾文档提交） |
+| ben.2 实现修改面 | 固定 `IMPLEMENTATION_HEAD=0117262ef90170e515b69f0ef513b01140e73bb4`：相对官方 `v2.40.0` 为 171 个文件、`+28,679/-605`；相对压缩后候选为 5 个文件、`+189/-58` |
+| ben.2 最终本地门禁 | 绑定 `IMPLEMENTATION_HEAD=0117262ef90170e515b69f0ef513b01140e73bb4`：focused 27 pass / 0 fail / 659 expect calls；完整 `bun run prepush` 退出 0，parallel 主套件 17,667 pass / 14 skip / 0 fail / 376,089 expect calls，全部 serial lanes、typecheck 与 privacy scan 完成；GUI 无改动，lint/doctor 按规则跳过 |
 | ben.1 最终本地门禁 | 绑定 `IMPLEMENTATION_HEAD=df73ecba7`：三项 reviewer finding 与维护真源 focused 84 pass / 0 fail / 1,153 assertions；完整 `bun run prepush` 首次仅有未修改 Issue #702 用例撞到 5 秒负载超时，单独复跑 1 pass / 0 fail；第二次完整 prepush 退出 0，parallel 主套件 17,665 pass / 14 skip / 0 fail / 398,488 assertions，全部 serial lanes、typecheck、GUI lint、privacy scan 与 React Doctor 完成 |
 | 外部发布状态 | [`v2.40.0-ben.1`](https://github.com/Trendymen/opencodex/releases/tag/v2.40.0-ben.1) 保持不可变且已闭环；`v2.40.0-ben.2` 已获用户明确授权，当前仅处于本地候选准备阶段，尚未创建 Tag、push 或 GitHub Release |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
@@ -173,11 +175,23 @@ release_refs=main-sync-tags-release-immutable
   本轮 `RELEASE_SYNC_REF=refs/heads/sync/v2.40.0-ben.2`；发布前要求本地/远端均不存在，
   atomic push 使用不带 `+` 的普通 refspec和 expected-absent lease创建。若并发出现同名 ref，
   fail closed；不得改写旧 `sync/v2.40.0`。
-- **修改范围：** 本轮不新增 runtime、Provider、adapter、GUI 或公共 API 行为；实现变化只包含
-  package 版本、revision-specific sync 发布治理、机械契约与维护真源。
-- **发布状态：** 当前尚未固定最终 `IMPLEMENTATION_HEAD` / `RELEASE_COMMIT`，未创建本地
+- **修改范围：** 固定 `IMPLEMENTATION_HEAD=0117262ef90170e515b69f0ef513b01140e73bb4`。
+  本轮不新增 runtime、Provider、adapter、GUI 或公共 API 行为；相对压缩后候选只修改
+  `AGENTS.local.md`、`FORK_CHANGES.md`、`docs/fork-sync-automation.md`、`package.json` 和
+  `tests/fork-maintenance-truth.test.ts`，合计 `+189/-58`。相对官方基线仍为 171 个文件、
+  `+28,679/-605`。
+- **TDD 证据：** 新契约先以旧规则得到 18 pass / 3 fail，失败精确命中旧 sync refset、缺失
+  `sync-audit-ref-policy` 与旧 ancestry 命令；实现后维护真源测试为 21 pass / 0 fail。连同
+  `tests/fork-version-policy.test.ts` 的 focused gate 为 27 pass / 0 fail / 659 expect calls，
+  `bun run typecheck` 与 `git diff --check` 通过。
+- **最终验证：** 绑定 `IMPLEMENTATION_HEAD=0117262ef90170e515b69f0ef513b01140e73bb4` 的
+  `bun run prepush` 退出 0：parallel 主套件 17,667 pass / 14 skip / 0 fail / 376,089
+  expect calls，全部 serial lanes、typecheck 与 privacy scan 完成；本轮无 GUI 改动，
+  lint/doctor 按规则跳过。验证未促成实现修改，因此无需废弃 A1。
+- **发布状态：** 当前已固定 `IMPLEMENTATION_HEAD` 并通过最终验证；本提交是只修改
+  `FORK_CHANGES.md` 的 R1 docs-only `RELEASE_COMMIT` 候选，尚待独立双审。未创建本地
   `v2.40.0-ben.2` Tag，未执行 atomic push，未创建或修改 GitHub Release。后续状态只按实际
-  验证、双审和外部 API 结果更新。
+  双审和外部 API 结果更新。
 
 <!-- v240-ben2-candidate:start -->
 official_base=35ff3a462e786bd5efc394dfb1a8a5cc946e454f
@@ -188,8 +202,10 @@ historical_sync_ref=refs/heads/sync/v2.40.0
 historical_sync_commit=f219dc999012c56ecf3b74e1fe66f4f89311d25b
 release_sync_ref=refs/heads/sync/v2.40.0-ben.2
 release_sync_precondition=local-and-remote-absent
-implementation_head=pending
-release_commit=pending
+implementation_head=0117262ef90170e515b69f0ef513b01140e73bb4
+release_commit=docs-only-current-head
+verification=pass-prepush-17667-pass-14-skip-0-fail
+review=pending
 tag_state=pending
 atomic_push=pending
 github_release=pending
