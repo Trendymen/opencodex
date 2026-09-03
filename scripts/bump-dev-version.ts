@@ -4,12 +4,10 @@
  *
  * WHY THIS EXISTS
  *
- * `scripts/release.ts` runs only on `main` or `preview` (`allowedBranches`), bumps
- * `package.json` there, and pushes that branch. `release.yml` ends at "Create GitHub
- * release". Nothing advances `dev`. So the moment a release publishes, `dev` carries a
- * version that is at or behind a published one, and
- * `tests/release-version-line.test.ts` fails on `dev` and on every pull request opened
- * against it — inherited red that a contributor cannot fix from their own diff.
+ * `scripts/release.ts` runs only on `main` or `preview` (`allowedBranches`) and does not
+ * advance `dev`. For ordinary upstream releases, this helper can prepare a reviewable
+ * version bump without writing to `dev` directly. Fork `ben.N` releases are different:
+ * `dev` is allowed to continue from the immutable release commit without a version bump.
  *
  * That has been repaired by hand four times: `32529c2b2`, `e4a85d134`, `076ad3036`,
  * `befcac3e1`. The second of those ADDED the detector, and two more repairs followed
@@ -20,8 +18,8 @@
  * This decides a version. It does no git and no network work, which is what makes it
  * unit-testable and what keeps the credential surface in the workflow that calls it.
  * It does not merge anything: `.github/workflows/dev-version-bump.yml` uses the
- * output to open a pull request, and a human still merges that. Until they do, the
- * red persists. This is a prepared repair, not an automatic one.
+ * output to open a pull request, and a human still merges that. This is a prepared
+ * ordinary-release update, not a gate on unrelated `dev` commits.
  *
  * THE RULE
  *
@@ -38,22 +36,18 @@
  * The rule is therefore about the published version's SHAPE, which is the only thing
  * this function can see:
  *
+ *   published `X.Y.Z-ben.N`      ->  no version-coupled dev bump
  *   published `X.Y.Z-preview.*`  ->  dev becomes `X.Y.Z`     (befcac3e1)
  *   published `X.Y.Z` (stable)   ->  dev becomes `X.(Y+1).0` (e4a85d134, 076ad3036, 32529c2b2)
  *
- * A prerelease means the stable core has not shipped, so `dev` should carry it. A
- * stable release means that core is consumed, so `dev` moves to the next minor.
- *
- * Freeness is then checked where the tag set IS visible: the workflow runs
- * `tests/release-version-line.test.ts` in the `dev` checkout after the rewrite. If the
- * candidate collides with something published, that test fails, no pull request is
- * opened, and the job goes red asking for a human decision. This file only enforces
- * what it can prove without I/O — that the candidate ranks strictly ahead of both
- * inputs by the repository's own comparator.
+ * A Fork revision is an immutable delivery snapshot, not a requirement to rename the
+ * ongoing development line. Other prereleases keep the upstream rule: their stable core
+ * has not shipped, while an ordinary stable consumes that core and advances the minor.
  */
 
 import { existsSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 
+import { forkBaseVersion } from "../src/fork/version-policy.mjs";
 import { compareReleaseTags } from "./release-notes";
 
 /**
@@ -103,20 +97,27 @@ export function decideDevVersion(released: string, current: string): BumpDecisio
   if (!rel) throw new Error(`released version is not parseable: ${JSON.stringify(released)}`);
   if (!parseVersion(current)) throw new Error(`current version is not parseable: ${JSON.stringify(current)}`);
 
+  if (rel.prerelease?.startsWith("ben.")) {
+    const normalizedReleased = released.trim().replace(/^v/, "");
+    if (!forkBaseVersion(normalizedReleased)) {
+      throw new Error(`released version is not a canonical Fork version: ${JSON.stringify(released)}`);
+    }
+    return {
+      changed: false,
+      version: current,
+      reason: `${released} is an immutable Fork revision; dev may continue without a release-coupled version bump`,
+    };
+  }
+
   const candidate = rel.prerelease === null
     ? `${rel.major}.${rel.minor + 1}.0`
     : `${rel.major}.${rel.minor}.${rel.patch}`;
 
-  // Nothing to do when dev is already clear of the RELEASED version. That is the real
-  // question — the detector in tests/release-version-line.test.ts compares dev against
-  // published tags, not against this candidate.
-  //
+  // Nothing to do when dev is already clear of the RELEASED version.
   // Comparing against the candidate instead is wrong, and a test caught it: dev at
   // `2.37.0-preview.1` with `2.36.0` published is genuinely ahead of the release, but it
   // is BEHIND the candidate `2.37.0`, so a candidate-based guard would "fix" a tree that
-  // was never broken and downgrade a legitimate prerelease line. release-version-line
-  // already pins that a prerelease of a future core outranks a published stable; these
-  // two must not disagree.
+  // was never broken and downgrade a legitimate prerelease line.
   if (compareReleaseTags(asTag(current), asTag(released)) > 0) {
     return {
       changed: false,
