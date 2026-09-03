@@ -43,6 +43,7 @@
 | 外部发布状态 | [`v2.39.0-ben.2`](https://github.com/Trendymen/opencodex/releases/tag/v2.39.0-ben.2) 保持不可变；[`v2.40.0-ben.1`](https://github.com/Trendymen/opencodex/releases/tag/v2.40.0-ben.1) 已通过最终双审、六成员 atomic push、本地双 ref 单事务 CAS、公开 GitHub Release 与 refs 后验；exact Release commit 的 `main` Cross-platform CI run `33628156986` 和 `dev` run `33628157296` 均成功，正式闭环 |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 发布后维护规则增强 | `dev` 提交 `3f5d1dd264d2b1f2f954d0a5069fa9d6ec932034` 已加入逐冲突 ledger、独立路径重算、主/影 rebase 对账、审查轮次 SHA 生命周期、三层 diff、命名风险与高风险升级契约；不改变 `2.40.0-ben.1` runtime、Tag 或 Release |
+| dev 全量历史压缩 | 以官方 `v2.40.0` 为父提交，将压缩前 `dev=d6ee37bea6e5d5c966564bfe1e1ba48ef64d28b2` 的 66 个 commits 重建为 4 个语义 commits；C3 tree 与压缩前 tree 均为 `5024beedc022c974df7d7614cff0cdd194841f84`，C4 只更新本文档 |
 | 官方基线标记 | `origin/upstream-release` 指向未经修改的官方 Tag commit |
 | origin 官方历史 Tag | `v2.33.0` 至 `v2.40.0` 各已 rebase 稳定基线均存在且与 upstream 对应官方 Tag 一致 |
 
@@ -103,6 +104,58 @@ clock/quota/network 基础修复；Fork 继续保留 listener-before-send 与精
 `SPEC_COMPLIANCE: PASS`、`CODE_QUALITY: PASS`，无未决 Critical、Important 或 Minor；真实
 shadow replay 行为仍须在下一次适用的官方 rebase 中按新协议生成证据，不能由本次静态契约
 测试替代。
+
+### v2.40.0 基线上的 dev 全量历史压缩
+
+本轮只重写自由开发线 `dev`，不创建新 Fork revision。压缩前本地与远端 `dev` 均为
+`d6ee37bea6e5d5c966564bfe1e1ba48ef64d28b2`，从官方
+`v2.40.0=35ff3a462e786bd5efc394dfb1a8a5cc946e454f` 到该提交共有 66 个 commits、171 条
+最终变更路径，tree 为 `5024beedc022c974df7d7614cff0cdd194841f84`。本地恢复分支
+`backup/dev-pre-v240-squash-20260903` 保留压缩前提交，不推送 origin。
+
+压缩后的语义边界如下：
+
+1. `d8325bc9dfe1ca4985e281a71e8d785ff9422750`：
+   `feat: 汇总 Fork 运行时与用户能力`，相对官方基线包含 84 条 `src/`、`bin/`、GUI、
+   docs-site、package 与用户能力路径；`scripts/install-local.ts` 和
+   `scripts/install-local-vendor.ts` 与注册它们的 `install:local` 命令同 commit 落下。
+2. `b2a56ec454ec464705acc75859756ad37a61b188`：
+   `chore: 汇总 Fork CI、脚本与维护基础设施`，增加剩余 22 条 workflow、script、structure、
+   规则与维护文档路径，并在测试提交前提供其静态读取/导入目标。
+3. `74c26e5e7053b20ba5501112332d8ff7c90636a7`：
+   `test: 汇总 Fork 回归与兼容覆盖`，最后增加 65 条 `tests/` / `gui/tests/` 路径；该提交 tree
+   精确等于压缩前 `dev` tree。
+4. 当前末尾提交：`docs: 记录 v2.40.0 Fork 全量历史压缩`，只修改
+   `FORK_CHANGES.md`，记录压缩边界、验证、审查与推送状态；不把该文档增量误记为压缩前 tree。
+
+三组路径清单是官方基线到压缩前 `dev` 的 171 条变更的无重复完整分区；每个 C1–C3 commit
+的实际 diff path list 已与对应清单逐字节比较。C3 tree 与压缩前 tree 相同，证明压缩没有改变
+压缩前已提交的 runtime、测试、GUI、脚本、配置或维护规则。C4 之外的文件不得再变化。
+
+<!-- v240-dev-squash:start -->
+official_base=35ff3a462e786bd5efc394dfb1a8a5cc946e454f
+source_dev=d6ee37bea6e5d5c966564bfe1e1ba48ef64d28b2
+source_commit_count=66
+source_path_count=171
+source_tree=5024beedc022c974df7d7614cff0cdd194841f84
+c1=d8325bc9dfe1ca4985e281a71e8d785ff9422750
+c1_path_count=84
+c2=b2a56ec454ec464705acc75859756ad37a61b188
+c2_path_count=22
+c3=74c26e5e7053b20ba5501112332d8ff7c90636a7
+c3_path_count=65
+c3_tree=5024beedc022c974df7d7614cff0cdd194841f84
+tree_identity=source-dev-tree-equals-c3-tree
+c4=docs-only-current-head
+target_commit_count=4
+remote_update=dev-only-force-with-lease-source-dev
+release_refs=main-sync-tags-release-immutable
+<!-- v240-dev-squash:end -->
+
+`main`、`sync/v2.40.0`、`upstream-release`、官方 `v2.40.0`、Fork
+`v2.40.0-ben.1` annotated Tag 和 GitHub Release 全部保持不可变。本轮不把包版本推进为
+`2.40.0-ben.2`，也不把压缩后的自由开发提交宣称为已包含在现有 `v2.40.0-ben.1` Release 中。
+远端只允许以压缩前 `origin/dev` 的精确 OID 为 lease 更新 `refs/heads/dev`；lease 漂移即停止。
 
 历史 v2.39.0 及更早轮次记录保留在专用区块，仅用于追溯，不能作为本轮结论。
 
