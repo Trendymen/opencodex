@@ -1825,7 +1825,7 @@ describe("provider discovered model display names", () => {
     modelDisplayNames: { "grok-4.6": "Grok 4.6" },
   };
 
-  test("an exact provider model id receives only the configured display name", () => {
+  test("an exact provider model id receives the configured display name and Fork route hint", () => {
     const discovered = {
       provider: "xai",
       id: "grok-4.6",
@@ -1848,7 +1848,11 @@ describe("provider discovered model display names", () => {
     const { displayName: _afterDisplayName, ...afterIdentity } = output;
 
     expect(output.displayName).toBe("Grok 4.6");
-    expect(afterIdentity).toEqual({ ...beforeIdentity, supportsServiceTier: false });
+    expect(afterIdentity).toEqual({
+      ...beforeIdentity,
+      supportsServiceTier: false,
+      routedProgressContractEligible: true,
+    });
     expect(catalogModelSlug(output)).toBe("xai/grok-4.6");
   });
 
