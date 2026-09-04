@@ -1438,7 +1438,8 @@ describe("Fork maintenance truth", () => {
       "GUI Logs/Debug 恢复标签与 sidecar 契约": [
         "`v2.42.0:gui/src/pages/Logs.tsx`（blob `0bbe286a887d6f811c9243d53e544cf4928700cd`）",
         `\`gui/src/pages/Logs.tsx\`（blob \`${currentGitBlob("gui/src/pages/Logs.tsx")}\`）`,
-        "`gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`，与官方 v2.42.0 相同）",
+        "`v2.42.0:gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`）",
+        `\`gui/src/pages/Debug.tsx\`（blob \`${currentGitBlob("gui/src/pages/Debug.tsx")}\`）`,
         `\`gui/src/i18n/de.ts\`（blob \`${currentGitBlob("gui/src/i18n/de.ts")}\`）`,
         `\`gui/src/i18n/en.ts\`（blob \`${currentGitBlob("gui/src/i18n/en.ts")}\`）`,
         `\`gui/src/i18n/fr.ts\`（blob \`${currentGitBlob("gui/src/i18n/fr.ts")}\`）`,
@@ -1483,6 +1484,7 @@ describe("Fork maintenance truth", () => {
   test("binds active mutable-file anchors to the current Git blob identity", () => {
     const paths = [
       "gui/src/pages/Logs.tsx",
+      "gui/src/pages/Debug.tsx",
       "gui/src/i18n/de.ts",
       "gui/src/i18n/en.ts",
       "gui/src/i18n/fr.ts",
@@ -1497,7 +1499,9 @@ describe("Fork maintenance truth", () => {
       "tests/shutdown-launcher.test.ts",
     ] as const;
     for (const path of paths) {
-      expect(changes).toContain(`\`${path}\`（blob \`${currentGitBlob(path)}\``);
+      expect(compactWhitespace(changes)).toContain(
+        compactWhitespace(`\`${path}\`（blob \`${currentGitBlob(path)}\``),
+      );
     }
   });
 
@@ -1508,6 +1512,6 @@ describe("Fork maintenance truth", () => {
     );
     expect(recovery).not.toContain("官方恢复模块（`agent-task-recovery.ts`）扩展了 strict backend ciphertext 的 envelope 识别");
     expect(compactWhitespace(recovery)).toContain("Fork 行为：strict non-Fernet envelope recognition、admission、routed trigger 与 fail-closed forwarding");
-    expect(recovery).toContain("官方 `v2.42.0` 仍只覆盖 turn termination 与通用 recovery admission");
+    expect(compactWhitespace(recovery)).toContain("官方 `v2.42.0` 仍只覆盖 turn termination 与通用 recovery admission");
   });
 });
