@@ -34,14 +34,14 @@
 | 本轮官方维护基线 | [`v2.42.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.42.0) |
 | 官方 Tag commit | `48f8186647d9ffb108d226dcfa91a64225aae2a7` |
 | 当前上游最新稳定 Release | `v2.42.0`（`48f8186647d9ffb108d226dcfa91a64225aae2a7`），非 draft、非 prerelease，且等于当前 `upstream/main` |
-| 当前 `IMPLEMENTATION_HEAD` | `b15af48ad49d4ca82861a2a1ff61dda1c639429c`；包含完整 v2.40→v2.42 rebase、冲突 union、`2.42.0-ben.1` 版本、维护真源测试升级、按用户决定移除 `provider_debug` 预算豁免，以及 R1 审查发现的 Provider POST 数据保全与 nested-exec 授权修复 |
+| 当前 `IMPLEMENTATION_HEAD` | `2ae33b6645015293657746be35b9217e4e3cf008`；包含完整 v2.40→v2.42 rebase、冲突 union、`2.42.0-ben.1` 版本、维护真源测试升级、按用户决定移除 `provider_debug` 预算豁免，以及 R1/R2 审查发现的 Provider POST、nested-exec 与 installer 安全修复 |
 | Fork 包版本 | `2.42.0-ben.1` |
 | 本轮派生 Tag | `v2.42.0-ben.1`（目标）；最终验证和双审通过前不创建，既有 `v2.40.0-ben.1`、`v2.40.0-ben.2`、`v2.40.0-ben.3` 保持不可变 |
 | 同步分支 | 本轮固定 `RELEASE_SYNC_REF=refs/heads/sync/v2.42.0`，本地与 origin 均尚不存在；发布时只能以 expected-absent lease 在六成员 atomic push 中创建，禁止 `sync/v2.42.0-ben.*` |
-| 实现修改面 | 固定 `IMPLEMENTATION_HEAD=b15af48ad49d4ca82861a2a1ff61dda1c639429c`：相对官方 `v2.42.0` 为 202 个文件、`+36,158/-747`；相对 `POST_REBASE_HEAD` 为 10 个文件、`+619/-119` |
+| 实现修改面 | 固定 `IMPLEMENTATION_HEAD=2ae33b6645015293657746be35b9217e4e3cf008`：相对官方 `v2.42.0` 为 202 个文件、`+36,587/-852`；相对 `POST_REBASE_HEAD` 为 12 个文件、`+1,056/-232` |
 | rebase 固定输入 | `OLD_OFFICIAL=35ff3a462e786bd5efc394dfb1a8a5cc946e454f`；`NEW_OFFICIAL=48f8186647d9ffb108d226dcfa91a64225aae2a7`；`PRE_REBASE_DEV=1aae7085e32e86e7043d0280b0097119a1e1e726`；`POST_REBASE_HEAD=6032e2cc5e131febda1a8d5c328e3323095ac7d3` |
 | rebase 机械对账 | 官方变更 476 路径；旧 Fork net/touched 均为 204；overlap 38；实际内容冲突 8 路径、10 个唯一 hunk；30 个 overlap 自动合并；主/影 replay 的 stop、stage、hunk、action、commit 与最终 tree 完全一致 |
-| 当前验证 | R1 前宽范围 focused 为 30 files、1,098 pass / 0 fail；R1 `CODE_QUALITY` 的两个 Important 已按 TDD 修复，Provider RED 2 pass / 1 fail→GREEN 3 pass / 0 fail，相邻管理路由 106 pass；nested-exec RED 3 fail→GREEN 8 pass。R2 精确门禁为 34 files、1,214 pass / 0 fail，typecheck、privacy scan、固定范围 diff check 与 clean status 全部 exit 0。两次默认 4x `bun run prepush` 仍是失败（A1：18,030 pass / 3 fail；A2：18,023 pass / 10 fail），用户明确要求本轮不再等待全量/远端 CI；R2 复审尚未完成，不把任何失败轮次记为 PASS |
+| 当前验证 | R2 `SPEC_COMPLIANCE` 与常规 `CODE_QUALITY` 复审 PASS，窄安全审查以三个 Important FAIL。R3 已按 TDD 修复：Provider DNS await 竞态 RED 3 pass / 1 fail→GREEN 4 pass / 0 fail；installer staged replacement、内部 symlink 与 boot recovery 旧实现均按预期 RED，六个 transaction/recovery 文件 GREEN 89 pass / 0 fail；最终精确门禁为 40 files、1,304 pass / 0 fail，typecheck、privacy scan、固定范围 diff check 与 clean status 全部 exit 0。两次默认 4x `bun run prepush` 仍是失败（A1：18,030 pass / 3 fail；A2：18,023 pass / 10 fail），用户明确要求本轮不再等待全量/远端 CI；R3 复审尚未完成，不把任何失败轮次记为 PASS |
 | 外部发布状态 | [`v2.40.0-ben.3`](https://github.com/Trendymen/opencodex/releases/tag/v2.40.0-ben.3) 已闭环且不可变；`v2.42.0-ben.1` 的 Tag、六成员 atomic push、main CI 与 GitHub Release 均未发生 |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
 | 官方基线标记 | 发布前本地与 `origin/upstream-release` 仍为旧官方 `v2.40.0`；本轮发布事务才允许更新到 `v2.42.0` |
@@ -70,6 +70,14 @@ nested-exec 又会把任意名为 `exec` 的普通函数误认作统一执行器
 转换后的普通 `function:exec`、顶层 `custom:exec`、其他 namespace 与歧义声明均不授权修复，
 未声明调用继续由既有 guard fail closed。
 
+R2 窄安全审查继续发现两个实现 Important 和一个验证缺口：Provider `POST` 在 DNS await
+前捕获的旧行仍可能覆盖期间已提交的 `PATCH null`；installer 只验证 staged 路径内容，
+未把通过验证的 root/package 对象绑定到最终 rename，也会跟随 required artifact 的内部
+symlink；R2 transcript 因而缺少当前 installer 专项证据。R3 用确定性并发栅栏证明并修复
+POST/PATCH 顺序，在 mutation lock 内从最新行重建并保存候选；installer 对 staged root/package
+记录 `dev/ino`、验证后和 rename 紧邻前复核，required files、dependency sentinels 与 Bun tree
+统一用 `lstat` 和 canonical containment 拒绝 symlink/逃逸，boot recovery 复用同一严格验证器。
+
 <!-- v242-rebase:start -->
 official_old=v2.40.0
 official_new=v2.42.0
@@ -95,9 +103,9 @@ content_conflicts=package.json,src/codex/catalog/provider-fetch.ts,src/lib/app-o
 content_hunk_ids=1506feca25c3046db7a409b0beffdea5d17efc88d02e184ea888926652afa738,2705a63636d9955c82f3bbb2a91568d7e0268cfcd0b85c3aedbae0cb7a1340bc,3765a3564c4bcef605964189ec05920a6850551319d75a527fb359d590904d95,65dbc31f100a0ec7f984efc7740a4f5aa173272a92041c033c0713e76233a3f7,681be6196942eae40ac4bc663495483fe8fb4141a2e40b0c86b2e8fd69f2968e,6f7418b738e24c83ed85e5b0e03f327a73d257a4506f4ae21107d2b49b40060c,7b6b4dfb987fba42c1e653c71c6adf28fa5fdd9bbe878824f0a3e462f30eb33e,d54645903050f445d616521aae7d50497bd94717ed0370dfe26cd834b78092f4,dbd348a5a005af2d4e4275a4149675873124d94db3e010cc11a42e42c3edbdaa,f1efdeafd214de44b9ac73524a34b0f9b1f0df409446dcf4c38661a2891ca38f
 replay_manifest_sha256=20380ff5b865d9da8c676482acb5258b9d8ebeda281d390d6a1e1f5cbe774b59
 shadow_replay=pass-exact-commit-tree-stops-paths-stages-hunks-actions
-implementation_head=b15af48ad49d4ca82861a2a1ff61dda1c639429c
+implementation_head=2ae33b6645015293657746be35b9217e4e3cf008
 release_commit=docs-only-current-head
-verification=pass-R2-focused-1214;typecheck-pass;privacy-pass;fixed-range-diff-check-pass;clean-status-pass;prepush-A1-fail-3;prepush-A2-fail-10;user-waived-further-full-and-remote-ci
+verification=pass-R3-focused-1304;typecheck-pass;privacy-pass;fixed-range-diff-check-pass;clean-status-pass;prepush-A1-fail-3;prepush-A2-fail-10;user-waived-further-full-and-remote-ci
 reviews=pending
 tag_state=pending
 atomic_push=pending
@@ -162,7 +170,7 @@ path=src/server/auth-cors.ts
 symbols=providerManagementConfigError,PROVIDER_CONFIG_FIELD_POLICY,providerEditorProviderDTO,parseProviderEditorConfigDTO,safeConfigDTO,inferResponsesMessagePhaseModels
 official_change=新增exhaustive provider editor字段策略、原子批量DTO与未知或敏感字段fail-closed
 fork_change=增加可编辑的inferResponsesMessagePhaseModels并保留凭据与运行时字段的安全投影边界
-resolution=将inferResponsesMessagePhaseModels分类为editor并复用官方editor DTO；R1审查后补齐普通Provider POST遗漏字段时的数据保全，PATCH null仍为唯一显式删除路径
+resolution=将inferResponsesMessagePhaseModels分类为editor并复用官方editor DTO；R1补齐普通Provider POST遗漏字段保留，R2后在DNS await结束时于mutation lock内从最新行重建候选，PATCH null仍为唯一显式删除路径
 official_coverage=官方editor框架完整保留；官方不知道Fork字段与message-phase消费者，因此只部分覆盖
 downstream_consumers=provider PUT/PATCH/GET、safe config API、src/fork/responses-message-phase.ts、Responses SSE/JSON重写
 failure_paths=未知、redacted、runtime或stale baseline写入均拒绝；DNS/SSRF在provider route锁内复验
@@ -171,7 +179,7 @@ ordering_edges=baseline比较、持久化锁、保存后runtime reload与message
 risk_domains=auth,secret,config,persistence
 conflict_snapshots=step=1;REBASE_HEAD=26005e4cf1d099594990c4552200d2f61f22b2fb;hunk_ids=3765a3564c4bcef605964189ec05920a6850551319d75a527fb359d590904d95
 focused_tests=tests/provider-config-batch-management.test.ts,tests/management-provider-validation.test.ts,tests/fork-provider-message-phase-config.test.ts
-residual_risk=pending:R2复审需确认POST遗漏保留不改变显式写入和PATCH清除语义
+residual_risk=pending:R3复审需确认POST锁内重放保留并发PATCH、同步校验与既有错误状态语义
 <!-- v242-conflict-src_server_auth_cors_ts:end -->
 
 <!-- v242-conflict-src_server_responses_core_ts:start -->
@@ -943,7 +951,8 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   含 GPT/OpenAI 或目标由 OpenAI 运营时硬排除。SSE 和非流式 JSON 使用一致语义；
   有界 barrier 区分后续还有工作时的 `commentary` 与最终 `final_answer`，并尊重
   上游已有 phase。普通 dashboard Provider `POST` 未携带该高级字段时保留已有规范化
-  数组，避免无关编辑静默关闭能力；显式删除仍只接受 `PATCH null`。
+  数组，避免无关编辑静默关闭能力；DNS/SSRF await 后在 mutation lock 内从最新 Provider
+  行重建并保存，避免期间完成的 `PATCH null` 被旧快照复活；显式删除仍只接受 `PATCH null`。
 - **代码：** `src/fork/responses-message-phase.ts`，以及 config、management API、
   eager relay、SSE rewrite 和 Responses core 的窄接线。
 - **测试：** `tests/responses-message-phase-config.test.ts`、
@@ -1313,13 +1322,18 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   复验旧树后才决定收敛；旧树严格验证失败时保留两棵树并写入结构化 recovery reason，启动探针
   不再自动把它覆盖到完整 live。即使 recovery marker 写入失败，dead owner + 完整 live + 现存 backup
   也保持 fail-closed；只有 live 缺失/损坏且 backup 通过通用 tree verifier 时才允许自动 restore。
+  R3 把同一对象身份约束扩展到 staged tree：验证前记录 stage root/package 的 `dev/ino`，验证后和
+  `stage -> live` rename 紧邻前再次复核，替换对象、symlink root 或 canonical containment 逃逸都在
+  live 未移动时 fail closed。通用 tree verifier 对 package root、`package.json`、launcher、dependency
+  sentinel 与 Bun tree 全部使用 `lstat` 并拒绝任一路径段 symlink；boot recovery 也复用该严格验证，
+  不再把 symlink-backed live tree 误判为健康并删除唯一 backup。
   Windows wrapper 看到任何 recovery marker 都拒绝自动 restore，避免绕过更严格的本地 tree verifier。
   launcher 对该 `failed` 分类仍沿用上游 non-blocking warning-and-continue 语义，未声明为启动级
   fail-closed。
 - **代码：** `scripts/install-local-vendor.ts`（blob `6eccd1c64fd823e9189d19f89169b4ffb8d15a93`）；
   事务化替换前的 `scripts/install-local.ts`（blob `e1f8f8d97db8cbeab97807c7733c5829cafb1276`）；
   当前 `scripts/install-local.ts`（blob `58326e840ea6c6608ae4658efff536533cbd08d6`）与
-  `src/update/transactional-install.mjs`（blob `b8b047e8b450b96738eb2a3100139f6ca59755c9`）；
+  `src/update/transactional-install.mjs`（blob `8aa19beb7d5ed685615990592482250cb232d8c2`）；
   Windows wrapper 接线位于 `src/service.ts`（blob `55734675faa9e111fc4a9d75b3fb159bc382fcd6`）。
 - **测试：** `tests/fork-install-local-staging.test.ts`（blob `2ab483349ae32e81b3dacc64a222dce3c18f69c5`）
   覆盖 staging、present/missing optional、offline closure、forged/empty/malformed pack JSON、
@@ -1340,12 +1354,12 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   scope 枚举和 recovery-unsafe 传播；`tests/fork-windows-service-pending-transaction.test.ts`
   （blob `51a84ad3d0b40792b0ddfdd7959b11fe6e340865`）固定 Windows marker-owned restore 脚本表面；
   `tests/fork-install-local-transaction-hardening.test.ts`（blob
-  `a997d5d085bea4bd580b40d7ec82839e9575357a`）覆盖 canonical handle failure、recovery marker
-  no-follow/0600、backup identity 替换、strict rollback verification、quarantine 双树保留与
-  Windows path casing。
+  `1948372da698b2260cce3f537751ff6625dcc8be`）覆盖 canonical handle failure、recovery marker
+  no-follow/0600、backup identity 替换、strict rollback verification、quarantine 双树保留、
+  staged object replacement、root/artifact symlink、canonical escape、boot restore 与 Windows path casing。
   这些仍是 isolated/unit/static 证据；本轮未执行真实全局替换、真实 service stop/restart 恢复或
   Windows PowerShell/junction 动态运行。
-- **官方对比：** 官方 `v2.39.0` 与当前 `v2.40.0` 均没有同等本地源码安装器。
+- **官方对比：** 官方 `v2.39.0` 与当前 `v2.42.0` 均没有同等本地源码安装器。
 
 ### GUI Logs/Debug 恢复标签与 sidecar 契约
 
