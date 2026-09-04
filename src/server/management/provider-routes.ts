@@ -888,14 +888,15 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!isPlainRecord(body.provider)) return jsonResponse({ error: "provider must be a plain object" }, 400);
+    const submittedProvider = body.provider;
     const existing = config.providers[name];
-    const aliasOwnershipError = providerAliasOverlayOwnershipError(body.provider, existing);
+    const aliasOwnershipError = providerAliasOverlayOwnershipError(submittedProvider, existing);
     if (aliasOwnershipError) return jsonResponse({ error: aliasOwnershipError }, 400);
-    const transportCandidate = providerTransportValidationCandidate(body.provider);
+    const transportCandidate = providerTransportValidationCandidate(submittedProvider);
     const providerError = providerManagementConfigError(name, transportCandidate)
       ?? providerEmptyToolOutputConfigError(name, transportCandidate);
     if (providerError) return jsonResponse({ error: providerError }, 400);
-    const rawProvider = body.provider as Record<string, unknown>;
+    const rawProvider = submittedProvider;
     if (rawProvider.upstreamWebsocket !== undefined && typeof rawProvider.upstreamWebsocket !== "boolean") {
       return jsonResponse({ error: "upstreamWebsocket must be a boolean" }, 400);
     }
@@ -921,6 +922,12 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     if (namespaceCollision) {
       return jsonResponse({ error: namespaceCollision }, 409);
     }
+    if (body.setDefault !== undefined && typeof body.setDefault !== "boolean") {
+      return jsonResponse({ error: "setDefault must be a boolean" }, 400);
+    }
+    if (body.setDefault === true && prov.disabled) {
+      return jsonResponse({ error: "cannot set a disabled provider as default", code: "default_provider_disabled" }, 400);
+    }
     // Hostname destinations additionally get a DNS-resolved SSRF check at write time —
     // the sync check above only classifies literal IPs (review finding, PR #96).
     // Canonical openai still runs the resolver: only Clash fake-IP (198.18.0.0/15)
@@ -928,99 +935,125 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     const allowBenchmarkAddresses = name === "openai" && isCanonicalOpenAiForwardProvider(prov);
     const resolvedError = await providerDestinationResolvedError(name, prov, { allowBenchmarkAddresses });
     if (resolvedError) return jsonResponse({ error: resolvedError }, 400);
-    if (body.setDefault !== undefined && typeof body.setDefault !== "boolean") {
-      return jsonResponse({ error: "setDefault must be a boolean" }, 400);
+    let replayError: string | undefined;
+    let replayCode: string | undefined;
+    let savedProvider: OcxProviderConfig | undefined;
+    // Destination validation awaits. Rebuild the candidate from the original request under
+    // the mutation lock so every field omitted by the dashboard is inherited from the newest
+    // row, not a snapshot that a PATCH could have changed while DNS was in flight.
+    withConfigMutationLockSync(() => {
+      const existing = config.providers[name];
+      const replayAliasOwnershipError = providerAliasOverlayOwnershipError(submittedProvider, existing);
+      if (replayAliasOwnershipError) {
+        replayError = replayAliasOwnershipError;
+        return;
+      }
+      const replayTransportCandidate = providerTransportValidationCandidate(submittedProvider);
+      const replayProviderError = providerManagementConfigError(name, replayTransportCandidate)
+        ?? providerEmptyToolOutputConfigError(name, replayTransportCandidate);
+      if (replayProviderError) {
+        replayError = replayProviderError;
+        return;
+      }
+      const replayRawProvider = submittedProvider;
+      if (replayRawProvider.upstreamWebsocket !== undefined && typeof replayRawProvider.upstreamWebsocket !== "boolean") {
+        replayError = "upstreamWebsocket must be a boolean";
+        return;
+      }
+      const replayServiceTierError = providerServiceTierConfigError(name, replayTransportCandidate);
+      if (replayServiceTierError) {
+        replayError = replayServiceTierError;
+        return;
+      }
+      const replayProv = stripCodexRuntimeProviderFields(replayTransportCandidate as unknown as OcxProviderConfig);
+      if (replayProv && replayProv.upstreamHttpVersion === null) delete replayProv.upstreamHttpVersion;
+      if (replayProv?.inferResponsesMessagePhaseModels) {
+        replayProv.inferResponsesMessagePhaseModels = normalizeNonBlankStringArray(replayProv.inferResponsesMessagePhaseModels);
+      }
+      if (!replayProv?.adapter || !replayProv?.baseUrl) {
+        replayError = "name, provider.adapter and provider.baseUrl are required";
+        return;
+      }
+      const replayDisplayNamesError = modelDisplayNamesConfigError(replayProv.modelDisplayNames);
+      if (replayDisplayNamesError) {
+        replayError = replayDisplayNamesError;
+        return;
+      }
+      const replayNamespaceCollision = codexAccountNamespaceProviderCollisionError(config.codexAccountNamespaces, name);
+      if (replayNamespaceCollision) {
+        replayError = replayNamespaceCollision;
+        return;
+      }
+      if (body.setDefault !== undefined && typeof body.setDefault !== "boolean") {
+        replayError = "setDefault must be a boolean";
+        return;
+      }
+      if (body.setDefault === true && replayProv.disabled) {
+        replayError = "cannot set a disabled provider as default";
+        replayCode = "default_provider_disabled";
+        return;
+      }
+
+      // Catalog providers (e.g. ollama-cloud) carry a models + vision/reasoning classification the GUI
+      // doesn't send — merge it in so the sidecars are gated correctly. Sample request ownership
+      // before enrichment, because registry defaults must not look client-submitted afterwards.
+      const submittedContextWindow = Object.hasOwn(replayProv, "contextWindow");
+      const submittedModelContextWindows = Object.hasOwn(replayProv, "modelContextWindows");
+      const submittedModelAutoCompactTokenLimits = Object.hasOwn(replayProv, "modelAutoCompactTokenLimits");
+      const submittedModelDisplayNames = Object.hasOwn(replayProv, "modelDisplayNames");
+      const submittedRequestPacing = Object.hasOwn(replayProv, "requestPacing");
+      const submittedUpstreamWebsocket = Object.hasOwn(replayProv, "upstreamWebsocket");
+      const submittedInferResponsesMessagePhaseModels = Object.hasOwn(replayProv, "inferResponsesMessagePhaseModels");
+      const submittedAnnotateEmptyToolOutputs = Object.hasOwn(replayProv, "annotateEmptyToolOutputs");
+      enrichProviderFromCatalog(name, replayProv);
+      const existingPool = existing?.apiKeyPool;
+      if (existingPool && !replayProv.apiKeyPool) replayProv.apiKeyPool = existingPool;
+      const existingCosts = existing?.modelCosts;
+      if (existingCosts && !replayProv.modelCosts) replayProv.modelCosts = existingCosts;
+      const existingFailover = existing?.oauthAccountFailover;
+      if (existingFailover && !replayProv.oauthAccountFailover) replayProv.oauthAccountFailover = existingFailover;
+      if (!submittedModelDisplayNames && existing?.modelDisplayNames) {
+        replayProv.modelDisplayNames = { ...existing.modelDisplayNames };
+      }
+      if (!submittedRequestPacing && existing?.requestPacing) {
+        replayProv.requestPacing = structuredClone(existing.requestPacing);
+      }
+      if (!submittedContextWindow && existing?.contextWindow !== undefined) {
+        replayProv.contextWindow = existing.contextWindow;
+      }
+      if (!submittedAnnotateEmptyToolOutputs && existing?.annotateEmptyToolOutputs !== undefined) {
+        replayProv.annotateEmptyToolOutputs = existing.annotateEmptyToolOutputs;
+      }
+      if (!submittedUpstreamWebsocket && existing?.upstreamWebsocket !== undefined) {
+        replayProv.upstreamWebsocket = existing.upstreamWebsocket;
+      }
+      if (!submittedInferResponsesMessagePhaseModels && existing?.inferResponsesMessagePhaseModels) {
+        replayProv.inferResponsesMessagePhaseModels = [...existing.inferResponsesMessagePhaseModels];
+      }
+      if (existing?.modelContextWindows) {
+        replayProv.modelContextWindows = submittedModelContextWindows
+          ? { ...existing.modelContextWindows, ...(replayProv.modelContextWindows ?? {}) }
+          : { ...existing.modelContextWindows };
+      }
+      if (existing?.modelAutoCompactTokenLimits) {
+        replayProv.modelAutoCompactTokenLimits = submittedModelAutoCompactTokenLimits
+          ? { ...existing.modelAutoCompactTokenLimits, ...(replayProv.modelAutoCompactTokenLimits ?? {}) }
+          : { ...existing.modelAutoCompactTokenLimits };
+      }
+      restorePersistedAliasOverlays(replayProv, existing);
+      config.providers[name] = stripRegistryOnlyStaticHeaders(name, replayProv);
+      if (body.setDefault === true) config.defaultProvider = name;
+      saveConfigPreservingClaudeCode(config);
+      savedProvider = replayProv;
+    });
+    if (replayError !== undefined) {
+      return jsonResponse({ error: replayError, ...(replayCode ? { code: replayCode } : {}) }, 409);
     }
-    if (body.setDefault === true && prov.disabled) {
-      return jsonResponse({ error: "cannot set a disabled provider as default", code: "default_provider_disabled" }, 400);
-    }
-    // Catalog providers (e.g. ollama-cloud) carry a models + vision/reasoning classification the GUI
-    // doesn't send — merge it in so the sidecars are gated correctly.
-    // Sample request ownership BEFORE enrichment. Enrichment fills absent fields from the
-    // registry seed, after which "the client omitted this" and "the registry supplied it" are
-    // indistinguishable — so a carry-over guard written as `prov.x === undefined` after this
-    // call can never fire.
-    const submittedContextWindow = Object.hasOwn(prov, "contextWindow");
-    const submittedModelContextWindows = Object.hasOwn(prov, "modelContextWindows");
-    const submittedModelAutoCompactTokenLimits = Object.hasOwn(prov, "modelAutoCompactTokenLimits");
-    const submittedModelDisplayNames = Object.hasOwn(prov, "modelDisplayNames");
-    const submittedRequestPacing = Object.hasOwn(prov, "requestPacing");
-    const submittedUpstreamWebsocket = Object.hasOwn(prov, "upstreamWebsocket");
-    const submittedInferResponsesMessagePhaseModels = Object.hasOwn(prov, "inferResponsesMessagePhaseModels");
-    // Same trap, one more field: DeepSeek carries a registry default of `true` for
-    // annotateEmptyToolOutputs, so enrichment cannot distinguish "the client omitted it"
-    // from "the registry supplied it" either. Without this sample, an unrelated edit that
-    // omits the key resurrects the registry default over an operator's explicit `false`.
-    const submittedAnnotateEmptyToolOutputs = Object.hasOwn(prov, "annotateEmptyToolOutputs");
-    enrichProviderFromCatalog(name, prov);
-    const { saveConfigPreservingClaudeCode: save } = await import("../../config");
-    // Overwriting an existing provider must not drop its multi-key pool: carry it over, then
-    // let the (possibly new) apiKey join the pool as the active entry.
-    const existingPool = config.providers[name]?.apiKeyPool;
-    if (existingPool && !prov.apiKeyPool) prov.apiKeyPool = existingPool;
-    // The same rule applies to user-configured price overlays: the dashboard's
-    // add/edit form does not send modelCosts, so an overwrite must not silently
-    // erase hand-edited per-model prices from Logs/Usage estimates.
-    const existingCosts = config.providers[name]?.modelCosts;
-    if (existingCosts && !prov.modelCosts) prov.modelCosts = existingCosts;
-    // And to the per-provider account-failover opt-out (#2568d). `ProviderPayload` has no
-    // member for it either, so an add/edit save structurally cannot carry it — and dropping it
-    // silently ENABLES rotation, because activation is presence-driven once the knob is gone.
-    // An overwrite must not spend a second subscription account's quota as a side effect.
-    const existingFailover = config.providers[name]?.oauthAccountFailover;
-    if (existingFailover && !prov.oauthAccountFailover) prov.oauthAccountFailover = existingFailover;
-    // ...and to hand-edited context windows. `ProviderPayload` (gui/src/provider-payload.ts)
-    // has no member for either field, so the add/edit form structurally cannot send them:
-    // absence in the request means "not carried", never "the user deleted it". Deletion goes
-    // through PATCH with an explicit null (#1409).
-    if (!submittedModelDisplayNames && existing?.modelDisplayNames) {
-      prov.modelDisplayNames = { ...existing.modelDisplayNames };
-    }
-    if (!submittedRequestPacing && existing?.requestPacing) {
-      prov.requestPacing = structuredClone(existing.requestPacing);
-    }
-    if (!submittedContextWindow && existing?.contextWindow !== undefined) {
-      prov.contextWindow = existing.contextWindow;
-    }
-    // `!== undefined` rather than a truthiness test: the whole point of this field is that
-    // an explicit `false` must survive, and `false` is falsy.
-    if (!submittedAnnotateEmptyToolOutputs && existing?.annotateEmptyToolOutputs !== undefined) {
-      prov.annotateEmptyToolOutputs = existing.annotateEmptyToolOutputs;
-    }
-    // The provider add/edit form may omit this transport option. Preserve the stored value
-    // during a full overwrite; PATCH remains the explicit mutation path, and `!== undefined`
-    // keeps an operator's explicit false from being treated as absent.
-    if (!submittedUpstreamWebsocket && existing?.upstreamWebsocket !== undefined) {
-      prov.upstreamWebsocket = existing.upstreamWebsocket;
-    }
-    if (!submittedInferResponsesMessagePhaseModels && existing?.inferResponsesMessagePhaseModels) {
-      prov.inferResponsesMessagePhaseModels = [...existing.inferResponsesMessagePhaseModels];
-    }
-    if (existing?.modelContextWindows) {
-      // When the client did send a map, its keys win and the user's other keys survive. When
-      // it did not, the stored value is the user's map alone: merging the registry seed in
-      // would persist seed keys into user config as a side effect of an unrelated save, and
-      // router.ts already fills registry values beneath user entries at resolve time.
-      prov.modelContextWindows = submittedModelContextWindows
-        ? { ...existing.modelContextWindows, ...(prov.modelContextWindows ?? {}) }
-        : { ...existing.modelContextWindows };
-    }
-    if (existing?.modelAutoCompactTokenLimits) {
-      prov.modelAutoCompactTokenLimits = submittedModelAutoCompactTokenLimits
-        ? { ...existing.modelAutoCompactTokenLimits, ...(prov.modelAutoCompactTokenLimits ?? {}) }
-        : { ...existing.modelAutoCompactTokenLimits };
-    }
-    // DNS validation above awaits. Re-read the live row so a dedicated alias write that
-    // completed during that wait remains authoritative instead of being overwritten by the
-    // older ownership snapshot used to admit this POST.
-    restorePersistedAliasOverlays(prov, config.providers[name]);
-    config.providers[name] = stripRegistryOnlyStaticHeaders(name, prov);
-    if (body.setDefault === true) config.defaultProvider = name;
-    save(config);
+    const savedProv = savedProvider!;
     reconcileLiveStateStores();
-    if (prov.apiKey && prov.apiKeyPool) {
+    if (savedProv.apiKey && savedProv.apiKeyPool) {
       const { addProviderApiKey } = await import("../../providers/api-keys");
-      addProviderApiKey(config, name, prov.apiKey);
+      addProviderApiKey(config, name, savedProv.apiKey);
     }
     const { clearModelCache } = await import("../../codex/model-cache");
     clearModelCache(name);

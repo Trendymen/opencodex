@@ -263,4 +263,78 @@ describe("fork provider message phase config", () => {
       await server.stop(true);
     }
   });
+
+  test("provider POST replay keeps a message phase inference clear committed during DNS validation", async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    const seeded = config("127.0.0.1");
+    seeded.providers["phase-race"] = {
+      adapter: "openai-responses",
+      baseUrl: "https://relay.example/v1",
+      liveModels: false,
+      models: ["glm-5.3", "kimi-k3"],
+      inferResponsesMessagePhaseModels: ["glm-5.3", "kimi-k3"],
+    };
+    saveConfig(seeded);
+
+    let releaseDns!: () => void;
+    const dnsResume = new Promise<void>(resolve => { releaseDns = resolve; });
+    let markDnsEntered!: () => void;
+    const dnsEntered = new Promise<void>(resolve => { markDnsEntered = resolve; });
+    let pauseFirstPhaseRaceProbe = true;
+    const resolvedError = spyOn(destinationPolicy, "providerDestinationResolvedError")
+      .mockImplementation(async name => {
+        if (name === "phase-race" && pauseFirstPhaseRaceProbe) {
+          pauseFirstPhaseRaceProbe = false;
+          markDnsEntered();
+          await dnsResume;
+        }
+        return null;
+      });
+
+    const managementDeps = { createManagementConvergeCodex: catalogConvergenceFactory() };
+    try {
+      const postUrl = new URL("http://127.0.0.1/api/providers");
+      const pendingPost = handleManagementAPI(new Request(postUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "phase-race",
+          provider: {
+            adapter: "openai-responses",
+            baseUrl: "https://relay.example/v1",
+            liveModels: false,
+            models: ["glm-5.3", "kimi-k3"],
+          },
+        }),
+      }), postUrl, seeded, managementDeps);
+      await dnsEntered;
+
+      const patchUrl = new URL("http://127.0.0.1/api/providers?name=phase-race");
+      const clear = await handleManagementAPI(new Request(patchUrl, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ inferResponsesMessagePhaseModels: null }),
+      }), patchUrl, seeded, managementDeps);
+      expect(clear?.status).toBe(200);
+      expect(seeded.providers["phase-race"]?.inferResponsesMessagePhaseModels).toBeUndefined();
+      expect(loadConfig().providers["phase-race"]?.inferResponsesMessagePhaseModels).toBeUndefined();
+
+      releaseDns();
+      expect((await pendingPost)?.status).toBe(200);
+      expect(seeded.providers["phase-race"]?.inferResponsesMessagePhaseModels).toBeUndefined();
+      const getUrl = new URL("http://127.0.0.1/api/providers");
+      const providers = await (await handleManagementAPI(
+        new Request(getUrl),
+        getUrl,
+        seeded,
+        managementDeps,
+      ))?.json() as Array<{ name: string; inferResponsesMessagePhaseModels?: string[] }>;
+      expect(providers.find(provider => provider.name === "phase-race")?.inferResponsesMessagePhaseModels).toBeUndefined();
+      expect(loadConfig().providers["phase-race"]?.inferResponsesMessagePhaseModels).toBeUndefined();
+    } finally {
+      resolvedError.mockRestore();
+    }
+  });
 });
