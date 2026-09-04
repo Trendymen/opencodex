@@ -218,4 +218,49 @@ describe("fork provider message phase config", () => {
       await server.stop(true);
     }
   });
+
+  test("provider POST preserves omitted message phase inference models during dashboard overwrite", async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    const seeded = config("127.0.0.1");
+    seeded.providers["phase-preserve"] = {
+      adapter: "openai-responses",
+      baseUrl: "https://relay.example/v1",
+      liveModels: false,
+      models: ["glm-5.3", "kimi-k3"],
+      inferResponsesMessagePhaseModels: ["glm-5.3", "kimi-k3"],
+    };
+    saveConfig(seeded);
+
+    const server = startServer(0);
+    try {
+      const overwriteRes = await fetch(new URL("/api/providers", server.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "phase-preserve",
+          provider: {
+            adapter: "openai-responses",
+            baseUrl: "https://relay.example/v1",
+            liveModels: false,
+            models: ["glm-5.3", "kimi-k3"],
+          },
+        }),
+      });
+      expect(overwriteRes.status).toBe(200);
+
+      const providers = await fetch(new URL("/api/providers", server.url)).then(response => response.json()) as Array<{
+        name: string;
+        inferResponsesMessagePhaseModels?: string[];
+      }>;
+      expect(providers.find(provider => provider.name === "phase-preserve")?.inferResponsesMessagePhaseModels)
+        .toEqual(["glm-5.3", "kimi-k3"]);
+
+      expect(loadConfig().providers["phase-preserve"]?.inferResponsesMessagePhaseModels)
+        .toEqual(["glm-5.3", "kimi-k3"]);
+    } finally {
+      await server.stop(true);
+    }
+  });
 });
