@@ -6,9 +6,15 @@ import {
 import { createTestTranslatorBudget } from "./helpers/translator-budget";
 
 describe("nested exec repair contexts", () => {
-  test("derives adapter-event repair from the current-turn wire catalog", () => {
+  const CODE_MODE_EXEC = {
+    type: "namespace",
+    name: "functions",
+    tools: [{ type: "custom", name: "exec", description: "Run JavaScript with nested helpers." }],
+  };
+
+  test("derives adapter-event repair from Codex's reserved functions custom exec declaration", () => {
     const repair = createNestedExecAdapterEventRepair({
-      rawBody: { tools: [{ type: "function", name: "exec" }] },
+      rawBody: { tools: [CODE_MODE_EXEC] },
       replayPrefixLength: 0,
       isPassthrough: false,
       translatorBudget: createTestTranslatorBudget(),
@@ -19,12 +25,27 @@ describe("nested exec repair contexts", () => {
 
   test("does not create an adapter repair plan for passthrough traffic", () => {
     const repair = createNestedExecAdapterEventRepair({
-      rawBody: { tools: [{ type: "function", name: "exec" }] },
+      rawBody: { tools: [CODE_MODE_EXEC] },
       replayPrefixLength: 0,
       isPassthrough: true,
       translatorBudget: createTestTranslatorBudget(),
     });
     expect(repair.plan).toBeUndefined();
+  });
+
+  test("does not authorize nested repair for ordinary or unproven exec declarations", () => {
+    for (const tools of [
+      [{ type: "function", name: "exec", parameters: { type: "object" } }],
+      [{ type: "custom", name: "exec" }],
+    ]) {
+      const repair = createNestedExecAdapterEventRepair({
+        rawBody: { tools },
+        replayPrefixLength: 0,
+        isPassthrough: false,
+        translatorBudget: createTestTranslatorBudget(),
+      });
+      expect(repair.plan).toBeUndefined();
+    }
   });
 
   test("builds a passthrough coordinator only when a lowered exec needs repair", () => {
