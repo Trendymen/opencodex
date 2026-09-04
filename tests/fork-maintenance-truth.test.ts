@@ -120,7 +120,7 @@ const EXPECTED_V239_KEYS = [
 ] as const;
 const EXPECTED_V239_BIN_DECISION = "official=hasPendingTeardownIn；fork=forkUpdateDecision；resolution=双方 import 与调用链均保留；tests=tests/fork-version-policy.test.ts,tests/update-stop-first.test.ts";
 const EXPECTED_V239_PACKAGE_DECISION = "official=version 2.39.0 与 package 表面；fork=install:local 与 ben 版本策略；resolution=保留官方表面并收敛为 2.39.0-ben.1；tests=tests/fork-version-policy.test.ts";
-const EXPECTED_V239_EXTERNAL_ACTIONS = "full_release；rebase 默认要求完成验证、双审、annotated Fork Tag、六成员 atomic push 与 GitHub Release；仅用户明确叫停时中止";
+const EXPECTED_V239_EXTERNAL_ACTIONS = "full_release；rebase 默认要求完成验证、双审和 annotated Fork Tag，再用一次 git push --atomic 同时更新 main、dev、sync/vX.Y.Z、upstream-release、Fork Tag 与官方 Tag，并创建 GitHub Release；仅用户明确叫停时中止";
 const EXPECTED_V239_TESTS = "tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts";
 const EXPECTED_V240_OVERLAP_PATHS = [
   ".github/workflows/dev-version-bump.yml",
@@ -712,7 +712,7 @@ function parseAtomicRefset(block: string): string[][] {
   });
   if (rows.length !== 6) throw new Error("atomic refset must contain exactly six rows");
   if (JSON.stringify(rows) !== JSON.stringify(EXPECTED_ATOMIC_REFSET)) {
-    throw new Error("atomic refset differs from the exact six-member contract");
+    throw new Error("atomic refset differs from the exact main/dev/sync/marker/Fork-Tag/official-Tag contract");
   }
   for (const [kind, name, policy, refspec] of rows) {
     if (kind === "branch" && !policy.startsWith("leased-")) throw new Error(`${name} branch is not leased`);
@@ -966,7 +966,7 @@ describe("Fork maintenance truth", () => {
     }));
     expect(rows).toEqual({
       "S2R candidate Cross-platform CI": "pending external gate",
-      "Atomic promotion": "pending external gate",
+      "发布用 `git push --atomic`": "pending external gate",
       "Final main Cross-platform CI": "pending external gate",
       "GitHub Release": "pending external gate",
     });
@@ -1000,11 +1000,11 @@ describe("Fork maintenance truth", () => {
     expect(normalized).toContain("raw=peeled=`80fff9a7f47332a4445df2b26ea175053fa55b0b`");
     expect(normalized).toContain("`v2.35.0`");
     expect(normalized).toContain("raw=peeled=`fc4de772b58c13f7b16b5029b1e981d612a5db06`");
-    expect(normalized).toContain("promotion 时补齐");
+    expect(normalized).toContain("同一次 `git push --atomic` 中补齐");
 
     for (const gate of [
       "v2.35.0-ben.2 Tag",
-      "Atomic promotion",
+      "发布用 `git push --atomic`",
       "Final main Cross-platform CI",
       "GitHub Release",
     ]) {
@@ -1013,12 +1013,12 @@ describe("Fork maintenance truth", () => {
 
     const gates = machineBlock(changes, "ben2-external-gates");
     expect(gates).toContain("| S2R candidate Cross-platform CI | `pending external gate` |");
-    expect(gates).toContain("| Atomic promotion | `pending external gate` |");
+    expect(gates).toContain("| 发布用 `git push --atomic` | `pending external gate` |");
     expect(gates).toContain("| Final main Cross-platform CI | `pending external gate` |");
     expect(gates).toContain("| GitHub Release | `pending external gate` |");
   });
 
-  test("requires the exact six-member atomic refset in every release contract", () => {
+  test("requires the exact main/dev/sync/marker/Fork-Tag/official-Tag atomic refset in every release contract", () => {
     const flows = [
       majorSection("没有新官方版本时的幂等收敛"),
       majorSection("每次稳定版 rebase 的强制流程"),

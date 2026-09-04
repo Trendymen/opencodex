@@ -9,7 +9,7 @@
 `FORK_CHANGES.md` 和维护真源机械测试，作为后续所有 Fork 历史压缩发布的永久约束：
 
 1. 压缩开始时固定 `SQUASH_TARGET_COUNT`；本次为 `4`。
-2. 候选 CI、双审、Tag、atomic promotion 和 GitHub Release 的精确 SHA 都必须保持该提交数。
+2. 候选 CI、双审、Tag、发布用 `git push --atomic` 和 GitHub Release 的精确 SHA 都必须保持该提交数。
 3. 候选 CI 未通过时不得追加第五个 commit；只允许 amend 既有四提交历史后，以精确
    `--force-with-lease` 强推 `dev` 触发新的 CI。
 4. GitHub Release 必须晚于精确候选 SHA 的成功 CI；旧 SHA 的 PASS 不得沿用。
@@ -40,7 +40,7 @@
 先在本地重建 C1–C4，把候选以精确 lease 强推到 `dev`。CI 失败时不增加 commit：无代码变化的
 重试只 amend C4 的候选尝试标识；需要修复时把变化 amend/重建进所属的 C1–C3，再重建 C4。
 每次都重新证明官方基线之后恰好 4 个 commits，然后强推 `dev` 触发新 CI。只有最终精确 SHA
-的 CI 与双审都通过，才创建 Tag 和执行 atomic promotion。
+的 CI 与双审都通过，才创建 Tag，并用一次 `git push --atomic` 同时更新全部发布引用。
 
 优点是 `main` 在候选阶段仍只指向最后一个正式 Fork Release，Tag 不会绑定失败候选，且所有
 失败尝试都能继续 amend。代价是 `dev` 会被多次有 lease 地强推，这是用户明确授权的候选线
@@ -146,7 +146,7 @@ C1–C3 依次只应用 M1–M3；C4只应用 M4。定义
 必须追加新的 `A_J` 与新 C4 SHA。修改 C1 时依次重建 C1–C4并创建新 S/A；修改 C2 时重建
 C2–C4；修改 C3 时重建 C3–C4。任何后继提交都不得继续挂在已废弃的前驱 SHA 上。
 
-每个候选 push 前、CI 返回后、双审前、Tag 前、atomic promotion 前和 GitHub Release 前都必须
+每个候选 push 前、CI 返回后、双审前、Tag 前、发布用 `git push --atomic` 前和 GitHub Release 前都必须
 执行等价检查：
 
 ```bash
@@ -211,19 +211,20 @@ OID漂移或计数不等，均 fail closed。
 `commit --amend` 不能只依赖时间戳碰运气生成新 OID；候选尝试编号必须变化。重试不得使用
 `--allow-empty` 新增 commit，也不得使用普通 `--force`。
 
-## Tag、promotion 与 GitHub Release
+## Tag、原子推送与 GitHub Release
 
 候选 CI 和双审都绑定最终 C4 SHA 后：
 
 1. 创建新的中文 annotated `v2.40.0-ben.3`，raw ref 类型必须为 `tag`，peeled commit 必须为
    最终 C4；创建前再次执行父链、tree、manifest、count、candidate CI、两个常规 review SHA
    和 workflow security-review blob等式检查。`v2.40.0-ben.2` 保持不可变。
-2. 按现行六成员 refset一次 atomic push：`main`、`dev`、`sync/v2.40.0` 指向 C4，marker 与
-   官方 Tag 指向官方基线，Fork Tag 指向 C4。四个 branch 使用各自精确 ref-scoped lease；
+2. 执行一次 `git push --atomic`，同时更新 `main`、`dev`、`sync/v2.40.0`、`upstream-release`、
+   Fork Tag 和官方 Tag：前三个 branch 与 Fork Tag 指向 C4，`upstream-release` 与官方 Tag
+   指向官方基线。四个 branch 使用各自精确 ref-scoped lease；
    两个 Tag 不 force、不使用 lease。
 3. 本地 `main`、`sync/v2.40.0`、`upstream-release` 使用一个带
    `start` / `prepare` / `commit` 的三 ref CAS transaction 收敛。
-4. promotion 后必须重新读取并证明远端 `main`、`dev`、`sync/v2.40.0` 和 Fork Tag peeled
+4. 原子推送后必须重新读取并证明远端 `main`、`dev`、`sync/v2.40.0` 和 Fork Tag peeled
    commit 全等于 C4，marker 与官方 Tag 全等于 `OFFICIAL_COMMIT`；本地三 ref 与对应远端一致。
 5. main push 的 Cross-platform CI 仍是发布后验。只接受 `workflowName=Cross-platform CI`、
    `event=push`、`headBranch=main`、`headSha=C4`、`status=completed`、`conclusion=success` 且
