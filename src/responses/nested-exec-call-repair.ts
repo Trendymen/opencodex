@@ -39,40 +39,43 @@ function responseToolSpecs(body: unknown): unknown[] {
   return specs;
 }
 
-function specConflictsWithExec(spec: unknown): boolean {
-  if (!isPlainObject(spec)) return false;
-  if (spec.type === "namespace" && Array.isArray(spec.tools)) {
-    return spec.name === "exec"
-      || spec.tools.some(child => isPlainObject(child) && child.name === "exec");
+type ExecDeclaration = Readonly<{
+  kind: "custom" | "function";
+  isCodeModeExec: boolean;
+}>;
+
+function execDeclarations(specs: readonly unknown[]): ExecDeclaration[] {
+  const declarations: ExecDeclaration[] = [];
+  for (const spec of specs) {
+    if (!isPlainObject(spec)) continue;
+    if (spec.type !== "namespace") {
+      if (spec.name === "exec" && (spec.type === "custom" || spec.type === "function")) {
+        declarations.push({ kind: spec.type, isCodeModeExec: false });
+      }
+      continue;
+    }
+    if (spec.name === "exec") declarations.push({ kind: "function", isCodeModeExec: false });
+    if (!Array.isArray(spec.tools)) continue;
+    for (const child of spec.tools) {
+      if (!isPlainObject(child) || child.name !== "exec") continue;
+      if (child.type !== "custom" && child.type !== "function") continue;
+      declarations.push({
+        kind: child.type,
+        isCodeModeExec: spec.name === "functions" && child.type === "custom",
+      });
+    }
   }
-  return spec.name === "exec";
+  return declarations;
 }
 
 export function findUniqueCurrentTurnExecDeclaration(body: unknown): CurrentTurnExecDeclaration | undefined {
-  const specs = responseToolSpecs(body);
-  const candidates = specs.filter(spec =>
-    isPlainObject(spec)
-    && (spec.type === "custom" || spec.type === "function")
-    && spec.name === "exec"
-  ) as Array<Record<string, unknown>>;
-  if (candidates.length !== 1) return undefined;
-  const candidate = candidates[0]!;
-  if (specs.some(spec => spec !== candidate && specConflictsWithExec(spec))) return undefined;
-  return {
-    kind: candidate.type as "custom" | "function",
-  };
-}
-
-function specCarriesNestedExecSurface(spec: unknown): boolean {
-  if (!isPlainObject(spec)) return false;
-  if ((spec.type === "custom" || spec.type === "function") && spec.name === "exec") return true;
-  return spec.type === "namespace"
-    && Array.isArray(spec.tools)
-    && spec.tools.some(specCarriesNestedExecSurface);
+  const declarations = execDeclarations(responseToolSpecs(body));
+  if (declarations.length !== 1 || !declarations[0]!.isCodeModeExec) return undefined;
+  return { kind: declarations[0]!.kind };
 }
 
 export function hasCurrentTurnNestedExecSurface(body: unknown): boolean {
-  return responseToolSpecs(body).some(specCarriesNestedExecSurface);
+  return findUniqueCurrentTurnExecDeclaration(body) !== undefined;
 }
 
 export function buildNestedExecRepairPlan(args: {
