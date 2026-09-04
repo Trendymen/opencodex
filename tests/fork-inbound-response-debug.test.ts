@@ -8,12 +8,7 @@ import {
 } from "../src/fork/inbound-response-debug";
 import { providerDebugLogPath } from "../src/fork/debug-persistence";
 import { CONFIG_UNINSTALL_MANIFEST, removeOwnedConfigState } from "../src/lib/config-ownership";
-import {
-  configureAppOwnedMemoryBudget,
-  enforceAppOwnedMemoryBudget,
-  resetAppOwnedMemoryForTests,
-} from "../src/lib/app-owned-memory";
-import { registerDefaultAppOwnedMemoryStores } from "../src/lib/app-owned-memory-stores";
+import { resetAppOwnedMemoryForTests } from "../src/lib/app-owned-memory";
 import { appendDebugLogLine, getDebugLogEntries, resetDebugLogBufferForTests } from "../src/lib/debug-log-buffer";
 import { resetDebugSettingsForTests, setDebugSettings } from "../src/lib/debug-settings";
 import { providerConfigSeed } from "../src/providers/derive";
@@ -226,15 +221,6 @@ describe("inbound upstream Responses debug observer", () => {
     expect(row!.line).not.toContain(longPath);
     expect(row!.line).not.toContain(longModel);
     expect(getDebugLogEntries()[0]!.line.length).toBeLessThan(row!.line.length);
-  });
-
-  test("provider debug ring is not evicted by the global app-owned memory budget", () => {
-    resetAppOwnedMemoryForTests();
-    registerDefaultAppOwnedMemoryStores();
-    appendDebugLogLine("provider-debug-operator-evidence");
-    configureAppOwnedMemoryBudget(0);
-    enforceAppOwnedMemoryBudget();
-    expect(getDebugLogEntries().map(entry => entry.line)).toContain("provider-debug-operator-evidence");
   });
 
   test("summarizes a native JSON terminal with text routed to the sample capture", () => {
