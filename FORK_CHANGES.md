@@ -185,7 +185,7 @@ release_refs=main-sync-tags-release-immutable
   `tests/fork-maintenance-truth.test.ts`，合计 `+299/-86`。相对官方基线仍为 171 个文件、
   `+28,761/-605`。
 - **TDD 证据：** 单一可移动 sync 指针契约先在旧 revision-specific 正文上得到
-  18 pass / 3 fail，失败精确命中六成员 refset、`sync-audit-ref-policy` 与旧 ancestry 门禁；
+  18 pass / 3 fail，失败精确命中同时更新 `main`、`dev`、sync、marker、Fork Tag 与官方 Tag 的原子 refset、`sync-audit-ref-policy` 与旧 ancestry 门禁；
   实现后 `bun test tests/fork-maintenance-truth.test.ts` 为 21 pass / 0 fail /
   630 expect calls，`git diff --check` 通过。
 - **双审状态：** R1 两位 reviewer 的 FAIL 针对已被用户撤销的 revision-specific sync 方案；
@@ -291,7 +291,7 @@ overlap_paths=.github/workflows/dev-version-bump.yml,docs-site/src/content/docs/
 content_conflict_count=12
 content_conflicts=docs-site/src/content/docs/reference/configuration/providers.md,package.json,src/adapters/cursor/request-builder.ts,src/codex/catalog/provider-fetch.ts,src/codex/inject.ts,src/config.ts,src/server/auth-cors.ts,src/server/management/provider-routes.ts,src/server/responses/core.ts,tests/cli-status-json.test.ts,tests/responses-state.test.ts,tests/server-auth.test.ts
 conflict_resolution=官方 v2.40.0 新能力与 Fork 专属兼容能力逐项 union；版本收敛为 2.40.0-ben.1，测试 fixture 使用官方 helper 并保留 Fork listener/namespace 边界
-external_actions=full_release；rebase 默认要求完成验证、双审、annotated Fork Tag、六成员 atomic push 与 GitHub Release；仅用户明确叫停时中止
+external_actions=full_release；rebase 默认要求完成验证、双审和 annotated Fork Tag，再用一次 git push --atomic 同时更新 main、dev、sync/vX.Y.Z、upstream-release、Fork Tag 与官方 Tag，并创建 GitHub Release；仅用户明确叫停时中止
 tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts
 <!-- v240-rebase:end -->
 
@@ -308,7 +308,7 @@ content_conflict_count=2
 content_conflicts=bin/ocx.mjs,package.json
 decision_bin_ocx_mjs=official=hasPendingTeardownIn；fork=forkUpdateDecision；resolution=双方 import 与调用链均保留；tests=tests/fork-version-policy.test.ts,tests/update-stop-first.test.ts
 decision_package_json=official=version 2.39.0 与 package 表面；fork=install:local 与 ben 版本策略；resolution=保留官方表面并收敛为 2.39.0-ben.1；tests=tests/fork-version-policy.test.ts
-external_actions=full_release；rebase 默认要求完成验证、双审、annotated Fork Tag、六成员 atomic push 与 GitHub Release；仅用户明确叫停时中止
+external_actions=full_release；rebase 默认要求完成验证、双审和 annotated Fork Tag，再用一次 git push --atomic 同时更新 main、dev、sync/vX.Y.Z、upstream-release、Fork Tag 与官方 Tag，并创建 GitHub Release；仅用户明确叫停时中止
 tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts
 <!-- v239-rebase:end -->
 
@@ -414,9 +414,9 @@ tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts
   atomic push 之间仍有无法对 future name 建立 wildcard lease 的 TOCTOU 残余风险。
 - **发布边界：** 初轮 `SPEC_COMPLIANCE` PASS；`CODE_QUALITY` 的本地双 ref 单事务 CAS
   Important 已修复，第一次 `RE_REVIEW` 新报的维护真源状态 Important 也已修复，原两位
-  reviewer 第二次 `RE_REVIEW` 均 PASS。六成员 atomic push 已把本地/远端 `main`、`dev`、
-  `sync/v2.39.0` 与 Fork Tag peeled commit 收敛到
-  `RELEASE_COMMIT=5f72ca85064898d660373af9e182d226e3c1d650`，marker 与官方 Tag 保持
+  reviewer 第二次 `RE_REVIEW` 均 PASS。一次 `git push --atomic` 已同时把远端 `main`、`dev`、
+  `sync/v2.39.0` 与 Fork Tag peeled commit 更新到
+  `RELEASE_COMMIT=5f72ca85064898d660373af9e182d226e3c1d650`，并把 `upstream-release` 与官方 Tag 更新到
   `af6113a0381d6fff2e4dce587652825c7eeb6423`；本地 `main` / marker 已用一个带
   `start` / `prepare` / `commit` 的 `git update-ref --stdin` transaction 完成 CAS。
   [`v2.39.0-ben.2`](https://github.com/Trendymen/opencodex/releases/tag/v2.39.0-ben.2)
@@ -485,7 +485,7 @@ tests=tests/fork-maintenance-truth.test.ts,tests/fork-version-policy.test.ts,tes
 
 提交形态收敛记录：原栈中跨 ben.1/ben.2 的 rebase 过程提交（含 14 笔 v2.36 轮候选、版本真源与文档往返）全部折叠进上述五笔；无能力丢失，全部修改面（135 文件）在 C1-C3 中完整保留。计数口径：git rev-list --count v2.37.0..4108827bd = 32（31 笔 Fork 提交 + 1 笔旧末尾文档提交）。
 
-新的 annotated `v2.37.0-ben.3` Tag、candidate 验证、双审、五成员 atomic promotion、最终 main CI 与 Release 流程沿用 `docs/fork-sync-automation.md` 完整 15 步流程执行。
+新的 annotated `v2.37.0-ben.3` Tag、candidate 验证、双审、用一次 `git push --atomic` 同时更新 `main`、`sync/v2.37.0`、`upstream-release`、Fork Tag 与官方 Tag、最终 main CI 与 Release 流程沿用 `docs/fork-sync-automation.md` 完整 15 步流程执行。
 
 <!-- v236-rebase-conflicts:start -->
 official_old=v2.35.0
@@ -580,12 +580,12 @@ Cross-platform `workflow_dispatch` run `33236921544` 已按严格 18-job allowli
 用户已纠正规则：Fork origin 对每个已 rebase 的官方版本保留同名官方 Tag；不再把 origin
 缺少官方 Tag 当作安全条件。`v2.34.0` 必须保持官方 lightweight 身份，
 raw=peeled=`80fff9a7f47332a4445df2b26ea175053fa55b0b`；`v2.35.0` 的固定官方 lightweight
-身份为 raw=peeled=`fc4de772b58c13f7b16b5029b1e981d612a5db06`，在 atomic promotion 时补齐。
+身份为 raw=peeled=`fc4de772b58c13f7b16b5029b1e981d612a5db06`，在发布用的同一次 `git push --atomic` 中补齐。
 已存在 Tag 必须逐项 exact；任何 raw、peeled 或 type mismatch 都 fail closed，禁止 force、删除、
 重建或移动。固定官方仓库仍是 provenance 来源，origin Tag 不是替代证据。
 
 上述三个 run 分别保留为失败、失败和成功但 stale 的 predecessor evidence。当前
-v2.35.0-ben.2 Tag：未发生；Atomic promotion：未发生；Final main Cross-platform CI：未发生；
+v2.35.0-ben.2 Tag：未发生；发布用 `git push --atomic`：未发生；Final main Cross-platform CI：未发生；
 GitHub Release：未发生。新的 S2R candidate 与其后的所有外部门禁仍 pending。
 <!-- ben2-s2r:end -->
 
@@ -593,7 +593,7 @@ GitHub Release：未发生。新的 S2R candidate 与其后的所有外部门禁
 | Gate | Tagged snapshot state |
 | --- | --- |
 | S2R candidate Cross-platform CI | `pending external gate` |
-| Atomic promotion | `pending external gate` |
+| 发布用 `git push --atomic` | `pending external gate` |
 | Final main Cross-platform CI | `pending external gate` |
 | GitHub Release | `pending external gate` |
 <!-- ben2-external-gates:end -->
@@ -614,7 +614,7 @@ C1 汇总运行时、CLI、GUI 与文档站；C2 汇总 Fork 回归与兼容覆�
 期望；本 C5 记录发布边界和可解析审计契约。
 
 ben.2 Tag 和其历史保持不可变，不移动、不删除、不重建。新的 annotated
-`v2.35.0-ben.3` Tag、candidate Cross-platform CI、五成员 atomic promotion、最终 main
+`v2.35.0-ben.3` Tag、candidate Cross-platform CI、用一次 `git push --atomic` 同时更新 `main`、`sync/v2.35.0`、`upstream-release`、Fork Tag 与官方 Tag、最终 main
 Cross-platform CI 和 GitHub Release 都是后续外部流程，尚未发生；不得将本地重写或局部
 测试误称为这些外部门禁已完成。
 
@@ -1173,7 +1173,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   继续保持 legacy exact-equality/proceed 行为。
 - **Tag 语义：** Git Tag 使用 `vX.Y.Z-ben.N`。必须存在对应官方 `vX.Y.Z` Tag；Fork
   对每个已 rebase 官方基线在 origin 保留同名、与固定官方仓库 type/raw/peeled 完全一致的
-  official Tag。缺失只能在 atomic promotion 中以已验证 raw ref 补齐；已存在的任一字段
+  official Tag。缺失只能在发布用的同一次 `git push --atomic` 中以已验证 raw ref 补齐；已存在的任一字段
   不一致即 fail closed，禁止 force、删除、重建或移动。严格 numbered `ben.N` 按精确官方
   基线独立维护：更新官方 stable 不自动禁止用户明确授权的旧基线维护 revision，但必须
   存在 exact base、不得低于完整本地/远端同基线最高有效 revision，已有同名 Fork Tag
@@ -1256,7 +1256,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   annotated-only 写成 provenance 要求。这不是对官方 CI 的替代，也不把 workflow 扩展为
   生产运行时能力。runner-local official ref proof 每轮重新验证；Fork origin 必须保留每个
   已 rebase 基线的同名 exact official Tag，但固定官方 URL 而非 origin 始终是 provenance
-  来源。缺失 Tag 只能在 atomic promotion 补齐，existing mismatch 必须 fail closed。
+  来源。缺失 Tag 只能在发布用的同一次 `git push --atomic` 中补齐，existing mismatch 必须 fail closed。
 
 ## 已替换、已移除或已证伪方向
 
@@ -1355,7 +1355,7 @@ GitHub Release。官方 `upstream-release` 已经是最新版本，并不代表�
 2. 若 `RELEASE_COMMIT` 已经完成但 Fork Tag 缺失，则先验证 package/document 版本一致、
    其父提交是记录的 `IMPLEMENTATION_HEAD`、提交只含本文档，并核对本地/远端 `main`、
    `dev`、sync 和 `upstream-release` 的 expected SHA；随后创建当前版本的 annotated Tag，
-   并使用同一套六成员 atomic push 与显式 branch lease 收敛引用。Tag refspec 不使用 force
+   再用一次 `git push --atomic` 同时更新 `main`、`dev`、`sync/vX.Y.Z`、`upstream-release`、Fork Tag 和官方 Tag，并以显式 branch lease 收敛分支引用。Tag refspec 不使用 force
    或 lease。不得启动新 rebase 或生成 `ben.(N+1)`。
 
 在任何幂等收敛 push 前，必须完成 fixed-upstream type/raw/peeled/ancestry 验证；origin

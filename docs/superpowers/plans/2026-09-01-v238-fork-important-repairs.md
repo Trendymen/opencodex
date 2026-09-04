@@ -39,7 +39,8 @@
 - Add to this functional commit: `docs/superpowers/plans/2026-09-01-v238-fork-important-repairs.md`
 
 **Interfaces:**
-- Consumes: fixed refs and the approved six-member contract from the Spec.
+- Consumes: fixed refs and the approved contract that updates `main`, `dev`, `sync/v2.38.0`,
+  `upstream-release`, the Fork Tag, and the official Tag in one `git push --atomic`.
 - Produces: `v238-rebase` machine block; identical six-row `official-atomic-refset` blocks; canonical `IMPLEMENTATION_HEAD`, `RELEASE_COMMIT`, and `OFFICIAL_COMMIT` terminology.
 
 - [ ] **Step 1: Extend the contract test first**
@@ -775,7 +776,7 @@ Tests must not hard-code `IMPLEMENTATION_HEAD` before the commit exists; they ma
 
 - [ ] **Step 3: Update implementation-facing sections of `FORK_CHANGES.md`**
 
-Describe the final active GLM/Kimi/Volcengine behavior and current blobs, weekly quota support, custom-model safety/round trip, staged installer, GUI Logs truth, corrected sidecar test, 17-path rebase account, six-member release contract, package version, and target `v2.38.0-ben.2`. Keep Tag/push/Release/external CI state explicitly pending.
+Describe the final active GLM/Kimi/Volcengine behavior and current blobs, weekly quota support, custom-model safety/round trip, staged installer, GUI Logs truth, corrected sidecar test, 17-path rebase account, the release contract that atomically updates the four branches and two Tags named above, package version, and target `v2.38.0-ben.2`. Keep Tag/push/Release/external CI state explicitly pending.
 
 - [ ] **Step 4: Run focused implementation gates**
 
@@ -959,7 +960,8 @@ authorized publication transaction. Confirm Tag/push/Release remain unperformed 
 **Interfaces:**
 - Consumes: approved `IMPLEMENTATION_HEAD`, `RELEASE_COMMIT`, `OFFICIAL_COMMIT`, exact remote OIDs,
   and all Task 8 review verdicts.
-- Produces: annotated Fork Tag, six-member atomic remote convergence, local compare-and-swap
+- Produces: annotated Fork Tag; one `git push --atomic` that updates `main`, `dev`, `sync/v2.38.0`,
+  `upstream-release`, the Fork Tag, and the official Tag together; local compare-and-swap
   convergence, and public non-draft/non-prerelease GitHub Release.
 
 - [ ] **Step 1: Re-read and freeze publication state**
@@ -969,19 +971,20 @@ Require a clean tree and re-read local/raw/peeled and remote OIDs for `main`, `d
 `v2.38.0-ben.2`. Also freeze raw and peeled identities for immutable `v2.38.0-ben.1` locally and
 remotely; it must remain unchanged before and after publication.
 
-Classify the complete six-ref remote state before mutation:
+Classify the complete remote state of `main`, `dev`, `sync/v2.38.0`, `upstream-release`, the Fork
+Tag, and the official Tag before mutation:
 
 1. all refs equal the frozen old OIDs: publication has not happened; refresh every OID and proceed
    once with the complete atomic set;
-2. all six refs equal their final targets: Git publication already completed; do not repush, and
+2. all listed refs equal their final targets: Git publication already completed; do not repush, and
    continue only with local CAS and Release convergence;
 3. mixed old/final or any unrelated value: fail closed for investigation and never split the set;
 4. a local-only ben.2 Tag is acceptable only when it is the exact captured annotated object peeling
    to `RELEASE_COMMIT`;
-5. after an uncertain push result, reread all six remote refs and re-enter this classification
+5. after an uncertain push result, reread all four branches and two Tags and re-enter this classification
    before considering any retry.
 
-The six-ref state is necessary but not sufficient for a same-base maintenance revision. Enforce
+The state of those four branches and two Tags is necessary but not sufficient for a same-base maintenance revision. Enforce
 this identical machine contract here and in `docs/fork-sync-automation.md`:
 
 <!-- same-base-ben-preflight:start -->
@@ -1016,14 +1019,15 @@ checkpoint.
   `REMOTE_BASELINE` byte-for-byte.
 - After a definite success or an uncertain result, local state must remain unchanged. Remote state
   may only equal `REMOTE_BASELINE` or exactly `REMOTE_BASELINE +` the target whose raw OID equals
-  `LOCAL_TARGET_RAW` and peeled OID equals `RELEASE_COMMIT`. Use the six branch/Tag ref results to
+  `LOCAL_TARGET_RAW` and peeled OID equals `RELEASE_COMMIT`. Use the results for those four branches
+  and two Tags to
   distinguish a completed atomic push from a no-op or failure.
 - Any other name addition/deletion, object replacement, raw/peeled drift, or higher valid revision
   fails closed. A late `ben.3` blocks `ben.2`, even when the target itself was absent at Task 8.
 
 Only one publisher may execute this release. The complete Tag namespace has no atomic Git lease, so
 the interval between the final remote recheck and push is an explicit TOCTOU residual risk; record
-it in the final release report and do not claim the six-member leases protect differently named
+it in the final release report and do not claim the branch leases and Tag refspecs in this push protect differently named
 future revisions. Run the complete remote namespace check after a reported successful push as well
 as after an uncertain result and before GitHub Release creation. If a higher revision appeared in
 the race window after the lower immutable Tag was published, do not delete or move the Tag; stop
@@ -1049,8 +1053,9 @@ or force it.
 
 - [ ] **Step 3: Perform the single atomic publication push**
 
-Push exactly the six canonical members in one `git push --atomic`: leased-force `main`, `dev`, and
-`upstream-release`; leased-fast-forward `sync/v2.38.0`; unforced/unleased official and Fork Tags.
+Use one `git push --atomic` to update `main`, `dev`, `sync/v2.38.0`, `upstream-release`, the official
+Tag, and the Fork Tag together: leased-force `main`, `dev`, and `upstream-release`;
+leased-fast-forward `sync/v2.38.0`; unforced/unleased official and Fork Tags.
 Use exact per-ref expected OIDs and an ordinary non-`+` sync refspec. Do not split or retry a partial
 set. Immediately before the transaction, reread remote sync, require it still equals
 `EXPECTED_REMOTE_SYNC`, and rerun its ancestry guard when nonempty. The exact transaction is:
@@ -1070,13 +1075,13 @@ git push --atomic origin \
 ```
 
 `EXPECTED_REMOTE_SYNC` is the empty string when the remote ref is absent, so the exact lease string
-ends in `:` and asserts nonexistence. None of the six refspecs has a leading `+`; only the three
+ends in `:` and asserts nonexistence. None of these branch/Tag refspecs has a leading `+`; only the three
 release-pointer branches and marker receive their explicitly listed lease capability, while sync's
 lease is backed by the separate ancestry guard. No tag receives a force or lease option.
 
 After confirmed success, update local `main` and `upstream-release` only through their captured old
 OIDs. If either is already final, accept it; otherwise require exact compare-and-swap. Fetch and
-verify remote-tracking refs. If all six remote refs are already final after an uncertain result, do
+verify remote-tracking refs. If all four branches and two Tags are already final after an uncertain result, do
 not repush.
 
 - [ ] **Step 4: Create and verify the GitHub Release**
