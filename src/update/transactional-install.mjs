@@ -18,14 +18,46 @@
  */
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 /** Verification manifest for a staged (or live) package tree. */
 export function verifyInstallTree(packageDir, expectedVersion) {
   const failures = [];
+  let canonicalRoot;
+  try {
+    const rootStat = lstatSync(packageDir);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+      return { ok: false, failures: ["package root must be a regular directory"] };
+    }
+    canonicalRoot = realpathSync(packageDir);
+  } catch (error) {
+    return { ok: false, failures: ["package root unreadable: " + (error?.message ?? String(error))] };
+  }
+  const regularFile = (parts, label, minimumSize = 0) => {
+    const path = join(packageDir, ...parts);
+    for (let index = 0; index < parts.length; index += 1) {
+      const ancestor = join(packageDir, ...parts.slice(0, index + 1));
+      try {
+        const stat = lstatSync(ancestor);
+        if (stat.isSymbolicLink()) return label + " must not be a symlink";
+      } catch {
+        return label + " absent";
+      }
+    }
+    try {
+      const stat = lstatSync(path);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size < minimumSize) return label + " missing or truncated";
+      if (!canonicalPathIsContained(canonicalRoot, realpathSync(path))) return label + " escapes package root";
+      return null;
+    } catch {
+      return label + " absent";
+    }
+  };
   let pkg;
   try {
+    const packageJsonFailure = regularFile(["package.json"], "package.json");
+    if (packageJsonFailure) return { ok: false, failures: [packageJsonFailure] };
     pkg = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
   } catch (error) {
     return { ok: false, failures: ["package.json unreadable: " + (error?.message ?? String(error))] };
@@ -34,19 +66,25 @@ export function verifyInstallTree(packageDir, expectedVersion) {
     failures.push("package.json version " + pkg.version + " != expected " + expectedVersion);
   }
   const launcher = join(packageDir, "bin", "ocx.mjs");
-  try {
-    const st = statSync(launcher);
-    if (!st.isFile() || st.size < 1024) failures.push("bin/ocx.mjs missing or truncated");
-  } catch {
-    failures.push("bin/ocx.mjs absent");
-  }
+  const launcherFailure = regularFile(["bin", "ocx.mjs"], "bin/ocx.mjs", 1024);
+  if (launcherFailure) failures.push(launcherFailure);
   // The bundled Bun binary is the load-bearing artifact: without it the launcher exits
   // before serving anything, and a boot probe that called this tree healthy would reap
   // the only backup (review High 3). Size-gate the real binary, not just its package.json.
   const bunPkgDir = join(packageDir, "node_modules", "bun");
   if (existsSync(bunPkgDir)) {
-    const bunBinary = findLargestFile(bunPkgDir);
-    if (!bunBinary || bunBinary.size < 10 * 1024 * 1024) {
+    let bunRootUnsafe = false;
+    try {
+      for (const part of ["node_modules", "bun"]) {
+        const parent = join(packageDir, ...(part === "bun" ? ["node_modules", part] : [part]));
+        const stat = lstatSync(parent);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) bunRootUnsafe = true;
+      }
+    } catch {
+      bunRootUnsafe = true;
+    }
+    const bunTree = bunRootUnsafe ? { largest: undefined, unsafe: true } : findLargestFile(bunPkgDir, canonicalRoot);
+    if (bunTree.unsafe || !bunTree.largest || bunTree.largest.size < 10 * 1024 * 1024) {
       failures.push("bundled Bun binary missing or truncated (< 10MB)");
     }
   }
@@ -57,8 +95,8 @@ export function verifyInstallTree(packageDir, expectedVersion) {
     ? deps.filter(name => name === "bun" || name === "zod")
     : deps.slice(0, 2);
   for (const name of sentinels) {
-    const depPkg = join(packageDir, "node_modules", ...name.split("/"), "package.json");
-    if (!existsSync(depPkg)) failures.push("sentinel dependency missing: " + name);
+    const failure = regularFile(["node_modules", ...name.split("/"), "package.json"], "sentinel dependency missing: " + name);
+    if (failure) failures.push(failure);
   }
   return failures.length === 0 ? { ok: true, failures: [] } : { ok: false, failures };
 }
@@ -68,22 +106,38 @@ function stampedName(prefix) {
 }
 
 /** Largest regular file under a directory tree (bounded depth) — locates the Bun binary. */
-function findLargestFile(root, depth = 3) {
+function canonicalPathIsContained(rootPath, childPath, platform = process.platform) {
+  const root = normalizePathIdentity(rootPath, platform);
+  const child = normalizePathIdentity(childPath, platform);
+  const remainder = relative(root, child);
+  return remainder.length > 0 && !remainder.startsWith("..") && !isAbsolute(remainder);
+}
+
+function findLargestFile(root, canonicalPackageRoot, depth = 3) {
   let best;
   let names = [];
-  try { names = readdirSync(root); } catch { return undefined; }
+  try { names = readdirSync(root); } catch { return { largest: undefined, unsafe: true }; }
   for (const name of names) {
     const full = join(root, name);
     let st;
-    try { st = statSync(full); } catch { continue; }
+    try { st = lstatSync(full); } catch { return { largest: undefined, unsafe: true }; }
+    if (st.isSymbolicLink()) return { largest: undefined, unsafe: true };
     if (st.isFile()) {
+      try {
+        if (!canonicalPathIsContained(canonicalPackageRoot, realpathSync(full))) {
+          return { largest: undefined, unsafe: true };
+        }
+      } catch {
+        return { largest: undefined, unsafe: true };
+      }
       if (!best || st.size > best.size) best = { path: full, size: st.size };
     } else if (st.isDirectory() && depth > 0) {
-      const sub = findLargestFile(full, depth - 1);
-      if (sub && (!best || sub.size > best.size)) best = sub;
+      const sub = findLargestFile(full, canonicalPackageRoot, depth - 1);
+      if (sub.unsafe) return sub;
+      if (sub.largest && (!best || sub.largest.size > best.size)) best = sub.largest;
     }
   }
-  return best;
+  return { largest: best, unsafe: false };
 }
 
 /** Bounded Windows-class rename retry: EPERM/EBUSY/EACCES from AV/indexers clears in ms. */
@@ -239,6 +293,27 @@ function sameDirectoryIdentity(path, expected) {
   return current !== null && expected !== null
     && current.dev === expected.dev
     && current.ino === expected.ino;
+}
+
+function stagedTreeIdentity(stageRoot, stagedPackage, realpath = realpathSync) {
+  const root = directoryIdentity(stageRoot);
+  const packageIdentity = directoryIdentity(stagedPackage);
+  if (root === null || packageIdentity === null) return null;
+  try {
+    const canonicalRoot = realpath(stageRoot);
+    const canonicalPackage = realpath(stagedPackage);
+    if (!canonicalPathIsContained(canonicalRoot, canonicalPackage)) return null;
+  } catch {
+    return null;
+  }
+  return { root, package: packageIdentity };
+}
+
+function sameStagedTreeIdentity(stageRoot, stagedPackage, expected, realpath = realpathSync) {
+  return expected !== null
+    && sameDirectoryIdentity(stageRoot, expected.root)
+    && sameDirectoryIdentity(stagedPackage, expected.package)
+    && stagedTreeIdentity(stageRoot, stagedPackage, realpath) !== null;
 }
 
 /** Startup probe: restore a backup when the live tree is broken (D4 power-loss rows). */
@@ -466,6 +541,14 @@ export function transactionalNpmUpdate({
     return { ok: false, phase: "verify", error: "staged package directory not found under " + stageRoot };
   }
 
+  // Bind the verifier's result to this exact staged root and package. npm's successful
+  // exit only proves it wrote a path; every directory can be replaced before the swap.
+  const stageIdentity = stagedTreeIdentity(stageRoot, stagedPackage, realpath);
+  if (stageIdentity === null) {
+    try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
+    return { ok: false, phase: "verify", error: "staged package path is unsafe" };
+  }
+
   // D2: verify INSIDE the stage. Live is still untouched on any failure here.
   let staged;
   try {
@@ -476,6 +559,10 @@ export function transactionalNpmUpdate({
   if (!staged.ok) {
     try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
     return { ok: false, phase: "verify", error: "staged tree failed verification: " + staged.failures.join("; ") };
+  }
+  if (!sameStagedTreeIdentity(stageRoot, stagedPackage, stageIdentity, realpath)) {
+    try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
+    return { ok: false, phase: "verify", error: "staged package object identity changed during verification" };
   }
 
   // D3: swap. live -> backup, stage -> live, re-verify live, rollback on failure.
@@ -562,6 +649,9 @@ export function transactionalNpmUpdate({
       : rollback;
   }
   try {
+    if (!sameStagedTreeIdentity(stageRoot, stagedPackage, stageIdentity, realpath)) {
+      throw new Error("staged package object identity changed before placement");
+    }
     renameWithRetry(rename, stagedPackage, packageDir);
   } catch (error) {
     const rollback = rollbackPackageSwap({

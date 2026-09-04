@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { bootRestoreProbe, transactionalNpmUpdate } from "../src/update/transactional-install.mjs";
+import { bootRestoreProbe, transactionalNpmUpdate, verifyInstallTree } from "../src/update/transactional-install.mjs";
 import { runLocalInstallLifecycle } from "../scripts/install-local";
 
 const roots: string[] = [];
@@ -70,6 +70,119 @@ afterEach(() => {
 });
 
 describe("deferred local-install transaction hardening", () => {
+  test("rejects a staged package replaced after its verifier approves the original object", () => {
+    const { packageDir, stagedTree } = setup();
+    let verified = false;
+    const result = transactionalNpmUpdate({
+      ...options(packageDir, stagedTree),
+      verifyStage: stagedPackage => {
+        expect(verifyInstallTree(stagedPackage, "2.40.0-ben.3")).toMatchObject({ ok: true });
+        verified = true;
+        renameSync(stagedPackage, `${stagedPackage}-verified`);
+        packageTree(stagedPackage, "attacker");
+        return { ok: true, failures: [] };
+      },
+    });
+
+    expect(verified).toBe(true);
+    expect(result).toMatchObject({ ok: false, phase: "verify" });
+    expect(version(packageDir)).toBe("2.40.0-ben.2");
+  });
+
+  test.skipIf(process.platform === "win32")("rejects a symlinked staging root before it can be swapped", () => {
+    const { root, packageDir, stagedTree } = setup();
+    const outsideStage = join(root, "outside-stage");
+    const result = transactionalNpmUpdate({
+      ...options(packageDir, stagedTree),
+      runNpm: args => {
+        const stageRoot = args[args.indexOf("--prefix") + 1]!;
+        const outsidePackage = join(outsideStage, "lib", "node_modules", "@bitkyc08", "opencodex");
+        mkdirSync(dirname(outsidePackage), { recursive: true });
+        cpSync(stagedTree, outsidePackage, { recursive: true });
+        rmSync(stageRoot, { recursive: true, force: true });
+        symlinkSync(outsideStage, stageRoot, "dir");
+        return { status: 0 };
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, phase: "verify" });
+    expect(version(packageDir)).toBe("2.40.0-ben.2");
+  });
+
+  test("rejects a staged package whose canonical path is not contained by its staging root", () => {
+    const { root, packageDir, stagedTree } = setup();
+    const result = transactionalNpmUpdate({
+      ...options(packageDir, stagedTree, {
+        realpath: (path: string) => path.endsWith("/opencodex") && path.includes(".ocx-staging-")
+          ? join(root, "outside", "opencodex")
+          : realpathSync(path),
+      }),
+    });
+
+    expect(result).toMatchObject({ ok: false, phase: "verify" });
+    expect(version(packageDir)).toBe("2.40.0-ben.2");
+  });
+
+  test.skipIf(process.platform === "win32")("rejects a symlinked package root", () => {
+    const { root, packageDir } = setup();
+    const linkedRoot = join(root, "linked-package");
+    symlinkSync(packageDir, linkedRoot, "dir");
+
+    expect(verifyInstallTree(linkedRoot)).toMatchObject({ ok: false });
+  });
+
+  test.skipIf(process.platform === "win32")("rejects symlinked launcher, dependency sentinel, and Bun tree artifacts", () => {
+    const mutations: Array<[string, (packageDir: string) => void]> = [
+      ["launcher", packageDir => {
+        const internalLauncher = join(packageDir, "bin", "real-ocx.mjs");
+        renameSync(join(packageDir, "bin", "ocx.mjs"), internalLauncher);
+        symlinkSync(internalLauncher, join(packageDir, "bin", "ocx.mjs"));
+      }],
+      ["dependency sentinel", packageDir => {
+        const sentinel = join(packageDir, "node_modules", "zod", "package.json");
+        renameSync(sentinel, `${sentinel}.real`);
+        symlinkSync(`${sentinel}.real`, sentinel);
+      }],
+      ["Bun tree", packageDir => {
+        const manifestPath = join(packageDir, "package.json");
+        const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+        manifest.dependencies.bun = "1";
+        writeFileSync(manifestPath, JSON.stringify(manifest));
+        const binary = join(packageDir, "node_modules", "bun", "bin", "bun");
+        mkdirSync(dirname(binary), { recursive: true });
+        writeFileSync(binary, "x".repeat(11 * 1024 * 1024));
+        symlinkSync(binary, join(packageDir, "node_modules", "bun", "bin", "bun-link"));
+      }],
+    ];
+    for (const [label, mutate] of mutations) {
+      const { packageDir } = setup();
+      mutate(packageDir);
+      expect(verifyInstallTree(packageDir), label).toMatchObject({ ok: false });
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("rejects required artifacts whose canonical target escapes the package root", () => {
+    const { root, packageDir } = setup();
+    const outside = join(root, "outside-launcher.mjs");
+    writeFileSync(outside, "x".repeat(2_048));
+    rmSync(join(packageDir, "bin", "ocx.mjs"));
+    symlinkSync(outside, join(packageDir, "bin", "ocx.mjs"));
+
+    expect(verifyInstallTree(packageDir)).toMatchObject({ ok: false });
+  });
+
+  test.skipIf(process.platform === "win32")("boot recovery restores a backup instead of reaping it through a symlinked launcher", () => {
+    const { root, packageDir } = setup();
+    const backupPackage = join(dirname(packageDir), ".ocx-backup-recovery", "opencodex");
+    cpSync(packageDir, backupPackage, { recursive: true });
+    const internalLauncher = join(packageDir, "bin", "real-ocx.mjs");
+    renameSync(join(packageDir, "bin", "ocx.mjs"), internalLauncher);
+    symlinkSync(internalLauncher, join(packageDir, "bin", "ocx.mjs"));
+
+    expect(bootRestoreProbe(packageDir)).toMatchObject({ action: "restored", from: backupPackage });
+    expect(lstatSync(join(packageDir, "bin", "ocx.mjs")).isSymbolicLink()).toBe(false);
+  });
+
   test("a canonical-backup lookup failure rolls back before restarting the old runtime", async () => {
     const { packageDir, stagedTree } = setup();
     const events: string[] = [];
