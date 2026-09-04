@@ -197,6 +197,117 @@ const EXPECTED_V240_KEYS = [
   "external_actions",
   "tests",
 ] as const;
+const EXPECTED_V242_OVERLAP_PATHS = [
+  "docs-site/src/content/docs/guides/codex-integration.md",
+  "docs-site/src/content/docs/guides/providers.md",
+  "docs-site/src/content/docs/reference/management-api.md",
+  "docs-site/src/content/docs/reference/proxy-formats.md",
+  "gui/src/i18n/de.ts",
+  "gui/src/i18n/en.ts",
+  "gui/src/i18n/fr.ts",
+  "gui/src/i18n/ja.ts",
+  "gui/src/i18n/ko.ts",
+  "gui/src/i18n/ru.ts",
+  "gui/src/i18n/tr.ts",
+  "gui/src/i18n/zh-TW.ts",
+  "gui/src/i18n/zh.ts",
+  "gui/src/pages/Logs.tsx",
+  "package.json",
+  "src/adapters/google.ts",
+  "src/adapters/identity.ts",
+  "src/adapters/openai-responses.ts",
+  "src/cli/registry.ts",
+  "src/codex/catalog/aggregation.ts",
+  "src/codex/catalog/parsing.ts",
+  "src/codex/catalog/provider-fetch.ts",
+  "src/codex/inject.ts",
+  "src/config.ts",
+  "src/lib/app-owned-memory-stores.ts",
+  "src/providers/registry.ts",
+  "src/server/auth-cors.ts",
+  "src/server/chat-native.ts",
+  "src/server/management/logs-usage-routes.ts",
+  "src/server/management/provider-routes.ts",
+  "src/server/responses/core.ts",
+  "src/usage/log.ts",
+  "tests/ci-workflows.test.ts",
+  "tests/codex-catalog.test.ts",
+  "tests/memory-watchdog.test.ts",
+  "tests/openai-responses-passthrough.test.ts",
+  "tests/responses-state.test.ts",
+  "tests/shutdown-launcher.test.ts",
+] as const;
+const EXPECTED_V242_CONFLICT_PATHS = [
+  "package.json",
+  "src/codex/catalog/provider-fetch.ts",
+  "src/lib/app-owned-memory-stores.ts",
+  "src/server/auth-cors.ts",
+  "src/server/responses/core.ts",
+  "tests/ci-workflows.test.ts",
+  "tests/codex-catalog.test.ts",
+  "tests/shutdown-launcher.test.ts",
+] as const;
+const EXPECTED_V242_HUNK_IDS = [
+  "1506feca25c3046db7a409b0beffdea5d17efc88d02e184ea888926652afa738",
+  "2705a63636d9955c82f3bbb2a91568d7e0268cfcd0b85c3aedbae0cb7a1340bc",
+  "3765a3564c4bcef605964189ec05920a6850551319d75a527fb359d590904d95",
+  "65dbc31f100a0ec7f984efc7740a4f5aa173272a92041c033c0713e76233a3f7",
+  "681be6196942eae40ac4bc663495483fe8fb4141a2e40b0c86b2e8fd69f2968e",
+  "6f7418b738e24c83ed85e5b0e03f327a73d257a4506f4ae21107d2b49b40060c",
+  "7b6b4dfb987fba42c1e653c71c6adf28fa5fdd9bbe878824f0a3e462f30eb33e",
+  "d54645903050f445d616521aae7d50497bd94717ed0370dfe26cd834b78092f4",
+  "dbd348a5a005af2d4e4275a4149675873124d94db3e010cc11a42e42c3edbdaa",
+  "f1efdeafd214de44b9ac73524a34b0f9b1f0df409446dcf4c38661a2891ca38f",
+] as const;
+const EXPECTED_V242_KEYS = [
+  "official_old",
+  "official_new",
+  "old_official_commit",
+  "new_official_commit",
+  "pre_rebase_dev",
+  "post_rebase_head",
+  "candidate_branch",
+  "package_version",
+  "fork_tag",
+  "release_sync_ref",
+  "official_changed_path_count",
+  "old_fork_net_path_count",
+  "old_fork_touched_path_count",
+  "net_overlap_path_count",
+  "overlap_path_count",
+  "content_conflict_count",
+  "content_hunk_count",
+  "non_overlap_conflict_count",
+  "auto_merge_path_count",
+  "overlap_paths",
+  "content_conflicts",
+  "content_hunk_ids",
+  "replay_manifest_sha256",
+  "shadow_replay",
+  "implementation_head",
+  "release_commit",
+  "verification",
+  "reviews",
+  "tag_state",
+  "atomic_push",
+  "github_release",
+] as const;
+const EXPECTED_V242_CONFLICT_FIELDS = [
+  "path",
+  "symbols",
+  "official_change",
+  "fork_change",
+  "resolution",
+  "official_coverage",
+  "downstream_consumers",
+  "failure_paths",
+  "state_edges",
+  "ordering_edges",
+  "risk_domains",
+  "conflict_snapshots",
+  "focused_tests",
+  "residual_risk",
+] as const;
 const EXPECTED_RELEASE_LIFECYCLE = [
   "rebase_branch=dev",
   "rebase_request=full_steps_1_to_15_unless_user_explicitly_stops",
@@ -727,7 +838,7 @@ function compactWhitespace(value: string): string {
 }
 
 describe("Fork maintenance truth", () => {
-  test("records the exact ben package version and preserved ben.2 rebase-overlap truth", () => {
+  test("records the exact current ben package version and preserves historical ben.2 overlap truth", () => {
     const version = JSON.parse(packageText).version;
     expect(version).toMatch(/^\d+\.\d+\.\d+-ben\.\d+$/);
     expect(changes).toContain(`| Fork 包版本 | \`${version}\` |`);
@@ -753,8 +864,7 @@ describe("Fork maintenance truth", () => {
     expect(union).toHaveLength(16);
   });
 
-  test("prepares the v2.40.0-ben.3 four-commit audit without claiming external gates", () => {
-    expect(JSON.parse(packageText).version).toBe("2.40.0-ben.3");
+  test("preserves the v2.40.0-ben.3 four-commit audit as historical evidence", () => {
     const rows = strictKeyValueBlock(changes, "v240-ben3-squash", EXPECTED_V240_BEN3_SQUASH_KEYS);
     expect(rows).toEqual({
       official_base: "35ff3a462e786bd5efc394dfb1a8a5cc946e454f",
@@ -779,6 +889,65 @@ describe("Fork maintenance truth", () => {
       main_ci: "pending external gate",
       github_release: "pending external gate",
     });
+  });
+
+  test("records the exact v2.42.0 rebase inputs, replay reconciliation, and per-conflict ledger", () => {
+    expect(JSON.parse(packageText).version).toBe("2.42.0-ben.1");
+    const rows = strictKeyValueBlock(changes, "v242-rebase", EXPECTED_V242_KEYS);
+    expect(rows).toMatchObject({
+      official_old: "v2.40.0",
+      official_new: "v2.42.0",
+      old_official_commit: "35ff3a462e786bd5efc394dfb1a8a5cc946e454f",
+      new_official_commit: "48f8186647d9ffb108d226dcfa91a64225aae2a7",
+      pre_rebase_dev: "1aae7085e32e86e7043d0280b0097119a1e1e726",
+      post_rebase_head: "6032e2cc5e131febda1a8d5c328e3323095ac7d3",
+      candidate_branch: "dev",
+      package_version: "2.42.0-ben.1",
+      fork_tag: "v2.42.0-ben.1",
+      release_sync_ref: "refs/heads/sync/v2.42.0",
+      official_changed_path_count: "476",
+      old_fork_net_path_count: "204",
+      old_fork_touched_path_count: "204",
+      net_overlap_path_count: "38",
+      overlap_path_count: "38",
+      content_conflict_count: "8",
+      content_hunk_count: "10",
+      non_overlap_conflict_count: "0",
+      auto_merge_path_count: "30",
+      replay_manifest_sha256: "20380ff5b865d9da8c676482acb5258b9d8ebeda281d390d6a1e1f5cbe774b59",
+      shadow_replay: "pass-exact-commit-tree-stops-paths-stages-hunks-actions",
+      implementation_head: expect.stringMatching(/^[0-9a-f]{40}$/),
+      release_commit: "docs-only-current-head",
+      verification: expect.stringMatching(/^(pending|pass)-/),
+      reviews: "pending",
+      tag_state: "pending",
+      atomic_push: "pending",
+      github_release: "pending",
+    });
+
+    const overlaps = rows.overlap_paths.split(",");
+    const conflicts = rows.content_conflicts.split(",");
+    const hunks = rows.content_hunk_ids.split(",");
+    expect(overlaps).toEqual(EXPECTED_V242_OVERLAP_PATHS);
+    expect(conflicts).toEqual(EXPECTED_V242_CONFLICT_PATHS);
+    expect(hunks).toEqual(EXPECTED_V242_HUNK_IDS);
+    expect(new Set(overlaps).size).toBe(38);
+    expect(new Set(conflicts).size).toBe(8);
+    expect(new Set(hunks).size).toBe(10);
+    for (const path of conflicts) expect(overlaps).toContain(path);
+
+    for (const path of EXPECTED_V242_CONFLICT_PATHS) {
+      const id = path.replaceAll("/", "_").replaceAll(".", "_").replaceAll("-", "_");
+      const ledger = strictKeyValueBlock(changes, `v242-conflict-${id}`, EXPECTED_V242_CONFLICT_FIELDS);
+      expect(ledger.path).toBe(path);
+      for (const field of EXPECTED_V242_CONFLICT_FIELDS.slice(1)) {
+        const value = ledger[field];
+        expect(value, `${path} missing ${field}`).toBeDefined();
+        expect(value!.trim(), `${path} has empty ${field}`).not.toBe("");
+        if (value!.startsWith("n/a")) expect(value).toMatch(/^n\/a:.+/);
+      }
+      expect(ledger.conflict_snapshots).toMatch(/step=[13];REBASE_HEAD=[0-9a-f]{40};hunk_ids=[0-9a-f]{64}/);
+    }
   });
 
   test("records the current v2.36 rebase conflict decisions separately from the historical ben.1 overlap", () => {
@@ -1238,71 +1407,74 @@ describe("Fork maintenance truth", () => {
     expect(automation).toContain("post_release_advanced_dev=must-not-reset");
   });
 
-  test("grounds every active official comparison in v2.39.0 evidence", () => {
+  test("grounds every active official comparison in v2.42.0 evidence", () => {
     const evidence = {
       "火山方舟 Agent Plan GLM/Kimi 与智谱 GLM Responses 兼容": [
-        "`v2.39.0:src/adapters/openai-responses.ts`（blob `0d918076171c14142a1bafdc6dde693a54a9d38f`，v2.39 已变更）",
-        "`src/fork/glm-kimi-compat.ts`（blob `64ce11986a7fc2391c7b8965256e55c16a2bfa72`）",
-        "`tests/fork-volcengine-empty-assistant-content.test.ts`（blob `95cfba92ac6e3ef6ee5fe27b62519f5a144b7862`）",
+        "`v2.42.0:src/adapters/openai-responses.ts`（blob `d9ec1fb01ab8dd36c99179c1fd1f12073ad84654`）",
+        `\`src/fork/glm-kimi-compat.ts\`（blob \`${currentGitBlob("src/fork/glm-kimi-compat.ts")}\`）`,
+        `\`tests/fork-volcengine-empty-assistant-content.test.ts\`（blob \`${currentGitBlob("tests/fork-volcengine-empty-assistant-content.test.ts")}\`）`,
       ],
       "Ark quota 在 Codex Desktop 中的展示": [
-        "`src/fork/ark-quota-display.ts`（blob `a80fd68a576013788bce100179c5982e2adb63ba`）",
-        "`tests/fork-ark-weekly-quota.test.ts`（blob `52e4b0b0d49438ffa5c14a12cba1c4f5eb704d35`）",
+        "`v2.42.0:src/adapters/openai-responses.ts`（blob `d9ec1fb01ab8dd36c99179c1fd1f12073ad84654`）",
+        `\`src/fork/ark-quota-display.ts\`（blob \`${currentGitBlob("src/fork/ark-quota-display.ts")}\`）`,
+        `\`tests/fork-ark-weekly-quota.test.ts\`（blob \`${currentGitBlob("tests/fork-ark-weekly-quota.test.ts")}\`）`,
       ],
       "自定义模型配置、工具模式与公开投影": [
-        "`src/config/custom-models.ts`（blob `12a84dd14a674eda773a83a31f9923c740a0e213`）",
-        "`src/config.ts`（blob `78480720f3b54fa80390504b89230f62f697f513`）",
-        "`src/server/management/model-routes.ts`（blob `70cd881de52bcfe99cf56ce44509872445b92fd5`）",
-        "`tests/fork-custom-model-config-schema.test.ts`（blob `269586b983374d4bd88c678a074ec975a3152bd7`）",
-        "`tests/fork-custom-model-tool-mode-contract.test.ts`（blob `a69dc95ff93c61e4fa4be4be1ec701f87797dfb8`）",
+        "`v2.42.0:src/config.ts`（blob `6cd87ef29f0e06a0d0980fab26b20080243975e3`）",
+        `\`src/config/custom-models.ts\`（blob \`${currentGitBlob("src/config/custom-models.ts")}\`）`,
+        `\`src/config.ts\`（blob \`${currentGitBlob("src/config.ts")}\`）`,
+        `\`src/server/management/model-routes.ts\`（blob \`${currentGitBlob("src/server/management/model-routes.ts")}\`）`,
+        `\`tests/fork-custom-model-config-schema.test.ts\`（blob \`${currentGitBlob("tests/fork-custom-model-config-schema.test.ts")}\`）`,
+        `\`tests/fork-custom-model-tool-mode-contract.test.ts\`（blob \`${currentGitBlob("tests/fork-custom-model-tool-mode-contract.test.ts")}\`）`,
       ],
       "本地源码包安装": [
-        "`scripts/install-local-vendor.ts`（blob `6eccd1c64fd823e9189d19f89169b4ffb8d15a93`）",
-        "`scripts/install-local.ts`（blob `e1f8f8d97db8cbeab97807c7733c5829cafb1276`）",
-        "`tests/fork-install-local-staging.test.ts`（blob `2ab483349ae32e81b3dacc64a222dce3c18f69c5`）",
-        "`tests/fork-install-local-manifest-lifecycle.test.ts`（blob `aa9580f645df7bf27ed71062cb6eb2265d3c2274`）",
-        "`tests/fork-install-local-guard-recovery.test.ts`（blob `05d24eb1b37ab7bf70c5a52d3adf261bba51c50e`）",
+        "`v2.42.0:package.json`（blob `6c7c80d9e471282778d67df6c7bacfe511278cdb`）",
+        `\`scripts/install-local-vendor.ts\`（blob \`${currentGitBlob("scripts/install-local-vendor.ts")}\`）`,
+        `\`scripts/install-local.ts\`（blob \`${currentGitBlob("scripts/install-local.ts")}\`）`,
+        `\`tests/fork-install-local-staging.test.ts\`（blob \`${currentGitBlob("tests/fork-install-local-staging.test.ts")}\`）`,
+        `\`tests/fork-install-local-manifest-lifecycle.test.ts\`（blob \`${currentGitBlob("tests/fork-install-local-manifest-lifecycle.test.ts")}\`）`,
+        `\`tests/fork-install-local-guard-recovery.test.ts\`（blob \`${currentGitBlob("tests/fork-install-local-guard-recovery.test.ts")}\`）`,
       ],
       "GUI Logs/Debug 恢复标签与 sidecar 契约": [
-        "`gui/src/pages/Logs.tsx`（blob `3cd4c4684b86a0506e154388aa5d82686b1db674`）",
-        "`gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`，与官方 v2.39.0 相同）",
-        "`gui/src/i18n/de.ts`（blob `9bfe68212c4c6903d68a8a1c7ddba68eec700d0b`）",
-        "`gui/src/i18n/en.ts`（blob `d8888146b824876177c8ca0a391ec50dbecdb88e`）",
-        "`gui/src/i18n/fr.ts`（blob `daf41357d9829568cf927d3571f7fabe1c617b68`）",
-        "`gui/src/i18n/ja.ts`（blob `f23b0a209a6c2b6171e7edfc6c6ce8f7b5e2ba94`）",
-        "`gui/src/i18n/ko.ts`（blob `ceed436976c8a79c449468e1213f02314550cb03`）",
-        "`gui/src/i18n/ru.ts`（blob `a1d6d15c3481eb95a108c94d92df83b792c9a687`）",
-        "`gui/src/i18n/tr.ts`（blob `116549be44eacaf9a65494cf89b51cb54163dd04`）",
-        "`gui/src/i18n/zh-TW.ts`（blob `6b7cb7dc6c663ffcc5b0f2c7a690631ce0e23b2a`）",
-        "`gui/src/i18n/zh.ts`（blob `60228bcddf5df7442414d9b1a934a4f6f7b5c281`）",
-        "`gui/tests/sidecar-layout.test.ts`（blob `e140a627260bbf952708e7f710874a5f76cc5b2b`，与官方 v2.39.0 相同）",
+        "`v2.42.0:gui/src/pages/Logs.tsx`（blob `0bbe286a887d6f811c9243d53e544cf4928700cd`）",
+        `\`gui/src/pages/Logs.tsx\`（blob \`${currentGitBlob("gui/src/pages/Logs.tsx")}\`）`,
+        "`gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`，与官方 v2.42.0 相同）",
+        `\`gui/src/i18n/de.ts\`（blob \`${currentGitBlob("gui/src/i18n/de.ts")}\`）`,
+        `\`gui/src/i18n/en.ts\`（blob \`${currentGitBlob("gui/src/i18n/en.ts")}\`）`,
+        `\`gui/src/i18n/fr.ts\`（blob \`${currentGitBlob("gui/src/i18n/fr.ts")}\`）`,
+        `\`gui/src/i18n/ja.ts\`（blob \`${currentGitBlob("gui/src/i18n/ja.ts")}\`）`,
+        `\`gui/src/i18n/ko.ts\`（blob \`${currentGitBlob("gui/src/i18n/ko.ts")}\`）`,
+        `\`gui/src/i18n/ru.ts\`（blob \`${currentGitBlob("gui/src/i18n/ru.ts")}\`）`,
+        `\`gui/src/i18n/tr.ts\`（blob \`${currentGitBlob("gui/src/i18n/tr.ts")}\`）`,
+        `\`gui/src/i18n/zh-TW.ts\`（blob \`${currentGitBlob("gui/src/i18n/zh-TW.ts")}\`）`,
+        `\`gui/src/i18n/zh.ts\`（blob \`${currentGitBlob("gui/src/i18n/zh.ts")}\`）`,
+        "`gui/tests/sidecar-layout.test.ts`（blob `e140a627260bbf952708e7f710874a5f76cc5b2b`，与官方 v2.42.0 相同）",
       ],
       "`ben` Fork 修订版本策略": [
-        "`src/fork/version-policy.mjs`（blob `1c9351fea6dd28f5d70fb945c37e5ac46536a7b6`）",
-        "`tests/fork-version-policy.test.ts`（blob `40c1092241345b88c3c26756bca1d3d59586f501`）",
+        "`v2.42.0:package.json`（blob `6c7c80d9e471282778d67df6c7bacfe511278cdb`）",
+        `\`src/fork/version-policy.mjs\`（blob \`${currentGitBlob("src/fork/version-policy.mjs")}\`）`,
+        `\`tests/fork-version-policy.test.ts\`（blob \`${currentGitBlob("tests/fork-version-policy.test.ts")}\`）`,
       ],
       "Standalone web search 能力注入": [
-        "`v2.39.0:src/codex/inject.ts`（blob `72be57878470077e9b3c434726aea329e007d79c`）",
-        "当前实现的 `src/codex/inject.ts` blob 为 `7cca45fa7f5e41328a5199a5adf5151406019220`",
-        "`0124c2809cb40c29603cff196e6d2182559bd48d`",
+        "`v2.42.0:src/codex/inject.ts`（blob `cb8e1434b39dc03867734ed9683b76ee37c4ee89`）",
+        `当前实现的 \`src/codex/inject.ts\` blob 为 \`${currentGitBlob("src/codex/inject.ts")}\``,
       ],
       "智谱 BigModel Codex 模型发现": [
-        "`v2.39.0:src/providers/model-discovery.ts`（blob `ada0bd2aecc196e003d0b1720c96d864e4793dbc`）",
-        "`src/providers/model-discovery.ts`（blob `85ea01d624b128d56400f4b699b95b32517de639`）",
-        "`c9446e0b5cddb90a0569d8e59913a91ae7eaa893`",
+        "`v2.42.0:src/providers/model-discovery.ts`（blob `ada0bd2aecc196e003d0b1720c96d864e4793dbc`）",
+        `\`src/providers/model-discovery.ts\`（blob \`${currentGitBlob("src/providers/model-discovery.ts")}\`）`,
+        `\`tests/zhipu-bigmodel-codex-provider.test.ts\`（blob \`${currentGitBlob("tests/zhipu-bigmodel-codex-provider.test.ts")}\`）`,
       ],
       "默认测试 runner 与负载敏感隔离": [
-        "`v2.39.0:tests/update-stop-first.test.ts`（blob `d20eafb5c7051744168d7ce649186c49da789d8e`，merge `fe063d16ef620a148ab425cfffe63a8936d00e52`）",
-        "Fork PATH-precedence guard（`a1e35b13db14a1686ef0033685d7214184c37743`）",
-        "`src/responses/state.ts`（blob `b95a1fa2c6d36b9b43269af60d51f5a64e6754ec`）",
-        "`tests/responses-state.test.ts`（blob `1a4d0a253b4d5991c332de114b34127dd6f30cf3`）",
-        "`fe063d16ef620a148ab425cfffe63a8936d00e52`",
+        "`v2.42.0:tests/update-stop-first.test.ts`（blob `95b6bd53daf1ef37b0fd2044aad8909cb0657355`）",
+        `\`src/responses/state.ts\`（blob \`${currentGitBlob("src/responses/state.ts")}\`）`,
+        `\`tests/responses-state.test.ts\`（blob \`${currentGitBlob("tests/responses-state.test.ts")}\`）`,
+        `\`tests/shutdown-launcher.test.ts\`（blob \`${currentGitBlob("tests/shutdown-launcher.test.ts")}\`）`,
       ],
       "Prepush 与 GitHub CI": [],
     } as const;
     for (const [title, anchors] of Object.entries(evidence)) {
       const active = section(title);
-      expect(active).toContain("v2.39.0");
+      expect(active).toContain("v2.42.0");
       expect(active).not.toContain("v2.34.0");
       for (const anchor of anchors) expect(compactWhitespace(active)).toContain(anchor);
     }
@@ -1329,13 +1501,13 @@ describe("Fork maintenance truth", () => {
     }
   });
 
-  test("separates Fork strict backend recovery from official v2.35 turn termination", () => {
+  test("separates Fork strict backend recovery from the current official recovery surface", () => {
     const recovery = section("原生加密子任务恢复接力");
     expect(compactWhitespace(recovery)).toContain(
-      "`v2.39.0:src/server/responses/agent-task-recovery.ts`（blob `8b409e175bfb83345ac147ccbeb4b5bc4d462fcf`，相对 `v2.34.0` 新增官方 cache admission 重构）",
+      "`v2.42.0:src/server/responses/agent-task-recovery.ts`（blob `e1c35932ff4610251364078bbcb966f97465157b`）",
     );
     expect(recovery).not.toContain("官方恢复模块（`agent-task-recovery.ts`）扩展了 strict backend ciphertext 的 envelope 识别");
     expect(compactWhitespace(recovery)).toContain("Fork 行为：strict non-Fernet envelope recognition、admission、routed trigger 与 fail-closed forwarding");
-    expect(recovery).toContain("官方 `v2.35.0` 行为：turn termination");
+    expect(recovery).toContain("官方 `v2.42.0` 仍只覆盖 turn termination 与通用 recovery admission");
   });
 });
