@@ -16,7 +16,8 @@ Important finding，并将最终结果发布为不可变 Fork 修订 `v2.35.0-be
 3. 把 `FORK_CHANGES.md` 修正为准确的 v2.35.0 维护真源，并推进包版本为
    `2.35.0-ben.2`；
 4. 在创建不可变 Tag 前先让最终候选 commit 通过远端 Cross-platform CI，随后按
-   fail-closed 流程完成原子 promotion、二次 CI 和公开 GitHub Release。
+   fail-closed 流程用一次 `git push --atomic` 同时更新 `main`、`sync/v2.35.0`、
+   `upstream-release`、官方 Tag 与 Fork Tag，再完成二次 CI 和公开 GitHub Release。
 
 ## 背景与已确认问题
 
@@ -60,7 +61,7 @@ candidate 均保存在 mode-0600 state 和 committed maintenance truth 中。
 “origin 不保留官方 Tag”的错误规则：Fork 对每个已经 rebase 的官方版本必须在 origin
 保留同名官方 Tag。盘点确认 origin 已有与当前官方 raw/peeled 一致的 lightweight
 `v2.34.0`，只有 `v2.35.0` 缺失。远端 `main` 仍为不可变 ben.1，`upstream-release` 仍为
-`fc4de772...`，本地/远端 `v2.35.0-ben.2`、atomic promotion、final main CI 与 GitHub
+`fc4de772...`，本地/远端 `v2.35.0-ben.2`、发布用 `git push --atomic`、final main CI 与 GitHub
 Release 均未发生。因此当前从状态表 **S2R** 追加一个 official-Tag preservation successor，
 不 amend/rebase/删除任何已推送 candidate。
 
@@ -458,7 +459,7 @@ official-Tag preservation规则。新的S2R candidate必须是`5548eb2a0`的desc
    candidate；新 candidate 不是旧 candidate descendant 时停止；随后重新执行 review、
    本地门禁和 candidate CI。
 
-### 2. 原子 promotion
+### 2. 用一次 `git push --atomic` 更新发布引用
 
 Candidate CI 绿后，在 exact candidate commit 上创建中文注释的 annotated
 `v2.35.0-ben.2`。核对 raw ref type=tag、peeled commit=candidate。
@@ -538,7 +539,7 @@ Release，不生成 ben.3。
 - CI prepare script 不删除或改写非自身临时 refs；
 - 已存在的官方本地 Tag必须与官方 raw/peeled一致；
 - promotion前后都要求origin `v2.34.0`与固定官方type/raw/peeled一致；origin `v2.35.0`
-  缺失时只通过同一次atomic promotion创建，已存在时只接受exact identity，任何不一致均
+  缺失时只通过发布用的同一次 `git push --atomic` 创建，已存在时只接受exact identity，任何不一致均
   fail closed且不得force、删除、重建或移动；
 - 初始候选阶段要求 Fork ben.2 Tag 不存在；进入 promotion 后已存在的本地 Fork Tag必须
   复用同一 raw OID，远端存在时必须 raw/peeled 与本地一致，否则停止；

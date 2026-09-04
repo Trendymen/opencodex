@@ -39,7 +39,7 @@ C3 是硬不变量检查点：C3 的 112 个共享路径必须逐字节等于 84
 
 ## ben.3 版本与维护真源
 
-C4 修改：package.json 2.35.0-ben.2 到 2.35.0-ben.3。tests/fork-maintenance-truth.test.ts 仅修改版本断言（接受 ben.3）并新增 ben3-squash 机器块（记录 39→5、C3 tree identity、C4 commit SHA 占位）。所有仅依赖 FORK_CHANGES 的断言移到 C5 补齐。保持五成员 atomic refset 等既有契约。
+C4 修改：package.json 2.35.0-ben.2 到 2.35.0-ben.3。tests/fork-maintenance-truth.test.ts 仅修改版本断言（接受 ben.3）并新增 ben3-squash 机器块（记录 39→5、C3 tree identity、C4 commit SHA 占位）。所有仅依赖 FORK_CHANGES 的断言移到 C5 补齐。保持用一次 `git push --atomic` 同时更新 `main`、`sync/v2.35.0`、`upstream-release`、Fork Tag 与官方 Tag 的既有契约。
 
 C5 修改：FORK_CHANGES.md 新增 ben.3 全量压缩段落，记录 39→5、C3 tree identity、112-path delta、ben.2 不可变历史；promotion/final CI/Release 标记为 pending external gate。同时补齐 C4 遗留的仅依赖 FORK_CHANGES 的测试断言。
 
@@ -49,7 +49,7 @@ C5 修改：FORK_CHANGES.md 新增 ben.3 全量压缩段落，记录 39→5、C3
 2. workflow_dispatch 启动 candidate CI。使用 mode-restricted 临时 controller 构建精确 job/cardinality allowlist（从当前 ci.yml 展开矩阵，含 Windows job-level skip），不复用 ben.2 旧 controller。
 3. CI 成功后复用原 SPEC/QUALITY reviewer 做一轮审查。
 4. 无 Critical/Important 才创建 annotated v2.35.0-ben.3 Tag，peeled 等于 C5。
-5. 一次五成员 atomic push：main（lease 42282c405dc4c3dcb4f1e2877b89ac6ab49eeaba）/sync（lease C5 已在 remote）/marker（lease fc4de772b58c13f7b16b5029b1e981d612a5db06）/official v2.35.0（no-force）/fork ben.3（no-force）。
+5. 执行一次 `git push --atomic`，同时更新 main（lease 42282c405dc4c3dcb4f1e2877b89ac6ab49eeaba）、sync（lease C5 已在 remote）、marker（lease fc4de772b58c13f7b16b5029b1e981d612a5db06）、official v2.35.0（no-force）与 fork ben.3（no-force）。
 6. 独立 main-push CI 成功后创建公开 Release。
 
 ## 非目标

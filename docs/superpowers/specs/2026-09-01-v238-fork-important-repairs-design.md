@@ -122,7 +122,7 @@ Stable rebase work runs on `dev`. Once the candidate is validated, `sync/vX.Y.Z`
 fast-forwarded from that candidate. `sync/vX.Y.Z` is not a working rebase line.
 
 `docs/fork-sync-automation.md` is the authoritative operational document and is a required output
-of this repair. Its branch-role, preflight, rebase, validation, atomic-promotion, local-ref update,
+of this repair. Its branch-role, preflight, rebase, validation, release `git push --atomic`, local-ref update,
 postflight, idempotent-recovery, and audit-command sections must be updated to use exactly the same
 vocabulary and timeline as this Spec. `FORK_CHANGES.md` and its contract tests mirror that authority;
 they do not define a competing topology.
@@ -147,9 +147,9 @@ do not create or move local or remote `sync`, `main`, `dev`, marker, or tag refs
 explicitly authorized publishing `v2.38.0-ben.2`; ref movement remains deferred until every review
 and validation gate passes and then follows the single atomic release transaction below.
 
-### Atomic promotion
+### One atomic Git push
 
-The release-instant atomic refset contains six members:
+The release is published with one `git push --atomic` that explicitly updates these six refs:
 
 ```text
 branch|main|leased-force|RELEASE_COMMIT:refs/heads/main
@@ -166,8 +166,8 @@ push fails closed; the operation is never split into partially successful pushes
 
 The rule against automatically moving `dev` applies after publication: when new development has
 advanced `dev` beyond the published release, an automation run must not reset it to the old release
-commit. It does not prohibit publishing the currently validated `dev` candidate as part of the
-same atomic promotion.
+commit. It does not prohibit publishing the currently validated `dev` candidate in that same
+`git push --atomic` operation.
 
 At publication, local `dev` already points to `RELEASE_COMMIT`; local `main` and
 `upstream-release` are updated after the successful remote transaction through an expected-old-OID
@@ -218,8 +218,8 @@ OID and peeled commit OID. The phase-aware states are exact:
    immutable lower Tag is not moved or deleted; Release creation stops and the race is reported.
 
 Publication is serialized to one publisher. Git cannot lease a future, differently named higher
-revision, so the final remote recheck-to-push interval remains an explicit TOCTOU residual risk
-rather than a guarantee supplied by the six-member refset.
+revision, so the final remote recheck-to-push interval remains an explicit TOCTOU residual risk;
+atomically updating the six named refs does not lease a differently named future revision.
 
 All implementation and test repairs are committed before capturing `IMPLEMENTATION_HEAD`. The
 package version commit is part of that implementation snapshot. `FORK_CHANGES.md` is then updated
@@ -625,6 +625,7 @@ dependency-installation changes receive an additional security-focused review. C
 findings block; fixes return to the same reviewer with `REVIEW_PHASE: RE_REVIEW`, complete prior
 findings, scoped fix diff, and real verification evidence.
 
-The user has explicitly authorized the final annotated Tag, six-member atomic push, local
-compare-and-swap convergence, and GitHub Release for `v2.38.0-ben.2` after every blocking gate passes.
+The user has explicitly authorized the final annotated Tag, one `git push --atomic` that updates
+`main`, `dev`, `sync/v2.38.0`, `upstream-release`, the Fork Tag, and the official Tag together,
+local compare-and-swap convergence, and the GitHub Release for `v2.38.0-ben.2` after every blocking gate passes.
 Global installation, service replacement, restart, and repair remain unauthorized.

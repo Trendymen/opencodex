@@ -4,7 +4,7 @@
 
 **Goal:** 将官方 `v2.40.0` 之后的 Fork 历史压缩为恰好 4 个语义 commits，并确保最终精确 SHA 的 dev candidate CI、双审、workflow security review 和 main CI 全部通过后才发布 `v2.40.0-ben.3`。
 
-**Architecture:** 先用 TDD 修改 Cross-platform CI，使 `dev` 上同-tree、message-only amend 强推也会运行完整 push 门禁；再把参数化 `N>=2` 压缩合同写入三份维护真源。所有批准变化形成内容快照 `S_K`，用四份无重叠 manifest 和临时 Git index重建 C1–C4；每次实际候选 push形成 append-only `A_J`，CI 失败时 amend既有四提交历史并用精确 lease重推，绝不追加 C5。最终 Tag/promotion/main CI/Release 都绑定同一 C4 SHA。
+**Architecture:** 先用 TDD 修改 Cross-platform CI，使 `dev` 上同-tree、message-only amend 强推也会运行完整 push 门禁；再把参数化 `N>=2` 压缩合同写入三份维护真源。所有批准变化形成内容快照 `S_K`，用四份无重叠 manifest 和临时 Git index重建 C1–C4；每次实际候选 push形成 append-only `A_J`，CI 失败时 amend既有四提交历史并用精确 lease重推，绝不追加 C5。最终 Tag、发布用 `git push --atomic`、main CI 和 Release 都绑定同一 C4 SHA。
 
 **Tech Stack:** Bun 1.4.0、TypeScript、Git plumbing（`read-tree` / `update-index` / `write-tree` / `commit-tree`）、GitHub Actions、GitHub CLI。
 
@@ -16,9 +16,9 @@
 - `v2.40.0-ben.2` raw Tag、peeled commit `569f0e7b7d3388758b05553fda9ba2a13208433f` 和公开 Release 永不移动、删除或重建。
 - 本轮固定 `SQUASH_TARGET_COUNT=4`；任一候选、远端 `dev`、Tag peeled 和 Release commit 都必须证明官方基线之后恰好 4 个线性 non-merge commits。
 - C4 只修改 `FORK_CHANGES.md`，父提交必须是 C3；所有 C4 后的实际 CI/review/ref/Release证据只进入任务证据与 GitHub Release Notes。
-- main 在候选阶段保持最后一个正式 Release；只有 Tag 前全部门禁通过后才与 dev/sync一起 promotion。
+- main 在候选阶段保持最后一个正式 Release；只有 Tag 前全部门禁通过后，才在发布用的同一次 `git push --atomic` 中与 `dev`、`sync/v2.40.0` 一起更新。
 - `sync/v2.40.0` 继续作为该官方基线唯一可移动 Release指针；禁止创建 `sync/v2.40.0-ben.3`。
-- candidate push和atomic promotion所有 branch强推都使用逐 ref精确 `--force-with-lease`；禁止普通 `--force`。
+- candidate push以及发布用 `git push --atomic` 中的所有 branch强推都使用逐 ref精确 `--force-with-lease`；禁止普通 `--force`。
 - official/Fork Tag refspec不带 `+`、不 force、不使用 lease；Fork Tag必须是中文 annotated Tag。
 - 修改 `.github/workflows/ci.yml` 后，第一次 candidate push前必须通过限定 workflow blob的独立 security `CODE_QUALITY` review。
 - 最终常规 `SPEC_COMPLIANCE` 与 `CODE_QUALITY` review绑定最终 C4 SHA；任何 Critical/Important finding阻塞。
@@ -49,7 +49,7 @@ watch也发送到同一session，并用`write_stdin`读取到sentinel或明确�
 如果持久session因未预期错误退出，当前固定目录、backup refs和S/A证据立即转为blocked：不得“从
 Task 0重跑”、不得删除/覆盖证据、不得用新shell补变量。向用户报告最后一个已见sentinel、HEAD/ref
 后验和失败命令，由用户决定是否另行制定有界恢复/放弃方案。candidate `dev`已写入
-后只允许从已落盘S_K/A_J和candidate classifier证据恢复；Tag/atomic promotion后只允许从promotion
+后只允许从已落盘S_K/A_J和candidate classifier证据恢复；Tag/发布原子推送后只允许从promotion
 classifier与Release证据恢复。正常可预期的RED、prepush/CI失败均在各自步骤显式捕获，不应导致
 session退出；无法唯一恢复phase/context时始终fail closed。
 
@@ -339,7 +339,7 @@ git commit -m "ci: 让压缩候选强推运行完整门禁"
 - Modify: `tests/fork-maintenance-truth.test.ts:185-305,495-590,920-1040`
 
 **Interfaces:**
-- Consumes: 现有机器块解析器、三个活跃 release contract、六成员 atomic refset和本地三 ref CAS。
+- Consumes: 现有机器块解析器、三个活跃 release contract、同时更新 `main`、`dev`、sync、marker、Fork Tag 与官方 Tag 的原子 refset，以及本地三 ref CAS。
 - Produces: 三处完全相同的 `fork-squash-release-policy` 机器块与 Tag-exists/Release-missing CI恢复门禁。
 
 - [ ] **Step 1: 在测试中定义精确通用合同**
@@ -439,7 +439,7 @@ Tag存在但Release缺失时，先取得同一peeled SHA的`push/dev` candidate 
 
 同时修订“双审前禁止push”的范围：压缩任务只有`dev` candidate push是明确例外，且必须先通过
 本地完整门禁和workflow security review；该例外不得移动`main`、`sync`、marker或任何Tag。
-常规双审仍必须在Tag、六成员atomic promotion和Release之前绑定最终C_N SHA并PASS。
+常规双审仍必须在Tag、一次 `git push --atomic` 同时更新 `main`、`dev`、sync、marker、Fork Tag 与官方 Tag，以及Release之前绑定最终C_N SHA并PASS。
 
 - [ ] **Step 6: 运行 GREEN并提交**
 
@@ -1879,7 +1879,7 @@ sed -n '1p' "$REVIEW_CANDIDATE_DIR/snapshot" > "$SQUASH_EVIDENCE_DIR/final-snaps
 
 ---
 
-### Task 8: 创建ben.3 Tag并执行六成员atomic promotion
+### Task 8: 创建 ben.3 Tag并用一次 `git push --atomic` 同时更新 `main`、`dev`、sync、marker 与两个 Tag
 
 **Files:**
 - Create: annotated `refs/tags/v2.40.0-ben.3`
@@ -2014,7 +2014,7 @@ FORK_TAG_RAW=$(sed -n '1p' "$SQUASH_EVIDENCE_DIR/fork-tag-raw")
 test "$(git rev-parse refs/tags/v2.40.0-ben.3)" = "$FORK_TAG_RAW"
 ```
 
-- [ ] **Step 3: 执行唯一六成员atomic push**
+- [ ] **Step 3: 用一次 `git push --atomic` 同时更新 `main`、`dev`、`sync/v2.40.0`、`upstream-release`、Fork Tag 和官方 Tag**
 
 先用`apply_patch`创建`.tmp/v240-ben3-squash/classify-promotion.sh`，把每次push后的远端读取和
 三分类封装为同一个函数：
@@ -2109,7 +2109,7 @@ Tag refspec不加`+`；不拆分。
 
 - [ ] **Step 4: 对确定失败或不确定结果做只读收敛判断**
 
-第一次push后调用同一函数。返回0表示六目标完整成功；返回10表示全部branch仍是preflight old、
+第一次 push 后调用同一函数。返回 0 表示远端 `main`、`dev`、`sync/v2.40.0`、`upstream-release`、官方 Tag 与 Fork Tag 均达到目标状态；返回 10 表示全部 branch 仍是 preflight old、
 ben.3远端Tag明确不存在且其它Tag namespace未变；20/30分别表示mixed/unknown或远端读取失败：
 
 ```bash

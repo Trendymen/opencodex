@@ -4,7 +4,7 @@
 
 **Goal:** 修复 v2.35 rebase 的 turn-termination 对象身份与 origin-only CI 基线证明缺口，修正 Fork 维护真源，并在 exact candidate/final CI 成功后发布不可变 `v2.35.0-ben.2`。
 
-**Architecture:** `core.ts` 只增加一个局部 adopt/rebind 入口，所有实质 CI 基线验证集中到一个新的 Bun 脚本；workflow 仅在运行完整 suite 的 job 中接线。代码与 version 完成后，以单独 `FORK_CHANGES.md` commit 形成 pre-promotion snapshot；先验证远端 sync candidate，再原子 promotion、验证 main push、最后创建 GitHub Release。
+**Architecture:** `core.ts` 只增加一个局部 adopt/rebind 入口，所有实质 CI 基线验证集中到一个新的 Bun 脚本；workflow 仅在运行完整 suite 的 job 中接线。代码与 version 完成后，以单独 `FORK_CHANGES.md` commit 形成发布前 snapshot；先验证远端 sync candidate，再用一次 `git push --atomic` 同时更新 `main`、`sync/v2.35.0`、`upstream-release`、官方 Tag 与 Fork Tag，随后验证 main push，最后创建 GitHub Release。
 
 **Tech Stack:** Bun 1.4、严格 TypeScript/ESM、Bun test、Git refs/annotated Tags、GitHub Actions、GitHub CLI。
 
@@ -27,7 +27,7 @@ promotion、final CI与Release均未发生。origin已有与固定官方仓库�
 1. Spec修订必须记录完整链：`d555/33234936660`失败、`d252/33236405510`失败、
    `5548/33236921544`成功但不可复用于新descendant、官方Tag保留规则纠正，以及ben.2
    Tag/promotion/final CI/Release未发生；单独提交并通过原`SPEC_DOCUMENT` reviewer。
-2. 本Plan修订必须把official Tag absent/exact、atomic promotion与恢复状态写成可执行命令；
+2. 本Plan修订必须把official Tag absent/exact、发布用 `git push --atomic` 与恢复状态写成可执行命令；
    单独提交并通过原`PLAN_DOCUMENT` reviewer。
 
 ### S2R-2：最窄contract/truth实现
@@ -76,7 +76,7 @@ promotion、final CI与Release均未发生。origin已有与固定官方仓库�
 4. 按用户指定顺序，candidate CI成功后复用原Spec/Quality reviewer做一次并行re-review；
    无Critical/Important才进入promotion，不增加额外review轮。
 
-### S2R-5：冻结Tags并原子promotion
+### S2R-5：冻结 Tags，并执行发布用的 `git push --atomic`
 
 1. Fresh-run `bun scripts/prepare-fork-official-base.ts`，从固定官方仓库重验证并确保本地
    `refs/tags/v2.35.0`为exact lightweight `fc4de772...`。独立fresh-read确认origin
@@ -201,7 +201,7 @@ Steps 1–5只作为原始审计记录，不得重复执行，不得重建state�
 
 ### Repair E：Task 7与Release补充证据
 
-后文Task 7原子promotion/Tag不变。Fork ben.2 Tag仍必须annotated。Tag annotation与Release
+后文 Task 7 用一次 `git push --atomic` 同时更新 `main`、`sync/v2.35.0`、`upstream-release` 与 Fork Tag 的历史发布步骤不变。Fork ben.2 Tag仍必须annotated。Tag annotation与Release
 Notes除replacement candidate/final run外，还必须记录首个失败candidate `d5558096b` / run
 `33234936660`、annotated-only assumption被真实official lightweight ref推翻以及对应修复。
 
@@ -219,7 +219,7 @@ Notes除replacement candidate/final run外，还必须记录首个失败candidat
 - 新版本固定为 `2.35.0-ben.2`，新 Tag 固定为 `v2.35.0-ben.2`；同名 Tag 一旦创建不得重建或移动。
 - Fork origin必须保留每个已rebase官方基线的同名Tag：`v2.34.0` exact lightweight
   `80fff9a7f...`保持不变，`v2.35.0`以固定官方仓库验证的exact lightweight
-  `fc4de772...`在本轮atomic promotion中补齐；任何existing mismatch均fail closed，禁止
+  `fc4de772...`在本轮发布用的 `git push --atomic` 中补齐；任何existing mismatch均fail closed，禁止
   force、删除、重建或移动。CI仍必须每轮从固定官方URL独立重新验证，不能把origin当作
   provenance来源。
 - 不弱化 `forkVersionTagError()`、空 Tag 集合保护、release-line、exact-SHA、branch lease、atomic push 或 CI-success 门禁。
@@ -1219,7 +1219,7 @@ Auto-merge (15):
 | Gate | Tagged snapshot state |
 | --- | --- |
 | Candidate Cross-platform CI | `pending external gate` |
-| Atomic promotion | `pending external gate` |
+| 发布用 `git push --atomic` | `pending external gate` |
 | Final main Cross-platform CI | `pending external gate` |
 | GitHub Release | `pending external gate` |
 <!-- ben2-external-gates:end -->
@@ -2227,7 +2227,7 @@ officialRefKind=`lightweight`, replacement candidate run ID and `recordedAt`; `c
 Re-entry compares
 and reuses it. After this point do not change code/docs or recreate/move the Tag.
 
-- [ ] **Step 3: Snapshot final-run identity and classify/push the atomic promotion**
+- [ ] **Step 3: Snapshot final-run identity and classify/execute the release `git push --atomic`**
 
 Before any possible atomic push, require origin official Tag absent again and run:
 
@@ -2435,7 +2435,7 @@ stays in conversation/external evidence only and never mutates Tag/FORK_CHANGES.
 | G1: preserve turn-termination object identity | Task 1 | Dedicated routed recovery × Kiro behavioral regression, canonical replacement invariant, focused tests, typecheck, reviewers. |
 | G2: independently prove and preserve official baseline Tags | Historical Tasks 2–3 plus S2R-3/S2R-5 | Fixed-official classifier/Git/redaction evidence; origin v2.34 exact retained; v2.35 absent-or-exact preflight and exact post-state in the atomic refset. |
 | G3: repair the maintenance source of truth | Historical Tasks 4–5 plus S2R-2 | Six exact whitespace removals, current-chain maintenance-truth RED/GREEN, corrected v2.35 overlap/evidence/current version, docs-only snapshot. |
-| G4: publish immutable ben.2 | S2R-4 through S2R-6 | `2.35.0-ben.2`, new exact candidate CI, one post-CI review gate, frozen annotated Tag, leased atomic promotion including verified official v2.35, independent final main CI, verified public Release. |
+| G4: publish immutable ben.2 | S2R-4 through S2R-6 | `2.35.0-ben.2`, new exact candidate CI, one post-CI review gate, frozen annotated Tag, one leased `git push --atomic` including the verified official v2.35 Tag, independent final main CI, verified public Release. |
 
 The Spec's non-goals and safety boundaries are carried by Global Constraints and by the Task 2/3
 security reviews: fixed official URL remains the provenance source; origin v2.34/v2.35 must match
@@ -2458,7 +2458,7 @@ goal or extra product behavior in this Plan.
 - [ ] New S2R candidate is a recorded descendant of `5548eb2a0`; workflow_dispatch is uniquely bound; every named shipping job/matrix passes, only job-level `platform-windows` is skipped, and no Windows suite shard expands before Tag creation.
 - [ ] Candidate CI succeeds before the single parallel Spec/Quality re-review; no Critical/Important finding remains before Tag creation.
 - [ ] Promotion preflight proves origin `v2.34.0` exact `80fff9a7f...`; origin `v2.35.0` is absent or exact `fc4de772...`; any mismatch stops without force/move/reconstruction.
-- [ ] Atomic promotion uses exact branch leases, frozen Fork Tag raw OID, and one explicit refset containing main, sync, marker, official `v2.35.0`, and Fork `v2.35.0-ben.2`.
+- [ ] One `git push --atomic` uses exact branch leases, the frozen Fork Tag raw OID, and one explicit refset containing main, sync, marker, official `v2.35.0`, and Fork `v2.35.0-ben.2`.
 - [ ] Final main-push CI is uniquely bound and successful before GitHub Release.
 - [ ] GitHub Release is public, stable, same-name, source-archive-only and metadata-verified.
 - [ ] Promotion/Release post-state proves origin `v2.34.0` remains exact `80fff9a7f...` and origin `v2.35.0` is exact `fc4de772...`, with both independently revalidated from the fixed official URL.
