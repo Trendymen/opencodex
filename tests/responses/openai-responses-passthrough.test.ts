@@ -23,6 +23,7 @@ import type { OcxConfig } from "../../src/types";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
 import { restoreRoutedNamespaceCalls } from "../../src/responses/namespace-tool-compat";
 import { restoreRoutedCustomCalls } from "../../src/responses/custom-tool-compat";
+import { ROUTED_PROGRESS_CONTRACT } from "../../src/fork/routed-progress-contract";
 
 const createResponsesPassthroughAdapter = (...args: Parameters<typeof createResponsesPassthroughAdapterProduction>) =>
   withTestTranslatorBudget(createResponsesPassthroughAdapterProduction(...args));
@@ -51,7 +52,9 @@ describe("native routed code-mode result visibility", () => {
     const before = JSON.stringify(body);
     const request = createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body));
     const wire = JSON.parse(request.body);
-    expect(wire.instructions).toBe(`Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}`);
+    expect(wire.instructions).toBe(
+      `Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}\n\n${ROUTED_PROGRESS_CONTRACT}`,
+    );
     expect(wire.tools.find((tool: { name: string }) => tool.name === "exec").parameters.properties.input.description)
       .toContain(CODE_MODE_RESULT_ECHO_SENTENCE);
     expect(JSON.stringify(body)).toBe(before);
