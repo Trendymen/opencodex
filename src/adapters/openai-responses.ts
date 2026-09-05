@@ -55,6 +55,7 @@ export const FORWARD_HEADERS = [
   "x-codex-window-id",
   "x-oai-attestation",
   "x-openai-subagent",
+  "x-openai-internal-codex-responses-lite",
   "x-responsesapi-include-timing-metrics",
 ];
 
@@ -1453,6 +1454,25 @@ function stripUnsupportedForwardParams(body: unknown): unknown {
   return rest;
 }
 
+function addCanonicalForwardResponsesLiteMetadata(body: unknown, incoming: IncomingMeta): unknown {
+  if (incoming.headers.get("x-openai-internal-codex-responses-lite") !== "true" || !isPlainObject(body)) {
+    return body;
+  }
+  if (Object.hasOwn(body, "client_metadata") && !isPlainObject(body.client_metadata)) return body;
+  const clientMetadata = body.client_metadata;
+  if (isPlainObject(clientMetadata)
+    && Object.hasOwn(clientMetadata, "ws_request_header_x_openai_internal_codex_responses_lite")) {
+    return body;
+  }
+  return {
+    ...body,
+    client_metadata: {
+      ...(isPlainObject(clientMetadata) ? clientMetadata : {}),
+      ws_request_header_x_openai_internal_codex_responses_lite: "true",
+    },
+  };
+}
+
 /** Return the lossless text represented by one system message, or null when it is multimodal. */
 function canonicalForwardSystemText(item: Record<string, unknown>): string | null {
   const content = item.content;
@@ -2442,7 +2462,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         ),
         isXaiSchemaTarget(provider),
       );
-      const finalBody = stripDisabledVerbosity(
+      let finalBody = stripDisabledVerbosity(
         stripDisabledReasoningSummaries(
           normalizeConfiguredReasoningSummaryDelivery(sanitizedBody, provider, parsed.modelId),
           provider,
@@ -2451,6 +2471,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         provider,
         parsed.modelId,
       );
+      if (isCanonicalOpenAiForwardProvider(provider)) {
+        finalBody = addCanonicalForwardResponsesLiteMetadata(finalBody, incoming);
+      }
       const actualServiceTier = isPlainObject(finalBody) && typeof finalBody.service_tier === "string"
         ? finalBody.service_tier
         : null;

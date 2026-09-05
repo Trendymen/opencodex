@@ -34,6 +34,15 @@ description: 监听、远程访问、准入密钥、超时、存储、侧车、�
 `ocx recover-history --legacy-openai --yes` 强制使用原生提供方恢复。
 此命令会重标所有包含用户消息的 `opencodex` 行，其中包括正常的专用提供方历史记录；执行前请查看生命周期参考中的完整范围警告。
 
+## Responses Lite 转发
+
+使用 Codex 账号转发到官方 ChatGPT 后端时，代理会保留传入的
+`x-openai-internal-codex-responses-lite` 请求头。值为 `true` 时，还会把缺失的
+`client_metadata.ws_request_header_x_openai_internal_codex_responses_lite` 补为 `"true"`，
+使上游 WebSocket 请求保留 Lite 标识。已有 metadata 字段（包括显式指定的 Lite 值）保持不变。
+请求头缺失或值不是 `true` 时不添加该字段；非对象的畸形 `client_metadata` 保持原样。
+这个映射不用于公共 API-key 提供方或第三方目标。
+
 ## 远程访问
 
 默认的 `127.0.0.1` 绑定仅限回环地址。像 `0.0.0.0` 这样的非回环地址需要
