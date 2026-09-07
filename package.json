@@ -58,6 +58,7 @@
     "build:remote-workspace-helper": "cargo build --release --locked --manifest-path native/remote-workspace-helper/Cargo.toml",
     "test:remote-workspace-helper": "cargo test --locked --manifest-path native/remote-workspace-helper/Cargo.toml",
     "prepare:package": "bun scripts/prepare-package.ts",
+    "install:local": "bun scripts/install-local.ts",
     "prepack": "bun run prepare:package",
     "prepublishOnly": "bun run audit:high && bun run typecheck && bun run build:gui",
     "release": "bun scripts/release.ts",

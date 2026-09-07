@@ -95,9 +95,8 @@ describe("passthrough reasoning summary rewrite honors hideThinkingSummary", () 
       "text/event-stream",
     );
     const text = await response.text();
-    expect(text).toContain("response.reasoning_text.delta");
-    expect(text).not.toContain("response.reasoning_summary_text.delta");
-    expect(text).toContain('"content":[{"type":"reasoning_text","text":"think"}]');
+    expect(text).toContain("response.reasoning_summary_text.delta");
+    expect(text).toContain('"summary":[{"type":"summary_text","text":"**think**\\n\\nthink"}]');
   });
 
   test("bounded JSON: hidden thinking keeps the content shape", async () => {
@@ -111,14 +110,16 @@ describe("passthrough reasoning summary rewrite honors hideThinkingSummary", () 
     expect(text).not.toContain('"summary":[{"type":"summary_text"');
   });
 
-  test("bounded JSON: requested summary keeps the content shape", async () => {
+  test("bounded JSON: requested summary retains item content while adding summary", async () => {
     const response = await runHandleResponses(
       { model: "deepseek-v4-flash", input: "ping", stream: false, reasoning: { effort: "max", summary: "detailed" } },
       JSON_UPSTREAM,
       "application/json",
     );
     const text = await response.text();
+    expect(text).toContain('"summary":[{"type":"summary_text","text":"think"}]');
     expect(text).toContain('"content":[{"type":"reasoning_text","text":"think"}]');
-    expect(text).not.toContain('"summary":[{"type":"summary_text"');
   });
+
+
 });
