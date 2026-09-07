@@ -359,6 +359,7 @@ import {
 import {
   agentTaskRecoveryConfig,
   discardEncryptedAgentTaskRecovery,
+  recoverEncryptedAgentTask,
   recoverEncryptedAgentTaskWithResult,
   restoreCachedEncryptedAgentTasks,
   type AgentTaskRecoveryFailureReason,
@@ -378,6 +379,22 @@ import {
   repairResponsesJsonItemIds,
 } from "../responses-item-id-repair";
 import {
+  createReasoningSummaryChannelBlockRewrite,
+  rewriteReasoningSummaryInJson,
+  rewriteReasoningSummaryInJsonString,
+  routeUsesContentChannelReasoning,
+} from "../responses-reasoning-summary-rewrite";
+import {
+  createResponsesMessagePhaseBlockRewrite,
+  rewriteResponsesMessagePhasesInJsonString,
+  routeUsesResponsesMessagePhaseInference,
+} from "../../fork/responses-message-phase";
+import {
+  createInboundResponsesDebugObserver,
+  persistInboundResponsesDebugSummary,
+} from "../../fork/inbound-response-debug";
+import { isDebugEnabled } from "../../lib/debug-settings";
+import {
   createImageGenCallRestoreRewrite,
   imageGenToolCallAliases,
   restoreImageGenCallsInJson,
@@ -394,7 +411,12 @@ import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/cat
 
 import { buildToolBridgeMaps, collabSurface, injectDeveloperMessage, multiAgentGuidanceText } from "./collaboration";
 import { mapCodexAuthContextErrorToResponse, nativeMainRefreshFailureResponse } from "./codex-auth-error";
-import { hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace } from "./encrypted-payload";
+import {
+  hasStrictBackendEncryptedAgentTask,
+  hasUnreadableEncryptedAgentTask,
+  looksLikeBackendCiphertext,
+  sanitizeEncryptedContentInPlace,
+} from "./encrypted-payload";
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel, safeOriginLabel, storedPoolReplayDispatchNotifier, type ProviderFetchOptions } from "./fetch-helpers";
 import { classifyTransportFailureKind, transportErrorCode } from "../../lib/upstream-reachability";
 import {
@@ -421,9 +443,18 @@ import {
   relaySseWithBlockRewrite,
 } from "../sse-payload-rewrite";
 import { hasUnmappedRoutedCustomToolOutput, restoreRoutedCustomCalls, restoreRoutedCustomCallsInJson } from "../../responses/custom-tool-compat";
+import { repairNestedExecCallsInJson } from "../../responses/nested-exec-call-repair";
+import { usesVolcengineAgentPlanResponses } from "../../fork/glm-kimi-compat";
+import { rendersArkQuotaAsClientError } from "../../fork/ark-quota-display";
 import { createRoutedCustomToolRestoreBlockRewrite } from "../responses-custom-tool-repair";
 import { collectFunctionCallRepairSchemas, repairFunctionCallsInJson } from "../../responses/function-call-compat";
 import { createResponsesFunctionToolRepairBlockRewrite } from "../responses-function-tool-repair";
+import {
+  createNestedExecAdapterEventRepair,
+  createNestedExecCallRepairBlockRewrite,
+  createNestedExecClientOutcomeBlockRewrite,
+  createNestedExecPassthroughRepair,
+} from "../responses-nested-exec-call-repair";
 import { restoreRoutedToolSearchCallsInJson } from "../../responses/tool-search-compat";
 import { createRoutedToolSearchRestoreBlockRewrite } from "../responses-tool-search-repair";
 import {
@@ -2873,6 +2904,9 @@ export async function handleComboResponses(
 
   const unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (body as { input?: unknown } | undefined)?.input,
+  ) || (
+    agentTaskRecoveryConfig(config) !== null
+    && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input)
   );
   const canDecryptUnreadableAgentTask = (target: (typeof combo.targets)[number]): boolean => {
     const provider = config.providers[target.provider];
@@ -3533,9 +3567,13 @@ async function handleResponsesInner(
       onRequestBodyRead: undefined,
     });
   }
-  let unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+  let routedUnreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (body as { input?: unknown } | undefined)?.input,
   );
+  let strictBackendEncryptedAgentTask = agentTaskRecovery !== null
+    && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+  let unreadableEncryptedAgentTask = routedUnreadableEncryptedAgentTask
+    || strictBackendEncryptedAgentTask;
   const inboundClientThreadId = req.headers.get("x-codex-parent-thread-id")?.trim() || undefined;
   const cursorClientThreadId = codexPoolAffinityKey(req.headers);
   const originalBody = body;
@@ -3654,6 +3692,10 @@ async function handleResponsesInner(
     cursorConversationId: parsed._cursorConversationId,
   });
   bindTurnTerminationScope(parsed, resolvedConversationId);
+  const adoptParsedRequest = (next: OcxParsedRequest): void => {
+    parsed = next;
+    bindTurnTerminationScope(parsed, resolvedConversationId);
+  };
   const rememberKiroDeliveredFinalAnswer = (adapterName: string, response: unknown): void => {
     if (adapterName === "kiro") rememberDeliveredFinalAnswer(parsed, response);
   };
@@ -3881,9 +3923,13 @@ async function handleResponsesInner(
     let recovered = restoreCachedEncryptedAgentTasks(
       req, (body as { input?: unknown } | undefined)?.input, config, { parentThreadId },
     ) > 0;
-    unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+    routedUnreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
       (body as { input?: unknown } | undefined)?.input,
     );
+    strictBackendEncryptedAgentTask = agentTaskRecovery !== null
+      && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+    unreadableEncryptedAgentTask = routedUnreadableEncryptedAgentTask
+      || strictBackendEncryptedAgentTask;
     if (unreadableEncryptedAgentTask) try {
       const result = await recoverEncryptedAgentTaskWithResult(
         req,
@@ -3899,9 +3945,13 @@ async function handleResponsesInner(
       recoveryFailureReason = undefined;
     }
     if (recovered) {
-      unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+      routedUnreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
         (body as { input?: unknown } | undefined)?.input,
       );
+      strictBackendEncryptedAgentTask = agentTaskRecovery !== null
+        && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+      unreadableEncryptedAgentTask = routedUnreadableEncryptedAgentTask
+        || strictBackendEncryptedAgentTask;
       if (!unreadableEncryptedAgentTask) {
         try {
           const reparsed = parseRequest(body);
@@ -3922,8 +3972,7 @@ async function handleResponsesInner(
               (reparsed as unknown as Record<string, unknown>)[key] = parsed[key];
             }
           }
-          bindTurnTerminationScope(reparsed, resolvedConversationId);
-          parsed = reparsed;
+          adoptParsedRequest(reparsed);
           // The recovery mutated `body.input` in place, so `_rawBody` now carries decrypted task
           // text. Bar it from the continuation cache before any recording path can reach it —
           // that cache is persisted to disk, which would defeat the recovery cache's TTL.
@@ -4022,6 +4071,13 @@ async function handleResponsesInner(
     && unreadableEncryptedAgentTask
   ) {
     return unreadableEncryptedAgentTaskResponse(recoveryFailureReason);
+  }
+
+  // A strict backend task remains opaque even when the canonical native target can consume it
+  // directly. Keep the outbound bytes unchanged, but bar the request body from the local
+  // continuation cache before any direct-success observer can persist the ciphertext.
+  if (strictBackendEncryptedAgentTask && isCanonicalOpenAiForwardProvider(route.provider)) {
+    markBodyNonPersistable(parsed._rawBody);
   }
 
   // The canonical ChatGPT backend rejects previous_response_id, so a local replay miss leaves no
@@ -4324,7 +4380,10 @@ async function handleResponsesInner(
       && credentialGeneration(row.credential) === binding.snapshot.generation;
   };
   const resolveSelectionAdapter = (provider: OcxProviderConfig, retention = config.cacheRetention): ProviderAdapter => {
-    const resolved = resolveAdapter(provider, retention, route.providerName);
+    const adapterProvider = options.comboAttempt && provider.allowEncryptedV2AgentTasks === true
+      ? { ...provider, allowEncryptedV2AgentTasks: false }
+      : provider;
+    const resolved = resolveAdapter(adapterProvider, retention, route.providerName);
     if (route.provider.authMode === "forward") return resolved;
     const binding: DispatchBinding | undefined = route.provider.authMode === "oauth"
       ? oauthSelection && servingOAuthSnapshot
@@ -4891,6 +4950,22 @@ async function handleResponsesInner(
     routedMuseToolNameAliases = builtRequest.convertedMuseToolNameAliases ?? new Map();
   };
 
+  const replayedInputPrefixLength = parsed._replayPrefixLen ?? 0;
+  const {
+    clientToolAuthorizationBody,
+    clientExplicitWireToolCatalog,
+    clientDeclaredWireToolNames,
+    clientDeclaredNamelessCallTypes,
+    currentTurnExecDeclaration,
+    repairSource: repairAdapterEventSource,
+    repairBatch: repairAdapterEventBatch,
+  } = createNestedExecAdapterEventRepair({
+    rawBody: parsed._rawBody,
+    replayPrefixLength: replayedInputPrefixLength,
+    isPassthrough,
+    translatorBudget,
+  });
+
   if ("passthrough" in adapter && adapter.passthrough && !routedCompaction) {
     let hostAdmissionLease = pendingHostAdmissionLease;
     pendingHostAdmissionLease = null;
@@ -4927,22 +5002,12 @@ async function handleResponsesInner(
     }
     // Preserve the caller's readable catalog boundary before provider-specific normalization can
     // remove an unsupported final entry (for example xAI cached-only web search).
-    const replayedInputPrefixLength = parsed._replayPrefixLen ?? 0;
-    const clientToolAuthorizationBody = currentTurnWireToolCatalogBody(
-      parsed._rawBody,
-      replayedInputPrefixLength,
-    );
     const selfNamedNamespaceScrubAuthorization = collectSelfNamedNamespaceScrubAuthorization(
       clientToolAuthorizationBody,
       toolBridgeMaps.bareCustomToolNames,
       toolBridgeMaps.bareFunctionToolNames,
     );
-    const clientExplicitWireToolCatalog = hasExplicitWireToolCatalog(clientToolAuthorizationBody);
-    const clientDeclaredWireToolNames = collectDeclaredWireToolNames(clientToolAuthorizationBody);
     const clientDeclaredBareWireToolNames = collectDeclaredBareWireToolNames(clientToolAuthorizationBody);
-    const clientDeclaredNamelessCallTypes = collectDeclaredNamelessClientCallTypes(
-      clientToolAuthorizationBody,
-    );
     // Hosted calls the PROVIDER runs itself. Gated on the destination actually being xAI, so a
     // declaration alone cannot buy the exemption on some other upstream that never serves it.
     // Provider-executed declarations are authorized from the actual outbound body, after the
@@ -5111,6 +5176,16 @@ async function handleResponsesInner(
       ) && route.provider.authMode !== "forward";
     };
     refreshUndeclaredToolGuard(request);
+    const {
+      plan: nestedExecRepairPlan,
+      coordinator: nestedExecRepairCoordinator,
+      inspection: nestedExecInspection,
+    } = createNestedExecPassthroughRepair({
+      execWasLowered: request.convertedRoutedCustomToolNames?.has("exec") === true,
+      currentTurnExecDeclaration,
+      clientDeclaredWireToolNames,
+      translatorBudget,
+    });
     // A refused turn must not seed `previous_response_id` replay. The inspection branch reads the
     // untouched upstream stream, so it can still observe a `response.completed` the client never
     // received; checking the payload itself rather than a flag shared with the client relay keeps
@@ -5125,6 +5200,95 @@ async function handleResponsesInner(
     let inspectedTerminal: ResponsesTerminalStatus | null = null;
     let inspectedCompletionSeen = false;
     let firstTerminalAllowsRecall = false;
+    const inboundDebugObserver = isDebugEnabled()
+      ? createInboundResponsesDebugObserver({ stage: "upstream-inbound" })
+      : undefined;
+    let inboundDebugUsesRawTerminalRepairTap = false;
+    let inboundDebugContext: { host: string; pathname: string; httpStatus?: number } | undefined;
+    let inboundDebugPersisted = false;
+    const downstreamObserver = isDebugEnabled()
+      ? createInboundResponsesDebugObserver({ stage: "downstream-after-rewrite" })
+      : undefined;
+    let downstreamPersisted = false;
+    const persistDownstreamOnce = (): void => {
+      if (downstreamPersisted || !downstreamObserver || !inboundDebugContext) return;
+      downstreamPersisted = true;
+      persistInboundResponsesDebugSummary({
+        observer: downstreamObserver,
+        host: inboundDebugContext.host,
+        pathname: inboundDebugContext.pathname,
+        model: route.modelId,
+        stage: "downstream-after-rewrite",
+        threadIdTag: request.threadIdTag,
+        httpStatus: inboundDebugContext.httpStatus,
+      });
+    };
+    const observeClientBoundSse = (body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> => {
+      if (!downstreamObserver) return body;
+      const inspector = createSseInspector({
+        onParsedPayload: payload => downstreamObserver.notePayload(payload),
+      });
+      const reader = body.getReader();
+      let settled = false;
+      const settle = (): void => {
+        if (settled) return;
+        settled = true;
+        try { inspector.finish(); } catch { /* diagnostics must not alter delivery */ }
+        inspector.dispose();
+        persistDownstreamOnce();
+      };
+      return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              settle();
+              controller.close();
+              return;
+            }
+            if (value) inspector.feed(value);
+            controller.enqueue(value);
+          } catch (error) {
+            settle();
+            controller.error(error);
+          }
+        },
+        cancel(reason) {
+          settle();
+          return reader.cancel(reason);
+        },
+      });
+    };
+    const persistInboundDebugOnce = (): void => {
+      if (inboundDebugPersisted || !inboundDebugObserver || !inboundDebugContext) return;
+      inboundDebugPersisted = true;
+      persistInboundResponsesDebugSummary({
+        observer: inboundDebugObserver,
+        host: inboundDebugContext.host,
+        pathname: inboundDebugContext.pathname,
+        model: route.modelId,
+        stage: "upstream-inbound",
+        threadIdTag: request.threadIdTag,
+        httpStatus: inboundDebugContext.httpStatus,
+      });
+    };
+    const setInboundDebugContext = (response: Response): void => {
+      if (!inboundDebugObserver) return;
+      let host = "";
+      let pathname = "";
+      try {
+        const parsedUrl = new URL(request.url);
+        host = parsedUrl.host;
+        pathname = parsedUrl.pathname;
+      } catch {
+        pathname = "invalid-url";
+      }
+      inboundDebugContext = {
+        host,
+        pathname,
+        httpStatus: response.status,
+      };
+    };
     const passiveQuotaObserved = hasPassiveAccountQuota(route.providerName)
       && route.provider.authMode === "oauth";
     const noteInspectedPayload = (payload: unknown) => {
@@ -5160,19 +5324,30 @@ async function handleResponsesInner(
           recordPassiveAccountQuota(route.providerName, servingAccountId, quota, passiveQuotaWriterGeneration);
         }
       }
+      if (!inboundDebugUsesRawTerminalRepairTap) inboundDebugObserver?.notePayload(payload);
       // Gated on the same flag as the guard itself: with no readable catalog (or a forward-auth
       // provider) every name looks undeclared, and flipping this would stop recording continuation
       // state for exactly the passthrough traffic the guard deliberately stands down for.
-      if (undeclaredToolGuardActive && !inspectionSawUndeclaredTool && undeclaredToolCallName(
-        restoreAuthorizedBareNamespaceToolCalls(
-          restoreMuseToolNames(payload, routedMuseToolNameAliases).value,
-        ),
-        declaredWireToolNames,
-        declaredNamelessClientCallTypes,
-        providerExecutedCallTypes,
-        declaredBareWireToolNames,
-      ) !== undefined) {
-        inspectionSawUndeclaredTool = true;
+      if (undeclaredToolGuardActive && !inspectionSawUndeclaredTool) {
+        const nestedDecision = nestedExecInspection?.notePayload(payload);
+        if (nestedDecision?.action === "defer") return;
+        if (nestedDecision?.action === "reject") {
+          inspectionSawUndeclaredTool = true;
+          return;
+        }
+        const inspectedPayload = restoreMuseToolNames(
+          nestedDecision?.value ?? payload,
+          routedMuseToolNameAliases,
+        ).value;
+        if (undeclaredToolCallName(
+          restoreAuthorizedBareNamespaceToolCalls(inspectedPayload),
+          declaredWireToolNames,
+          declaredNamelessClientCallTypes,
+          providerExecutedCallTypes,
+          declaredBareWireToolNames,
+        ) !== undefined) {
+          inspectionSawUndeclaredTool = true;
+        }
       }
       // The snapshot callback opts the inspector into output reconstruction. Compaction
       // has no continuation cache, so use the parsed terminal here without adding retention.
@@ -5187,10 +5362,16 @@ async function handleResponsesInner(
       response: { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
     ) => {
       if (inspectionSawUndeclaredTool) return;
+      const nestedDecision = nestedExecInspection?.prepareResponseForCache(response);
+      if (nestedDecision?.action === "reject") {
+        inspectionSawUndeclaredTool = true;
+        return;
+      }
+      const inspectedResponse = (nestedDecision?.value ?? response) as typeof response;
       const restored = restoreRoutedCustomCalls(
         restoreAuthorizedBareNamespaceToolCalls(
           restoreRoutedNamespaceCalls(
-            restoreMuseToolNames(response, routedMuseToolNameAliases).value,
+            restoreMuseToolNames(inspectedResponse, routedMuseToolNameAliases).value,
             routedNamespaceToolAliases,
           ).value,
         ),
@@ -5227,21 +5408,28 @@ async function handleResponsesInner(
             declaredBareWireToolNames,
           ).value
         : replayResponse) as typeof replayResponse;
-      rememberPassthroughResponse?.(normalizedReplayResponse);
       const firstCompletion = !inspectedCompletionSeen;
       inspectedCompletionSeen = true;
-      if (firstCompletion && (inspectedTerminal === null || firstTerminalAllowsRecall)) {
-        // A model-less first completion permanently declines recall; later terminal
-        // frames are hidden by the client boundary and cannot supply its identity.
-        // Native inspection sees the pre-rewrite model. Only an actual terminal
-        // model can seed recall; an absent model never falls back to the pick.
-        if (typeof response.model === "string" && response.model.trim()) {
-          notifyResponseComplete({
-            status: response.status,
-            model: parsed._responseModelId !== undefined && parsed._responseModelId !== parsed.modelId
-              ? parsed._responseModelId : response.model,
-          });
+      const publishAcceptedResponse = (accepted: unknown): void => {
+        rememberPassthroughResponse?.(accepted as typeof replayResponse);
+        if (firstCompletion && (inspectedTerminal === null || firstTerminalAllowsRecall)) {
+          // A model-less first completion permanently declines recall; later terminal
+          // frames are hidden by the client boundary and cannot supply its identity.
+          // Native inspection sees the pre-rewrite model. Only an actual terminal
+          // model can seed recall; an absent model never falls back to the pick.
+          if (typeof response.model === "string" && response.model.trim()) {
+            notifyResponseComplete({
+              status: response.status,
+              model: parsed._responseModelId !== undefined && parsed._responseModelId !== parsed.modelId
+                ? parsed._responseModelId : response.model,
+            });
+          }
         }
+      };
+      if (nestedExecRepairCoordinator) {
+        nestedExecRepairCoordinator.stageCacheCandidate(normalizedReplayResponse, publishAcceptedResponse);
+      } else {
+        publishAcceptedResponse(normalizedReplayResponse);
       }
     };
     recordAdapterReasoning(logCtx, request);
@@ -5323,6 +5511,7 @@ async function handleResponsesInner(
     const refuseOversizedOutboundBody = (
       builtRequest: AdapterRequest,
       refusalAuthCtx: CodexAuthContext = authCtx,
+      preserveOriginalResponse = false,
     ): Response | undefined => {
       const result = checkOutboundBodySize(builtRequest.body, config.maxUpstreamBodyBytes);
       if (result.admitted) return undefined;
@@ -5330,6 +5519,13 @@ async function handleResponsesInner(
       // This returns before the surrounding fetch/finally owns the observation, so release
       // it here or one refused body holds translator budget for the process lifetime.
       builtRequest.releaseBodyObservation?.();
+      if (preserveOriginalResponse) {
+        return formatErrorResponse(
+          413,
+          "outbound_body_too_large",
+          describeOutboundBodyRefusal(result),
+        );
+      }
       upstream.abort();
       releaseUpstreamHostAdmission(hostAdmissionLease);
       hostAdmissionLease = null;
@@ -5355,8 +5551,8 @@ async function handleResponsesInner(
         describeOutboundBodyRefusal(result),
       );
     };
-    const transportFailureResponse = (err: unknown): Response => {
-      upstream.abort();
+    const transportFailureResponse = (err: unknown, abortUpstream = true): Response => {
+      if (abortUpstream) upstream.abort();
       if (options.abortSignal?.aborted) {
         releaseUpstreamHostAdmission(hostAdmissionLease);
         hostAdmissionLease = null;
@@ -5408,6 +5604,7 @@ async function handleResponsesInner(
     };
     const initialBodyRefusal = refuseOversizedOutboundBody(request);
     if (initialBodyRefusal) return initialBodyRefusal;
+    let transientRetryExhausted = false;
     try {
       // Transient-5xx pre-stream retry (devlog/_plan/260716_claudecode_hardening/010):
       // the ChatGPT backend emits transient 502/520s that an immediate retry absorbs.
@@ -5433,7 +5630,11 @@ async function handleResponsesInner(
             // retry wrapper replaces — proves the host was reached (#914 review).
             .then(adoptObservedResponse);
         },
-        { abortSignal: upstream.signal, label: safeHostLabel(request.url) },
+        {
+          abortSignal: upstream.signal,
+          label: safeHostLabel(request.url),
+          onTransientExhausted: () => { transientRetryExhausted = true; },
+        },
       );
     } catch (err) {
       return transportFailureResponse(err);
@@ -5453,13 +5654,15 @@ async function handleResponsesInner(
     let rateLimitRetries = 0;
     const rebuildAndRefetch = async (
       recovery: AttemptRecoveryKind,
+      oneShot = false,
+      discardBeforeSend?: Response,
     ): Promise<Response | { failed: Response }> => {
       const retryAdapter = resolveSelectionAdapter(
         resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
         config.cacheRetention,
       );
       if (!("passthrough" in retryAdapter) || !retryAdapter.passthrough) {
-        upstream.abort();
+        if (!oneShot) upstream.abort();
         return { failed: formatErrorResponse(502, "upstream_error", "Recovery changed the provider wire unexpectedly") };
       }
       try {
@@ -5473,7 +5676,7 @@ async function handleResponsesInner(
         recordAdapterReasoning(logCtx, request);
         recordAdapterTier(logCtx, request);
       } catch (err) {
-        upstream.abort();
+        if (!oneShot) upstream.abort();
         if (options.abortSignal?.aborted) return { failed: clientCancelledResponse() };
         const msg = err instanceof Error ? err.message : String(err);
         return { failed: formatErrorResponse(400, "invalid_request_error", redactSecretString(msg)) };
@@ -5491,39 +5694,98 @@ async function handleResponsesInner(
         logCtx.accountLogLabel,
       );
       recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, retryAdapter.name);
-      const rebuiltBodyRefusal = refuseOversizedOutboundBody(request);
+      const rebuiltBodyRefusal = refuseOversizedOutboundBody(request, authCtx, oneShot);
       if (rebuiltBodyRefusal) return { failed: rebuiltBodyRefusal };
+      const refetch = (innerRecovery?: "connection-reset" | "transient-5xx"): Promise<Response> => {
+        noteAttemptSend(logCtx.activeAttempt, passthroughEstimate, innerRecovery ?? recovery);
+        return fetchWithHeaderTimeout(request.url, applyUpstreamRecoveryInit({
+          method: request.method,
+          headers: request.headers,
+          body: request.body,
+        }, innerRecovery), upstream.signal, connectMs, parsed.stream,
+          providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+            dispatchOverride: oauthDispatch(request),
+            providerName: route.providerName,
+            modelId: route.modelId,
+            onCodexWsQuota: codexWsQuotaObserver(authCtx, route.provider, route.modelId),
+            beforeDispatch: isCanonicalOpenAiForwardProvider(route.provider)
+              ? createCodexReserveDispatchGuard(authCtx, options.codexAuthPolicy ?? config, route.modelId, options.admission, options.visionDescribeTerminal === true) : undefined,
+          }),
+          route.provider.authMode === "forward")
+          .then(adoptObservedResponse);
+      };
       try {
+        if (oneShot) {
+          const replacement = await refetch();
+          try { void discardBeforeSend?.body?.cancel().catch(() => {}); } catch { /* already consumed */ }
+          return replacement;
+        }
         return await fetchWithTransientRetry(
-          innerRecovery => {
-            noteAttemptSend(logCtx.activeAttempt, passthroughEstimate, innerRecovery ?? recovery);
-            return fetchWithHeaderTimeout(request.url, applyUpstreamRecoveryInit({
-              method: request.method,
-              headers: request.headers,
-              body: request.body,
-            }, innerRecovery), upstream.signal, connectMs, parsed.stream,
-              providerFetch(route.provider, options.codexWsRuntimeIdentity, {
-              dispatchOverride: oauthDispatch(request),
-                providerName: route.providerName,
-                modelId: route.modelId,
-                onCodexWsQuota: codexWsQuotaObserver(authCtx, route.provider, route.modelId),
-                beforeDispatch: isCanonicalOpenAiForwardProvider(route.provider)
-                  ? createCodexReserveDispatchGuard(authCtx, options.codexAuthPolicy ?? config, route.modelId, options.admission, options.visionDescribeTerminal === true) : undefined,
-              }),
-              route.provider.authMode === "forward")
-              .then(adoptObservedResponse);
-          },
+          innerRecovery => refetch(innerRecovery),
           { abortSignal: upstream.signal, label: safeHostLabel(request.url) },
         );
       } catch (err) {
-        return { failed: transportFailureResponse(err) };
+        return { failed: transportFailureResponse(err, !oneShot) };
       } finally {
         request.releaseBodyObservation?.();
       }
     };
 
+    // The canonical native child normally receives its ciphertext untouched. Only after its
+    // existing pre-output transient retry budget is exhausted can the explicit recovery opt-in
+    // recover a strict NEW_TASK backend ciphertext and replay this exact target once.
+    let agentTaskRecoveryReplayTerminal = false;
+    if (
+      transientRetryExhausted
+      && isTransientUpstreamStatus(upstreamResponse.status)
+      && inboundWire === "responses"
+      && threadSpawn
+      && agentTaskRecovery
+      && isCanonicalOpenAiForwardProvider(route.provider)
+      && !options.comboAttempt
+      && strictBackendEncryptedAgentTask
+    ) {
+      let recovered = false;
+      try {
+        recovered = await recoverEncryptedAgentTask(
+          req,
+          (parsed._rawBody as { input?: unknown } | undefined)?.input,
+          agentTaskRecovery,
+          config,
+          { parentThreadId, abortSignal: options.abortSignal },
+        );
+      } catch {
+        recovered = false;
+      }
+      if (options.abortSignal?.aborted || req.signal.aborted) {
+        return transportFailureResponse(
+          options.abortSignal?.reason ?? req.signal.reason ?? new DOMException("client disconnected", "AbortError"),
+        );
+      }
+      if (recovered) {
+        markBodyNonPersistable(parsed._rawBody);
+        try {
+          const reparsed = parseRequest(parsed._rawBody);
+          // Only the task-bearing input changed. Keep the already-settled model, tier, account,
+          // provider and replay provenance while refreshing the input-derived context.
+          adoptParsedRequest({ ...parsed, context: reparsed.context, _rawBody: reparsed._rawBody });
+          const retried = await rebuildAndRefetch("agent-task-recovery", true, upstreamResponse);
+          if ("failed" in retried) {
+            if (options.abortSignal?.aborted || req.signal.aborted) return retried.failed;
+          } else {
+            upstreamResponse = retried;
+            agentTaskRecoveryReplayTerminal = true;
+          }
+        } catch {
+          // Optional recovery never replaces the original terminal upstream response when its
+          // bounded plaintext replay cannot be built or sent.
+        }
+      }
+    }
+
     // Keep recovery kinds in sync with the generic `recovery:` loop below.
     passthroughRecovery: for (;;) {
+    if (agentTaskRecoveryReplayTerminal) break;
 
     if (
       upstreamResponse.status === 401
@@ -6064,6 +6326,10 @@ async function handleResponsesInner(
     const passthroughCt = headers.get("content-type")?.toLowerCase();
     const isEventStream = passthroughCt?.includes("text/event-stream")
       || (plaintextV2AgentMessageToolNames.size === 0 && upstreamResponse.ok && !!upstreamResponse.body && !passthroughCt && parsed.stream);
+    const inferResponsesMessagePhases = routeUsesResponsesMessagePhaseInference(
+      route.provider,
+      route.modelId,
+    );
     const recordTerminalOutcome = codexForwardTerminalOutcomeRecorder(
       config,
       authCtx,
@@ -6167,6 +6433,7 @@ async function handleResponsesInner(
       return formatPassthroughUpstreamError(upstreamResponse.status, errorText, {
         statusText: upstreamResponse.statusText,
         headers,
+        renderQuotaAsClientError: rendersArkQuotaAsClientError(route.providerName),
       });
     }
 
@@ -6207,6 +6474,13 @@ async function handleResponsesInner(
       const webSearchBridgeBinding = requestBindings.get(request);
       // The bridge wraps the RAW upstream body, so terminal repair below still owns the single
       // client-facing terminal — the bridge drops the terminal of every intercepted leg.
+      const rawInboundSseInspector = !webSearchBridgePlan && terminalRepairPolicy && inboundDebugObserver
+        ? createSseInspector({
+          onParsedPayload: payload => inboundDebugObserver.notePayload(payload),
+        })
+        : undefined;
+      inboundDebugUsesRawTerminalRepairTap = rawInboundSseInspector !== undefined
+        || (webSearchBridgePlan !== undefined && inboundDebugObserver !== undefined);
       const upstreamSseBody = webSearchBridgePlan
         ? createPassthroughWebSearchBridgeStream({
           plan: webSearchBridgePlan,
@@ -6222,6 +6496,7 @@ async function handleResponsesInner(
             connectMs,
             true,
             providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(request),
               // Pacing can outlive a manual selection change. A continuation must retain the
               // first leg's key and appended search result, never rebuild from the original turn.
               beforeDispatch: () => {
@@ -6243,6 +6518,7 @@ async function handleResponsesInner(
             return result.admitted ? undefined : describeOutboundBodyRefusal(result);
           },
           signal: upstream.signal,
+          onRawPayload: payload => inboundDebugObserver?.notePayload(payload),
         })
         : upstreamResponse.body;
       const passthroughSseBody = terminalRepairPolicy
@@ -6252,6 +6528,13 @@ async function handleResponsesInner(
           terminalRepairPolicy,
           translatorBudget,
           options.responsesTerminalRepairScheduler,
+          rawInboundSseInspector
+            ? {
+              onChunk: chunk => rawInboundSseInspector.feed(chunk),
+              onFinish: () => rawInboundSseInspector.finish(),
+              onDispose: () => rawInboundSseInspector.dispose(),
+            }
+            : undefined,
         )
         : upstreamSseBody;
       const repairConfig = route.provider.responsesItemIdRepair;
@@ -6261,11 +6544,17 @@ async function handleResponsesInner(
       // explicit Grok compatibility marker enables strict client compatibility rewrites.
       // The provider's broader snapshot/lifecycle repair remains opt-in.
       const grokClientCompatibilityEnabled = logCtx.surface === "grok";
-      const snapshotRepairEnabled = hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair);
+      const snapshotRepairEnabled = route.provider.responsesSnapshotRepair !== false
+        && (hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair)
+          || usesVolcengineAgentPlanResponses(route.provider));
       const githubCopilotRepairEnabled = route.providerName === "github-copilot";
       const responseModelRewrite = parsed._responseModelId !== undefined
         && parsed._responseModelId !== parsed.modelId
         ? createResponsesModelPayloadRewrite(parsed._responseModelId)
+        : undefined;
+      const reasoningSummaryBlockRewrite = parsed.options.hideThinkingSummary !== true
+        && routeUsesContentChannelReasoning(route.provider, route.modelId)
+        ? createReasoningSummaryChannelBlockRewrite()
         : undefined;
       // Compose opt-in payload rewrites into one parse/stringify pass (image-gen restore first).
       const payloadRewrites = [
@@ -6305,6 +6594,17 @@ async function handleResponsesInner(
       const blockRewrites = [
         payloadRewrites.length > 0
           ? payloadRewriteAsBlockRewrite(composeSsePayloadRewrites(...payloadRewrites))
+          : undefined,
+        reasoningSummaryBlockRewrite,
+        inferResponsesMessagePhases
+          ? createResponsesMessagePhaseBlockRewrite(translatorBudget)
+          : undefined,
+        nestedExecRepairPlan && nestedExecRepairCoordinator
+          ? createNestedExecCallRepairBlockRewrite(
+            nestedExecRepairPlan,
+            nestedExecRepairCoordinator,
+            translatorBudget,
+          )
           : undefined,
         routedCustomToolNames.size > 0 || routedCustomToolRepairNames.size > 0
           ? createRoutedCustomToolRestoreBlockRewrite(
@@ -6346,7 +6646,13 @@ async function handleResponsesInner(
             declaredNamelessClientCallTypes,
             providerExecutedCallTypes,
             declaredBareWireToolNames,
+            nestedExecRepairCoordinator
+              ? () => nestedExecRepairCoordinator.reject()
+              : undefined,
           )
+          : undefined,
+        nestedExecRepairCoordinator
+          ? createNestedExecClientOutcomeBlockRewrite(nestedExecRepairCoordinator)
           : undefined,
         rememberPlaintextBlock,
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
@@ -6368,9 +6674,10 @@ async function handleResponsesInner(
       // branch retained bytes without a bound. Force the existing bounded,
       // single-reader relay before tee; HTTP fallback responses stay unmarked.
       const forceCodexWsEagerRelay = isCodexWsUpstreamResponse(upstreamResponse);
+      const phaseBarrierRequiresEagerRelay = inferResponsesMessagePhases;
       const inlineEagerRewrite = needsClientRewrite
-        && (forceCodexWsEagerRelay || win32EagerRewrite || eagerPath?.useEagerRelay === true);
-      if (forceCodexWsEagerRelay || eagerPath?.useEagerRelay || win32EagerRewrite) {
+        && (forceCodexWsEagerRelay || win32EagerRewrite || eagerPath?.useEagerRelay === true || phaseBarrierRequiresEagerRelay);
+      if (forceCodexWsEagerRelay || eagerPath?.useEagerRelay || win32EagerRewrite || phaseBarrierRequiresEagerRelay) {
         const turnAc = new AbortController();
         linkAbortSignal(upstream, turnAc.signal);
         registerTurn(turnAc, options.turnAdmissionLease);
@@ -6401,24 +6708,37 @@ async function handleResponsesInner(
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
         });
+        const clientInspector = downstreamObserver
+          ? createSseInspector({ onParsedPayload: payload => downstreamObserver.notePayload(payload) })
+          : undefined;
+        setInboundDebugContext(upstreamResponse);
         const eagerBody = relaySseEagerBounded(passthroughSseBody, turnAc, {
           inspectChunk: chunk => inspector.feed(chunk),
           finishInspection: () => inspector.finish(),
-          disposeInspection: () => inspector.dispose(),
+          disposeInspection: () => {
+            inspector.dispose();
+            persistInboundDebugOnce();
+            nestedExecInspection?.dispose();
+          },
+          ...(clientInspector
+            ? {
+              onClientChunk: chunk => clientInspector.feed(chunk),
+            }
+            : {}),
           // Stream lifetime follows the protocol terminal even when this request
           // has no outcome callback configured (reported() would stay false).
           sawTerminal: () => inspector.terminalSeen(),
           ...(clientBlockRewrite
             ? { rewriteBlocks: clientBlockRewrite }
             : {}),
-          onSynthetic: (kind, reason) => {
+          onSynthetic: (kind, httpStatusOverride) => {
             if (!reportNativeTerminal) return;
             if (kind === "incomplete") {
               logCtx.terminalSource = "synthetic";
               reportNativeTerminal("incomplete");
-            } else if (reason === "upstream_error") {
+            } else if (kind === "upstream-error") {
               logCtx.terminalSource = "synthetic";
-              reportNativeTerminal("failed", logCtx.terminalHttpStatus ?? 502);
+              reportNativeTerminal("failed", httpStatusOverride ?? logCtx.terminalHttpStatus ?? 502);
             } else {
               logCtx.transportPhase = "mid_stream";
               logCtx.terminalSource = "synthetic";
@@ -6430,7 +6750,13 @@ async function handleResponsesInner(
             responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
           },
-          onDone: () => unregisterTurn(turnAc),
+          onDone: () => {
+            try { clientInspector?.finish(); } catch { /* bounded diagnostics only */ }
+            clientInspector?.dispose();
+            persistInboundDebugOnce();
+            persistDownstreamOnce();
+            unregisterTurn(turnAc);
+          },
         }, {
           clientGoneSignal: options.abortSignal,
           terminalBoundary: codexSafetyBufferingOptions,
@@ -6464,6 +6790,7 @@ async function handleResponsesInner(
         pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
         onParsedPayload: noteInspectedPayload,
       };
+      setInboundDebugContext(upstreamResponse);
       if (recordTerminalOutcomes) {
         // A real terminal was parsed from the (teed) inspection stream — record it as the outcome
         // even if the client has already disconnected: the turn genuinely reached that terminal, so
@@ -6490,7 +6817,11 @@ async function handleResponsesInner(
           inspectBody,
           reportNativeTerminal,
           turnAc.signal,
-          () => unregisterTurn(turnAc),
+          () => {
+            persistInboundDebugOnce();
+            nestedExecInspection?.dispose();
+            unregisterTurn(turnAc);
+          },
           logCtx,
           () => {
             responseCompletionCancelled = true;
@@ -6505,7 +6836,11 @@ async function handleResponsesInner(
           inspectBody,
           logCtx,
           turnAc.signal,
-          () => unregisterTurn(turnAc),
+          () => {
+            persistInboundDebugOnce();
+            nestedExecInspection?.dispose();
+            unregisterTurn(turnAc);
+          },
           rememberPassthroughResponse && plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
@@ -6518,7 +6853,10 @@ async function handleResponsesInner(
       const rewrittenBody = clientBlockRewrite !== undefined
         ? relaySseWithBlockRewrite(nativeBody, clientBlockRewrite, translatorBudget)
         : nativeBody;
-      const clientBody = relaySseWithFailedTail(
+      // Keep the official tee-lane shape: the downstream diagnostic observer wraps the
+      // stream variable itself, so the response constructor stays byte-identical to the
+      // upstream invariant this lane's platform gate asserts on.
+      const clientBody = observeClientBoundSse(relaySseWithFailedTail(
         rewrittenBody,
         upstream,
         reason => {
@@ -6526,7 +6864,7 @@ async function handleResponsesInner(
           clientGone.abort(reason);
         },
         { upstreamError: logCtx.upstreamError, terminalBoundary: codexSafetyBufferingOptions },
-      );
+      ));
       return markNativePassthroughSseResponse(new Response(clientBody, {
         status: upstreamResponse.status,
         headers,
@@ -6539,21 +6877,37 @@ async function handleResponsesInner(
       // without limit. This path is no longer rare — WebSocket turns for models whose
       // streaming terminal event is unreliable are deliberately answered with bounded JSON.
       // Oversize and stall deadlines both fail closed; a partial body is never parsed.
+      setInboundDebugContext(upstreamResponse);
       const bounded = await readBoundedResponseBody(upstreamResponse, UPSTREAM_JSON_BODY_READ_OPTIONS);
       if (bounded.oversized) {
+        inboundDebugObserver?.noteJsonResponse({});
+        persistInboundDebugOnce();
         return formatErrorResponse(502, "upstream_error", "upstream JSON response exceeded the safe body limit");
       }
       if (bounded.truncated) {
+        inboundDebugObserver?.noteJsonResponse({});
+        persistInboundDebugOnce();
         return formatErrorResponse(502, "upstream_error", "upstream JSON response stalled before completing");
       }
       const text = bounded.text;
       inspectResponseLogJson(logCtx, text);
       let plaintextV2RestoreFailed = false;
+      try {
+        inboundDebugObserver?.noteJsonResponse(JSON.parse(text));
+      } catch {
+        // The client-facing error path keeps the original malformed body behavior; the diagnostic
+        // marks only that a JSON-labelled response arrived and never stores the body itself.
+        inboundDebugObserver?.noteJsonResponse({});
+      }
+      persistInboundDebugOnce();
+      const nestedUpstreamJson = nestedExecRepairPlan
+        ? repairNestedExecCallsInJson(text, nestedExecRepairPlan)
+        : text;
       let clientJson = (() => {
         const restoredNamespace = restoreRoutedNamespaceCallsInJson(
           scrubSelfNamedToolCallNamespaceInJson(
             restoreMuseToolNamesInJson(
-              restoreImageGenCallsInJson(text, imageGenCallAliases),
+              restoreImageGenCallsInJson(nestedUpstreamJson, imageGenCallAliases),
               routedMuseToolNameAliases,
             ),
             selfNamedNamespaceScrubAuthorization,
@@ -6579,11 +6933,29 @@ async function handleResponsesInner(
           normalizedJson, plaintextV2AgentMessageToolNames, plaintextV2AgentMessageAliasedToolNames,
         );
         plaintextV2RestoreFailed = plaintextRestore.overflowed;
-        const repaired = plaintextRestore.value;
+        const phaseRepaired = inferResponsesMessagePhases
+          ? rewriteResponsesMessagePhasesInJsonString(plaintextRestore.value)
+          : plaintextRestore.value;
+        const snapshotRepaired = (route.provider.responsesSnapshotRepair !== false
+          && (hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair)
+            || usesVolcengineAgentPlanResponses(route.provider)))
+          ? repairResponsesSnapshotJson(phaseRepaired, outboundRequestBody)
+          : phaseRepaired;
+        const repaired = repairFunctionCallsInJson(
+          backfillResponsesFieldsJson(snapshotRepaired),
+          functionRepairSchemas,
+        );
         const modelRewritten = parsed._responseModelId !== undefined && parsed._responseModelId !== parsed.modelId
           ? rewriteResponsesModelJson(repaired, parsed._responseModelId)
           : repaired;
-        return modelRewritten;
+        // The bounded-JSON answer bypasses the SSE payload rewrite, so content-
+        // channel reasoning needs the same normalization here for the plain
+        // JSON answer and every reframed-SSE variant built from clientJson.
+        const reasoningNormalized = parsed.options.hideThinkingSummary !== true
+          && routeUsesContentChannelReasoning(route.provider, route.modelId)
+          ? rewriteReasoningSummaryInJsonString(modelRewritten)
+          : modelRewritten;
+        return reasoningNormalized;
       })();
       if (plaintextV2RestoreFailed) {
         return formatErrorResponse(502, "upstream_error", PLAINTEXT_V2_AGENT_MESSAGE_RESTORE_OVERFLOW_MESSAGE);
@@ -6618,9 +6990,13 @@ async function handleResponsesInner(
       commitReasoningReplayServingRoute(request.headers);
       try {
         rememberPassthroughResponseChecked(
-          JSON.parse(text) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
+          JSON.parse(nestedUpstreamJson) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
         );
       } catch { /* non-JSON despite content-type; recording is best-effort */ }
+      // Prepare the repaired continuation while inspection is live. Disposing first rejects it.
+      nestedExecRepairCoordinator?.markClientCommitted();
+      nestedExecInspection?.dispose();
+      nestedExecRepairCoordinator?.dispose();
       // #875: the transport-neutral reliability policy forced a bounded JSON
       // upstream for a client that asked for SSE. Reframe the completed JSON
       // as the canonical terminal SSE sequence (created → output_item.done →
@@ -6665,7 +7041,7 @@ async function handleResponsesInner(
           const sseHeaders = sanitizePassthroughHeaders(headers, codexSafetyBufferingOptions);
           sseHeaders.set("content-type", "text/event-stream");
           sseHeaders.set("cache-control", "no-store");
-          return new Response(stream, {
+          return new Response(observeClientBoundSse(stream), {
             status: upstreamResponse.status,
             statusText: upstreamResponse.statusText,
             headers: sseHeaders,
@@ -6689,6 +7065,14 @@ async function handleResponsesInner(
           }
         })()
         : clientJson;
+      if (downstreamObserver) {
+        try {
+          downstreamObserver.noteJsonResponse(JSON.parse(outboundJson));
+        } catch {
+          downstreamObserver.noteJsonResponse({});
+        }
+        persistDownstreamOnce();
+      }
       return new Response(outboundJson, {
         status: upstreamResponse.status,
         statusText: upstreamResponse.statusText,
@@ -6701,6 +7085,8 @@ async function handleResponsesInner(
     }
     // An unclassified passthrough body is relayed directly and has no bounded completion observer;
     // use the same non-error-status success boundary as SSE instead of retaining per-stream state.
+    nestedExecInspection?.dispose();
+    nestedExecRepairCoordinator?.dispose();
     commitReasoningReplayServingRoute(request.headers);
     const body = relayWithAbort(upstreamResponse.body, upstream);
     const turnAc = new AbortController();
@@ -7264,8 +7650,9 @@ async function handleResponsesInner(
         : observeEmptyCompletion(eventSource, () => {
           console.warn(emptyCompletionNotice(route.providerName, route.modelId));
         });
+      const repairedSource = repairAdapterEventSource(guardedSource);
       const sseStream = bridgeToResponsesSSE(
-        guardedSource, parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
+        repairedSource, parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
         () => {
           cancelResponseCompletion();
           runTurnAbort.abort();
@@ -7336,6 +7723,7 @@ async function handleResponsesInner(
     } else {
       events = runTurnEvents;
     }
+    events = await repairAdapterEventBatch(events);
     if (options.comboAttempt) {
       const firstMeaningful = events.find(event => event.type !== "heartbeat");
       if (!firstMeaningful || firstMeaningful.type === "error") {
@@ -8498,9 +8886,10 @@ async function handleResponsesInner(
           continuation: fetchGuardedEmptyCompletionRetry,
         })
       : eventStream;
+    const repairedEventStream = repairAdapterEventSource(guardedEventStream);
     const { toolNsMap, declaredToolNames, toolParameterSchemas, freeformToolNames, toolSearchToolNames } = toolBridgeMaps;
     const sseStream = bridgeToResponsesSSE(
-      guardedEventStream, parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
+      repairedEventStream, parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
       () => { cancelResponseCompletion(); upstream.abort(); }, 2_000,
       {
         translatorBudget,
@@ -8577,6 +8966,7 @@ async function handleResponsesInner(
       } else {
         events = guardedEvents;
       }
+      events = await repairAdapterEventBatch(events);
     } finally {
       cleanupUpstreamAbort();
     }

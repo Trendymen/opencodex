@@ -34,6 +34,7 @@ import {
   type CursorCheckpointSnapshot,
 } from "./checkpoint-store";
 import { extractCursorImageUrls } from "./images";
+import { appendRoutedProgressContractPart } from "../../fork/routed-progress-contract";
 
 /** Probe-verified Cursor Connect boundaries, with byte headroom for the enclosing field. */
 export const CURSOR_TOOL_COUNT_LIMIT = 330;
@@ -482,14 +483,22 @@ export function createCursorRequest(
   const visibleTools = cursorToolsForActivePrompt(parsed.context.tools, activeText, parsed.options.toolChoice);
   const budget = applyCursorToolBudget(visibleTools, parsed.options.toolChoice);
   const limitNote = catalogLimitNote(budget.tools, budget.omitted);
-  const model = normalizeCursorModelId(parsed.modelId, parsed.options.reasoning, cursorFastRequested(parsed));
+  const system = [...(parsed.context.systemPrompt ?? []), ...(limitNote ? [limitNote] : [])];
+  const guidedSystem = budget.tools.length > 0 && parsed._compactionRequest !== true
+    ? appendRoutedProgressContractPart(system)
+    : system;
+  const model = normalizeCursorModelId(
+    parsed.modelId,
+    parsed.options.reasoning,
+    cursorFastRequested(parsed),
+  );
   const request: CursorRunRequest = {
     modelId: model.modelId,
     ...(model.requestedModelParameters ? { requestedModelParameters: model.requestedModelParameters } : {}),
     ...(model.routingLevel ? { routingLevel: model.routingLevel } : {}),
     ...(model.maxMode ? { maxMode: true } : {}),
     conversationId: resolveCursorConversationId(parsed, model.modelId, options),
-    system: [...(parsed.context.systemPrompt ?? []), ...(limitNote ? [limitNote] : [])],
+    system: guidedSystem,
     messages,
     rawMessages: parsed.context.messages,
     ...(parsed._compactionRequest === true || parsed._contextCompactionBoundary === true ? { contextUsageReset: true } : {}),

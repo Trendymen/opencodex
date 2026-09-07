@@ -3,7 +3,14 @@ import { decodeJwtPayload, extractAccountId } from "../../oauth/chatgpt";
 import type { OcxConfig } from "../../types";
 import { boundedBodyDecodeFailure, readBoundedResponseBody } from "../../lib/bounded-body";
 import { isApiAuthRequired, isProxyAdmissionSecret } from "../auth-cors";
-import { MAX_AGENT_TASK_CIPHERTEXT_BYTES, MAX_AGENT_TASK_ENCRYPTED_PARTS, structurallyValidFernetTokens } from "./encrypted-payload";
+import {
+  backendTaskCiphertextRuns,
+  hasStrictBackendEncryptedAgentTask,
+  isBackendTaskCiphertext,
+  MAX_AGENT_TASK_CIPHERTEXT_BYTES,
+  MAX_AGENT_TASK_ENCRYPTED_PARTS,
+  structurallyValidFernetTokens,
+} from "./encrypted-payload";
 import {
   cachedAgentTaskRecovery,
   discardCachedAgentTaskRecovery,
@@ -110,6 +117,7 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
   let encryptedStartIndex = -1;
   const ciphertexts: string[] = [];
   let ciphertextBytes = 0;
+  const strictBackendCiphertext = hasStrictBackendEncryptedAgentTask(input);
 
   for (let index = 0; index < content.length; index += 1) {
     const part = content[index] as { type?: unknown; text?: unknown; encrypted_content?: unknown } | null;
@@ -136,7 +144,11 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
     ciphertextBytes += Buffer.byteLength(part.encrypted_content);
     if (ciphertexts.length >= MAX_AGENT_TASK_ENCRYPTED_PARTS || ciphertextBytes > MAX_AGENT_TASK_CIPHERTEXT_BYTES) return null;
     const tokens = structurallyValidFernetTokens(part.encrypted_content);
-    if (tokens.length !== 1 || tokens[0] !== part.encrypted_content) return null;
+    const backendCiphertext = strictBackendCiphertext
+      && tokens.length === 0
+      && isBackendTaskCiphertext(part.encrypted_content);
+    if (!backendCiphertext && (tokens.length !== 1 || tokens[0] !== part.encrypted_content)) return null;
+    if (backendCiphertext && ciphertexts.length > 0) return null;
     if (encryptedStartIndex < 0) encryptedStartIndex = index;
     if (index !== encryptedStartIndex + ciphertexts.length) return null;
     ciphertexts.push(part.encrypted_content);
@@ -149,6 +161,7 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
     || !sender
     || encryptedStartIndex < 0
     || ciphertexts.length === 0
+    || (strictBackendCiphertext && ciphertexts.length !== 1)
   ) return null;
 
   const itemRecord = item as { author?: unknown; recipient?: unknown };
@@ -187,6 +200,7 @@ function validateAssignment(assignment: unknown, envelope: AgentEnvelope): strin
   if (payload === null || payload.trim().length === 0) return null;
   if (Buffer.byteLength(payload) > MAX_ASSIGNMENT_BYTES) return null;
   if (structurallyValidFernetTokens(payload).length > 0) return null;
+  if (backendTaskCiphertextRuns(payload).length > 0) return null;
   return payload;
 }
 
