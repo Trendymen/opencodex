@@ -23,6 +23,7 @@ import type { OcxConfig } from "../../src/types";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
 import { restoreRoutedNamespaceCalls } from "../../src/responses/namespace-tool-compat";
 import { restoreRoutedCustomCalls } from "../../src/responses/custom-tool-compat";
+import { ROUTED_PROGRESS_CONTRACT } from "../../src/fork/routed-progress-contract";
 
 const createResponsesPassthroughAdapter = (...args: Parameters<typeof createResponsesPassthroughAdapterProduction>) =>
   withTestTranslatorBudget(createResponsesPassthroughAdapterProduction(...args));
@@ -51,7 +52,9 @@ describe("native routed code-mode result visibility", () => {
     const before = JSON.stringify(body);
     const request = createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body));
     const wire = JSON.parse(request.body);
-    expect(wire.instructions).toBe(`Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}`);
+    expect(wire.instructions).toBe(
+      `Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}\n\n${ROUTED_PROGRESS_CONTRACT}`,
+    );
     expect(wire.tools.find((tool: { name: string }) => tool.name === "exec").parameters.properties.input.description)
       .toContain(CODE_MODE_RESULT_ECHO_SENTENCE);
     expect(JSON.stringify(body)).toBe(before);
@@ -1865,7 +1868,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     });
   });
 
-  test("keeps a native blob while blanking its raw reasoning content", () => {
+  test("keeps an OpenAI-issued blob while blanking its raw reasoning content", () => {
     const adapter = createResponsesPassthroughAdapter(provider);
     const request = adapter.buildRequest({
       modelId: "gpt-5.6-sol",
@@ -1878,7 +1881,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
           type: "reasoning",
           status: "completed",
           summary: [],
-          encrypted_content: "native-backend-blob",
+          encrypted_content: "gAAAA-openai-issued-blob",
           content: [{ type: "reasoning_text", text: "raw routed reasoning" }],
         }],
       },
@@ -1888,7 +1891,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(body.input[0]).toEqual({
       type: "reasoning",
       summary: [],
-      encrypted_content: "native-backend-blob",
+      encrypted_content: "gAAAA-openai-issued-blob",
       content: [],
     });
   });
@@ -4312,6 +4315,161 @@ describe("reasoning input content channel", () => {
     });
     expect(out.content).toEqual([]);
     expect(out.encrypted_content).toBe("upstream-issued-blob");
+  });
+});
+
+describe("Responses-only encrypted tool schema annotations", () => {
+  function markedSchema(): Record<string, unknown> {
+    return {
+      type: "object",
+      encrypted: true,
+      properties: {
+        encrypted: { type: "boolean", description: "a legitimate argument name" },
+        message: { type: "string", encrypted: true },
+        literalData: {
+          type: "object",
+          const: { encrypted: true },
+          default: { encrypted: false },
+          enum: [{ encrypted: true }],
+          examples: [{ encrypted: false }],
+        },
+      },
+      $defs: { encrypted: { type: "string", encrypted: true } },
+      required: ["encrypted", "message"],
+    };
+  }
+
+  function expectedSchema(): Record<string, unknown> {
+    return {
+      type: "object",
+      properties: {
+        encrypted: { type: "boolean", description: "a legitimate argument name" },
+        message: { type: "string" },
+        literalData: {
+          type: "object",
+          const: { encrypted: true },
+          default: { encrypted: false },
+          enum: [{ encrypted: true }],
+          examples: [{ encrypted: false }],
+        },
+      },
+      $defs: { encrypted: { type: "string" } },
+      required: ["encrypted", "message"],
+    };
+  }
+
+  function bodyWithMarkedTools(): Record<string, unknown> {
+    return {
+      model: "glm-5.3-flash",
+      input: [{
+        type: "additional_tools",
+        tools: [
+          { type: "function", name: "additional", parameters: markedSchema() },
+          {
+            type: "namespace",
+            name: "deferred",
+            tools: [{ type: "function", name: "delegate", parameters: markedSchema() }],
+          },
+        ],
+      }],
+      tools: [
+        { type: "function", name: "top_level", parameters: markedSchema() },
+        {
+          type: "namespace",
+          name: "collaboration",
+          tools: [{ type: "function", name: "spawn", parameters: markedSchema() }],
+        },
+      ],
+    };
+  }
+
+  function listedTools(body: Record<string, unknown>): Array<Record<string, unknown>> {
+    const direct = Array.isArray(body.tools) ? body.tools : [];
+    const deferred = Array.isArray(body.input)
+      ? body.input.flatMap(item => item && typeof item === "object" && !Array.isArray(item)
+        && (item as Record<string, unknown>).type === "additional_tools"
+        && Array.isArray((item as Record<string, unknown>).tools)
+        ? (item as { tools: unknown[] }).tools
+        : [])
+      : [];
+    const flattened: Array<Record<string, unknown>> = [];
+    const visit = (tool: unknown): void => {
+      if (!tool || typeof tool !== "object" || Array.isArray(tool)) return;
+      const record = tool as Record<string, unknown>;
+      if (record.type === "namespace" && Array.isArray(record.tools)) {
+        record.tools.forEach(visit);
+        return;
+      }
+      flattened.push(record);
+    };
+    [...direct, ...deferred].forEach(visit);
+    return flattened;
+  }
+
+  function buildWire(providerConfig: Parameters<typeof createResponsesPassthroughAdapter>[0], body: Record<string, unknown>) {
+    const request = createResponsesPassthroughAdapter(providerConfig).buildRequest({
+      modelId: body.model as string,
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: body,
+    }, { headers: new Headers() });
+    return JSON.parse(request.body) as Record<string, unknown>;
+  }
+
+  test("removes the backend-only marker from every final ordinary third-party Responses tool group without mutating the caller schema", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "third-party-test" };
+    const body = bodyWithMarkedTools();
+    body.model = "gpt-5.6-sol";
+    const original = structuredClone(body);
+    const wire = buildWire(target, body);
+    const tools = listedTools(wire);
+
+    expect(body).toEqual(original);
+    expect(tools.map(tool => tool.name).sort()).toEqual([
+      "additional",
+      "collaboration__spawn",
+      "deferred__delegate",
+      "top_level",
+    ]);
+    for (const tool of tools) expect(tool.parameters).toEqual(expectedSchema());
+  });
+
+  test("removes the marker from Zhipu GLM's final lowered tool groups", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://open.bigmodel.cn/api/v1", authMode: "key" as const, apiKey: "zhipu-test" };
+    const body = bodyWithMarkedTools();
+    const wire = buildWire(target, body);
+
+    for (const tool of listedTools(wire)) {
+      const parameters = tool.parameters as Record<string, unknown>;
+      expect(parameters.encrypted).toBeUndefined();
+      expect((parameters.properties as Record<string, Record<string, unknown>>).encrypted)
+        .toEqual({ type: "boolean", description: "a legitimate argument name" });
+      expect((parameters.properties as Record<string, Record<string, unknown>>).message?.encrypted).toBeUndefined();
+      expect((parameters.properties as Record<string, Record<string, unknown>>).literalData?.const)
+        .toEqual({ encrypted: true });
+    }
+  });
+
+  test("keeps the marker for OpenAI-operated Responses destinations and explicitly trusted direct relays", () => {
+    const targets = [
+      { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" as const },
+      { adapter: "openai-responses", baseUrl: "https://api.openai.com/v1", authMode: "key" as const, apiKey: "openai-test" },
+      {
+        adapter: "openai-responses",
+        baseUrl: "http://127.0.0.1:10100/v1",
+        authMode: "key" as const,
+        apiKey: "trusted-relay-test",
+        allowEncryptedV2AgentTasks: true,
+      },
+    ] as const;
+
+    for (const target of targets) {
+      const wire = buildWire(target, bodyWithMarkedTools());
+      for (const tool of listedTools(wire)) {
+        expect((tool.parameters as Record<string, unknown>).encrypted).toBe(true);
+      }
+    }
   });
 });
 

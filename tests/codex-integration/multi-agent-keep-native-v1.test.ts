@@ -106,9 +106,9 @@ function isolateHomes(): void {
  * WHICH executable is being launched — it never sees `file`, and it accepts any
  * `.cmd`/`.bat` target, so `evil.cmd` parses as readily as `codex.cmd`.
  * Executable identity belongs to the launcher contract, which is pinned
- * independently by `tests/codex-v2-gate.test.ts` (`codexFeaturesInvocation`
+ * independently by `tests/codex-integration/codex-v2-gate.test.ts` (`codexFeaturesInvocation`
  * resolving `codex` on POSIX, `.cmd` and `.exe` on win32) and
- * `tests/win-exec.test.ts` (PATH×PATHEXT resolution and escaping). Duplicating
+ * `tests/windows/win-exec.test.ts` (PATH×PATHEXT resolution and escaping). Duplicating
  * that here would couple these state tests to resolution behaviour again, which
  * is the defect this helper exists to remove.
  *
