@@ -137,8 +137,20 @@ appears earlier in the chain. Combos remain canonical-native-only.
 
 ## Encrypted v2 task delivery
 
+For ordinary third-party Responses routes, this fork removes the ChatGPT-only `encrypted`
+annotation from function tool parameter schemas before sending them upstream. This includes
+namespace tools and tools supplied through `additional_tools`. OpenAI-operated Responses
+destinations and direct key-auth relays explicitly trusted with `allowEncryptedV2AgentTasks: true`
+retain the annotation. A third-party combo member does not inherit that direct-relay exception,
+including when its API key selection changes before dispatch. Properties actually named
+`encrypted`, schema literal values, and the caller's original schemas are preserved.
+
+This prepares the tool schema for plaintext delegation; it does not decrypt or repair an existing
+task payload. A malformed message already present in task history must be replaced with a valid
+plaintext assignment. The encrypted-task checks and recovery rules below still apply.
+
 Codex may send a v2 native-to-routed child task only as backend-encrypted `encrypted_content`. That
-payload can be read by the native ChatGPT backend, but not by an external provider. This is the
+payload can be read by the native ChatGPT backend, but not by an external provider without matching support. This is the
 known [#92 limitation](https://github.com/lidge-jun/opencodex/issues/92).
 
 opencodex fails safely instead of forwarding an empty or unreadable task:

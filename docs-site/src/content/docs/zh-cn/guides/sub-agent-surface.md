@@ -76,7 +76,11 @@ fallback 不会让不兼容的加密任务变得可读。当子任务为 ChatGPT
 
 ## 加密的 v2 任务传递
 
-Codex 只能把 v2 原生到路由的子任务作为后端加密的 `encrypted_content` 发送。这个载荷可以被原生 ChatGPT 后端读取，但外部 provider 不能读取。这就是已知的 [#92](https://github.com/lidge-jun/opencodex/issues/92) 限制。
+对于普通第三方 Responses 路由，本 Fork 会在发送前删除 function 工具参数 schema 中仅供 ChatGPT 使用的 `encrypted` 注解，覆盖 namespace 工具和 `additional_tools` 中的工具。OpenAI 运营的 Responses 目的地，以及通过 `allowEncryptedV2AgentTasks: true` 明确信任的直接密钥认证 relay，会保留该注解。第三方 combo 成员不继承直接 relay 的例外，发送前 API key 选择发生变化时也一样。真正名为 `encrypted` 的属性、schema 字面量值及调用方原始 schema 会保留。
+
+这项处理让工具 schema 适用于明文派发，不会解密或修复已有任务载荷。任务历史中已有的异常消息，需要重新提供有效的明文任务说明。下述密文检查和 recovery 规则仍然生效。
+
+Codex 可能仅以加密的 `encrypted_content` 发送 v2 原生到路由的子任务。这个载荷可以被原生 ChatGPT 后端读取，但不具备相应能力的外部 provider 不能读取。这就是已知的 [#92](https://github.com/lidge-jun/opencodex/issues/92) 限制。
 
 opencodex 会安全失败，而不是转发空任务或不可读任务：
 
@@ -86,7 +90,9 @@ opencodex 会安全失败，而不是转发空任务或不可读任务：
 
 恢复选项是选择原生 ChatGPT 子级、明确信任能够处理不透明载荷的直接密钥认证 Responses 中继、在 combo 中添加原生 ChatGPT 目标、在异构 provider 委派中使用 v1，或者在你控制调用方时将任务作为明文 v2 `agent_message` 内容重新发送。
 
-实验性的 `agentTaskRecovery` 默认关闭。显式启用后，它可以通过向固定 ChatGPT 端点发送额外的认证请求来恢复这种格式，但会消耗配额、增加延迟，并依赖非公开的后端行为。任何失败都会保留原有的 `unreadable_encrypted_agent_task` 错误。详见[英文配置参考](/reference/configuration/agents/#encrypted-v2-task-recovery)。
+实验性的 `agentTaskRecovery` 默认关闭。显式启用后，它可以通过向固定 ChatGPT 端点发送额外的认证请求来恢复这种格式，但会消耗配额、增加延迟，并依赖非公开的后端行为。
+
+同一个开关也控制一条更窄的原生兜底：当当前子任务是完整且严格匹配路由头的后端密文 `NEW_TASK`，并且规范原生 ChatGPT 子级已经耗尽现有的 pre-output transient 5xx 重试后仍失败时，opencodex 才会恢复明文，并对**同一个原生目标**仅重发一次。原生子级正常成功时不会预先 recovery；开关关闭时不会分类、不会发送 recovery 请求，也不会增加重试或缓存副作用。推理、压缩、历史消息、普通 `gAAAA…` 文本、不完整/不匹配的 envelope 和 combo 都不能触发此路径。recovery 失败时会保留原本的终态响应；路由子级的失败仍保持 `unreadable_encrypted_agent_task`。详见[英文配置参考](/reference/configuration/agents/#encrypted-v2-task-recovery)。
 
 ## 更改模式
 

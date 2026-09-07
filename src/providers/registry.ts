@@ -96,6 +96,13 @@ interface ProviderModelDiscoverySharedSpec {
    * Empty/invalid remainders skip that row only.
    */
   stripIdPrefix?: string;
+  /**
+   * Opt in to the vendor's `{ models: [{ slug: ... }] }` Codex catalog rather
+   * than the default OpenAI `{ data: [{ id: ... }] }` response shape.
+   */
+  envelopeKey?: "models";
+  /** Required together with `envelopeKey`; identifies the provider-native model id field. */
+  modelIdKey?: "slug";
 }
 
 type ProviderModelDiscoveryLocation =

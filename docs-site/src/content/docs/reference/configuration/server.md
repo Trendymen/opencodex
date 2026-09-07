@@ -100,6 +100,16 @@ Compare the diagnostic on the same machine and account under the two network
 modes. A successful TUN test alone does not identify why the service's HTTP proxy
 path failed, and does not establish a general fix.
 
+## Responses Lite forwarding
+
+For Codex-account requests forwarded to the canonical ChatGPT backend, the incoming
+`x-openai-internal-codex-responses-lite` header is forwarded. A value of `true` also fills the missing
+`client_metadata.ws_request_header_x_openai_internal_codex_responses_lite` field with `"true"`.
+This keeps the Lite marker when the upstream request uses WebSocket. Existing metadata fields,
+including an explicit Lite value, remain unchanged. A missing or non-`true` header does not add the
+field. Malformed non-object `client_metadata` is left unchanged. Public API-key providers and
+third-party destinations do not receive this mapping.
+
 ## Remote access
 
 The default `127.0.0.1` bind is loopback-only. A non-loopback address such as `0.0.0.0` requires
