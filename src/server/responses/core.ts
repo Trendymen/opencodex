@@ -3699,19 +3699,11 @@ async function handleResponsesInner(
   }
 
   let recoveryFailureReason: AgentTaskRecoveryFailureReason | undefined;
-  // Native fallback and explicitly trusted direct Responses routes can consume ciphertext,
-  // so recover only after final route selection.
-  //
-  // Deliberately NOT gated on `threadSpawn` (#4089). Switching a live thread from a native
-  // ChatGPT model to a routed provider replays a backend-minted encrypted agent message on every
-  // later turn, and a model switch is not a spawn, so the spawn requirement failed the thread
-  // closed permanently without ever attempting recovery. The trust boundary is
-  // `recoveryAdmission()` in ./agent-task-recovery -- Codex originator, live native ChatGPT
-  // bearer, matching chatgpt-account-id, no inbound API key, no proxy-admission secret -- which
-  // admits only the owner of the session that would be spent. `threadSpawn` narrowed which of
-  // that owner's own requests could use their own session; it kept nobody else out. The combo
-  // gate above keeps its spawn requirement: that path has its own native-target filtering and
-  // per-attempt failover, and the reported defect is on this path.
+  // 原生 fallback 和显式信任的直接 Responses 路由可以读取密文，因此先完成最终路由选择。
+  // 此处不要求 threadSpawn：覆盖原生模型切换为路由模型后重放的历史（#4089），
+  // 以及路由父任务收到 worker 加密 MESSAGE 的情况。recoveryAdmission 仍校验 Codex
+  // 来源、有效原生 ChatGPT bearer、匹配账号及无入站 API key/代理准入 secret；缓存作用域
+  // 和严格 envelope 校验继续生效。combo 的目标筛选和逐次 failover 由其独立入口处理。
   if (
     inboundWire === "responses"
     && agentTaskRecovery
