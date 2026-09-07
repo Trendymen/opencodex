@@ -30,24 +30,329 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 审计日期 | 2026-09-04 |
-| 本轮官方维护基线 | [`v2.42.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.42.0) |
-| 官方 Tag commit | `48f8186647d9ffb108d226dcfa91a64225aae2a7` |
-| 当前上游最新稳定 Release | `v2.42.0`（`48f8186647d9ffb108d226dcfa91a64225aae2a7`），非 draft、非 prerelease，且等于当前 `upstream/main` |
-| 当前 `IMPLEMENTATION_HEAD` | `2ae33b6645015293657746be35b9217e4e3cf008`；包含完整 v2.40→v2.42 rebase、冲突 union、`2.42.0-ben.1` 版本、维护真源测试升级、按用户决定移除 `provider_debug` 预算豁免，以及 R1/R2 审查发现的 Provider POST、nested-exec 与 installer 安全修复 |
-| Fork 包版本 | `2.42.0-ben.1` |
-| 本轮派生 Tag | `v2.42.0-ben.1`（目标）；最终验证和双审通过前不创建，既有 `v2.40.0-ben.1`、`v2.40.0-ben.2`、`v2.40.0-ben.3` 保持不可变 |
-| 同步分支 | 本轮固定 `RELEASE_SYNC_REF=refs/heads/sync/v2.42.0`，本地与 origin 均尚不存在；发布时只能以 expected-absent lease 在六成员 atomic push 中创建，禁止 `sync/v2.42.0-ben.*` |
-| 实现修改面 | 固定 `IMPLEMENTATION_HEAD=2ae33b6645015293657746be35b9217e4e3cf008`：相对官方 `v2.42.0` 为 202 个文件、`+36,587/-852`；相对 `POST_REBASE_HEAD` 为 12 个文件、`+1,056/-232` |
-| rebase 固定输入 | `OLD_OFFICIAL=35ff3a462e786bd5efc394dfb1a8a5cc946e454f`；`NEW_OFFICIAL=48f8186647d9ffb108d226dcfa91a64225aae2a7`；`PRE_REBASE_DEV=1aae7085e32e86e7043d0280b0097119a1e1e726`；`POST_REBASE_HEAD=6032e2cc5e131febda1a8d5c328e3323095ac7d3` |
-| rebase 机械对账 | 官方变更 476 路径；旧 Fork net/touched 均为 204；overlap 38；实际内容冲突 8 路径、10 个唯一 hunk；30 个 overlap 自动合并；主/影 replay 的 stop、stage、hunk、action、commit 与最终 tree 完全一致 |
-| 当前验证 | R2 `SPEC_COMPLIANCE` 与常规 `CODE_QUALITY` 复审 PASS，窄安全审查以三个 Important FAIL。R3 已按 TDD 修复：Provider DNS await 竞态 RED 3 pass / 1 fail→GREEN 4 pass / 0 fail；installer staged replacement、内部 symlink 与 boot recovery 旧实现均按预期 RED，六个 transaction/recovery 文件 GREEN 89 pass / 0 fail；最终精确门禁为 40 files、1,304 pass / 0 fail，typecheck、privacy scan、固定范围 diff check 与 clean status 全部 exit 0。两次默认 4x `bun run prepush` 仍是失败（A1：18,030 pass / 3 fail；A2：18,023 pass / 10 fail），用户明确要求本轮不再等待全量/远端 CI；R3 复审尚未完成，不把任何失败轮次记为 PASS |
-| 外部发布状态 | [`v2.40.0-ben.3`](https://github.com/Trendymen/opencodex/releases/tag/v2.40.0-ben.3) 已闭环且不可变；`v2.42.0-ben.1` 的 Tag、六成员 atomic push、main CI 与 GitHub Release 均未发生 |
+| 审计日期 | 2026-09-07 |
+| 本轮官方维护基线 | [`v2.45.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.45.0) |
+| 官方 Tag commit | `b0900e556e50984a651a4c72db000e9285a6952a` |
+| 当前上游最新稳定 Release | `v2.45.0`（`b0900e556e50984a651a4c72db000e9285a6952a`），非 draft、非 prerelease，且可从 `upstream/main` 到达 |
+| 当前 `IMPLEMENTATION_HEAD` | `1cbcffdfbabca11fbca6d9f2db6623f1a3c5fa2f`；包含完整 v2.42→v2.45 rebase、冲突收敛、`2.45.0-ben.1` 版本、官方测试布局迁移，以及 Responses relay、code-mode、agent-task cache、GUI recovery kind、本机 update 测试夹具和 R1 审查修复 |
+| Fork 包版本 | `2.45.0-ben.1` |
+| 本轮派生 Tag | `v2.45.0-ben.1`（目标）；最终验证和双审通过前不创建，既有 Fork Tag 保持不可变 |
+| 同步分支 | 本轮固定 `RELEASE_SYNC_REF=refs/heads/sync/v2.45.0`，本地与 origin 均尚不存在；发布时只能以 expected-absent lease 在六成员 atomic push 中创建，禁止 `sync/v2.45.0-ben.*` |
+| 实现修改面 | 固定 `IMPLEMENTATION_HEAD=1cbcffdfbabca11fbca6d9f2db6623f1a3c5fa2f`：相对官方 `v2.45.0` 为 210 个文件、`+36,314/-713`；相对 `POST_REBASE_HEAD` 为 88 个文件、`+772/-1,227` |
+| rebase 固定输入 | `OLD_OFFICIAL=48f8186647d9ffb108d226dcfa91a64225aae2a7`；`NEW_OFFICIAL=b0900e556e50984a651a4c72db000e9285a6952a`；`PRE_REBASE_DEV=ff6e2206edc6a02b929faf22cca23ae9d2dffb03`；`POST_REBASE_HEAD=0c35c76f971ef6e098b0c8635e4f1ac3359b1bd1` |
+| rebase 机械对账 | 官方变更 3,384 路径；旧 Fork net/touched 均为 205；overlap 82；20 次冲突发生落在 19 个唯一路径，形成 64 个唯一 hunk；其中 4 个测试路径因官方 domain rename 成为 non-overlap，67 个 overlap 路径自动合并；主/影 replay 的 stop、stage、hunk、action、commit 与最终 tree 完全一致 |
+| 当前验证 | 实现 SHA `1cbcffdfbabca11fbca6d9f2db6623f1a3c5fa2f` 的默认 4x `bun run prepush` 通过：21,136 pass / 16 skip / 0 fail；六个串行 lane 分别为 81 / 18 / 17 / 1 / 40 / 23 pass；typecheck、GUI lint、privacy scan 与 425 页 docs-site 构建通过。React Doctor exit 0，并报告 8 条官方 GUI 测试文件既有提示。R1 复审、candidate CI 与 main CI 尚未完成 |
+| 外部发布状态 | [`v2.42.0-ben.1`](https://github.com/Trendymen/opencodex/releases/tag/v2.42.0-ben.1) 已闭环且不可变；`v2.45.0-ben.1` 的 Tag、六成员 atomic push、main CI 与 GitHub Release 均未发生 |
 | dev 发布策略 | `dev` 是候选与 rebase 线；发布时以显式 lease 与 `main` 同步到同一 Release commit，发布后可再次自由领先 `main` |
-| 官方基线标记 | 发布前本地与 `origin/upstream-release` 仍为旧官方 `v2.40.0`；本轮发布事务才允许更新到 `v2.42.0` |
-| origin 官方历史 Tag | `v2.33.0` 至 `v2.41.0` 已存在且与 upstream 对应官方 Tag 一致；`v2.42.0` 将作为目标官方 Tag 进入本轮 atomic refset |
+| 官方基线标记 | 发布前本地与 `origin/upstream-release` 仍为旧官方 `v2.42.0`；本轮发布事务才允许更新到 `v2.45.0` |
+| origin 官方历史 Tag | 历史官方 Tag 保持不可变；`v2.45.0` 当前在 origin 缺失，将作为目标官方 Tag 进入本轮 atomic refset |
 
-### v2.42.0-ben.1 上游同步与发布候选
+### v2.45.0-ben.1 上游同步与发布候选
+
+本轮把来源明确的 `dev=ff6e2206edc6a02b929faf22cca23ae9d2dffb03` 从官方
+`v2.42.0` 完整 rebase 到正式稳定版 `v2.45.0`。rebase 在 6 个 stop 发生 20 次内容冲突，
+其中 `src/adapters/openai-responses.ts` 重复出现，合计 19 个唯一冲突路径；
+主流程和隔离 replay 的 stop、stage、hunk、action、commit tree 与最终 tree 完全一致。
+
+官方在这三个版本间增加 Responses 输入与路由保护、`--fast`/priority、Reserve 调度、
+Responses WebSocket 复用、credential-scoped quota、function/namespace tool 修复、流式错误终态、
+原子配置初始化、日志 cursor 以及更严格的 compact/recovery 语义。Fork 采用官方
+`tests/<domain>/` 布局和当前 CI 拓扑，只保留两类 CI 差异：无 `push.paths` 的 exact-SHA
+候选触发，以及完整 suite 运行前的 `prepare-fork-official-base` provenance 检查。旧版本的
+job 名、shard、timeout 和测试根路径不再作为 Fork 自己的重复门禁。
+
+本轮删除旧的 `responses-call-idless-tool-output` Fork 测试；官方当前源码与
+`openai-responses-passthrough`、compaction 和 parser 测试已覆盖缺失或非法 `call_id`，
+官方 marker 为 `[tool output for unknown call]`。其他 61 个 Fork 测试只迁移到官方 domain，
+能力与断言不因目录调整而删除。
+
+rebase 后修复了四组实际差异：裸顶层 upstream error 恢复为 `upstream-error` 并保留状态码；
+bounded JSON replay 重新经过 function schema 校验；agent-task cache restore 恢复后重新计算
+strict backend；code-mode 仅接受带 string `instructions`、唯一 bare unnamespaced
+`custom_tool_call(name=exec)` 与对应输出的精确来源。GUI 增加 `key-401` 恢复标签；本机
+update 测试改用真实 Node 可执行文件，避免 Volta shim 绕过 fake npm。以上都保留官方
+v2.45.0 的终态和测试合同。
+
+首次完整门禁又暴露两个旧 Fork 兼容点：message-only nested error 被 typed-error 分支吞掉原始
+frame，`release-version-line` 也把同基线 `ben.1` 当成低于官方 stable。当前只对显式带
+`type`/`code` 的错误做安全归一化，message-only 形状恢复官方 byte-preserving 路径；版本线
+识别 Fork 后改用 `forkVersionTagError`，普通 stable/preview 继续走官方比较。
+
+R1 审查发现并修复三个 Important：终态后的重复 `[DONE]` 现在只向 legacy/eager 客户端发送一枚；
+code-mode 的 `call_id` 来源索引会把 function、local-shell 与 standalone output 的同 ID 碰撞视为
+歧义，不再改写非 custom exec 输出；bounded JSON 在 nested-exec inspection 仍存活时暂存并提交
+continuation cache，随后才释放协调器。对应 TDD focused 分别为 27、31、91 pass / 0 fail。
+
+同轮也把 rebase 门禁收敛到官方优先：默认保留两名独立 reviewer、逐冲突核心账本、三层 diff
+和精确 SHA；不再因敏感路径或冲突数量自动要求 explorer、五字段附录或第三 reviewer。只有双审
+指出仍未收敛的具体跨边界 path、symbol 或 edge 时才补窄审。replay manifest digest 仅作可选摘要，
+固定输入与 stop/stage/hunk/action/tree 的可复算证据仍为硬门禁。
+
+<!-- v245-rebase:start -->
+official_old=v2.42.0
+official_new=v2.45.0
+old_official_commit=48f8186647d9ffb108d226dcfa91a64225aae2a7
+new_official_commit=b0900e556e50984a651a4c72db000e9285a6952a
+pre_rebase_dev=ff6e2206edc6a02b929faf22cca23ae9d2dffb03
+post_rebase_head=0c35c76f971ef6e098b0c8635e4f1ac3359b1bd1
+candidate_branch=dev
+package_version=2.45.0-ben.1
+fork_tag=v2.45.0-ben.1
+release_sync_ref=refs/heads/sync/v2.45.0
+official_changed_path_count=3384
+old_fork_net_path_count=205
+old_fork_touched_path_count=205
+net_overlap_path_count=82
+overlap_path_count=82
+content_conflict_count=19
+content_hunk_count=64
+non_overlap_conflict_count=4
+non_overlap_conflicts=tests/ci-workflows/bump-dev-version.test.ts,tests/ci-workflows/ci-workflows.test.ts,tests/ci-workflows/release-version-line.test.ts,tests/service/shutdown-launcher.test.ts
+auto_merge_path_count=67
+overlap_paths=.github/workflows/ci.yml,.github/workflows/dev-version-bump.yml,.gitignore,MAINTAINERS.md,bin/ocx.mjs,docs-site/src/content/docs/guides/codex-integration.md,docs-site/src/content/docs/guides/providers.md,docs-site/src/content/docs/reference/configuration/agents.md,docs-site/src/content/docs/reference/configuration/providers.md,docs-site/src/content/docs/reference/configuration/server.md,docs-site/src/content/docs/reference/management-api.md,docs-site/src/content/docs/reference/proxy-formats.md,docs-site/src/content/docs/zh-cn/guides/codex-integration.md,docs-site/src/content/docs/zh-cn/guides/providers.md,docs-site/src/content/docs/zh-cn/guides/sub-agent-surface.md,docs-site/src/content/docs/zh-cn/reference/configuration/providers.md,docs-site/src/content/docs/zh-cn/reference/configuration/server.md,docs-site/src/content/docs/zh-cn/reference/management-api.md,docs-site/src/content/docs/zh-cn/reference/proxy-formats.md,gui/src/i18n/de.ts,gui/src/i18n/en.ts,gui/src/i18n/fr.ts,gui/src/i18n/ja.ts,gui/src/i18n/ko.ts,gui/src/i18n/ru.ts,gui/src/i18n/tr.ts,gui/src/i18n/zh-TW.ts,gui/src/i18n/zh.ts,gui/src/pages/Logs.tsx,package.json,scripts/bump-dev-version.ts,src/adapters/anthropic.ts,src/adapters/command-code.ts,src/adapters/exec-tool-result-normalize.ts,src/adapters/google.ts,src/adapters/kiro.ts,src/adapters/openai-chat.ts,src/adapters/openai-responses.ts,src/cli/help.ts,src/cli/models-runtime.ts,src/cli/models.ts,src/cli/registry.ts,src/codex/catalog/parsing.ts,src/codex/catalog/provider-fetch.ts,src/codex/catalog/sync.ts,src/codex/inject.ts,src/config.ts,src/providers/model-discovery.ts,src/providers/registry.ts,src/responses/custom-tool-compat.ts,src/router.ts,src/server/auth-cors.ts,src/server/chat-native.ts,src/server/management/logs-usage-routes.ts,src/server/management/model-routes.ts,src/server/management/model-rows.ts,src/server/management/provider-routes.ts,src/server/relay-eager.ts,src/server/relay.ts,src/server/responses-undeclared-tool-guard.ts,src/server/responses/agent-task-recovery.ts,src/server/responses/core.ts,src/server/sse-payload-rewrite.ts,src/service.ts,src/types/provider.ts,src/update/notify.ts,src/usage/log.ts,structure/04_transports-and-sidecars.md,tests/api-debug.test.ts,tests/bump-dev-version.test.ts,tests/ci-workflows.test.ts,tests/codex-catalog.test.ts,tests/custom-tool-compat.test.ts,tests/openai-responses-passthrough.test.ts,tests/project-config-warnings.test.ts,tests/release-version-line.test.ts,tests/responses-reasoning-summary-passthrough.test.ts,tests/responses-reasoning-summary-rewrite.test.ts,tests/responses-state.test.ts,tests/server-auth.test.ts,tests/shutdown-launcher.test.ts,tests/update-stop-first.test.ts
+content_conflicts=.github/workflows/ci.yml,.github/workflows/dev-version-bump.yml,MAINTAINERS.md,docs-site/src/content/docs/reference/configuration/agents.md,docs-site/src/content/docs/reference/configuration/server.md,package.json,scripts/bump-dev-version.ts,src/adapters/openai-responses.ts,src/codex/catalog/provider-fetch.ts,src/config.ts,src/server/management/provider-routes.ts,src/server/relay-eager.ts,src/server/relay.ts,src/server/responses/core.ts,tests/ci-workflows/bump-dev-version.test.ts,tests/ci-workflows/ci-workflows.test.ts,tests/ci-workflows/release-version-line.test.ts,tests/service/shutdown-launcher.test.ts,tests/update-stop-first.test.ts
+content_hunk_ids=009723be4e502c4ac7927459715738f22a01ee1eaa6e52d433f1a15b89b628ee,06fbe70ee21af2197aa0d424780512dd57d260dc4aa3897b9bfae36058a6bcea,08d305aeeca3cda1ce748eb71716c629cd476123828cd14cd996566cf58917fc,08d9dacfafa1cf7bb52679da5cf3da928e353e1464bfa6ea603992f27936af46,091cefbf6ca894319419dd6c8bd7ddc1e206335bef513a4b659f16fc02150b29,0e4f72aa251d9ff5156be867cb280b599a5c52b3d5c410cb9e708fee9366be1a,17ad87773b1b0bfa3b8f6bbf20941d815b1cac45692f27a2d21f4641eec6e9fe,17ec006f0528ed27469cda3c0941d6b2a545b7d815e76a92559e665ffbdbdd9f,1ab8342f61c71f7ba4f9c719633959f3e7b1e8269f0940a757f915c56e96fd67,1d29347ba4cc053204442b8a0c8ed77826332c3214ff8781404882fd5586e213,1f43ba0d80784492cab34211919a27e92acc2e5ec135e6266e9b0d541fe3edc3,21451d6f47c522fd12c51e23675ed005b93b4fb704189e61bb3f0e2cb6183f7d,2bc9602d324215a86baea9327642dca76327b4b330304dea77e12f16e42ef7cd,31a1d955da2dc8f7793f201812c2aff6fd53e33a2c15e5a072f819042d3f51c6,445ddec2994e5af2ea2b1a2c06afe2ebce9de2eda08bc36cd9168b54bca5cdad,45727d02af4896e2148ec8bd78957b5aa856e30af78a5d5a4c4f4e01a25dac26,4de33db989e92c92bbcfab19f090a5dd567b71fec06d06f294954f33ea195842,4f7cf1af11d009e93dc27720724b828d2c44e8f15a45a6a32e56b9419979751a,50289b419353f90f5fde983dc294872af29ca5d8857eedf450fc6dc505cb3853,5273ee143c80ed953a9340034ea4757baaafbff05ed33a4f0f3a5c684a018dcc,54984ec667c8242fa8e7ae0d0fa9b996a6c42738bfaabf719b44305a9d56489f,569d39d14dc38ddde3100ecf70d3fd736431c659985991c1558128e72c5fadc8,583c369b7f725b35b99a71ce7ff49196b70100dd58c434fe2b5e4205f650e2bc,5b2139777a538fd298af3b752cb41fb7768bae0fafaaf725dc914824a5d5ab9e,6be91a89d025ad3acc572afa8ba1616e039c83dfc5c398a325275dd5699b7453,6fc674b165b789d9bdf63b480fdb0116a0192a6f6e63835b10f7e1646e671fa5,736f31f82c694108f8df9e8eac6c21eb36446b34f6bb9e1d79cb1f76921dc4a6,73ac0ab003a2ce28e6bff57cac4f131724bf11e2888b9c890f5625eef7bf669c,75967f5e5977de936f8fc6bccf79b6708860d55d65c09e83da490a81de5c8768,82641433b151403d53053223c7d4877cbf39bd4de7ed64cee5030d4abeade3b4,8276a27abf829f038056658bad130b539dae8297956e0b317339ae9abb44c63d,890746f7f5073ed147f6071bbd48a1821c02bf815113c9aafae362473d9490b4,8a8329ad8146ce1cecf86b6f2aed476a46da902b3100ede9cdbff0f55ce34540,90342c2ebf67600a98377a85de3e6e9280c4a2a61a0be2108aef0e7966158d77,91672a46d1bb7a85130e23209c995911afb5ce9ae65a4c77c9faf7b36ef34006,974de5f761595eecd10502984905c5415d1ea1acdbfeea510b33380ce6d56784,99f3014c496c2cfa66f41fa4cdf2159d2d1b17d6c0a5bf389bfbe1567b547aa9,9e7436d067ff13ebf3184ecdcb3e0397b6fc9bd57b72fb04e87ab70215e84d99,a480452c12d67e206490e476ffa4289c978df2d678e594d347cb8224149429ee,a89402737f7443911d87019fefb7d618a5214fe257bb969c36287a979455745f,aac3da18db3ea1d372a489813487d74c52271d768defd1d398b1495097ba5825,ab7e94fe5543bcc11c3aa2da696e0d8cd0d973c9d6ab084301ec592c6994abc6,ac761e9e8f182cb55233de589d0e49bac2601da82bcf7be46cd190886181b5e9,b03547d25a31fca5b88b6669cf023583cc7b95ca244ade896a2773a0ee838fa7,b50d3b0b9746abd32b14424ba7253ba346540db497829dbdd8932290edb6e7ba,b60bf9dca5a73f742c1cf946ef651bf8d723aadf5aa5d23b0099856d3f70612b,ba3d25381fc07f273dd51e8f13c1febeb224527937f6a16d76f346352a3b28e6,c5fee5d8f7eab382bfc84dab7ed020f8b90d2ec5a0892740dc663eb3a31a7647,c79f716b21a5fbc55ee34465bc74400af98ac7f9b29dd3f91cbf701862bd1939,ce642dd707c87ebde2386139e42f23bc92b10af681308baba7b64f43c189131d,ceebeb17e922ecd98f384d535f09cb0c719c50c218d4a9102cce7051c6508b5d,d2cab3b256679dee725a6506b632f72314d034a9f1ed34a07205aaf290f90266,d6a52e3bc3f2941f934c2fdf0a197ec5d6e0ffda733132b93fb0c489e0685587,dbd75654f9e15d9008076b48c7fb48a5d77871ab6a6c4129bfac3d8ac7a73365,e4d095e0f52feb88a1193480cd4ad01d803979cd009b86e1321a75888de354dd,e8854e1b7287a712363355aacb407489e0c9282370356f5bf5a1687d8243819d,edd997a3804fe28cf9613b380dc872c4cdff92815d7deda2fd70614a65793479,eedf843c3b6431af5fea5a28f8cf9a48d9c6f54aff16572cd8de560998a4b015,f4bd120d67464df545c738c8726278a14c170f25df8b956c42bdd5bda5082622,f83d9146f5dab8e813f30c1ae6d465d18ea6a90e6d39736206362d1df9ff5a1c,f939fc96238e3545b73bdf7002cb70cc55653ab4e6aa0d8beb3b87584a97fb17,fa2451f9be6af4d240689f7de2709bc31ad3505bc5a9ff0de1e410e2149d1ab4,fb864984cddb79ac83b01edbf7dce345d7c45ea26c8c5597901743662ba80a78,fbe58bed537c5623f24355f675adb83ed98cc35045873791afa0d09ec41168bf
+shadow_replay=pass-exact-commit-tree-stops-paths-stages-hunks-actions
+implementation_head=1cbcffdfbabca11fbca6d9f2db6623f1a3c5fa2f
+release_commit=docs-only-current-head
+verification=pass-prepush-21136-16skip-0fail;serial-81-18-17-1-40-23;typecheck-pass;gui-lint-pass;privacy-pass;doctor-exit0-8-official-test-findings;docs-build-425-pages
+reviews=re-review-required
+tag_state=pending
+atomic_push=pending
+github_release=pending
+<!-- v245-rebase:end -->
+
+#### v2.45.0 逐冲突核心账本
+
+<!-- v245-conflict-_github_workflows_ci_yml:start -->
+path=.github/workflows/ci.yml
+symbols=push触发、changes、完整suite、Prepare verified Fork official base
+official_change=重组macOS控制lane、Windows分片、runner选择与aggregate门禁
+fork_change=候选提交即使tree不变也要触发exact-SHA CI，并验证官方基线Tag与marker
+resolution=采用官方v2.45拓扑，只删除push.paths并在完整suite接入provenance检查
+official_coverage=官方ci.yml与ci-workflows.test.ts完整负责job、shard、timeout和runner；Fork只保留候选触发与基线证明
+conflict_snapshots=step=2;REBASE_HEAD=f8af3a2adb6d5d06bb7af34720be7d79484c4263;hunk_ids=f83d9146f5dab8e813f30c1ae6d465d18ea6a90e6d39736206362d1df9ff5a1c,569d39d14dc38ddde3100ecf70d3fd736431c659985991c1558128e72c5fadc8,1d29347ba4cc053204442b8a0c8ed77826332c3214ff8781404882fd5586e213,fb864984cddb79ac83b01edbf7dce345d7c45ea26c8c5597901743662ba80a78,d2cab3b256679dee725a6506b632f72314d034a9f1ed34a07205aaf290f90266,091cefbf6ca894319419dd6c8bd7ddc1e206335bef513a4b659f16fc02150b29
+focused_tests=tests/ci-workflows/ci-workflows.test.ts,tests/ci-workflows/fork-ci-official-baseline.test.ts
+residual_risk=pending:远端candidate与main CI尚未运行
+<!-- v245-conflict-_github_workflows_ci_yml:end -->
+
+<!-- v245-conflict-_github_workflows_dev_version_bump_yml:start -->
+path=.github/workflows/dev-version-bump.yml
+symbols=workflow_dispatch、open-bump-pr、版本freeness、Fork ben no-op
+official_change=将普通版本推进整理为受审PR流程并校验目标版本未占用
+fork_change=Fork ben.N发布不强制推进自由开发线dev
+resolution=保留官方pre-move PR和freeness检查，同时让ben.N走显式no-op
+official_coverage=官方覆盖普通stable和preview版本推进；Fork ben版本语义由bump-dev-version与version-policy补充
+conflict_snapshots=step=2;REBASE_HEAD=f8af3a2adb6d5d06bb7af34720be7d79484c4263;hunk_ids=4f7cf1af11d009e93dc27720724b828d2c44e8f15a45a6a32e56b9419979751a,ce642dd707c87ebde2386139e42f23bc92b10af681308baba7b64f43c189131d,b50d3b0b9746abd32b14424ba7253ba346540db497829dbdd8932290edb6e7ba
+focused_tests=tests/ci-workflows/bump-dev-version.test.ts,tests/ci-workflows/ci-workflows.test.ts
+residual_risk=none:workflow静态合同与决策脚本测试通过
+<!-- v245-conflict-_github_workflows_dev_version_bump_yml:end -->
+
+<!-- v245-conflict-MAINTAINERS_md:start -->
+path=MAINTAINERS.md
+symbols=发布职责、dev集成、main与preview保护
+official_change=明确PR-only维护者集成和普通版本发布责任
+fork_change=main保持最新Fork Release，dev作为自由开发和rebase候选线
+resolution=保留官方分支保护，追加Fork ben发布瞬间收敛和发布后dev可继续领先
+official_coverage=官方维护政策不定义Trendymen ben生命周期；Fork发布文档继续负责该差异
+conflict_snapshots=step=2;REBASE_HEAD=f8af3a2adb6d5d06bb7af34720be7d79484c4263;hunk_ids=99f3014c496c2cfa66f41fa4cdf2159d2d1b17d6c0a5bf389bfbe1567b547aa9
+focused_tests=tests/ci-workflows/fork-maintenance-truth.test.ts
+residual_risk=none:纯政策冲突由机器发布合同交叉核对
+<!-- v245-conflict-MAINTAINERS_md:end -->
+
+<!-- v245-conflict-docs_site_src_content_docs_reference_configuration_agents_md:start -->
+path=docs-site/src/content/docs/reference/configuration/agents.md
+symbols=Agent配置字段与示例
+official_change=补充v2.45 Agent配置表面与当前示例
+fork_change=保留Fork Provider和模型配置说明
+resolution=采用官方结构并只保留仍存在的Fork字段说明
+official_coverage=官方覆盖通用Agent配置；Fork自定义字段仍由本仓库文档说明
+conflict_snapshots=step=1;REBASE_HEAD=62cbfa6c11faab6a4db81cbde9627362befda2ae;hunk_ids=974de5f761595eecd10502984905c5415d1ea1acdbfeea510b33380ce6d56784
+focused_tests=n/a:纯文档冲突由最终diff和站点构建核对
+residual_risk=none:docs-site构建425页通过
+<!-- v245-conflict-docs_site_src_content_docs_reference_configuration_agents_md:end -->
+
+<!-- v245-conflict-docs_site_src_content_docs_reference_configuration_server_md:start -->
+path=docs-site/src/content/docs/reference/configuration/server.md
+symbols=Server配置、日志与恢复字段
+official_change=更新服务端配置和恢复语义说明
+fork_change=保留Fork message phase与诊断配置
+resolution=沿用官方章节结构并合入现存Fork字段
+official_coverage=官方未覆盖Fork专属message phase和诊断字段
+conflict_snapshots=step=15;REBASE_HEAD=ff6e2206edc6a02b929faf22cca23ae9d2dffb03;hunk_ids=08d305aeeca3cda1ce748eb71716c629cd476123828cd14cd996566cf58917fc
+focused_tests=n/a:纯文档冲突由最终diff和站点构建核对
+residual_risk=none:docs-site构建425页通过
+<!-- v245-conflict-docs_site_src_content_docs_reference_configuration_server_md:end -->
+
+<!-- v245-conflict-package_json:start -->
+path=package.json
+symbols=version、install:local、scripts、dependencies与overrides
+official_change=升级到2.45.0并更新官方脚本和依赖合同
+fork_change=保留install:local入口与ben版本策略
+resolution=采用官方依赖与脚本表面，保留install:local并设置2.45.0-ben.1
+official_coverage=官方覆盖依赖和普通版本；不提供本地源码安装或ben修订
+conflict_snapshots=step=6;REBASE_HEAD=e1a79222dd68df0e66d0714d4c403a9637ac01df;hunk_ids=91672a46d1bb7a85130e23209c995911afb5ce9ae65a4c77c9faf7b36ef34006
+focused_tests=tests/update/fork-version-policy.test.ts,tests/ci-workflows/install-local.test.ts
+residual_risk=none:实现SHA的默认4x完整prepush已通过
+<!-- v245-conflict-package_json:end -->
+
+<!-- v245-conflict-scripts_bump_dev_version_ts:start -->
+path=scripts/bump-dev-version.ts
+symbols=decideDevVersion、nextDevelopmentVersion、forkBaseVersion
+official_change=统一普通stable与preview的下一开发版本决策
+fork_change=ben.N必须保持dev版本不变
+resolution=先识别并验证ben版本后no-op，普通版本继续调用官方nextDevelopmentVersion
+official_coverage=官方函数覆盖普通版本；Fork分支由forkBaseVersion补充
+conflict_snapshots=step=2;REBASE_HEAD=f8af3a2adb6d5d06bb7af34720be7d79484c4263;hunk_ids=5b2139777a538fd298af3b752cb41fb7768bae0fafaaf725dc914824a5d5ab9e,08d9dacfafa1cf7bb52679da5cf3da928e353e1464bfa6ea603992f27936af46,f939fc96238e3545b73bdf7002cb70cc55653ab4e6aa0d8beb3b87584a97fb17
+focused_tests=tests/ci-workflows/bump-dev-version.test.ts,tests/update/fork-version-policy.test.ts
+residual_risk=none:普通与ben分支均有确定性单测
+<!-- v245-conflict-scripts_bump_dev_version_ts:end -->
+
+<!-- v245-conflict-src_adapters_openai_responses_ts:start -->
+path=src/adapters/openai-responses.ts
+symbols=Responses Lite metadata、function工具修复、GLM/Kimi兼容、code-mode lowering
+official_change=增加function与namespace工具修复、external task输入保真和Responses Lite元数据
+fork_change=保留GLM/Kimi schema兼容、opaque reasoning与Fork code-mode接线
+resolution=两次stop都采用最小union；call-idless旧marker由官方实现接管
+official_coverage=官方完整覆盖call-idless tool output；GLM/Kimi和Fork code-mode差异仍未覆盖
+conflict_snapshots=step=1;REBASE_HEAD=62cbfa6c11faab6a4db81cbde9627362befda2ae;hunk_ids=fbe58bed537c5623f24355f675adb83ed98cc35045873791afa0d09ec41168bf,06fbe70ee21af2197aa0d424780512dd57d260dc4aa3897b9bfae36058a6bcea,edd997a3804fe28cf9613b380dc872c4cdff92815d7deda2fd70614a65793479,ac761e9e8f182cb55233de589d0e49bac2601da82bcf7be46cd190886181b5e9,aac3da18db3ea1d372a489813487d74c52271d768defd1d398b1495097ba5825|step=15;REBASE_HEAD=ff6e2206edc6a02b929faf22cca23ae9d2dffb03;hunk_ids=e4d095e0f52feb88a1193480cd4ad01d803979cd009b86e1321a75888de354dd,21451d6f47c522fd12c51e23675ed005b93b4fb704189e61bb3f0e2cb6183f7d
+focused_tests=tests/responses/openai-responses-passthrough.test.ts,tests/responses/responses-code-mode-exec-output-guard.test.ts,tests/providers/fork-glm-kimi-compat.test.ts
+residual_risk=none:相关Responses与Provider专项测试通过
+<!-- v245-conflict-src_adapters_openai_responses_ts:end -->
+
+<!-- v245-conflict-src_codex_catalog_provider_fetch_ts:start -->
+path=src/codex/catalog/provider-fetch.ts
+symbols=catalog抓取、picker order、routedProgressContractEligible
+official_change=扩展v2.45 catalog同步、display-only顺序与Provider发现
+fork_change=为第三方Responses目标保留routed progress资格
+resolution=采用官方catalog数据流并保留Fork资格字段的计算与传播
+official_coverage=官方覆盖catalog同步，不提供Fork routed progress字段
+conflict_snapshots=step=1;REBASE_HEAD=62cbfa6c11faab6a4db81cbde9627362befda2ae;hunk_ids=583c369b7f725b35b99a71ce7ff49196b70100dd58c434fe2b5e4205f650e2bc,75967f5e5977de936f8fc6bccf79b6708860d55d65c09e83da490a81de5c8768,ab7e94fe5543bcc11c3aa2da696e0d8cd0d973c9d6ab084301ec592c6994abc6
+focused_tests=tests/codex-integration/codex-catalog.test.ts,tests/codex-integration/fork-routed-progress-contract.test.ts
+residual_risk=none:catalog与Fork进度合同测试通过
+<!-- v245-conflict-src_codex_catalog_provider_fetch_ts:end -->
+
+<!-- v245-conflict-src_config_ts:start -->
+path=src/config.ts
+symbols=配置schema、原子初始化、自定义模型、message phase、quota reset
+official_change=加入no-replace原子初始化、quota reset和新配置字段
+fork_change=保留custom models与inferResponsesMessagePhaseModels
+resolution=采用官方初始化和schema演进，只在官方扩展点保留Fork字段
+official_coverage=官方覆盖通用配置生命周期；Fork模型和message phase字段未覆盖
+conflict_snapshots=step=1;REBASE_HEAD=62cbfa6c11faab6a4db81cbde9627362befda2ae;hunk_ids=d6a52e3bc3f2941f934c2fdf0a197ec5d6e0ffda733132b93fb0c489e0685587,ba3d25381fc07f273dd51e8f13c1febeb224527937f6a16d76f346352a3b28e6,90342c2ebf67600a98377a85de3e6e9280c4a2a61a0be2108aef0e7966158d77,736f31f82c694108f8df9e8eac6c21eb36446b34f6bb9e1d79cb1f76921dc4a6,9e7436d067ff13ebf3184ecdcb3e0397b6fc9bd57b72fb04e87ab70215e84d99
+focused_tests=tests/config/fork-custom-model-config-schema.test.ts,tests/config/config-mutation-lock.test.ts,tests/server/fork-provider-message-phase-config.test.ts
+residual_risk=none:配置加载、持久化和Fork字段专项通过
+<!-- v245-conflict-src_config_ts:end -->
+
+<!-- v245-conflict-src_server_management_provider_routes_ts:start -->
+path=src/server/management/provider-routes.ts
+symbols=Provider POST/PATCH、DNS校验、mutation lock、inferResponsesMessagePhaseModels
+official_change=强化原子Provider编辑、字段策略与异步目标校验
+fork_change=普通POST未携带Fork字段时必须保留现值，PATCH null才显式删除
+resolution=复用官方锁和校验，在锁内以最新行重建Fork字段候选
+official_coverage=官方覆盖编辑框架，但不知道Fork message phase字段
+conflict_snapshots=step=12;REBASE_HEAD=6610d726b907d1277c094d8a5c8594f6a041e8d5;hunk_ids=54984ec667c8242fa8e7ae0d0fa9b996a6c42738bfaabf719b44305a9d56489f
+focused_tests=tests/providers/provider-config-batch-management.test.ts,tests/server/management-provider-validation.test.ts,tests/server/fork-provider-message-phase-config.test.ts
+residual_risk=none:POST/PATCH并发与字段保留测试通过
+<!-- v245-conflict-src_server_management_provider_routes_ts:end -->
+
+<!-- v245-conflict-src_server_relay_eager_ts:start -->
+path=src/server/relay-eager.ts
+symbols=onSynthetic、bare upstream error、EOF、client observation与flush
+official_change=修复bare error、clean EOF、502、cancel和tee rewrite终态
+fork_change=保留eager单reader、客户端可见字节观察和Fork终态回调
+resolution=保留官方三态和状态码，裸顶层错误归类为upstream-error并在terminal前flush
+official_coverage=官方覆盖基本relay终态；Fork客户端观察与生命周期钩子仍需保留
+conflict_snapshots=step=1;REBASE_HEAD=62cbfa6c11faab6a4db81cbde9627362befda2ae;hunk_ids=73ac0ab003a2ce28e6bff57cac4f131724bf11e2888b9c890f5625eef7bf669c,b03547d25a31fca5b88b6669cf023583cc7b95ca244ade896a2773a0ee838fa7,a480452c12d67e206490e476ffa4289c978df2d678e594d347cb8224149429ee,dbd75654f9e15d9008076b48c7fb48a5d77871ab6a6c4129bfac3d8ac7a73365,a89402737f7443911d87019fefb7d618a5214fe257bb969c36287a979455745f,009723be4e502c4ac7927459715738f22a01ee1eaa6e52d433f1a15b89b628ee,45727d02af4896e2148ec8bd78957b5aa856e30af78a5d5a4c4f4e01a25dac26,2bc9602d324215a86baea9327642dca76327b4b330304dea77e12f16e42ef7cd
+focused_tests=tests/server/relay-eager.test.ts,tests/server/fork-relay-eager-client-observation.test.ts,tests/server/fork-relay-eager-flush.test.ts
+residual_risk=none:eager与Fork观察专项通过
+<!-- v245-conflict-src_server_relay_eager_ts:end -->
+
+<!-- v245-conflict-src_server_relay_ts:start -->
+path=src/server/relay.ts
+symbols=SseTerminalOutputBoundary、clean EOF、read error与inspection
+official_change=补齐bare error、EOF和失败状态码传播
+fork_change=保留pending clean EOF、read-error frame和inspection记账
+resolution=终态优先级为结构化失败、裸上游错误、adapter_eof incomplete；终态后只接受首枚DONE
+official_coverage=官方覆盖基础终态；Fork inspection和诊断消费者仍未覆盖
+conflict_snapshots=step=1;REBASE_HEAD=62cbfa6c11faab6a4db81cbde9627362befda2ae;hunk_ids=f4bd120d67464df545c738c8726278a14c170f25df8b956c42bdd5bda5082622,6be91a89d025ad3acc572afa8ba1616e039c83dfc5c398a325275dd5699b7453,17ad87773b1b0bfa3b8f6bbf20941d815b1cac45692f27a2d21f4641eec6e9fe,50289b419353f90f5fde983dc294872af29ca5d8857eedf450fc6dc505cb3853,4de33db989e92c92bbcfab19f090a5dd567b71fec06d06f294954f33ea195842,ceebeb17e922ecd98f384d535f09cb0c719c50c218d4a9102cce7051c6508b5d
+focused_tests=tests/responses/sse-failed-tail.test.ts,tests/responses/passthrough-abort.test.ts,tests/responses/sse-inspector-bounds.test.ts,tests/server/consume-for-inspection-cancel.test.ts
+residual_risk=pending:真实第三方Provider与Codex App流式终态尚未动态验收
+<!-- v245-conflict-src_server_relay_ts:end -->
+
+<!-- v245-conflict-src_server_responses_core_ts:start -->
+path=src/server/responses/core.ts
+symbols=Responses主入口、bounded replay、agent-task cache、nested-exec、debug与quota
+official_change=加入tool call_id保护、WS与recovery reason、流式失败和quota终态
+fork_change=保留strict backend恢复、nested-exec授权、diagnostics、message phase和continuation cache
+resolution=合并官方入口顺序；replay重新走schema检查，cache恢复后重算strict backend；bounded nested-exec在inspection存活时提交continuation cache
+official_coverage=官方覆盖通用recovery与终态，不覆盖Fork strict backend、nested-exec和诊断链
+conflict_snapshots=step=1;REBASE_HEAD=62cbfa6c11faab6a4db81cbde9627362befda2ae;hunk_ids=8276a27abf829f038056658bad130b539dae8297956e0b317339ae9abb44c63d,31a1d955da2dc8f7793f201812c2aff6fd53e33a2c15e5a072f819042d3f51c6,5273ee143c80ed953a9340034ea4757baaafbff05ed33a4f0f3a5c684a018dcc,890746f7f5073ed147f6071bbd48a1821c02bf815113c9aafae362473d9490b4,6fc674b165b789d9bdf63b480fdb0116a0192a6f6e63835b10f7e1646e671fa5,0e4f72aa251d9ff5156be867cb280b599a5c52b3d5c410cb9e708fee9366be1a,c5fee5d8f7eab382bfc84dab7ed020f8b90d2ec5a0892740dc663eb3a31a7647,1ab8342f61c71f7ba4f9c719633959f3e7b1e8269f0940a757f915c56e96fd67,82641433b151403d53053223c7d4877cbf39bd4de7ed64cee5030d4abeade3b4,fa2451f9be6af4d240689f7de2709bc31ad3505bc5a9ff0de1e410e2149d1ab4,1f43ba0d80784492cab34211919a27e92acc2e5ec135e6266e9b0d541fe3edc3,c79f716b21a5fbc55ee34465bc74400af98ac7f9b29dd3f91cbf701862bd1939,e8854e1b7287a712363355aacb407489e0c9282370356f5bf5a1687d8243819d,8a8329ad8146ce1cecf86b6f2aed476a46da902b3100ede9cdbff0f55ce34540
+focused_tests=tests/server/agent-task-recovery-routed-backend.test.ts,tests/responses/nested-exec-repair.test.ts,tests/responses/responses-undeclared-tool-guard.test.ts,tests/responses/openai-responses-passthrough.test.ts
+residual_risk=pending:双审尚未完成
+<!-- v245-conflict-src_server_responses_core_ts:end -->
+
+<!-- v245-conflict-tests_ci_workflows_bump_dev_version_test_ts:start -->
+path=tests/ci-workflows/bump-dev-version.test.ts
+symbols=普通版本推进与ben no-op用例
+official_change=更新v2.45版本推进和workflow输入预期
+fork_change=保留ben.N不推进dev的回归
+resolution=采用官方用例结构并追加Fork版本分支
+official_coverage=官方测试覆盖普通版本，不覆盖ben后缀
+conflict_snapshots=step=3;REBASE_HEAD=e0701f787f5a2b61fd9075f9f54786a90045c407;hunk_ids=445ddec2994e5af2ea2b1a2c06afe2ebce9de2eda08bc36cd9168b54bca5cdad,eedf843c3b6431af5fea5a28f8cf9a48d9c6f54aff16572cd8de560998a4b015
+focused_tests=tests/ci-workflows/bump-dev-version.test.ts
+residual_risk=none:目标文件通过
+<!-- v245-conflict-tests_ci_workflows_bump_dev_version_test_ts:end -->
+
+<!-- v245-conflict-tests_ci_workflows_ci_workflows_test_ts:start -->
+path=tests/ci-workflows/ci-workflows.test.ts
+symbols=官方CI拓扑、action pin、Fork provenance与push触发
+official_change=固定v2.45平台lane、分片、timeout和aggregate
+fork_change=原先重复固定官方拓扑，并额外要求push上GUI、npm和skip判定
+resolution=保留官方测试合同；Fork断言只检查安全扫描、无push.paths和动态provenance接线
+official_coverage=官方完整覆盖自身拓扑；Fork只补候选触发和基线证明
+conflict_snapshots=step=3;REBASE_HEAD=e0701f787f5a2b61fd9075f9f54786a90045c407;hunk_ids=b60bf9dca5a73f742c1cf946ef651bf8d723aadf5aa5d23b0099856d3f70612b
+focused_tests=tests/ci-workflows/ci-workflows.test.ts,tests/ci-workflows/fork-ci-official-baseline.test.ts
+residual_risk=pending:远端Actions尚未运行
+<!-- v245-conflict-tests_ci_workflows_ci_workflows_test_ts:end -->
+
+<!-- v245-conflict-tests_ci_workflows_release_version_line_test_ts:start -->
+path=tests/ci-workflows/release-version-line.test.ts
+symbols=官方Tag、package版本线与Fork ben版本
+official_change=调整当前release版本线和Tag读取前提
+fork_change=允许X.Y.Z-ben.N映射到同基线官方Tag
+resolution=保留官方stable/preview断言并让Fork测试走version-policy
+official_coverage=官方不识别Trendymen ben版本；Fork gate继续补充
+conflict_snapshots=step=3;REBASE_HEAD=e0701f787f5a2b61fd9075f9f54786a90045c407;hunk_ids=none
+focused_tests=tests/ci-workflows/release-version-line.test.ts,tests/update/fork-version-policy.test.ts
+residual_risk=none:版本策略focused通过
+<!-- v245-conflict-tests_ci_workflows_release_version_line_test_ts:end -->
+
+<!-- v245-conflict-tests_service_shutdown_launcher_test_ts:start -->
+path=tests/service/shutdown-launcher.test.ts
+symbols=service stop、launcher、pending transaction恢复
+official_change=更新服务生命周期和shutdown launcher行为
+fork_change=保留安装事务中止后的恢复与平台wrapper断言
+resolution=采用官方service fixture并保留Fork恢复场景
+official_coverage=官方覆盖普通shutdown；Fork安装事务恢复仍未覆盖
+conflict_snapshots=step=3;REBASE_HEAD=e0701f787f5a2b61fd9075f9f54786a90045c407;hunk_ids=17ec006f0528ed27469cda3c0941d6b2a545b7d815e76a92559e665ffbdbdd9f
+focused_tests=tests/service/shutdown-launcher.test.ts,tests/update/update-stop-first.test.ts
+residual_risk=none:shutdown与update组合测试通过
+<!-- v245-conflict-tests_service_shutdown_launcher_test_ts:end -->
+
+<!-- v245-conflict-tests_update_stop_first_test_ts:start -->
+path=tests/update-stop-first.test.ts
+symbols=npm launcher update失败后的stop/restart夹具
+official_change=更新update stop-first和launcher回归
+fork_change=测试用fake npm必须在本机Volta环境仍被命中
+resolution=迁移到tests/update并探测process.execPath，避免Volta重排PATH调用真实npm
+official_coverage=生产更新行为由官方与Fork事务测试覆盖；本项只修复本机测试隔离
+conflict_snapshots=step=3;REBASE_HEAD=e0701f787f5a2b61fd9075f9f54786a90045c407;hunk_ids=none
+focused_tests=tests/update/update-stop-first.test.ts
+residual_risk=none:23 pass / 0 fail且未修改生产更新逻辑
+<!-- v245-conflict-tests_update_stop_first_test_ts:end -->
+
+### 历史 v2.42.0-ben.1 上游同步与发布候选
 
 本轮把已提交且来源明确的 `dev=1aae7085e32e86e7043d0280b0097119a1e1e726`
 从官方 `v2.40.0` 完整 rebase 到正式稳定版 `v2.42.0`。官方两版主要新增 Cursor
@@ -902,7 +1207,11 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 ### 火山方舟 Agent Plan GLM/Kimi 与智谱 GLM Responses 兼容
 
-- **v2.42.0 当前复核：** 官方 `v2.42.0:src/adapters/openai-responses.ts`（blob
+- **v2.45.0 当前复核：** 官方新增 function/namespace tool、external task 与 Responses
+  Lite 修复，但仍未提供 Ark/BigModel 专用 schema lowering。当前差异位于
+  `src/fork/glm-kimi-compat.ts`，回归见
+  `tests/providers/fork-volcengine-empty-assistant-content.test.ts`。
+- **v2.42.0 上一轮复核（历史）：** 官方 `v2.42.0:src/adapters/openai-responses.ts`（blob
   `d9ec1fb01ab8dd36c99179c1fd1f12073ad84654`）新增 unknown usage/rawUsage 等能力，但仍未覆盖
   Fork 的方舟/智谱 schema lowering、trailing-user 与空 assistant 兼容。当前
   `src/fork/glm-kimi-compat.ts`（blob `64ce11986a7fc2391c7b8965256e55c16a2bfa72`）及
@@ -927,10 +1236,10 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   非文本 part 和其他有效字段，避免把空 assistant 重放给上游。
 - **代码：** `src/fork/glm-kimi-compat.ts`（blob `64ce11986a7fc2391c7b8965256e55c16a2bfa72`）。
   最小接线位于 `src/adapters/openai-responses.ts` 和 `src/server/responses/core.ts`。
-- **测试：** `tests/fork-glm-kimi-compat.test.ts`、
-  `tests/fork-kimi-schema-compiler.test.ts`、
-  `tests/fork-zhipu-glm-schema-lowering.test.ts`；
-  `tests/fork-volcengine-empty-assistant-content.test.ts`（blob `95cfba92ac6e3ef6ee5fe27b62519f5a144b7862`）
+- **测试：** `tests/providers/fork-glm-kimi-compat.test.ts`、
+  `tests/providers/fork-kimi-schema-compiler.test.ts`、
+  `tests/providers/fork-zhipu-glm-schema-lowering.test.ts`；
+  `tests/providers/fork-volcengine-empty-assistant-content.test.ts`（blob `95cfba92ac6e3ef6ee5fe27b62519f5a144b7862`）
   固定空 assistant 清理、字段保真与非目标输入不变。39 工具测试是与已观察数量一致的
   合成目录，不等同于真实 Codex App fixture；智谱测试另覆盖顶层工具和 Responses
   Lite `additional_tools`。
@@ -955,10 +1264,10 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   行重建并保存，避免期间完成的 `PATCH null` 被旧快照复活；显式删除仍只接受 `PATCH null`。
 - **代码：** `src/fork/responses-message-phase.ts`，以及 config、management API、
   eager relay、SSE rewrite 和 Responses core 的窄接线。
-- **测试：** `tests/responses-message-phase-config.test.ts`、
-  `tests/responses-message-phase-passthrough.test.ts`、
-  `tests/responses-message-phase-rewrite.test.ts`、
-  `tests/fork-provider-message-phase-config.test.ts`。
+- **测试：** `tests/responses/responses-message-phase-config.test.ts`、
+  `tests/responses/responses-message-phase-passthrough.test.ts`、
+  `tests/responses/responses-message-phase-rewrite.test.ts`、
+  `tests/server/fork-provider-message-phase-config.test.ts`。
 - **官方对比：** 官方 bridge 已对 adapter event 做 phase 推断，但原生 Responses
   passthrough 没有可配置的 phase inference；不能因名称相似删除 Fork 状态机。
 
@@ -986,7 +1295,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `src/codex/catalog/parsing.ts`、`src/codex/catalog/provider-fetch.ts`、
   `src/codex/catalog/aggregation.ts`、`src/codex/catalog/sync.ts` 和
   `src/fork/outbound-debug.ts`。
-- **测试：** `tests/fork-routed-progress-contract.test.ts` 覆盖转换型 adapter、模板/无模板
+- **测试：** `tests/codex-integration/fork-routed-progress-contract.test.ts` 覆盖转换型 adapter、模板/无模板
   catalog、Responses wire 幂等、ChatGPT/public OpenAI 不变和脱敏 debug 证据。
 - **官方对比：** 官方 `v2.35.0` 已有 non-OpenAI tool-catalog nudge 与 routed identity
   修复，但没有普通 assistant 进度契约、第三方 Responses wire 注入或对应 debug 证明。
@@ -1005,8 +1314,8 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `src/responses/nested-exec-adapter-events.ts`、
   `src/server/responses-nested-exec-call-repair.ts`、
   `src/chat/nested-exec-eligibility.ts`，以及 `src/server/responses/core.ts` 的窄接线。
-- **测试：** `tests/nested-exec-eligibility.test.ts`、
-  `tests/nested-exec-repair-context.test.ts`、`tests/nested-exec-repair.test.ts`。
+- **测试：** `tests/responses/nested-exec-eligibility.test.ts`、
+  `tests/responses/nested-exec-repair-context.test.ts`、`tests/responses/nested-exec-repair.test.ts`。
 - **官方对比：** 官方提交 `cb9bb9b7634640f18568207322d386a059f6c9ac` 已通过
   `src/responses/code-mode-helper-compat.ts` 和
   `src/server/responses-custom-tool-repair.ts` 把裸 `exec_command` / `apply_patch`
@@ -1015,7 +1324,10 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 ### Ark quota 在 Codex Desktop 中的展示
 
-- **v2.42.0 当前复核：** 官方 `v2.42.0:src/adapters/openai-responses.ts`（blob
+- **v2.45.0 当前复核：** 官方新增 credential-scoped quota、reset 检测与自动激活，但没有
+  Ark 客户端专用错误投影。当前实现仍在 `src/fork/ark-quota-display.ts`，回归见
+  `tests/providers/fork-ark-weekly-quota.test.ts`。
+- **v2.42.0 上一轮复核（历史）：** 官方 `v2.42.0:src/adapters/openai-responses.ts`（blob
   `d9ec1fb01ab8dd36c99179c1fd1f12073ad84654`）的通用错误与 usage 保真仍未替代 Fork 的
   方舟配额客户端展示。当前 `src/fork/ark-quota-display.ts`（blob
   `a80fd68a576013788bce100179c5982e2adb63ba`）和 `tests/fork-ark-weekly-quota.test.ts`（blob
@@ -1032,16 +1344,20 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 - **代码：** `src/fork/ark-quota-display.ts`（blob `a80fd68a576013788bce100179c5982e2adb63ba`），以及
   `src/server/responses/passthrough-error.ts` / `src/server/responses/core.ts` 的非 2xx
   边界。
-- **测试：** `tests/fork-ark-weekly-quota.test.ts`（blob `52e4b0b0d49438ffa5c14a12cba1c4f5eb704d35`）
+- **测试：** `tests/providers/fork-ark-weekly-quota.test.ts`（blob `52e4b0b0d49438ffa5c14a12cba1c4f5eb704d35`）
   覆盖三种正例、相邻词汇、reset/timezone、malformed body 与 Provider scope；既有
-  `tests/fork-latest-compat.test.ts`、`tests/fork-ark-quota-error.test.ts` 保留相邻回归。
+  `tests/providers/fork-latest-compat.test.ts`、`tests/server/fork-ark-quota-error.test.ts` 保留相邻回归。
 - **官方对比：** 官方有通用 passthrough error / Retry-After pipeline，但没有 Ark
-  专用客户端展示；本轮基线已更新为 `v2.39.0`。真实 weekly downstream 展示尚未执行，
+  专用客户端展示；本轮基线为 `v2.45.0`。真实 weekly downstream 展示尚未执行，
   focused test 不替代 live Provider/Codex App 证据。
 
 ### 自定义模型配置、工具模式与公开投影
 
-- **v2.42.0 当前复核：** 官方 `v2.42.0:src/config.ts`（blob
+- **v2.45.0 当前复核：** 官方增加原子配置初始化和更多 Provider 配置，但没有完整覆盖
+  Fork custom models 与 stored tool mode。当前实现位于 `src/config/custom-models.ts`、
+  `src/server/management/model-routes.ts`，回归见
+  `tests/config/fork-custom-model-config-schema.test.ts`。
+- **v2.42.0 上一轮复核（历史）：** 官方 `v2.42.0:src/config.ts`（blob
   `6cd87ef29f0e06a0d0980fab26b20080243975e3`）加入 Provider editor 等配置能力，但没有完整覆盖
   Fork customModels 与 stored tool mode。当前 `src/config/custom-models.ts`（blob
   `12a84dd14a674eda773a83a31f9923c740a0e213`）、`src/config.ts`（blob
@@ -1075,8 +1391,8 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `src/server/management/model-routes.ts`（blob `70cd881de52bcfe99cf56ce44509872445b92fd5`）。
   static roster 位于 `src/providers/known-model-ids.ts`，router、catalog 与 CLI 仅保留必要
   窄接线。
-- **测试：** `tests/fork-custom-model-config-schema.test.ts`（blob `269586b983374d4bd88c678a074ec975a3152bd7`）；
-  `tests/fork-custom-model-tool-mode-contract.test.ts`（blob `a69dc95ff93c61e4fa4be4be1ec701f87797dfb8`）。
+- **测试：** `tests/config/fork-custom-model-config-schema.test.ts`（blob `269586b983374d4bd88c678a074ec975a3152bd7`）；
+  `tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts`（blob `a69dc95ff93c61e4fa4be4be1ec701f87797dfb8`）。
 - **官方对比：** 官方 `v2.39.0` 没有上述 Fork `customModels` schema、stored tool-mode
   round trip 与 opaque-field public projection；因此保留新增窄模块和最小接线。
 
@@ -1087,7 +1403,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   是字符串：字符串原样保留，text/refusal 按顺序换行拼接，其他结构回退为 JSON。
 - **代码：** `src/fork/custom-tool-output.ts`、
   `src/responses/custom-tool-compat.ts`。
-- **测试：** `tests/custom-tool-compat.test.ts`、`tests/fork-latest-compat.test.ts`。
+- **测试：** `tests/responses/custom-tool-compat.test.ts`、`tests/providers/fork-latest-compat.test.ts`。
 - **官方对比：** 官方已改 item type，但可能把 Codex content-part 数组继续送入
   string-only function output wire contract。
 
@@ -1123,10 +1439,10 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `src/fork/glm-kimi-compat.ts` 的诊断部分，以及 `src/fork/inbound-response-debug.ts`
   与 `src/server/responses-terminal-repair.ts` 的 raw tap 接线；授权表面还包括
   `src/lib/debug-settings.ts`、`src/cli/debug.ts`、management API 与 GUI Debug 页面。
-- **测试：** `tests/fork-debug-persistence.test.ts`、
-  `tests/fork-kimi-schema-compiler.test.ts`、`tests/fork-inbound-response-debug.test.ts`、
-  `tests/fork-provider-debug-safety.test.ts` 与对应 CLI/API/GUI focused 测试。
-- `ben.7` 增补 `tests/fork-relay-eager-client-observation.test.ts`。
+- **测试：** `tests/server/fork-debug-persistence.test.ts`、
+  `tests/providers/fork-kimi-schema-compiler.test.ts`、`tests/server/fork-inbound-response-debug.test.ts`、
+  `tests/server/fork-provider-debug-safety.test.ts` 与对应 CLI/API/GUI focused 测试。
+- `ben.7` 增补 `tests/server/fork-relay-eager-client-observation.test.ts`。
 - **官方对比：** 官方有 `debugProviderDiagnostic` 和内存 ring buffer，但没有 Fork 的
   durable log、outbound shape 摘要或入站结构化摘要落盘。
 
@@ -1151,15 +1467,15 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   summary index。terminal 后迟到 raw/content close 被抑制，空 part 不伪造 `**Thinking**`。SSE `event:` 字段与
   重写后 JSON `type` 保持一致；terminal summary 继续保留原始 `reasoning_text`、
   `reasoning.content` 与 opaque replay state。
-- **测试：** `tests/deepseek-reasoning-replay.test.ts`、
-  `tests/responses-reasoning-summary-passthrough.test.ts`、
-  `tests/responses-reasoning-summary-rewrite.test.ts`、
-  `tests/responses-original-field-preservation.test.ts`、
-  `tests/responses-reasoning-summary-lifecycle.test.ts`、
-  `tests/responses-reasoning-summary-display-projection.test.ts`、
-  `tests/responses-reasoning-summary-block-lifecycle.test.ts`、
-  `tests/responses-reasoning-summary-block-edge-lifecycle.test.ts`、
-  `tests/responses-reasoning-summary-block-terminal-failure.test.ts`（blob
+- **测试：** `tests/providers/deepseek-reasoning-replay.test.ts`、
+  `tests/responses/responses-reasoning-summary-passthrough.test.ts`、
+  `tests/responses/responses-reasoning-summary-rewrite.test.ts`、
+  `tests/responses/responses-original-field-preservation.test.ts`、
+  `tests/responses/responses-reasoning-summary-lifecycle.test.ts`、
+  `tests/responses/responses-reasoning-summary-display-projection.test.ts`、
+  `tests/responses/responses-reasoning-summary-block-lifecycle.test.ts`、
+  `tests/responses/responses-reasoning-summary-block-edge-lifecycle.test.ts`、
+  `tests/responses/responses-reasoning-summary-block-terminal-failure.test.ts`（blob
   `08e1b5f4cf3406f057a90a6de5af4fbc34fbff00`）。
 - **官方对比：** 官方已有普通 reasoning text → summary 与若干 replay 清理；Fork
   继续保留 opaque terminal、跨 Provider raw-backed blob 删除，以及上述多 part/EOF/稀疏终态
@@ -1173,12 +1489,14 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   message phase barrier 实现 `flush`。普通 pull reader error 只 dispose；nested-exec
   barrier 当前只有 `dispose`，teardown 时 reject/release retained state，不承诺 flush。
 - **代码：** `src/server/sse-payload-rewrite.ts`、`src/server/relay-eager.ts`。
-- **测试：** `tests/sse-payload-rewrite.test.ts`、`tests/relay-eager.test.ts`。
+- **测试：** `tests/responses/sse-payload-rewrite.test.ts`、`tests/server/relay-eager.test.ts`。
 - **官方对比：** 官方稳定 Tag 没有 block rewrite flush contract 或 compose propagation。
 
 ### Standalone web search 能力注入
 
-- **v2.42.0 当前复核：** `v2.42.0:src/codex/inject.ts`（blob
+- **v2.45.0 当前复核：** 官方继续扩展 Codex 注入与 catalog，但没有提供 Fork 的
+  `supports_standalone_web_search` 开关；当前差异仍在 `src/codex/inject.ts`。
+- **v2.42.0 上一轮复核（历史）：** `v2.42.0:src/codex/inject.ts`（blob
   `cb8e1434b39dc03867734ed9683b76ee37c4ee89`）新增 Realtime WebSocket 配置注入；当前实现的
   `src/codex/inject.ts` blob 为 `e9c84ee64a529b841e8af1ae50eb414de8d4834d`，同时保留 Fork
   standalone web search 注入，两条能力在同一高频入口最小并存。
@@ -1198,12 +1516,15 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `72be57878470077e9b3c434726aea329e007d79c`）同一 `buildProviderTableBlock` 只接受
   `supportsWebsockets`/auth/hostname 参数，已核对不含
   `supports_standalone_web_search`；Fork injection path 是上述 `src/codex/inject.ts`，
-  现有 `tests/codex-inject-integration.test.ts` 覆盖 provider-table 注入的相邻契约，
+  现有 `tests/codex-integration/codex-inject-integration.test.ts` 覆盖 provider-table 注入的相邻契约，
   但尚无此 capability 的专门测试。
 
 ### 智谱 BigModel Codex 模型发现
 
-- **v2.42.0 当前复核：** `v2.42.0:src/providers/model-discovery.ts`（blob
+- **v2.45.0 当前复核：** 官方 catalog 演进没有加入大陆 BigModel Codex 发现分支；当前
+  实现位于 `src/providers/model-discovery.ts`，回归见
+  `tests/providers/zhipu-bigmodel-codex-provider.test.ts`。
+- **v2.42.0 上一轮复核（历史）：** `v2.42.0:src/providers/model-discovery.ts`（blob
   `ada0bd2aecc196e003d0b1720c96d864e4793dbc`）仍未包含 Fork 的 BigModel Codex 发现分支；当前
   `src/providers/model-discovery.ts`（blob `85ea01d624b128d56400f4b699b95b32517de639`）与
   `tests/zhipu-bigmodel-codex-provider.test.ts`（blob
@@ -1215,7 +1536,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `/`）时，把大陆官方 Codex `{ models: [{ slug }] }` 映射成内部 `id`。其他 Provider
   继续使用默认 `data[].id`。没有人为 64 条限制，仍受全局 2,000 条安全上限保护。
 - **代码：** `src/providers/model-discovery.ts`、`src/providers/registry.ts`。
-- **测试：** `tests/zhipu-bigmodel-codex-provider.test.ts`。定向/registry 测试、typecheck、
+- **测试：** `tests/providers/zhipu-bigmodel-codex-provider.test.ts`。定向/registry 测试、typecheck、
   完整套件与真实 discovery/Responses 回放均通过；提交为 `c9446e0b5`。
 - **官方对比：** `v2.39.0:src/providers/model-discovery.ts`（blob
   `ada0bd2aecc196e003d0b1720c96d864e4793dbc`）只以默认 `data[]`/`id` envelope 取值，
@@ -1229,7 +1550,12 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 ### 原生加密子任务恢复接力
 
-- **v2.42.0 当前复核：** `v2.42.0:src/server/responses/agent-task-recovery.ts`（blob
+- **v2.45.0 当前复核：** 官方 `src/server/responses/agent-task-recovery.ts` 已提供 bounded
+  recovery reason，并由 core 在不泄露 payload 的前提下返回；官方 `v2.45.0` 仍只覆盖
+  turn termination 与通用 recovery admission。Fork 行为仍是 strict non-Fernet envelope
+  recognition、admission、routed trigger 与 fail-closed forwarding。
+
+- **v2.42.0 上一轮复核（历史）：** `v2.42.0:src/server/responses/agent-task-recovery.ts`（blob
   `e1c35932ff4610251364078bbcb966f97465157b`）。官方 `v2.42.0` 仍只覆盖 turn termination 与通用
   recovery admission；Fork 行为：strict non-Fernet envelope recognition、admission、routed trigger
   与 fail-closed forwarding 继续由 Fork 窄模块与 `responses/core.ts` 接线承担。
@@ -1262,7 +1588,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `src/server/responses/encrypted-payload.ts`、`src/server/responses/core.ts`、
   `src/usage/log.ts`，以及 GUI/i18n/双语配置文档接线。
 - **测试与审查：** 提交为 `aea2ff119`；`ben.6` 修订补充
-  `tests/agent-task-recovery-routed-backend.test.ts`（提交 `1bf175bf2`）。
+  `tests/server/agent-task-recovery-routed-backend.test.ts`（提交 `1bf175bf2`）。
 - **已知缺口：** 尚未使用当前真实 minted ChatGPT backend ciphertext 与 live recovery
   SSE 做隔离验收；当前自动化使用合成 ciphertext、mock fetch/SSE 与 fake JWT。
 
@@ -1270,7 +1596,10 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 ### 本地源码包安装
 
-- **v2.42.0 当前复核：** 官方 `v2.42.0:package.json`（blob
+- **v2.45.0 当前复核：** 官方仍没有本地源码安装事务。当前入口为
+  `scripts/install-local-vendor.ts`、`scripts/install-local.ts`，回归见
+  `tests/ci-workflows/fork-install-local-staging.test.ts`。
+- **v2.42.0 上一轮复核（历史）：** 官方 `v2.42.0:package.json`（blob
   `6c7c80d9e471282778d67df6c7bacfe511278cdb`）仍没有 `install:local`。当前
   `scripts/install-local-vendor.ts`（blob `6eccd1c64fd823e9189d19f89169b4ffb8d15a93`）、
   `scripts/install-local.ts`（blob `58326e840ea6c6608ae4658efff536533cbd08d6`）、
@@ -1335,35 +1664,38 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   当前 `scripts/install-local.ts`（blob `58326e840ea6c6608ae4658efff536533cbd08d6`）与
   `src/update/transactional-install.mjs`（blob `8aa19beb7d5ed685615990592482250cb232d8c2`）；
   Windows wrapper 接线位于 `src/service.ts`（blob `55734675faa9e111fc4a9d75b3fb159bc382fcd6`）。
-- **测试：** `tests/fork-install-local-staging.test.ts`（blob `2ab483349ae32e81b3dacc64a222dce3c18f69c5`）
+- **测试：** `tests/ci-workflows/fork-install-local-staging.test.ts`（blob `2ab483349ae32e81b3dacc64a222dce3c18f69c5`）
   覆盖 staging、present/missing optional、offline closure、forged/empty/malformed pack JSON、
   integrity/shasum/file rows、tarball escape/symlink、installed identity/main/bin/exports/files、
   link/cycle/special-file containment、默认 large-junk Bun probe 与 cleanup/error ordering；
-  `tests/fork-install-local-manifest-lifecycle.test.ts`（blob `aa9580f645df7bf27ed71062cb6eb2265d3c2274`）
+  `tests/ci-workflows/fork-install-local-manifest-lifecycle.test.ts`（blob `aa9580f645df7bf27ed71062cb6eb2265d3c2274`）
   固定 pre-build snapshot、post-prepare read failure cleanup、lifecycle admission cleanup 及
   replace 成功/失败后 recovery-first 顺序；
-  `tests/fork-install-local-guard-recovery.test.ts`（blob `05d24eb1b37ab7bf70c5a52d3adf261bba51c50e`）
+  `tests/ci-workflows/fork-install-local-guard-recovery.test.ts`（blob `05d24eb1b37ab7bf70c5a52d3adf261bba51c50e`）
   单独固定 stop verification guard failure 的 `stop -> verify -> restart -> ready` 顺序、
-  replacement 零调用、recovery 双错误顺序与 stage cleanup exactly once；`tests/install-local-vendor.test.ts`、
-  `tests/install-local.test.ts` 保留相邻生命周期回归；
-  `tests/fork-install-local-transaction.test.ts` 覆盖 local tarball/offline argv、stage/live
+  replacement 零调用、recovery 双错误顺序与 stage cleanup exactly once；`tests/ci-workflows/install-local-vendor.test.ts`、
+  `tests/ci-workflows/install-local.test.ts` 保留相邻生命周期回归；
+  `tests/ci-workflows/fork-install-local-transaction.test.ts` 覆盖 local tarball/offline argv、stage/live
   verifier、post-swap rollback 与双故障不 restart；
-  `tests/fork-install-local-deferred-transaction.test.ts`（blob
+  `tests/ci-workflows/fork-install-local-deferred-transaction.test.ts`（blob
   `45d705d1f30e2e295aaf8735e4bae227ea32a3c2`）覆盖 marker-before-rename、active/dead owner、
   deferred commit/rollback、配置/restart/readiness 失败、marker race/ownership、越界/symlink、
-  scope 枚举和 recovery-unsafe 传播；`tests/fork-windows-service-pending-transaction.test.ts`
+  scope 枚举和 recovery-unsafe 传播；`tests/windows/fork-windows-service-pending-transaction.test.ts`
   （blob `51a84ad3d0b40792b0ddfdd7959b11fe6e340865`）固定 Windows marker-owned restore 脚本表面；
-  `tests/fork-install-local-transaction-hardening.test.ts`（blob
+  `tests/ci-workflows/fork-install-local-transaction-hardening.test.ts`（blob
   `1948372da698b2260cce3f537751ff6625dcc8be`）覆盖 canonical handle failure、recovery marker
   no-follow/0600、backup identity 替换、strict rollback verification、quarantine 双树保留、
   staged object replacement、root/artifact symlink、canonical escape、boot restore 与 Windows path casing。
   这些仍是 isolated/unit/static 证据；本轮未执行真实全局替换、真实 service stop/restart 恢复或
   Windows PowerShell/junction 动态运行。
-- **官方对比：** 官方 `v2.39.0` 与当前 `v2.42.0` 均没有同等本地源码安装器。
+- **官方对比：** 官方 `v2.45.0` 仍没有同等本地源码安装器。
 
 ### GUI Logs/Debug 恢复标签与 sidecar 契约
 
-- **v2.42.0 当前复核：** 官方 `v2.42.0:gui/src/pages/Logs.tsx`（blob
+- **v2.45.0 当前复核：** 官方增加 epoch/query/window-hash 日志 cursor；Fork 继续只在
+  `gui/src/pages/Logs.tsx` 与 `gui/src/i18n/zh.ts` 等 9 个 locale 保留 recovery label，
+  `gui/src/pages/Debug.tsx` 继续采用官方实现。本轮新增 `key-401` 映射。
+- **v2.42.0 上一轮复核（历史）：** 官方 `v2.42.0:gui/src/pages/Logs.tsx`（blob
   `0bbe286a887d6f811c9243d53e544cf4928700cd`）与
   `v2.42.0:gui/src/pages/Debug.tsx`（blob `05207fbb9097dc665c94fdef24d665782ac2f9ce`）已纳入新功能，
   Fork 当前仍在 `gui/src/pages/Logs.tsx`（blob `6152ade45c77fd127fc118225b252224efaf0f27`）和
@@ -1425,7 +1757,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   才跳过。Patch、校验或 rename 失败时保留原 plist 并清理临时文件。Launchctl 使用
   现有失败判定，同时检查 exit 0 但 stderr 为 `Load failed` 的情况。
 - **代码与测试：** 只修改 `scripts/install-local.ts`，新增
-  `tests/install-local.test.ts`；专项 14 pass，连同既有安装测试共 31 pass；提交为
+  `tests/ci-workflows/install-local.test.ts`；专项 14 pass，连同既有安装测试共 31 pass；提交为
   `49763c34c`。
 - **跨平台修正：** `ffdb37774` 把 restart 环境用例改为显式 `darwin`，与实现的显式
   platform 分支语义一致；Linux CI 对应失败已闭环，实现行为未改。
@@ -1434,7 +1766,10 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 ### `ben` Fork 修订版本策略
 
-- **v2.42.0 当前复核：** 官方 `v2.42.0:package.json`（blob
+- **v2.45.0 当前复核：** 官方 `package.json` 仍只使用正式版本号；
+  `src/fork/version-policy.mjs` 与 `tests/update/fork-version-policy.test.ts` 继续负责
+  `ben.N` 的基线映射、单调性与不可变 Tag 规则。
+- **v2.42.0 上一轮复核（历史）：** 官方 `v2.42.0:package.json`（blob
   `6c7c80d9e471282778d67df6c7bacfe511278cdb`）只提供正式版版本号；当前
   `src/fork/version-policy.mjs`（blob `7c9e93828220d323c1c478814c70d9a93e547f9c`）与
   `tests/fork-version-policy.test.ts`（blob `40d080512c44e077875529d3969b781e5773e998`）继续负责
@@ -1442,7 +1777,7 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 - **状态：** Fork 独有——保留。
 - **包版本：** 官方稳定版 `X.Y.Z` 对应 Fork 包版本 `X.Y.Z-ben.N`。当前为
-  `2.40.0-ben.3`；`v2.40.0-ben.1`、`v2.40.0-ben.2`、`v2.39.0-ben.*` 及更早 Tag
+  `2.45.0-ben.1`；已发布的 `v2.42.0-ben.1`、`v2.40.0-ben.*`、`v2.39.0-ben.*` 及更早 Tag
   保留为历史不可变修订。
   `N` 从 1 开始且必须是安全整数；
   `ben.0`、前导零、超安全整数或其他 suffix 不属于该策略。
@@ -1472,25 +1807,28 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `7c9e93828220d323c1c478814c70d9a93e547f9c`）、
   `src/fork/version-policy.d.mts`；
   `src/update/notify.ts`、`src/update/index.ts` 和 `bin/ocx.mjs` 只保留窄接线。
-- **测试：** 官方对比使用的原锚点为 `tests/fork-version-policy.test.ts`（blob
+- **测试：** 官方对比使用的原锚点为 `tests/update/fork-version-policy.test.ts`（blob
   `40c1092241345b88c3c26756bca1d3d59586f501`）；S7 当前文件 blob 为
   `40d080512c44e077875529d3969b781e5773e998`。Node/Bun 策略、same-base late `ben.3` 与
   immutable current Tag 均覆盖；
-  `tests/fork-update-downgrade.test.ts` 单独覆盖较低 stable target；
-  `tests/fork-update-monotonicity.test.ts`（blob `3e952e9050fd0d05f0133c641c1f540e60706fa2`）
+  `tests/update/fork-update-downgrade.test.ts` 单独覆盖较低 stable target；
+  `tests/update/fork-update-monotonicity.test.ts`（blob `3e952e9050fd0d05f0133c641c1f540e60706fa2`）
   覆盖同基线较低/相同/较高 revision、malformed latest、canonical preview，以及 Node
   package-shaped launcher 在副作用前拒绝 lower/malformed target。Bun 路径当前仍以共享策略和
-  源码顺序断言为主。原 `tests/release-version-line.test.ts` 已按用户规则移除：普通 `dev`
+  源码顺序断言为主。原 `tests/ci-workflows/release-version-line.test.ts` 已按用户规则移除：普通 `dev`
   提交不再强制绑定新 Release 版本。普通 stable/preview 发布仍由 release helper/workflow
   保护；Fork `ben.N` 发布仍由双审、严格 Tag namespace preflight、immutable annotated Tag
   与 atomic leased push 保护。
-- **官方对比：** 官方 `v2.39.0` 没有该 Fork ben 版本与 Tag 策略。
+- **官方对比：** 官方 `v2.45.0` 没有该 Fork ben 版本与 Tag 策略。
 - **前端边界：** 按用户要求不修改 `gui/src/App.tsx` 或 CSS。GUI 继续通过现有链路显示
   真实版本，视觉缩短仅来自实际包版本从 `2.34.1-trendymen.1` 改为 `ben` 系列。
 
 ### 默认测试 runner 与负载敏感隔离
 
-- **v2.42.0 当前复核：** 官方 `v2.42.0:tests/update-stop-first.test.ts`（blob
+- **v2.45.0 当前复核：** 官方测试已迁入 domain。Fork 采用官方默认并发、shard 和 timeout，
+  不再维护旧拓扑副本；仅在 `tests/update/update-stop-first.test.ts` 使用真实 Node executable，
+  并由 `tests/service/shutdown-launcher.test.ts` 固定服务恢复行为。
+- **v2.42.0 上一轮复核（历史）：** 官方 `v2.42.0:tests/update-stop-first.test.ts`（blob
   `95b6bd53daf1ef37b0fd2044aad8909cb0657355`）保留当前上游时序修复。Fork 当前
   `src/responses/state.ts`（blob `6d8c6a3a96937c61ed7af9d806cd344f0e1fddab`）、
   `tests/responses-state.test.ts`（blob `7cf404ce199696f8537706477cf5f4df8fb67329`）和
@@ -1498,8 +1836,8 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   spill/shutdown 与真实 Node launcher 行为；不以串行模式或放宽 timeout 替代默认门禁。
 
 - **状态：** 官方部分覆盖——只保留剩余差异。
-- **Fork 剩余行为：** launcher/update 测试规避环境 runtime shim 与不支持的 PATH interception。`tests/server-auth.test.ts` 的 serial lane membership 与 watchdog 预算已按用户要求还原为官方行为。
-- **最终门禁修复：** 首次完整 prepush 暴露 `tests/cli-status-json.test.ts` 把 dead owner
+- **Fork 剩余行为：** launcher/update 测试规避环境 runtime shim 与不支持的 PATH interception。`tests/server/server-auth.test.ts` 的 serial lane membership 与 watchdog 预算已按用户要求还原为官方行为。
+- **最终门禁修复：** 首次完整 prepush 暴露 `tests/cli/cli-status-json.test.ts` 把 dead owner
   PID 硬编码为 `4242`，而当前主机该 PID 正由 `playwright-mcp` 使用，导致两个 stale-process
   E2E 正确返回 false。`3ea61a1b0` 改为在 fixture 建立时验证一个不可存活的高 PID 后再
   写入记录，不改变 production status/doctor 行为；当前测试 blob 为
@@ -1510,17 +1848,17 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
   `deadlineMs`，测试通过预先探测的极大 dead PID 消除共享 runner PID 复用噪声，同时用
   hostile runtime argument 证明调用者不能覆盖周期预算。当前
   `src/responses/state.ts`（blob `b95a1fa2c6d36b9b43269af60d51f5a64e6754ec`）、
-  `tests/responses-state.test.ts`（blob `1a4d0a253b4d5991c332de114b34127dd6f30cf3`）。
-- **代码：** `tests/shutdown-launcher.test.ts`、`tests/update-stop-first.test.ts`、
-  `tests/cli-status-json.test.ts`。
+  `tests/responses/responses-state.test.ts`（blob `1a4d0a253b4d5991c332de114b34127dd6f30cf3`）。
+- **代码：** `tests/service/shutdown-launcher.test.ts`、`tests/update/update-stop-first.test.ts`、
+  `tests/cli/cli-status-json.test.ts`。
 - **官方对比：** `v2.39.0:tests/update-stop-first.test.ts`（blob
   `d20eafb5c7051744168d7ce649186c49da789d8e`，merge
   `fe063d16ef620a148ab425cfffe63a8936d00e52`）已包含 recovery PID cleanup、
   `UPDATE_SPAWN_TIMEOUT_MS`/`PROXY_READY_TIMEOUT_MS` 派生预算，以及 cleanup 后才
   `rmSync` 的防 orphan 顺序。该官方文件不含 `nodeExecutable`；该 token 只出现在当前
-  Fork `tests/shutdown-launcher.test.ts`（blob `c576243cb4fd92829ebb812c98ee254c42942183`）
+  Fork `tests/service/shutdown-launcher.test.ts`（blob `c576243cb4fd92829ebb812c98ee254c42942183`）
   明确以 `process.execPath` 绕开
-  version-manager shim。Fork 在 `tests/update-stop-first.test.ts` 保留的唯一 host guard
+  version-manager shim。Fork 在 `tests/update/update-stop-first.test.ts` 保留的唯一 host guard
   是 PATH-precedence：Fork PATH-precedence guard（`a1e35b13db14a1686ef0033685d7214184c37743`）
   先实测 Bun 是否保留 fake npm 的 supplied PATH，只有可表示 fixture 时才运行该恢复用例；
   该 guard 来自 Fork 承载提交 `0124c2809cb40c29603cff196e6d2182559bd48d`，不改变官方
@@ -1530,13 +1868,18 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 
 - **状态：** Fork 独有——保留。
 - **文件：** `AGENTS.local.md`。
-- **规则：** 新能力默认使用新的职责明确测试文件；修改既有测试需要用户明确批准。
+- **规则：** 同一行为已有官方测试覆盖点时，优先在原文件补回归；只有独立边界才新建测试文件。
   所有实现必须优先新增窄模块或使用扩展点，避免扩散到官方高频文件；审查必须单独检查
   相对官方的修改面。本文件不进入 npm package。
 
 ### Prepush 与 GitHub CI
 
-- **v2.42.0 当前复核：** 本轮必须在当前 `2.42.0-ben.1` 精确候选上重新运行默认并发
+- **v2.45.0 当前复核：** `.github/workflows/ci.yml` 的 job、shard、runner、timeout 和
+  aggregate 采用官方合同。Fork 只保留 exact-SHA branch push 触发，以及
+  `scripts/prepare-fork-official-base.ts` 的官方 Tag/marker/ancestry provenance 检查；
+  Fork 专项测试不再复制官方拓扑常量。
+
+- **v2.42.0 上一轮复核（历史）：** 当时必须在 `2.42.0-ben.1` 精确候选上重新运行默认并发
   `bun run prepush`、privacy scan 与双审；任何 v2.40 的旧绿灯均不作为本轮证据。本轮
   A1/A2 两次默认 4x prepush 均如实记为失败；用户随后对本轮明确豁免再次运行全量门禁
   与等待远端 CI，但没有豁免精确 focused、typecheck、privacy scan、diff check 或双审。
@@ -1592,16 +1935,14 @@ ben.1 的远端 Cross-platform CI 失败后，本次 `ben.2` 保留官方 v2.35 
 7. **同基线发布竞态：** 完整远端 ben namespace 的最终复核到 atomic push 之间无法对
    尚不存在的 differently named future Tag 建立 wildcard lease；依赖 single publisher，
    push 后必须在 GitHub Release 前复核，发现竞态时保留 immutable Tag 并停止 Release。
-8. **上游版本边界：** 官方 `v2.39.0` 的两个 Fork Tag 均保持不可变；官方 `v2.40.0` 已
-   发布 `v2.40.0-ben.1`，固定 `IMPLEMENTATION_HEAD=df73ecba72a50739e4060133928d5cb16d15bf4f`、
-   `RELEASE_COMMIT=f219dc999012c56ecf3b74e1fe66f4f89311d25b`。后续新开发从 advanced
+8. **上游版本边界：** 已发布的 Fork Tag 均保持不可变；当前 `v2.45.0-ben.1` 仍是候选，
+   `IMPLEMENTATION_HEAD`、`RELEASE_COMMIT` 与发布状态以本页开头的当前审计表为准。后续新开发从
    `dev` 继续，不得重置回旧 Release。
 9. **并行工作区：** 本清单只按 committed SHA 计算，绝不因工作区中恰好存在其他任务
    文件而把它们混入提交或能力清单。
-10. **React Doctor：** `prepush` 对 changed GUI 报告 3 个官方 `v2.40.0` 测试文件中的
-    `eslint/no-unused-vars`：`tests/codex-stale-banner.test.ts:11`、
-    `tests/connect-pairing.test.ts:1`、`tests/provider-capacity-shell.test.tsx:300`。三者均不在
-    Fork 相对官方的 diff 中，GUI lint 已通过，因此本轮按最小修改面不混入修复。
+10. **React Doctor：** 当前 `prepush` 的 Doctor exit 0；报告 8 条既有官方 GUI 测试文件提示：
+    1 条 `no-unused-vars`、6 条 React Compiler 和 1 条 JSON clone。它们不在 Fork 相对官方的
+    diff 中，GUI lint 已通过，因此本轮不混入修复。
 11. **Reasoning 合成事件：** 多 part/EOF/稀疏终态生命周期已有 focused 覆盖，但合成事件
     没有统一分配新的 `sequence_number`，closed-state 保留到 terminal teardown；当前 relay 会在
     terminal 后 dispose，真实第三方 Provider/Codex App 流仍需独立动态验收。
