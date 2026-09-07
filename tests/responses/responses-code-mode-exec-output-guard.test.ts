@@ -184,6 +184,13 @@ function outputFor(body: Record<string, unknown>, callId: string): unknown {
   ))?.output;
 }
 
+function outputsFor(body: Record<string, unknown>, callId: string): Array<Record<string, unknown>> {
+  return (body.input as Array<Record<string, unknown>>).filter(item => (
+    (item.type === "custom_tool_call_output" || item.type === "function_call_output")
+    && item.call_id === callId
+  ));
+}
+
 describe("Responses code-mode exec output guard", () => {
   test("adds the shared echo rule once before the fresh routed progress contract", () => {
     const { body } = build();
@@ -272,6 +279,43 @@ describe("Responses code-mode exec output guard", () => {
     expect(outputFor(body, "call_named_shell")).toBe(SUCCESS_EMPTY_WRAPPER);
     expect(outputFor(body, "call_named_local")).toBe(SUCCESS_EMPTY_WRAPPER);
     expect(outputFor(body, "call_local_item")).toBe(SUCCESS_EMPTY_WRAPPER);
+  });
+
+  test("does not authorize a custom exec pair that collides with a function call pair", () => {
+    const body = build({
+      input: [
+        ...pairedCustomExec(SUCCESS_EMPTY_WRAPPER, "call_collision"),
+        { type: "function_call", call_id: "call_collision", name: "other", arguments: "{}" },
+        { type: "function_call_output", call_id: "call_collision", output: SUCCESS_EMPTY_WRAPPER },
+      ],
+    }).body;
+    expect(outputsFor(body, "call_collision").map(item => item.output))
+      .toEqual([SUCCESS_EMPTY_WRAPPER, SUCCESS_EMPTY_WRAPPER]);
+    expect(JSON.stringify(body)).not.toContain(EMPTY_EXEC_OUTPUT_MESSAGE);
+  });
+
+  test("does not authorize a custom exec pair that collides with a local shell call", () => {
+    const body = build({
+      input: [
+        ...pairedCustomExec(SUCCESS_EMPTY_WRAPPER, "call_collision"),
+        { type: "local_shell_call", call_id: "call_collision", name: "local_shell", action: {} },
+      ],
+    }).body;
+    expect(outputsFor(body, "call_collision").map(item => item.output))
+      .toEqual([SUCCESS_EMPTY_WRAPPER]);
+    expect(JSON.stringify(body)).not.toContain(EMPTY_EXEC_OUTPUT_MESSAGE);
+  });
+
+  test("does not authorize a custom exec pair that collides with a standalone function output", () => {
+    const body = build({
+      input: [
+        ...pairedCustomExec(SUCCESS_EMPTY_WRAPPER, "call_collision"),
+        { type: "function_call_output", call_id: "call_collision", output: SUCCESS_EMPTY_WRAPPER },
+      ],
+    }).body;
+    expect(outputsFor(body, "call_collision").map(item => item.output))
+      .toEqual([SUCCESS_EMPTY_WRAPPER, SUCCESS_EMPTY_WRAPPER]);
+    expect(JSON.stringify(body)).not.toContain(EMPTY_EXEC_OUTPUT_MESSAGE);
   });
 
   test("requires the paired custom exec call to be bare and unnamespaced", () => {

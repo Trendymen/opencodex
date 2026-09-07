@@ -206,7 +206,7 @@ fixed_shas=task:OLD_OFFICIAL,NEW_OFFICIAL,PRE_REBASE_DEV,POST_REBASE_HEAD;round:
 path_sets=OFFICIAL_CHANGED_PATHS,OLD_FORK_NET_PATHS,OLD_FORK_TOUCHED_PATHS,NET_OVERLAP_PATHS,OVERLAP_PATHS,CONTENT_CONFLICTS,NON_OVERLAP_CONFLICTS,AUTO_MERGES
 conflict_ledger=one-entry-per-content-conflict-path
 conflict_fields=path,symbols,official_change,fork_change,resolution,official_coverage,conflict_snapshots,focused_tests,residual_risk
-risk_fields=conditional-downstream_consumers,failure_paths,state_edges,ordering_edges,risk_domains
+risk_fields=on-specific-reviewer-evidence-request-only:downstream_consumers,failure_paths,state_edges,ordering_edges,risk_domains
 full_fork_diff=FULL_FORK_DIFF:git-diff-NEW_OFFICIAL-to-RELEASE_COMMIT_RN
 rebase_resolution_diff=REBASE_RESOLUTION_DIFF:git-range-diff-OLD_OFFICIAL..PRE_REBASE_DEV-to-NEW_OFFICIAL..POST_REBASE_HEAD
 post_rebase_fix_diff=POST_REBASE_FIX_DIFF:git-diff-POST_REBASE_HEAD-to-IMPLEMENTATION_HEAD_RN
@@ -235,10 +235,10 @@ focused_tests=<本轮实际执行且直接覆盖该决定的测试>
 residual_risk=<尚未验证的真实边界；没有则写 none:<理由>>
 ```
 
-`FORK_CHANGES.md` 只保存上述核心字段。冲突触及真实的 runtime、config、persistence、ui、
-release、auth/secret、dependency-install 或 shared-entrypoint 边界时，review package 再追加
-`downstream_consumers`、`failure_paths`、`state_edges`、`ordering_edges` 与 `risk_domains`。纯文档、
-测试路径迁移和没有运行时消费者的维护配置不填这五项，避免用重复模板制造假精度。
+`FORK_CHANGES.md` 只保存上述核心字段。五项补充字段
+`downstream_consumers`、`failure_paths`、`state_edges`、`ordering_edges` 与 `risk_domains` 只在 reviewer
+针对具体链路要求补证时写入 review package；不写入 `FORK_CHANGES.md`。纯文档、测试路径迁移和没有
+运行时消费者的维护配置不需要补模板字段。
 
 同一路径有多个互不相干的冲突符号时可以拆成多条，但至少一条记录必须覆盖该路径。仅列
 文件名、只描述冲突文本、只写“采用 ours/theirs”或只附一次 HTTP 200 均不合格。删除 Fork
@@ -287,8 +287,10 @@ verdict=SPEC_COMPLIANCE:FAIL-on-missing-or-mismatch
 
 ### 冲突 stop 与条件式 shadow replay
 
-主 rebase 开始前固定 replay manifest：Git version、原始与有效 rebase invocation、会影响
-commit 选择/merge/rename/换行的 config 及来源、两端 `.gitattributes` 和有效 merge driver。
+主 rebase 开始前固定 replay 输入：Git version、原始与有效 rebase invocation、会影响
+commit 选择/merge/rename/换行的 config 及来源、两端 `.gitattributes` 和有效 merge driver。可以记录
+replay manifest 摘要 hash 方便比对，但它不是发布门禁；固定输入、每个 stop 的 stage/hunk/action/tree
+证据可复算即可。
 主流程显式设置 `rerere.enabled=false`、`rerere.autoupdate=false`，不得读取既有 `rr-cache`；
 非确定性 external merge driver 阻塞同步。
 
@@ -326,6 +328,7 @@ hunk_id=sha256-rebase-step-REBASE_HEAD-path-stage-mode-blobs-normalized-hunk
 hunk_dedupe=exact-hunk-id-only
 captured_union=all-unresolved-paths-from-all-stops
 replay_environment=pre-rebase-git-version-invocation-config-attributes-and-rerere-disabled
+replay_manifest_digest=optional-summary-not-release-gate
 shadow_trigger=ambiguous-source-or-nonlinear-history-or-custom-driver-or-rerere-or-incomplete-evidence-or-history-rewrite-or-mechanical-mismatch-or-reviewer-request
 shadow_clone=created-only-when-triggered-and-preserves-PRE_REBASE_DEV
 object_access=shared-source-objects-cat-file-verified-before-replay
@@ -402,41 +405,22 @@ minimal_official_diff=required-per-file-necessity-and-no-unrelated-change
 
 ### 高风险升级与 hook 边界
 
-默认仍是两个独立 reviewer，不泛化增加人数。下列输入全部从 review package 机械派生：
+默认就是两个独立 reviewer。敏感路径、shared entrypoint、冲突路径数量和 hunk 数量用于提醒双审
+覆盖范围，不自动增加 explorer 或 reviewer。
 
-- `SENSITIVE_SCOPE` 检查 `FULL_FORK_DIFF` 的全部 changed path、所有增删 hunk 原始文本，以及
-  conflict ledger 的全部 `symbols`：路径匹配
-  `.github/workflows/**`、`scripts/release.ts`、`scripts/release-*.ts`、`scripts/install*`，依赖字段
-  发生改变的 `package.json`/lockfile；hunk/symbol 使用大小写不敏感的保守子串
-  `auth|oauth|credential|token|secret|api[_-]?key|apikey|keyring`。扫描不排除注释或字符串，宁可
-  多触发 explorer，不能漏掉 `apiKey`、`resolveApiKey`、`oauthClient` 或 `tokenProvider`。
-- `SHARED_ENTRYPOINTS` 是精确集合：`src/router.ts`、`src/server/lifecycle.ts`、
-  `src/server/responses/core.ts`、`src/codex/inject.ts`；不得自行扩缩。
-- `CONFLICT_HUNK_COUNT` 是全部 stop snapshot 的唯一 `hunk_id` 数，不是复制的整数，也不按路径
-  粗略计数。同一 path 在不同 rebase step 的 hunk 不合并。
-
-`SENSITIVE_SCOPE` 非空、命中任一 `SHARED_ENTRYPOINTS`、内容冲突路径达到 5 个，或唯一 hunk
-达到 10 个时，最终双审前必须先派只读 explorer 生成冲突数据流、最终消费者和错误路径证据；
-explorer 不下 verdict。命中真实风险边界的 ledger 用 `risk_domains` 标注 `runtime`、`config`、
-`persistence`、`ui`、`release` 中的相关项；允许一条记录命中多个边界，但“命中两个类别”本身不触发第三审。
-只有证据明确给出从一个边界的具体 path/symbol 到另一边界具体 path/symbol 的消费者链 edge，
-或 explorer 仍报告跨边界不确定性，才增加一个独立 `CODE_QUALITY` reviewer。第三 reviewer 的
-scope 必须精确列出这些 path、symbol 与 edge，只审跨边界风险；不得重复整份泛化审查制造票数。
+explorer 可以用于补充数据流、最终消费者和错误路径证据，但不是发布硬门槛，也不下 verdict。只有
+`SPEC_COMPLIANCE` 或 `CODE_QUALITY` 明确指出某个跨边界 path、symbol 或消费者链 edge 仍无法收敛，
+或者主线程已有同样具体的不确定性，才增加一个独立 `CODE_QUALITY` reviewer。该 reviewer 只审列出的
+未收敛链路；不得用泛化第三审重复整份 diff。
 
 <!-- rebase-review-escalation:start -->
 default_reviewers=SPEC_COMPLIANCE,CODE_QUALITY
-sensitive_scope=exact-path-or-sensitive-substring-in-all-diff-hunks-and-ledger-symbols
-sensitive_identifiers=auth,oauth,credential,token,secret,api-key,apikey,keyring
-sensitive_scan=case-insensitive-conservative-no-comment-or-string-exclusion
-shared_entrypoints=src/router.ts,src/server/lifecycle.ts,src/server/responses/core.ts,src/codex/inject.ts
-conflict_hunk_count=unique-hunk-id-count
-explorer_trigger=sensitive-scope-or-shared-entrypoint-or-5-plus-conflict-paths-or-10-plus-unique-hunks
-explorer_scope=evidence-only-no-verdict
-boundary_set=runtime,config,persistence,ui,release
-cross_boundary_edges=consumer-chain-edges-not-category-count
-third_reviewer_trigger=cross-boundary-edge-or-explorer-unresolved-risk
-third_reviewer_mode=CODE_QUALITY
-third_reviewer_scope=exact-cross-boundary-paths-symbols-and-edges-only
+review_priority=paths-hunks-and-symbols-cover-sensitive-and-shared-boundaries
+explorer=optional-evidence-only-not-release-gate
+annex=on-specific-reviewer-evidence-request-only
+narrow_review_trigger=dual-reviewer-unresolved-specific-cross-boundary-path-symbol-or-edge-or-owner-specific-uncertainty
+narrow_review_mode=CODE_QUALITY
+narrow_review_scope=exact-unresolved-paths-symbols-and-edges-only
 generic_reviewer_expansion=forbidden
 <!-- rebase-review-escalation:end -->
 
@@ -470,14 +454,14 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 
 1. fetch 后固定本地/远端 main、dev、upstream-release、`refs/heads/sync/vX.Y.Z` 和目标 Fork Tag 的 raw/peeled SHA；按 `sync-audit-ref-policy` 固定本轮 `RELEASE_SYNC_REF=refs/heads/sync/vX.Y.Z`，并将 `OLD_OFFICIAL`、`NEW_OFFICIAL`、`PRE_REBASE_DEV` 记为任务级不可变输入。本地 main 与 marker 必须和远端一致；dev 的本地/远端状态同时记录为候选证据；发现本基线 `sync/vX.Y.Z-ben.N` 即停止。
 2. 保护候选历史：候选固定为已提交的 `dev`。远端 dev 必须 fetch；本地 dev 领先、落后或分叉时均须记录两端 SHA 与来源。只要本地 dev 是当前已知、干净的发布候选，可继续；来源不明、远端独有而无法证明、或 lease 预期无法固定时停止。目标 `RELEASE_SYNC_REF` 已存在时必须 fetch 并记录精确 expected-OID lease；首次不存在时记录 expected-absent lease。sync 不要求是 `RELEASE_COMMIT` 的祖先，允许在发布时 non-fast-forward 强制更新。
-3. 启动主 rebase 前按 `conflict-snapshot-contract` 固定 replay manifest，并显式禁用 `rerere`/`rerere.autoupdate`。随后在 `dev` 上执行等价于 `git rebase --onto <new-tag-sha> <old-upstream-release-sha> dev`。每次停住时先捕获完整证据，才允许解决并继续；完成后立即固定 `POST_REBASE_HEAD`，并按条件判断是否需要 shadow replay。rebase 阶段不得移动 main，不得 detached HEAD 验证。完成实现、验证和末尾文档提交后，才能准备本轮 `RELEASE_SYNC_REF` 指向同一 `RELEASE_COMMIT`；不得将 dev 当作只读证据，也不得在任何 sync ref 上 rebase。
+3. 启动主 rebase 前按 `conflict-snapshot-contract` 固定 replay 输入，并显式禁用 `rerere`/`rerere.autoupdate`。随后在 `dev` 上执行等价于 `git rebase --onto <new-tag-sha> <old-upstream-release-sha> dev`。每次停住时先捕获完整证据，才允许解决并继续；完成后立即固定 `POST_REBASE_HEAD`，并按条件判断是否需要 shadow replay。rebase 阶段不得移动 main，不得 detached HEAD 验证。完成实现、验证和末尾文档提交后，才能准备本轮 `RELEASE_SYNC_REF` 指向同一 `RELEASE_COMMIT`；不得将 dev 当作只读证据，也不得在任何 sync ref 上 rebase。
 4. 冲突处理以 FORK_CHANGES.md、src/fork 边界、AGENTS.local.md、既有测试和新官方实现为依据，并为全部 `CONTENT_CONFLICTS` 写逐冲突 ledger。仅当前官方源码与测试证明等价或更优才可删除 Fork 行为；名称相似、旧文档或单次 HTTP 200 不算证据。部分覆盖只移除被替代部分；语义改变、能力放弃或无法判定时请用户决定。Fork 逻辑优先放窄模块或 src/fork，官方高频文件最小接线。
 5. revision：新官方 vX.Y.Z 首次派生固定 X.Y.Z-ben.1 / vX.Y.Z-ben.1。同基线已有 Release 不自动递增；仅用户明确要求才允许 ben.2、ben.3。`ben.N` 按官方基线独立维护：即使完整 Tag 集已有更新官方稳定版，明确授权的旧基线维护修订仍可继续，但必须存在精确官方基线 Tag、不得低于同基线最高有效 ben revision、不得复用或移动既有 Fork Tag，也不得声称包含更新官方版本能力。普通 stable/preview 仍遵守全局单调版本门禁。重复 heartbeat 幂等。
 6. 完成并提交全部 rebase、冲突、版本与实现修复。
 7. 创建下一个候选尝试 `AK`（首次为 `A1`，否则最大 `K + 1`），捕获 `CANDIDATE_IMPLEMENTATION_HEAD_AK`，不得从后续 HEAD 反推。按该 SHA 中文更新 FORK_CHANGES.md：官方 Release/Tag/SHA、实现 commit、shortstat、包版本、目标 Tag、能力状态、官方覆盖证据、逐冲突 ledger、已移除方向、已知缺口与验收边界。历史移除记录不删，旧 PASS 不沿用。
 8. 文档更新后执行最终验证：定向测试；共享 runtime/adapter/server/script/runner/version 改动跑一次 bun run prepush；GUI 改动按规则构建；privacy scan 必须通过。验证促成实现修改时把当前 `AK` 标记为 abandoned，以最大 `K + 1` 回到第 7 步；验证失败的 `AK` 不得占用 `RN`，也不得写入 `PRIOR_FINDINGS`。
 9. 验证通过后只暂存 `FORK_CHANGES.md`，核对 staged list 与 diff check，创建 docs-only commit，并机械验证其父提交等于当前 `CANDIDATE_IMPLEMENTATION_HEAD_AK`。此时才将完整 SHA 对晋升为下一个审查轮次：尚无轮次时创建 `R1`；已有 reviewed round 时使用当前最大 `N + 1`。令 `IMPLEMENTATION_HEAD_RN=CANDIDATE_IMPLEMENTATION_HEAD_AK`、`RELEASE_COMMIT_RN=<docs-only commit>`，两者同时存在后才算分配成功。
-10. 生成最新完整 `RN` 的 review package，执行机械集合/冲突 replay 对账、命名风险检查、高风险升级与双审门禁（见上）。首次真实派发使用 `REVIEW_PHASE: INITIAL`。任一 Critical/Important finding 都从新 `AK` 回到第 7 步；新候选经第 7–9 步晋升为下一完整 `RN` 后，按 `REVIEW_PHASE: RE_REVIEW` 复用原 reviewer 并保留完整 `PRIOR_FINDINGS`。未取得两个 `PASS` 以及必要的跨边界第三审 `PASS` 前，禁止后续 push、Tag、Release。
+10. 生成最新完整 `RN` 的 review package，执行机械集合/冲突 replay 对账、命名风险检查与双审门禁（见上）。首次真实派发使用 `REVIEW_PHASE: INITIAL`。任一 Critical/Important finding 都从新 `AK` 回到第 7 步；新候选经第 7–9 步晋升为下一完整 `RN` 后，按 `REVIEW_PHASE: RE_REVIEW` 复用原 reviewer 并保留完整 `PRIOR_FINDINGS`。未取得两个 `PASS`，以及仅在明确未收敛跨边界风险时所需的窄审 `PASS` 前，禁止后续 push、Tag、Release。
 11. 双审通过后创建中文注释 annotated Tag vX.Y.Z-ben.N；raw 类型必须是 tag，peeled 等于 `RELEASE_COMMIT`。远端已存在时核对 OID，否则 fail closed。禁止 force Tag。
 12. 紧邻 push 重新读取 `main`、`dev`、`refs/heads/sync/vX.Y.Z` 与 marker 的 expected OID；sync 首次不存在则重证 absent。按“提交术语与唯一原子集合”执行一次 `git push --atomic`，同时更新 `main`、`dev`、`RELEASE_SYNC_REF`、`upstream-release`、Fork Tag 和官方 Tag：前三个 branch 与 Fork Tag 指向 `RELEASE_COMMIT`，`upstream-release` 与官方 Tag 指向 `OFFICIAL_COMMIT`。四个 branch 均使用各自 ref-scoped force-with-lease；sync 使用 `+RELEASE_COMMIT:refs/heads/sync/vX.Y.Z`，允许 non-fast-forward。任一 lease 漂移、出现 revision-specific sync ref、Tag 冲突或 push 失败都 fail closed；禁止无 lease force、blanket force 和拆分推送。
 13. push 成功后、Release API 前，严格按 `local-ref-cas-transaction` 使用一个带
