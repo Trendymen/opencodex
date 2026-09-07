@@ -243,7 +243,10 @@ describe("Responses code-mode exec output guard", () => {
     test(`shares one eligibility decision for ${label}`, () => {
       const body = build(options).body;
       const instructions = typeof body.instructions === "string" ? body.instructions : "";
-      expect(instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)).toBe(expected);
+      const wireTools = (body.tools as Array<{ name: string; parameters?: { properties?: { input?: unknown } } }>) ?? [];
+      const execInputDescription = wireTools.find(tool => tool.name === "exec")
+        ?.parameters?.properties?.input;
+      expect(execInputDescription !== undefined && JSON.stringify(execInputDescription).includes(CODE_MODE_RESULT_ECHO_SENTENCE)).toBe(expected);
       expect(JSON.stringify(body).includes(EMPTY_EXEC_OUTPUT_MESSAGE)).toBe(expected);
       expect(outputFor(body, "call_exec"))
         .toBe(expected ? EMPTY_EXEC_OUTPUT_MESSAGE : SUCCESS_EMPTY_WRAPPER);
