@@ -28,10 +28,11 @@ external_evidence=task-and-release-notes-not-candidate-tree
 
 - 压缩任务开始时固定 `SQUASH_TARGET_COUNT=N`（`N>=2`）；CI 或审查未通过时只 amend `C_N` 或把修复折回所属提交并重建后继，禁止追加 `C_(N+1)`。只有同一 `C_N` SHA 的 dev candidate CI、常规双审与 main CI 全部通过，才允许创建或补齐 GitHub Release。
 
-## 测试文件隔离
+## 测试文件与官方布局
 
-- 为新增能力、Provider 适配或专项回归新增测试时，默认新建职责明确的 `tests/<feature>.test.ts` 文件；不要为了追加新场景而修改既有测试文件。
-- 只有用户明确要求修改既有测试文件时，才允许例外；例外必须在实现报告和代码审查中说明原因。
+- 测试遵循官方 `tests/<domain>/` 布局。新增文件放到对应 domain；resolver 无法归类时，同时更新 `scripts/test-layout/layout.json` 与 `tests/fixtures/test-layout-expected.json`。
+- 同一行为已有官方测试文件时，优先在原文件补充回归，不为“Fork 专项”重复建根目录测试。源码真值测试通过 `tests/helpers/repo-root.ts` 取仓库路径。
+- rebase 时，当前官方源码与测试已经完整覆盖 Fork 行为的，可以移动、改写或删除旧 Fork 测试；必须在 `FORK_CHANGES.md` 记录覆盖证据，不能只为通过测试降低断言。
 
 ## 官方版本修改面最小化
 

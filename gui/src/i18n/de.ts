@@ -782,6 +782,7 @@ export const de: Record<TKey, string> = {
   "logs.detail.attempt.recovery.agentTaskRecovery": "Wiederherstellung verschlüsselter Agentenaufgaben",
   "logs.detail.attempt.recovery.connectionReset": "Verbindung zurückgesetzt",
   "logs.detail.attempt.recovery.oauth401": "OAuth-Neuanmeldung",
+  "logs.detail.attempt.recovery.key401": "API-Schlüssel-Neuauthentifizierung",
   "logs.detail.attempt.recovery.key429": "Schlüssel ratenbegrenzt (429)",
   "logs.detail.attempt.recovery.rateLimit429": "Ratenbegrenzt (429)",
   "logs.detail.attempt.recovery.anthropicOauth429": "Anthropic OAuth ratenbegrenzt (429)",

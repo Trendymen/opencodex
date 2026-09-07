@@ -104,6 +104,7 @@ type AttemptRecoveryKind =
   | "agent-task-recovery"
   | "connection-reset"
   | "oauth-401"
+  | "key-401"
   | "key-429"
   | "rate-limit-429"
   | "anthropic-oauth-429"
@@ -298,6 +299,7 @@ const RECOVERY_KIND_KEYS = {
   "agent-task-recovery": "logs.detail.attempt.recovery.agentTaskRecovery",
   "connection-reset": "logs.detail.attempt.recovery.connectionReset",
   "oauth-401": "logs.detail.attempt.recovery.oauth401",
+  "key-401": "logs.detail.attempt.recovery.key401",
   "key-429": "logs.detail.attempt.recovery.key429",
   "rate-limit-429": "logs.detail.attempt.recovery.rateLimit429",
   "anthropic-oauth-429": "logs.detail.attempt.recovery.anthropicOauth429",

@@ -815,6 +815,7 @@ export const en = {
   "logs.detail.attempt.recovery.agentTaskRecovery": "Encrypted agent-task recovery",
   "logs.detail.attempt.recovery.connectionReset": "Connection reset",
   "logs.detail.attempt.recovery.oauth401": "OAuth re-authentication",
+  "logs.detail.attempt.recovery.key401": "API key re-authentication",
   "logs.detail.attempt.recovery.key429": "Key rate-limited (429)",
   "logs.detail.attempt.recovery.rateLimit429": "Rate-limited (429)",
   "logs.detail.attempt.recovery.anthropicOauth429": "Anthropic OAuth rate-limited (429)",

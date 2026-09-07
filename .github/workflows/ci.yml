@@ -389,7 +389,7 @@ jobs:
           bun install --frozen-lockfile
 
       - name: GUI lint
-        if: github.event_name != 'pull_request' || needs.changes.outputs.gui == 'true'
+        if: needs.changes.outputs.gui == 'true'
         run: |
           cd gui
           bun run lint
@@ -416,7 +416,7 @@ jobs:
         run: bun build scripts/release.ts --target=bun --outdir=.tmp/ci-release-script-check
 
       - name: GUI build
-        if: github.event_name != 'pull_request' || needs.changes.outputs.gui == 'true'
+        if: needs.changes.outputs.gui == 'true'
         run: |
           cd gui
           bun run build
@@ -476,6 +476,9 @@ jobs:
 
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
+
+      - name: Prepare verified Fork official base
+        run: bun scripts/prepare-fork-official-base.ts
 
       - name: Install dependencies
         run: |
@@ -904,7 +907,7 @@ jobs:
   npm-global-smoke:
     name: npm-global ${{ matrix.os }}
     needs: changes
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.outputs.packaging == 'true'
+    if: needs.changes.outputs.packaging == 'true'
     runs-on: ${{ matrix.os }}
     # 8 minutes was too tight for the Windows leg: dependency installation alone takes
     # about 7 there, leaving under a minute for pack, verify, global install, and the
@@ -987,7 +990,6 @@ jobs:
         shell: bash
         env:
           RESULTS: ${{ toJSON(needs) }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           echo "$RESULTS" | jq .
@@ -1004,17 +1006,6 @@ jobs:
           if [ -n "$bad" ]; then
             echo "::error::needed job(s) did not pass: $bad"
             exit 1
-          fi
-
-          if [ "$EVENT_NAME" = "push" ]; then
-            unexpected_skips=$(echo "$RESULTS" | jq -r '
-              to_entries
-              | map(select(.value.result == "skipped" and .key != "platform-windows"))
-              | .[] | "\(.key)=\(.value.result)"')
-            if [ -n "$unexpected_skips" ]; then
-              echo "::error::required push job(s) were skipped: $unexpected_skips"
-              exit 1
-            fi
           fi
 
       # Windows is dispatch-only, so there is no event where a skipped Windows

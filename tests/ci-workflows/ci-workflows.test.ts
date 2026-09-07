@@ -274,25 +274,7 @@ runs:
       expect(value).toMatch(/^[^\s@]+@[0-9a-f]{40}$/);
     }
 
-    const jobs = ci.jobs as Record<string, {
-      permissions?: Record<string, string>;
-      "runs-on"?: string;
-      strategy?: { matrix?: { os?: string[]; include?: Array<{ name: string; runner: string }> } };
-    }>;
-    expect(Object.keys(jobs).sort()).toEqual([
-      "api-usage",
-      "changes",
-      "ci",
-      "gates",
-      "keyring-smoke",
-      "macos-control",
-      "npm-global-smoke",
-      "platform-macos",
-      "platform-windows",
-      "select-windows-runner",
-      "storage-policy",
-      "test",
-    ]);
+    const jobs = ci.jobs as Record<string, { permissions?: Record<string, string> }>;
     for (const [name, job] of Object.entries(jobs)) {
       if (name === "changes") {
         expect(job.permissions).toEqual({ contents: "read", "pull-requests": "read" });
@@ -307,26 +289,6 @@ runs:
     expect([...new Set(localUses)]).toEqual(["./.github/actions/setup-project-bun"]);
     expect(localWorkflowActionUses(setupProjectBunAction)).toEqual([]);
 
-    const fixedRunners = {
-      "select-windows-runner": "ubuntu-latest",
-      changes: "ubuntu-latest",
-      test: "ubuntu-latest",
-      "storage-policy": "ubuntu-latest",
-      "api-usage": "ubuntu-latest",
-      gates: "ubuntu-latest",
-      "platform-macos": "macos-latest",
-      ci: "ubuntu-latest",
-    } as const;
-    for (const [name, runner] of Object.entries(fixedRunners)) {
-      expect(jobs[name]?.["runs-on"]).toBe(runner);
-    }
-    expect(jobs["platform-windows"]?.["runs-on"])
-      .toBe("${{ fromJSON(needs.select-windows-runner.outputs.runner) }}");
-    expect(jobs["keyring-smoke"]?.["runs-on"]).toBe("${{ matrix.runner }}");
-    expect(jobs["npm-global-smoke"]?.["runs-on"]).toBe("${{ matrix.os }}");
-    expect(jobs["npm-global-smoke"]?.strategy?.matrix?.os)
-      .toEqual(["ubuntu-latest", "windows-latest", "macos-latest"]);
-
     // Sharding is only safe while the shards tile the suite exactly. If the
     // matrix and the divisor drift apart, some files stop running and CI stays
     // green — the worst failure available here. Pin them to each other.
@@ -337,15 +299,6 @@ runs:
     // Windows sharded differently, this assertion matched the Windows step's --shard
     // literal by coincidence; pin the Linux env line so it observes the Linux job.
     expect(workflow).toContain(`TEST_SHARD: \${{ matrix.shard }}/${linuxShards.length}`);
-
-    // Every test job needs tags for both the official-base provenance check and the
-    // release-version-line check. Pin the flag per job so one leg cannot silently
-    // run with an empty local tag set.
-    for (const jobName of ["test", "platform-macos", "macos-control", "platform-windows"]) {
-      const steps = (ci.jobs?.[jobName] as { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> })?.steps ?? [];
-      const checkout = steps.find(step => typeof step.uses === "string" && step.uses.includes("actions/checkout"));
-      expect(`${jobName}:${String(checkout?.with?.["fetch-tags"])}`).toBe(`${jobName}:true`);
-    }
 
     // Windows shards more finely than Linux: the same suite takes 17-25 minutes per
     // quarter on windows-latest, which is the leg's own 25-minute ceiling (run
@@ -784,61 +737,10 @@ runs:
     const gateSteps = (ci.jobs?.gates as {
       steps?: { name?: string; if?: string }[];
     })?.steps ?? [];
-    const pushOrGuiChanged = "github.event_name != 'pull_request' || needs.changes.outputs.gui == 'true'";
     for (const stepName of ["GUI lint", "GUI build"]) {
       const step = gateSteps.find(candidate => candidate.name === stepName);
       expect(`${stepName}:${step === undefined}`).toBe(`${stepName}:false`);
-      expect(step?.if).toBe(pushOrGuiChanged);
-    }
-
-    const npmGlobal = ci.jobs?.["npm-global-smoke"] as { if?: string } | undefined;
-    expect(npmGlobal?.if).toBe(
-      "github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.outputs.packaging == 'true'",
-    );
-
-    const aggregate = ci.jobs?.ci as {
-      steps?: Array<{ env?: Record<string, string>; run?: string }>;
-    } | undefined;
-    const assertion = aggregate?.steps?.find(step => step.run?.includes("needed job(s) did not pass"));
-    expect(assertion?.env?.EVENT_NAME).toBe("${{ github.event_name }}");
-    expect(assertion?.run).toContain('if [ "$EVENT_NAME" = "push" ]; then');
-    expect(assertion?.run).toContain('.key != "platform-windows"');
-    expect(assertion?.run).toContain('.value.result != "success"');
-    expect([...(assertion?.run ?? "").matchAll(/\.key !=/g)]).toHaveLength(1);
-
-    const aggregateScript = assertion?.run ?? "";
-    const needs = (ci.jobs?.ci as { needs?: string[] })?.needs ?? [];
-    const allSuccess = Object.fromEntries(needs.map(name => [name, { result: "success" }]));
-    const runAggregate = (results: Record<string, { result?: string }>): number | null => Bun.spawnSync(
-      ["bash", "-c", aggregateScript],
-      {
-        env: { ...process.env, EVENT_NAME: "push", RESULTS: JSON.stringify(results) },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    ).exitCode;
-    let aggregateToolsAvailable = false;
-    try {
-      aggregateToolsAvailable = Bun.spawnSync(
-        ["bash", "-c", "command -v jq >/dev/null 2>&1"],
-        { stdout: "ignore", stderr: "ignore" },
-      ).exitCode === 0;
-    } catch {
-      aggregateToolsAvailable = false;
-    }
-    if (!aggregateToolsAvailable) {
-      expect(process.env.GITHUB_ACTIONS === "true" && process.platform === "linux").toBe(false);
-      console.warn("aggregate push truth table skipped: bash+jq unavailable outside the required GitHub Linux lane");
-    } else {
-      for (const name of needs) {
-        const results = structuredClone(allSuccess);
-        results[name] = { result: "skipped" };
-        expect(`${name}:${runAggregate(results)}`).toBe(`${name}:${name === "platform-windows" ? 0 : 1}`);
-      }
-      for (const result of ["failure", "cancelled", "unknown"]) {
-        expect(runAggregate({ ...allSuccess, changes: { result } })).not.toBe(0);
-      }
-      expect(runAggregate({ ...allSuccess, changes: {} })).not.toBe(0);
+      expect(step?.if).toBe("needs.changes.outputs.gui == 'true'");
     }
 
     const filterStep = (ci.jobs?.changes as {

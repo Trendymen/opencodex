@@ -335,9 +335,9 @@ export function relaySseEagerBounded(
               observeClientBytes(terminalSentinel);
               controllerRef?.enqueue(terminalSentinel);
             } catch { /* client already gone */ }
-            syntheticKind = errorFrame
-              ? "upstream-error"
-              : upstreamError === undefined ? "incomplete" : "failed";
+            syntheticKind = upstreamError === undefined && errorFrame === null
+              ? "incomplete"
+              : "upstream-error";
             syntheticHttpStatus = errorFrame?.httpStatus;
           }
           break;
