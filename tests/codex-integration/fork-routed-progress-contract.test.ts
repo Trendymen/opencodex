@@ -22,6 +22,7 @@ import type { OcxProviderConfig } from "../../src/types";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
 
 const PROGRESS_SENTENCE = "ordinary assistant text message before the first tool call";
+const TOOL_CONTRACT_SENTENCE = "Tool contract: use the current tool catalog as ground truth.";
 
 function routedProvider(): OcxProviderConfig {
   return {
@@ -39,24 +40,66 @@ const TOOL = {
   parameters: { type: "object", properties: {}, additionalProperties: false },
 };
 
+const CODE_MODE_WIRE_TOOLS = [{
+  type: "namespace",
+  name: "functions",
+  tools: [{
+    type: "custom",
+    name: "exec",
+    description: "Run JavaScript to call deferred tools.",
+  }],
+}, {
+  type: "namespace",
+  name: "mcp__cua_repl",
+  tools: [{
+    type: "function",
+    name: "js",
+    description: "Control the current UI surface.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  }],
+}];
+
+const CODE_MODE_CONTEXT_TOOLS = [{
+  name: "exec",
+  description: "Run JavaScript to call deferred tools.",
+  parameters: { type: "object", properties: {} },
+  freeform: true,
+}, {
+  namespace: "mcp__cua_repl",
+  name: "js",
+  description: "Control the current UI surface.",
+  parameters: { type: "object", properties: {} },
+}];
+
 function buildResponsesBody(
   provider: OcxProviderConfig,
   instructions: unknown,
-  options: { toolPlacement?: "top" | "additional" | "none"; compaction?: boolean } = {},
+  options: {
+    toolPlacement?: "top" | "additional" | "none";
+    compaction?: boolean;
+    wireTools?: unknown[];
+    contextTools?: unknown[];
+  } = {},
 ): Record<string, unknown> {
   const toolPlacement = options.toolPlacement ?? "top";
+  const wireTools = options.wireTools ?? [TOOL];
+  const contextTools = options.contextTools ?? [{
+    name: TOOL.name,
+    description: TOOL.description,
+    parameters: TOOL.parameters,
+  }];
   const input: unknown[] = [{
     type: "message",
     role: "user",
     content: [{ type: "input_text", text: "Inspect the repository with tools." }],
   }];
   if (toolPlacement === "additional") {
-    input.push({ type: "additional_tools", role: "developer", tools: [TOOL] });
+    input.push({ type: "additional_tools", role: "developer", tools: wireTools });
   }
   const adapter = withTestTranslatorBudget(createResponsesPassthroughAdapter(provider));
   const request = adapter.buildRequest({
     modelId: "glm-5.3-flash",
-    context: { messages: [] },
+    context: { messages: [], tools: contextTools as never },
     stream: true,
     options: {},
     ...(options.compaction ? { _compactionRequest: true } : {}),
@@ -64,7 +107,7 @@ function buildResponsesBody(
       model: "glm-5.3-flash",
       ...(instructions === undefined ? {} : { instructions }),
       input,
-      ...(toolPlacement === "top" ? { tools: [TOOL] } : {}),
+      ...(toolPlacement === "top" ? { tools: wireTools } : {}),
       stream: true,
     },
   }, { headers: new Headers({ "thread-id": "thread-progress-contract" }) });
@@ -406,10 +449,25 @@ describe("fork routed progress contract", () => {
     expect(typeof firstInstructions).toBe("string");
     expect(firstInstructions).toContain("Existing caller instructions.");
     expect(firstInstructions).toContain(PROGRESS_SENTENCE);
+    expect(firstInstructions).toContain(TOOL_CONTRACT_SENTENCE);
     expect(firstInstructions).not.toMatch(/commentary|final_answer|channel/i);
 
     const second = buildResponsesBody(routedProvider(), firstInstructions as string);
     expect(occurrences(second.instructions as string, ROUTED_PROGRESS_CONTRACT)).toBe(1);
+    expect(occurrences(second.instructions as string, TOOL_CONTRACT_SENTENCE)).toBe(1);
+  });
+
+  test("third-party Responses explains flattened code-mode and deferred tools", () => {
+    const body = buildResponsesBody(routedProvider(), "Existing caller instructions.", {
+      wireTools: CODE_MODE_WIRE_TOOLS,
+      contextTools: CODE_MODE_CONTEXT_TOOLS,
+    });
+    const names = (body.tools as Array<{ name?: string }>).map(tool => tool.name);
+
+    expect(names).toEqual(["exec", "mcp__cua_repl__js"]);
+    expect(body.instructions).toContain("Valid tool names for this turn are exactly `exec`, `mcp__cua_repl__js`.");
+    expect(body.instructions).toContain("Nested helpers are called INSIDE that body");
+    expect(body.instructions).toContain("Discover them from the isolate global `ALL_TOOLS`");
   });
 
   test("partial prose does not spoof a complete delivered progress contract", () => {
@@ -434,6 +492,8 @@ describe("fork routed progress contract", () => {
     expect(noTools.instructions).toBe("No tools.");
     expect(JSON.stringify(compact)).not.toContain(PROGRESS_SENTENCE);
     expect(lite.instructions).toContain(PROGRESS_SENTENCE);
+    expect(JSON.stringify(compact)).not.toContain(TOOL_CONTRACT_SENTENCE);
+    expect(lite.instructions).toContain(TOOL_CONTRACT_SENTENCE);
   });
 
   test("Cursor tool requests receive one contract after the effective tool budget", () => {
