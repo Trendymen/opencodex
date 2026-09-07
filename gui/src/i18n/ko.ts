@@ -801,6 +801,7 @@ export const ko: Record<TKey, string> = {
   "logs.detail.attempt.recovery.agentTaskRecovery": "암호화된 에이전트 작업 복구",
   "logs.detail.attempt.recovery.connectionReset": "연결이 재설정됨",
   "logs.detail.attempt.recovery.oauth401": "OAuth 재인증",
+  "logs.detail.attempt.recovery.key401": "API 키 재인증",
   "logs.detail.attempt.recovery.key429": "키 요청 한도 초과 (429)",
   "logs.detail.attempt.recovery.rateLimit429": "요청 한도 초과 (429)",
   "logs.detail.attempt.recovery.anthropicOauth429": "Anthropic OAuth 요청 한도 초과 (429)",

@@ -176,7 +176,7 @@ export type SseTerminalOutputBoundary = {
   doneSeen(): boolean;
   upstreamError(): string | undefined;
   pendingCleanEofFailure(): CleanEofUpstreamError | null;
-  /** Safe ordinary-error replay for a reader-reset tail, never for clean EOF. */
+  /** Safe typed ordinary-error replay for a reader-reset tail, never for clean EOF. */
   pendingReadErrorFrame(): Uint8Array | null;
   dispose(): void;
 };
@@ -219,9 +219,8 @@ export function createSseTerminalOutputBoundary(): SseTerminalOutputBoundary {
       const ordinaryFailure = policyError ? null : cleanEofUpstreamErrorFromParsed(parsed);
       if (ordinaryFailure) {
         cleanEofFailure = ordinaryFailure;
-        // An ordinary top-level error is not a Responses terminal. Hold it so
-        // a later real terminal remains authoritative; only clean EOF emits
-        // the normalized response.failed envelope.
+        // Typed/code-bearing errors are normalized at clean EOF. Message-only
+        // bare errors stay byte-preserving and use upstreamErrorTailFrame.
         continue;
       }
       const outboundBlock = policyError
@@ -570,10 +569,17 @@ export function cleanEofUpstreamErrorFromParsed(parsed: unknown): CleanEofUpstre
     for (const candidate of candidates) {
       const message = stringField(candidate, "message");
       if (!message) continue;
+      const explicitType = stringField(candidate, "type");
+      const explicitCode = stringField(candidate, "code");
+      // A message-only bare error already has the legacy, byte-preserving
+      // upstreamError fallback. Promote only a typed/code-bearing envelope;
+      // otherwise this path would replace the original frame and change its
+      // canonical upstream_server_error classification.
+      if (!explicitType && !explicitCode) continue;
       const error = {
-        type: redactSecretString(stringField(candidate, "type") ?? "upstream_error")
+        type: redactSecretString(explicitType ?? "upstream_error")
           .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
-        code: redactSecretString(stringField(candidate, "code") ?? "upstream_error")
+        code: redactSecretString(explicitCode ?? "upstream_error")
           .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
         message: redactSecretString(message).slice(0, MAX_TAIL_ERROR_MESSAGE_CHARS),
       };

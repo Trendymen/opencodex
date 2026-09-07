@@ -794,6 +794,7 @@ export const zh: Record<TKey, string> = {
   "logs.detail.attempt.recovery.agentTaskRecovery": "加密子任务恢复",
   "logs.detail.attempt.recovery.connectionReset": "连接已重置",
   "logs.detail.attempt.recovery.oauth401": "OAuth 重新认证",
+  "logs.detail.attempt.recovery.key401": "API 密钥重新认证",
   "logs.detail.attempt.recovery.key429": "密钥被限流 (429)",
   "logs.detail.attempt.recovery.rateLimit429": "被限流 (429)",
   "logs.detail.attempt.recovery.anthropicOauth429": "Anthropic OAuth 被限流 (429)",

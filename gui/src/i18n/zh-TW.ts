@@ -2132,6 +2132,7 @@ export const zhTW: Record<TKey, string> = {
   "logs.detail.attempt.recovery.agentTaskRecovery": "加密子任務復原",
   "logs.detail.attempt.recovery.connectionReset": "連線重設",
   "logs.detail.attempt.recovery.oauth401": "OAuth 重新驗證",
+  "logs.detail.attempt.recovery.key401": "API 金鑰重新驗證",
   "logs.detail.attempt.recovery.key429": "金鑰被限流 (429)",
   "logs.detail.attempt.recovery.rateLimit429": "被限流 (429)",
   "logs.detail.attempt.recovery.anthropicOauth429": "Anthropic OAuth 被限流 (429)",

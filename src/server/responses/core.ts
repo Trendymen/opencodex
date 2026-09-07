@@ -3465,7 +3465,6 @@ async function handleResponsesInner(
     inboundWire === "responses"
     &&
     threadSpawn
-    && (routedUnreadableEncryptedAgentTask || strictBackendEncryptedAgentTask)
     && agentTaskRecovery
     && !isCanonicalOpenAiForwardProvider(route.provider)
     && !options.comboAttempt
@@ -3474,9 +3473,13 @@ async function handleResponsesInner(
     let recovered = restoreCachedEncryptedAgentTasks(
       req, (body as { input?: unknown } | undefined)?.input, config, { parentThreadId },
     ) > 0;
-    unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+    routedUnreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
       (body as { input?: unknown } | undefined)?.input,
     );
+    strictBackendEncryptedAgentTask = agentTaskRecovery !== null
+      && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+    unreadableEncryptedAgentTask = routedUnreadableEncryptedAgentTask
+      || strictBackendEncryptedAgentTask;
     if (unreadableEncryptedAgentTask) try {
       const result = await recoverEncryptedAgentTaskWithResult(
         req,
@@ -5932,7 +5935,7 @@ async function handleResponsesInner(
               reportNativeTerminal("incomplete");
             } else if (kind === "upstream-error") {
               logCtx.terminalSource = "synthetic";
-              reportNativeTerminal("failed", httpStatusOverride);
+              reportNativeTerminal("failed", httpStatusOverride ?? logCtx.terminalHttpStatus ?? 502);
             } else {
               logCtx.transportPhase = "mid_stream";
               logCtx.terminalSource = "synthetic";
@@ -6156,15 +6159,11 @@ async function handleResponsesInner(
       commitReasoningReplayServingRoute();
       nestedExecInspection?.dispose();
       nestedExecRepairCoordinator?.dispose();
-      if (rememberPassthroughResponse) {
+      if (rememberPassthroughResponseChecked) {
         try {
-          const restoredResponse = restoreRoutedCustomCalls(
-            JSON.parse(nestedUpstreamJson),
-            routedCustomToolNames,
-            routedCustomToolRepairNames,
-            declaredWireToolNames,
-          ).value as { id?: unknown; output?: unknown; status?: unknown };
-          rememberPassthroughResponse(restoredResponse);
+          rememberPassthroughResponseChecked(
+            JSON.parse(nestedUpstreamJson) as { id?: unknown; output?: unknown; status?: unknown },
+          );
         } catch { /* non-JSON despite content-type; recording is best-effort */ }
       }
       // #875: the transport-neutral reliability policy forced a bounded JSON

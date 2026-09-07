@@ -150,6 +150,14 @@ sync 的 force 权限只来自当前发布动作，并且必须 ref-scoped：远
 
 FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维护真源。每次任务先读取它，以实际提交代码、测试和真实验收为能力基准，不以旧 Spec、Plan、devlog 或安装包残留为准。文档、任务状态、Tag 注释与 GitHub Release Notes 必须使用简体中文；代码符号、路径、命令、Provider/模型 ID 和版本号保持原样。
 
+## 跟随官方门禁
+
+- 新官方稳定 Tag 的 `AGENTS.md`、目录级 `AGENTS.md`、package scripts、测试布局和 CI 拓扑是本轮默认基线。Fork 只保留有当前能力证据支持的差异。
+- Fork 测试只固定 Fork 新增语义，不固定官方自行维护的 job 名、shard 数、timeout、目录旧路径或实现细节；官方门禁改变时，先采用官方合同，再补最小 Fork 断言。
+- 同一行为已由当前官方源码与测试完整覆盖时，删除重复 Fork 实现或测试，并在 `FORK_CHANGES.md` 留下证据。不能为了让旧 Fork 测试继续通过而恢复已经过时的官方结构。
+- 验证命令失败时，先在 `NEW_OFFICIAL` 的干净临时工作区运行同一命令。官方基线同样失败且不影响本轮 Fork 修改路径或发布产物时，记录为 upstream-baseline residual risk，不算 Fork 回归；不能借此忽略只在 Fork 候选出现的失败，也不能改弱断言。
+- 测试文件使用官方 `tests/<domain>/` 布局；当前命令和维护文档更新真实路径，已经结束的历史 Spec/Plan 不做纯路径批量改写。
+
 ## 官方 Tag 保留规则
 
 每个官方稳定基线 Tag（vX.Y.Z，非 preview/beta/rc/draft）必须同时保留在本地与 origin 远端：
@@ -197,12 +205,13 @@ abandoned task evidence，不得占用 `RN`，也不写入 `PRIOR_FINDINGS`。�
 fixed_shas=task:OLD_OFFICIAL,NEW_OFFICIAL,PRE_REBASE_DEV,POST_REBASE_HEAD;round:IMPLEMENTATION_HEAD_RN,RELEASE_COMMIT_RN
 path_sets=OFFICIAL_CHANGED_PATHS,OLD_FORK_NET_PATHS,OLD_FORK_TOUCHED_PATHS,NET_OVERLAP_PATHS,OVERLAP_PATHS,CONTENT_CONFLICTS,NON_OVERLAP_CONFLICTS,AUTO_MERGES
 conflict_ledger=one-entry-per-content-conflict-path
-conflict_fields=path,symbols,official_change,fork_change,resolution,official_coverage,downstream_consumers,failure_paths,state_edges,ordering_edges,risk_domains,conflict_snapshots,focused_tests,residual_risk
+conflict_fields=path,symbols,official_change,fork_change,resolution,official_coverage,conflict_snapshots,focused_tests,residual_risk
+risk_fields=conditional-downstream_consumers,failure_paths,state_edges,ordering_edges,risk_domains
 full_fork_diff=FULL_FORK_DIFF:git-diff-NEW_OFFICIAL-to-RELEASE_COMMIT_RN
 rebase_resolution_diff=REBASE_RESOLUTION_DIFF:git-range-diff-OLD_OFFICIAL..PRE_REBASE_DEV-to-NEW_OFFICIAL..POST_REBASE_HEAD
 post_rebase_fix_diff=POST_REBASE_FIX_DIFF:git-diff-POST_REBASE_HEAD-to-IMPLEMENTATION_HEAD_RN
 spec_recomputation=required-independent-for-endpoint-and-touched-sets
-conflict_reconciliation=captured-union-must-equal-isolated-shadow-replay-union
+conflict_reconciliation=captured-stop-union-plus-conditional-shadow-replay
 review_rounds=append-only-latest-round-binds-review
 review_verdicts=PASS,FAIL
 quality_named_risks=required
@@ -211,8 +220,8 @@ quality_named_risks=required
 ### 逐冲突证据账本
 
 每个进入过 unresolved 状态的内容冲突路径都必须在 `FORK_CHANGES.md` 的本轮 rebase 章节和
-review package 中各有一条 `CONFLICT_LEDGER` 记录。字段顺序固定如下；任何字段都不得为空，
-确实不适用时写 `n/a:<原因>`，不得只写 `n/a`：
+review package 中各有一条记录。核心字段顺序固定如下；任何字段都不得为空，确实不适用时写
+`n/a:<原因>`，不得只写 `n/a`：
 
 ```text
 path=<仓库相对路径>
@@ -221,15 +230,15 @@ official_change=<新官方相对旧官方改变了什么语义>
 fork_change=<旧 Fork 相对旧官方保留了什么能力>
 resolution=<最终 union、替换或删除的精确决定>
 official_coverage=<官方是否完整覆盖 Fork；证据路径、符号与测试>
-downstream_consumers=<最终读取者、二次转换者和公开投影>
-failure_paths=<异常、abort、timeout、retry、资源释放等路径>
-state_edges=<undefined/absent/null/false/empty、初建/重建等状态边界>
-ordering_edges=<并发、SSE、terminal、flush、dispose 等时序边界>
-risk_domains=<auth/secret/release/dependency-install/shared-entrypoint/runtime/config/persistence/ui/none，可多值并说明命中证据>
 conflict_snapshots=<覆盖该记录的 rebase step、REBASE_HEAD 与 hunk_id>
 focused_tests=<本轮实际执行且直接覆盖该决定的测试>
 residual_risk=<尚未验证的真实边界；没有则写 none:<理由>>
 ```
+
+`FORK_CHANGES.md` 只保存上述核心字段。冲突触及真实的 runtime、config、persistence、ui、
+release、auth/secret、dependency-install 或 shared-entrypoint 边界时，review package 再追加
+`downstream_consumers`、`failure_paths`、`state_edges`、`ordering_edges` 与 `risk_domains`。纯文档、
+测试路径迁移和没有运行时消费者的维护配置不填这五项，避免用重复模板制造假精度。
 
 同一路径有多个互不相干的冲突符号时可以拆成多条，但至少一条记录必须覆盖该路径。仅列
 文件名、只描述冲突文本、只写“采用 ours/theirs”或只附一次 HTTP 200 均不合格。删除 Fork
@@ -257,11 +266,10 @@ LC_ALL=C comm -23 OVERLAP_PATHS CONTENT_CONFLICTS > AUTO_MERGES
 
 端点净差异不能证明逐 commit rebase 的完整冲突集：早期修改可能在后续 commit 中被恢复，
 rename/modify 也可能使用不同路径名。因此 `CONTENT_CONFLICTS` 的真值来自每次 rebase stop 的
-stage snapshot，并必须与隔离 shadow replay 的路径与 hunk 并集完全一致；不得仅凭
-`OVERLAP_PATHS` 推导、也不得为了满足子集关系删除真实冲突。`NON_OVERLAP_CONFLICTS` 可以非空，
-但每一项都要在 ledger 说明中间 commit 或 rename 原因。固定 SHA 不可读取、snapshot 缺失、
-shadow replay 不一致、count 不是从集合计算，或账本漏项时，正式 verdict 必须为
-`SPEC_COMPLIANCE: FAIL`。
+stage snapshot，不得仅凭 `OVERLAP_PATHS` 推导，也不得为了满足子集关系删除真实冲突。
+`NON_OVERLAP_CONFLICTS` 可以非空，但每一项都要在 ledger 说明中间 commit 或 rename 原因。
+固定 SHA 不可读取、snapshot 缺失、count 不是从集合计算、账本漏项，或触发 shadow replay 后
+主/影证据不一致时，正式 verdict 必须为 `SPEC_COMPLIANCE: FAIL`。
 
 <!-- mechanical-recomputation:start -->
 official_changed_paths=git-diff-name-only-no-renames-OLD_OFFICIAL-to-NEW_OFFICIAL
@@ -269,7 +277,7 @@ old_fork_net_paths=git-diff-name-only-no-renames-OLD_OFFICIAL-to-PRE_REBASE_DEV
 old_fork_touched_paths=union-of-per-nonmerge-commit-no-renames-paths
 net_overlap_paths=OFFICIAL_CHANGED_PATHS-intersect-OLD_FORK_NET_PATHS
 overlap_paths=OFFICIAL_CHANGED_PATHS-intersect-OLD_FORK_TOUCHED_PATHS
-content_conflicts=captured-union-equals-isolated-shadow-replay-union
+content_conflicts=captured-union-from-all-rebase-stops
 non_overlap_conflicts=CONTENT_CONFLICTS-minus-OVERLAP_PATHS-retained-and-explained
 auto_merges=OVERLAP_PATHS-minus-CONTENT_CONFLICTS
 counts=derived-from-recomputed-sets
@@ -277,13 +285,12 @@ copied_constants=forbidden
 verdict=SPEC_COMPLIANCE:FAIL-on-missing-or-mismatch
 <!-- mechanical-recomputation:end -->
 
-### 冲突 stop 与 shadow replay 证据
+### 冲突 stop 与条件式 shadow replay
 
-主 rebase 开始前必须创建并保留隔离的 shared temporary clone，使其拥有独立 ref 指向
-`PRE_REBASE_DEV`，同时固定完整 replay manifest：Git version、原始与有效 rebase invocation、
-会影响 commit 选择/merge/rename/换行的 config 及来源、两端 `.gitattributes` 和有效 merge
-driver。主流程与 shadow invocation 都显式设置 `rerere.enabled=false`、
-`rerere.autoupdate=false`，不得读取既有 `rr-cache`；非确定性 external merge driver 阻塞同步。
+主 rebase 开始前固定 replay manifest：Git version、原始与有效 rebase invocation、会影响
+commit 选择/merge/rename/换行的 config 及来源、两端 `.gitattributes` 和有效 merge driver。
+主流程显式设置 `rerere.enabled=false`、`rerere.autoupdate=false`，不得读取既有 `rr-cache`；
+非确定性 external merge driver 阻塞同步。
 
 每次 rebase 停在 unresolved 状态时，必须在继续之前捕获 rebase step、`REBASE_HEAD`、
 `git diff --name-only --diff-filter=U`、`git ls-files -u` 的 stage 1/2/3 mode+blob，以及禁用 color 和
@@ -297,15 +304,18 @@ step、`REBASE_HEAD`、path、stage mode+blobs 和规范化 hunk bytes 共同计
 `continue-kept-empty`。动作后记录 `REBASE_HEAD -> replayed commit | dropped:<原因>` 映射和
 post-action `HEAD^{tree}`；`skip-empty` 不得伪造 replayed commit。
 
-最终 review 前，在 `mktemp -d` 的隔离临时 clone 中按 pre-rebase manifest 从相同任务级固定 SHA
-重放同一非 merge commit 序列。每个 shadow stop 先独立捕获路径、stage mode+blob 与 hunk，再将
-主 rebase 记录的完整 resolved index tree 恢复到 shadow index/worktree 后执行同一
-`resolution_action`。replay 前必须从 shadow clone 对所有 recorded stage 0 blob 与 resolved
-index tree 执行 `git cat-file -e`，证明 shared source objects 可读。动作序列、commit/dropped
-映射、每个实际生成 commit 的 tree、post-action tree、最终 tree，以及主/影子两套 stop、路径、`hunk_id` 并集必须完全一致，否则 fail
-closed。临时 clone 不得复用或移动主仓库的 worktree、index、
-HEAD、branch 或 ref，完成比对后删除。reviewer 不自行执行可变 rebase，只静态核对两套完整
-证据和集合相等性；缺少 shadow replay 不能降级成 residual risk。
+下列任一情况才必须在最终 review 前执行隔离 shadow replay：候选来源或 commit 序列不能从固定
+SHA 唯一证明；使用 `--rebase-merges`、merge commit、custom/external merge driver；主流程可能
+读取过 rerere；任一 stop 的 stage、hunk、resolved tree 或 action 证据不完整；需要同时压缩或
+重排提交；机械集合出现不一致；reviewer 根据具体证据要求复核。普通线性、来源明确且逐 stop
+证据完整的 rebase 不重复重放。
+
+触发时，在 `mktemp -d` 的隔离临时 clone 中按 manifest 从相同固定 SHA 重放同一 commit 序列，
+显式禁用 rerere。每个 shadow stop 独立捕获路径、stage mode+blob 与 hunk，再恢复主流程记录的
+resolved index tree 并执行同一 `resolution_action`。动作序列、commit/dropped 映射、每个生成
+commit 的 tree、post-action tree、最终 tree，以及主/影 stop、路径、`hunk_id` 并集必须一致，
+否则 fail closed。未触发时，review package 写明未触发的逐项依据，reviewer 只核对固定 SHA、
+主流程 stop 证据和最终 scoped diff。
 
 <!-- conflict-snapshot-contract:start -->
 per_stop=rebase-step,REBASE_HEAD,resolution-action,resolved-index-tree,post-action-HEAD-tree
@@ -316,9 +326,10 @@ hunk_id=sha256-rebase-step-REBASE_HEAD-path-stage-mode-blobs-normalized-hunk
 hunk_dedupe=exact-hunk-id-only
 captured_union=all-unresolved-paths-from-all-stops
 replay_environment=pre-rebase-git-version-invocation-config-attributes-and-rerere-disabled
-shadow_clone=created-before-main-rebase-and-preserves-PRE_REBASE_DEV
+shadow_trigger=ambiguous-source-or-nonlinear-history-or-custom-driver-or-rerere-or-incomplete-evidence-or-history-rewrite-or-mechanical-mismatch-or-reviewer-request
+shadow_clone=created-only-when-triggered-and-preserves-PRE_REBASE_DEV
 object_access=shared-source-objects-cat-file-verified-before-replay
-shadow_replay=isolated-temp-clone-fixed-task-shas-recorded-resolutions
+shadow_replay=conditional-isolated-temp-clone-fixed-task-shas-recorded-resolutions
 shadow_match=actions-mappings-stops-paths-hunk-ids-produced-trees-and-final-tree-must-equal-before-review
 mismatch_verdict=SPEC_COMPLIANCE:FAIL
 <!-- conflict-snapshot-contract:end -->
@@ -406,8 +417,8 @@ minimal_official_diff=required-per-file-necessity-and-no-unrelated-change
 
 `SENSITIVE_SCOPE` 非空、命中任一 `SHARED_ENTRYPOINTS`、内容冲突路径达到 5 个，或唯一 hunk
 达到 10 个时，最终双审前必须先派只读 explorer 生成冲突数据流、最终消费者和错误路径证据；
-explorer 不下 verdict。每条 ledger 用 `risk_domains` 标注 `runtime`、`config`、`persistence`、
-`ui`、`release` 中命中的边界；允许一条记录命中多个边界，但“命中两个类别”本身不触发第三审。
+explorer 不下 verdict。命中真实风险边界的 ledger 用 `risk_domains` 标注 `runtime`、`config`、
+`persistence`、`ui`、`release` 中的相关项；允许一条记录命中多个边界，但“命中两个类别”本身不触发第三审。
 只有证据明确给出从一个边界的具体 path/symbol 到另一边界具体 path/symbol 的消费者链 edge，
 或 explorer 仍报告跨边界不确定性，才增加一个独立 `CODE_QUALITY` reviewer。第三 reviewer 的
 scope 必须精确列出这些 path、symbol 与 edge，只审跨边界风险；不得重复整份泛化审查制造票数。
@@ -429,9 +440,9 @@ third_reviewer_scope=exact-cross-boundary-paths-symbols-and-edges-only
 generic_reviewer_expansion=forbidden
 <!-- rebase-review-escalation:end -->
 
-现有 `pre-push` hook 会执行 `bun run prepush`，因此会运行
-`tests/fork-maintenance-truth.test.ts` 并阻止上述机器契约被静默删改；未安装 hook 时，发布者必须
-在 push 前显式运行该 focused test 和完整验证。hook 只能证明仓库内的静态契约与测试通过，
+若本地安装了 `pre-push` hook，它可以执行 `bun run prepush`，并运行
+`tests/ci-workflows/fork-maintenance-truth.test.ts`；没有 hook 时，发布者必须在 push 前显式运行
+该 focused test 和完整验证。hook 不是发布状态真源，只能证明它实际执行过的静态契约与测试通过，
 不能证明双审通过，也不能证明 reviewer 真正完成了 SHA 重算、数据流检查或复审。禁止 hook
 自动生成 approval、自动清除 finding、自动移动 ref，自动化也不得用 `--no-verify` 绕过它。
 
@@ -459,7 +470,7 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 
 1. fetch 后固定本地/远端 main、dev、upstream-release、`refs/heads/sync/vX.Y.Z` 和目标 Fork Tag 的 raw/peeled SHA；按 `sync-audit-ref-policy` 固定本轮 `RELEASE_SYNC_REF=refs/heads/sync/vX.Y.Z`，并将 `OLD_OFFICIAL`、`NEW_OFFICIAL`、`PRE_REBASE_DEV` 记为任务级不可变输入。本地 main 与 marker 必须和远端一致；dev 的本地/远端状态同时记录为候选证据；发现本基线 `sync/vX.Y.Z-ben.N` 即停止。
 2. 保护候选历史：候选固定为已提交的 `dev`。远端 dev 必须 fetch；本地 dev 领先、落后或分叉时均须记录两端 SHA 与来源。只要本地 dev 是当前已知、干净的发布候选，可继续；来源不明、远端独有而无法证明、或 lease 预期无法固定时停止。目标 `RELEASE_SYNC_REF` 已存在时必须 fetch 并记录精确 expected-OID lease；首次不存在时记录 expected-absent lease。sync 不要求是 `RELEASE_COMMIT` 的祖先，允许在发布时 non-fast-forward 强制更新。
-3. 在启动主 rebase 前先创建保留 `PRE_REBASE_DEV` 的 shared temporary clone、按 `conflict-snapshot-contract` 固定 replay manifest，并在主流程与 shadow 中显式禁用 `rerere`/`rerere.autoupdate`。随后在 `dev` 上执行等价于 `git rebase --onto <new-tag-sha> <old-upstream-release-sha> dev`。rebase 每次停住时先捕获完整证据，才允许解决并继续；完成后立即固定 `POST_REBASE_HEAD`，再进行 shadow replay 对账。rebase 阶段不得移动 main，不得 detached HEAD 验证。完成实现、验证和末尾文档提交后，才能准备本轮 `RELEASE_SYNC_REF` 指向同一 `RELEASE_COMMIT`；不得将 dev 当作只读证据，也不得在任何 sync ref 上 rebase。
+3. 启动主 rebase 前按 `conflict-snapshot-contract` 固定 replay manifest，并显式禁用 `rerere`/`rerere.autoupdate`。随后在 `dev` 上执行等价于 `git rebase --onto <new-tag-sha> <old-upstream-release-sha> dev`。每次停住时先捕获完整证据，才允许解决并继续；完成后立即固定 `POST_REBASE_HEAD`，并按条件判断是否需要 shadow replay。rebase 阶段不得移动 main，不得 detached HEAD 验证。完成实现、验证和末尾文档提交后，才能准备本轮 `RELEASE_SYNC_REF` 指向同一 `RELEASE_COMMIT`；不得将 dev 当作只读证据，也不得在任何 sync ref 上 rebase。
 4. 冲突处理以 FORK_CHANGES.md、src/fork 边界、AGENTS.local.md、既有测试和新官方实现为依据，并为全部 `CONTENT_CONFLICTS` 写逐冲突 ledger。仅当前官方源码与测试证明等价或更优才可删除 Fork 行为；名称相似、旧文档或单次 HTTP 200 不算证据。部分覆盖只移除被替代部分；语义改变、能力放弃或无法判定时请用户决定。Fork 逻辑优先放窄模块或 src/fork，官方高频文件最小接线。
 5. revision：新官方 vX.Y.Z 首次派生固定 X.Y.Z-ben.1 / vX.Y.Z-ben.1。同基线已有 Release 不自动递增；仅用户明确要求才允许 ben.2、ben.3。`ben.N` 按官方基线独立维护：即使完整 Tag 集已有更新官方稳定版，明确授权的旧基线维护修订仍可继续，但必须存在精确官方基线 Tag、不得低于同基线最高有效 ben revision、不得复用或移动既有 Fork Tag，也不得声称包含更新官方版本能力。普通 stable/preview 仍遵守全局单调版本门禁。重复 heartbeat 幂等。
 6. 完成并提交全部 rebase、冲突、版本与实现修复。

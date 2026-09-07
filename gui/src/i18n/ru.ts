@@ -799,6 +799,7 @@ export const ru: Record<TKey, string> = {
   "logs.detail.attempt.recovery.agentTaskRecovery": "Восстановление зашифрованной задачи агента",
   "logs.detail.attempt.recovery.connectionReset": "Соединение сброшено",
   "logs.detail.attempt.recovery.oauth401": "Повторная авторизация OAuth",
+  "logs.detail.attempt.recovery.key401": "Повторная авторизация API-ключа",
   "logs.detail.attempt.recovery.key429": "Ключ ограничен (429)",
   "logs.detail.attempt.recovery.rateLimit429": "Ограничение частоты запросов (429)",
   "logs.detail.attempt.recovery.anthropicOauth429": "Anthropic OAuth ограничен (429)",

@@ -797,6 +797,7 @@ export const fr: Record<TKey, string> = {
   "logs.detail.attempt.recovery.connectionReset": "Réinitialisation de la connexion",
   "logs.detail.attempt.recovery.emptyCompletion": "Nouvelle tentative après une réponse vide",
   "logs.detail.attempt.recovery.oauth401": "Réauthentification OAuth",
+  "logs.detail.attempt.recovery.key401": "Réauthentification de la clé API",
   "logs.detail.attempt.recovery.key429": "Clé soumise à une limitation de débit (429)",
   "logs.detail.attempt.recovery.rateLimit429": "Limitation de débit (429)",
   "logs.detail.attempt.recovery.anthropicOauth429": "Limitation de débit OAuth Anthropic (429)",
