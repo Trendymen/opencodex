@@ -31,6 +31,115 @@
 | 项目 | 当前值 |
 | --- | --- |
 | 审计日期 | 2026-09-07 |
+| 本轮官方维护基线 | [v2.46.0](https://github.com/lidge-jun/opencodex/releases/tag/v2.46.0) |
+| 官方 Tag commit | `bba63222d3eeb5c8e397edae35798225e4fa1a6f`；正式 Release，Tag 可从 upstream/main 到达 |
+| 当前 IMPLEMENTATION_HEAD | `ab4d7dcbfb351974d0ad93449a0da923eb253439` |
+| Fork 包版本 | `2.46.0-ben.1` |
+| 本轮派生 Tag | `v2.46.0-ben.1` |
+| 实现修改面 | 相对官方：210 files changed, 36722 insertions(+), 717 deletions(-)；相对 POST_REBASE_HEAD：2 files changed, 70 insertions(+), 3 deletions(-) |
+| 验证 | `ab4d7dcbfb351974d0ad93449a0da923eb253439` 上 390 项定向测试通过；默认 4x prepush 为 21,424 pass / 16 skip / 0 fail，六个 serial lane 为 81 / 18 / 17 / 1 / 40 / 23 pass；typecheck、GUI lint/build、docs-site build、privacy scan 及 prepush 整体 exit 0 |
+| 发布动作 | 本表是 Tag 前快照；双审、push、CI 和 Release 的最终结果由本会话与同名 Release Notes 记录，不为回填外部结果移动 Tag |
+
+### v2.46.0 本轮能力与覆盖核对
+
+本轮从已发布 `v2.45.0-ben.1` 的 dev 提交 `f5a83db0377659ef079c74bf449fadd9bdd17fa9` 重放 19 个线性 Fork 提交。
+官方改动 202 条路径，旧 Fork 净差异 210 条，逐提交触及 272 条；两种 overlap 均为 33。
+3 次 stop 涉及 3 个路径、4 个 hunk，30 个 overlap 路径自动合并。未使用 rerere、merge commit、特殊 driver 或历史重排，stop 证据齐全；本轮不触发 shadow replay。
+
+| 能力 | v2.46.0 覆盖状态与本轮处理 |
+| --- | --- |
+| BigModel Responses | 官方新增 zhipu-bigmodel-responses 静态预设；Fork zhipu-bigmodel-codex 的动态目录、glm schema 转换与已有 ID 配置继续保留。两者 ID 不同，不自动迁移用户配置 |
+| catalog 显示名称 | 采用官方 native display-name、discovered model 编辑与重建恢复实现；保留 Fork routed progress 与 custom model metadata 的窄接线 |
+| Grok / Responses snapshot | 官方新增严格 framing；保留 Fork Volcengine 默认开启且显式 false 关闭的 snapshot 策略，两条客户端/provider 开关独立 |
+| reasoning / tool replay | 采用官方 reasoning/tool envelope 和 terminal overflow 修复；保留 Fork GLM/Kimi 兼容、opaque 字段、reasoning summary、message phase 与 exec provenance |
+| nested-exec / agent-task recovery | 保留已提交授权、bounded JSON cache 生命周期及 strict backend 恢复；合入官方更具体的恢复失败原因 |
+| quota / diagnostics | 合入官方 serving-account quota 和 reset deadline、inbound body size 分类；保留 Fork Ark quota、诊断持久化与隐私限制 |
+| 安装与更新 | Fork install:local 事务、Windows 恢复与 ben.N 更新策略不变；官方 CLI/proxy 版本差异提示随基线更新 |
+| 测试与 CI | 采用官方 domain 布局与新增 Docker smoke；保留 exact-SHA push 与官方基线校验，双审按当前简化规则执行 |
+
+本轮未主动移除 Fork 能力或测试。下方 v2.45 及更早章节是对应提交的历史核对与移除记录；当前继承的实现应以本轮固定 SHA 和实际测试为准。
+真实第三方 Provider/Codex App、全局安装替换与 Windows 实机验收仍未完成；Docker 实机验证留给远端官方 CI job。
+
+<!-- v246-rebase:start -->
+official_old=v2.45.0
+official_new=v2.46.0
+old_official_commit=b0900e556e50984a651a4c72db000e9285a6952a
+new_official_commit=bba63222d3eeb5c8e397edae35798225e4fa1a6f
+pre_rebase_dev=f5a83db0377659ef079c74bf449fadd9bdd17fa9
+post_rebase_head=bbccacdd3d3dba17c36eec1add1bf5dfa016e3bb
+candidate_branch=dev
+package_version=2.46.0-ben.1
+fork_tag=v2.46.0-ben.1
+release_sync_ref=refs/heads/sync/v2.46.0
+official_changed_path_count=202
+old_fork_net_path_count=210
+old_fork_touched_path_count=272
+net_overlap_path_count=33
+overlap_path_count=33
+content_conflict_count=3
+content_hunk_count=4
+non_overlap_conflict_count=0
+non_overlap_conflicts=none
+auto_merge_path_count=30
+overlap_paths=.github/workflows/ci.yml,docs-site/src/content/docs/guides/providers.md,docs-site/src/content/docs/reference/cli/agents.md,docs-site/src/content/docs/reference/configuration/providers.md,docs-site/src/content/docs/reference/proxy-formats.md,docs-site/src/content/docs/zh-cn/guides/providers.md,docs-site/src/content/docs/zh-cn/reference/cli/agents.md,docs-site/src/content/docs/zh-cn/reference/configuration/providers.md,gui/src/i18n/de.ts,gui/src/i18n/en.ts,gui/src/i18n/fr.ts,gui/src/i18n/ja.ts,gui/src/i18n/ko.ts,gui/src/i18n/ru.ts,gui/src/i18n/tr.ts,gui/src/i18n/zh-TW.ts,gui/src/i18n/zh.ts,package.json,scripts/test-layout/layout.json,src/adapters/anthropic.ts,src/adapters/openai-responses.ts,src/cli/help.ts,src/cli/registry.ts,src/codex/catalog/sync.ts,src/providers/registry.ts,src/server/management/model-routes.ts,src/server/responses/agent-task-recovery.ts,src/server/responses/core.ts,structure/04_transports-and-sidecars.md,tests/ci-workflows/ci-workflows.test.ts,tests/codex-integration/codex-catalog.test.ts,tests/fixtures/test-layout-expected.json,tests/responses/openai-responses-passthrough.test.ts
+content_conflicts=.github/workflows/ci.yml,package.json,src/server/responses/core.ts
+content_hunk_ids=55da5b1107b476698ebdf7191b912dcf0a7487610d2190496f65593223bc336a,97f7db7951f960d0c7babe229b896e0955cc3f35a55247acba7422dc657f7db7,cfc535725e6ac9764b5fbf30d1b2aa1a3bb38b16dbba03b4a8d021f02a89d542,d8da9b93350ecfbc24ccd896d0f9d41d8e4e4e1048eb8cffd2ce3b17f5ecb0ea
+shadow_replay=not-triggered-linear-fixed-source-complete-stop-evidence-no-rerere
+implementation_head=ab4d7dcbfb351974d0ad93449a0da923eb253439
+release_commit=docs-only-current-head
+verification=pass-focused-390;prepush-21424-16skip-0fail;serial-81-18-17-1-40-23;typecheck-gui-docs-privacy-pass
+reviews=pending
+tag_state=pending
+atomic_push=pending
+github_release=pending
+<!-- v246-rebase:end -->
+
+### v2.46.0 冲突决定
+
+<!-- v246-conflict-_github_workflows_ci_yml:start -->
+path=.github/workflows/ci.yml
+symbols=on.push.paths,docker-smoke,ci.needs,Prepare verified Fork official base
+official_change=新增 Docker build/start/recreate job、路径过滤与 aggregate 依赖
+fork_change=每个 branch SHA 触发 CI、完整 suite 验证官方基线
+resolution=删除 workflow 级 push.paths；保留官方 Docker job/filter/aggregate 与四处 Fork provenance
+official_coverage=官方 v2.46.0 ci.yml 和 tests/ci-workflows/ci-workflows.test.ts 管理拓扑；Fork 专项仅验证 provenance 接线
+conflict_snapshots=step=2;REBASE_HEAD=5ce88ccb9f960c27ad5e41829d304e1b37b3ae06;hunk_ids=55da5b1107b476698ebdf7191b912dcf0a7487610d2190496f65593223bc336a,cfc535725e6ac9764b5fbf30d1b2aa1a3bb38b16dbba03b4a8d021f02a89d542
+focused_tests=tests/ci-workflows/ci-workflows.test.ts,tests/ci-workflows/fork-ci-official-baseline.test.ts
+residual_risk=pending:Docker 实机门禁由远端 Actions 验证
+<!-- v246-conflict-_github_workflows_ci_yml:end -->
+
+<!-- v246-conflict-package_json:start -->
+path=package.json
+symbols=version,install:local
+official_change=官方包版本推进至 2.46.0
+fork_change=Fork ben.N 版本与 install:local 入口
+resolution=重放时保留各旧提交版本过渡，最终单独推进 2.46.0-ben.1
+official_coverage=官方 scripts/dependencies 不变；src/fork/version-policy.mjs 保留 Fork 版本语义
+conflict_snapshots=step=6;REBASE_HEAD=4372ee9d3ae2bc60bf28c73d90412e4741576594;hunk_ids=97f7db7951f960d0c7babe229b896e0955cc3f35a55247acba7422dc657f7db7
+focused_tests=tests/update/fork-version-policy.test.ts
+residual_risk=pending:最终发布前复核 Tag 名称空间
+<!-- v246-conflict-package_json:end -->
+
+<!-- v246-conflict-src_server_responses_core_ts:start -->
+path=src/server/responses/core.ts
+symbols=grokClientCompatibilityEnabled,snapshotRepairEnabled,payloadRewrites
+official_change=Grok 控制帧修复新增接线并重命名开关
+fork_change=Volcengine Responses 默认 snapshot repair，显式 false 禁用
+resolution=保留官方 Grok 新符号和两个消费者；保留 Fork snapshot 条件及 bounded JSON 对应条件
+official_coverage=src/server/grok-responses-control-frame.ts 负责 Grok framing；tests/responses/responses-snapshot-repair-server.test.ts 覆盖客户端和 provider 开关；未替代 Volcengine 默认策略
+conflict_snapshots=step=1;REBASE_HEAD=222be71303c7f0c197ac54ff999b0b63d9c60119;hunk_ids=d8da9b93350ecfbc24ccd896d0f9d41d8e4e4e1048eb8cffd2ce3b17f5ecb0ea
+focused_tests=tests/responses/responses-snapshot-repair-server.test.ts,tests/responses/responses-snapshot-repair.test.ts
+residual_risk=pending:真实 Grok/Volcengine 服务尚未动态验收
+<!-- v246-conflict-src_server_responses_core_ts:end -->
+
+## 历史 v2.45.0 审计快照
+
+以下表格与机器块保存当时 Tag 前状态。该版本后续已经完成双审、原子推送、dev/main CI 和公开 Release；发布对象是 `f5a83db0377659ef079c74bf449fadd9bdd17fa9`，原始 Tag 保持不变。
+
+
+| 项目 | 当前值 |
+| --- | --- |
+| 审计日期 | 2026-09-07 |
 | 本轮官方维护基线 | [`v2.45.0`](https://github.com/lidge-jun/opencodex/releases/tag/v2.45.0) |
 | 官方 Tag commit | `b0900e556e50984a651a4c72db000e9285a6952a` |
 | 当前上游最新稳定 Release | `v2.45.0`（`b0900e556e50984a651a4c72db000e9285a6952a`），非 draft、非 prerelease，且可从 `upstream/main` 到达 |
