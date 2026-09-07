@@ -216,6 +216,29 @@ test("MESSAGE recovery reaches the provider and survives tool-result replay", as
   }
 });
 
+test("a routed parent without spawn markers recovers a worker's encrypted MESSAGE", async () => {
+  const { post, providerResponse } = await import("../helpers/agent-task-recovery");
+  let recoveries = 0;
+  const bodies: string[] = [];
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    if (String(url).includes("chatgpt.com")) {
+      expect(String(init?.body)).toContain("Message Type: MESSAGE");
+      recoveries++;
+      return new Response(recoverySse("Clothing fly starts at the item node."));
+    }
+    bodies.push(String(init?.body));
+    return providerResponse();
+  }) as typeof fetch;
+  const config = routedConfig({ enabled: true });
+  const headers = codexHeaders();
+  headers.delete("x-openai-subagent");
+  expect((await post(config, "xai/grok-4.5", encryptedMessage(), headers)).status).toBe(200);
+  expect(recoveries).toBe(1);
+  expect(bodies).toHaveLength(1);
+  expect(bodies[0]).toContain("Clothing fly starts at the item node.");
+  expect(bodies[0]).not.toContain(FERNET_TASK);
+});
+
 test("a changed valid token cannot read another credential snapshot's recovery", async () => {
   let recoveries = 0;
   globalThis.fetch = (async () => {

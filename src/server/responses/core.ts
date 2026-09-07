@@ -3539,11 +3539,12 @@ async function handleResponsesInner(
 
   let recoveryFailureReason: AgentTaskRecoveryFailureReason | undefined;
   // Native fallback and explicitly trusted direct Responses routes can consume ciphertext,
-  // so recover only after final route selection.
+  // so recover only after final route selection. Spawned children are one eligible lane;
+  // a routed parent conversation receiving a worker's encrypted MESSAGE is the other:
+  // it cannot read that ciphertext either. Admission, cache scope, and the recovery
+  // parser's strict envelope checks keep the parent lane bounded to exactly that case.
   if (
     inboundWire === "responses"
-    &&
-    threadSpawn
     && agentTaskRecovery
     && !isCanonicalOpenAiForwardProvider(route.provider)
     && !options.comboAttempt
