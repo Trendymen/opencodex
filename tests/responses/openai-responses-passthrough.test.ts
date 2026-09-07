@@ -52,9 +52,11 @@ describe("native routed code-mode result visibility", () => {
     const before = JSON.stringify(body);
     const request = createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body));
     const wire = JSON.parse(request.body);
-    expect(wire.instructions).toBe(
-      `Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}\n\n${CODE_MODE_HOST_CONTRACT_SENTENCE}\n\n${ROUTED_PROGRESS_CONTRACT}`,
+    expect(wire.instructions).toStartWith(
+      `Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}\n\n${CODE_MODE_HOST_CONTRACT_SENTENCE}\n\n${ROUTED_PROGRESS_CONTRACT}\n\n`,
     );
+    expect(wire.instructions).toContain("Tool contract: use the current tool catalog as ground truth.");
+    expect(wire.instructions.split(CODE_MODE_RESULT_ECHO_SENTENCE)).toHaveLength(2);
     expect(wire.tools.find((tool: { name: string }) => tool.name === "exec").parameters.properties.input.description)
       .toContain(CODE_MODE_RESULT_ECHO_SENTENCE);
     expect(JSON.stringify(body)).toBe(before);
