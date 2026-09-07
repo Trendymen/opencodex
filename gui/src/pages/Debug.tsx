@@ -206,7 +206,7 @@ export default function Debug({ apiBase, embedded, active = true }: { apiBase: s
     }
   };
 
-  const setDebugFlag = async (flag: "debug" | "usage" | "injection" | "claude", enabled: boolean) => {
+  const setDebugFlag = async (flag: "debug" | "providerText" | "usage" | "injection" | "claude", enabled: boolean) => {
     await runDebugMutation({ [flag]: enabled });
   };
 
