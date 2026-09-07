@@ -69,7 +69,7 @@ describe("non-OpenAI tool catalog nudge", () => {
     expect(note).toContain("nested helper APIs are not additional top-level tools");
     expect(note).toContain("`exec` is Codex code mode");
     expect(note).toContain("await tools.<name>(...)");
-    expect(note).toContain("await tools.codex_app__list_threads({})");
+    expect(note).toContain("await tools.mcp__codex_app__list_threads({})");
     expect(note).toContain("isolate global `ALL_TOOLS`, not `tools.ALL_TOOLS`");
     expect(note).toContain("Do not skip an available nested helper");
     expect(note).toContain("`*** Begin Patch`");
