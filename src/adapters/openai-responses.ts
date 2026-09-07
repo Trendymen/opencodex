@@ -3,7 +3,7 @@ import { normalizeOpenCodeGoAdditionalTools } from "./opencode-go-additional-too
 import { isXaiResponsesDestination } from "../providers/xai-transport";
 import { createHash } from "node:crypto";
 import type { IncomingMeta, ProviderAdapter } from "./base";
-import { namespacedToolName, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
+import { namespacedToolName, toolChoiceToolPredicate, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
 import { catalogModelSupportsReasoningSummaries } from "../codex/catalog";
 import { applyCodexRoutingHint, CODEX_RESPONSES_LITE_HEADER, CODEX_ROUTING_HINT_HEADER } from "../codex/forward-transport-headers";
 import { COMPACT_PROMPT, compactionItemToText, decodeCompactionSummary, isCompactionItemType } from "../responses/compaction";
@@ -25,6 +25,11 @@ import { rewriteRoutedToolSearchForUpstream } from "../responses/tool-search-com
 import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-tool-compat";
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeResponsesCodeMode } from "./responses-code-mode";
+import { CODE_MODE_RESULT_ECHO_SENTENCE } from "./exec-tool-result-normalize";
+import {
+  buildNonOpenAIToolCatalogNudgeForTools,
+  shouldInjectNonOpenAIToolCatalogNudge,
+} from "./tool-catalog-nudge";
 import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "./xai-web-search";
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "./empty-tool-output-annotation";
 import { stripResponsesOnlyEncryptedMarker } from "./responses-tool-schema";
@@ -633,6 +638,30 @@ function stripSparkCompatibility(body: unknown): unknown {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/** Add tool guidance only when the parsed catalog still matches every final named wire tool. */
+function applyRoutedResponsesToolCatalogNudge(body: unknown, parsed: OcxParsedRequest): unknown {
+  if (!isPlainObject(body) || typeof body.instructions !== "string") return body;
+  const declarations = collectResponsesToolGroups(body).flat();
+  if (declarations.length === 0) return body;
+  if (declarations.some(tool => !isPlainObject(tool) || typeof tool.name !== "string")) return body;
+
+  const wireNames = declarations.map(tool => (tool as Record<string, unknown>).name as string);
+  const uniqueWireNames = new Set(wireNames);
+  const tools = parsed.context.tools ?? [];
+  const visibleTools = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
+  const matchingTools = visibleTools.filter(tool => uniqueWireNames.has(namespacedToolName(tool.namespace, tool.name)));
+  const matchedNames = new Set(matchingTools.map(tool => namespacedToolName(tool.namespace, tool.name)));
+  if (matchedNames.size !== uniqueWireNames.size) return body;
+
+  const nudge = buildNonOpenAIToolCatalogNudgeForTools(matchingTools, parsed.options.toolChoice);
+  if (!nudge) return body;
+  const novelNudge = body.instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)
+    ? nudge.replace(`${CODE_MODE_RESULT_ECHO_SENTENCE} `, "")
+    : nudge;
+  if (body.instructions.includes(novelNudge)) return body;
+  return { ...body, instructions: `${body.instructions}\n\n${novelNudge}` };
 }
 
 /** Codex's reserved client-tool group on Responses Lite; carries no wire prefix. */
@@ -2568,6 +2597,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         provider,
         parsed.modelId,
       );
+      if (parsed._compactionRequest !== true && shouldInjectNonOpenAIToolCatalogNudge(provider)) {
+        finalBody = applyRoutedResponsesToolCatalogNudge(finalBody, parsed);
+      }
       if (isCanonicalOpenAiForwardProvider(provider)) {
         // Spark closes Responses Lite streams before a terminal completion. Select compatibility
         // from the final wire model so aliases cannot leave the caller or a static header enabled.
