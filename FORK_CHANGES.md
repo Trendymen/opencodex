@@ -33,12 +33,19 @@
 | 审计日期 | 2026-09-07 |
 | 本轮官方维护基线 | [v2.46.0](https://github.com/lidge-jun/opencodex/releases/tag/v2.46.0) |
 | 官方 Tag commit | `bba63222d3eeb5c8e397edae35798225e4fa1a6f`；正式 Release，Tag 可从 upstream/main 到达 |
-| 当前 IMPLEMENTATION_HEAD | `ab4d7dcbfb351974d0ad93449a0da923eb253439` |
+| 当前 IMPLEMENTATION_HEAD | `95c0b9f4058961cceeb296a6e411ab75cc50c316` |
 | Fork 包版本 | `2.46.0-ben.1` |
 | 本轮派生 Tag | `v2.46.0-ben.1` |
-| 实现修改面 | 相对官方：210 files changed, 36722 insertions(+), 717 deletions(-)；相对 POST_REBASE_HEAD：2 files changed, 70 insertions(+), 3 deletions(-) |
+| 实现修改面 | 相对官方：210 files changed, 36848 insertions(+), 717 deletions(-)；相对 POST_REBASE_HEAD：5 files changed, 205 insertions(+), 12 deletions(-) |
 | 验证 | `ab4d7dcbfb351974d0ad93449a0da923eb253439` 上 390 项定向测试通过；默认 4x prepush 为 21,424 pass / 16 skip / 0 fail，六个 serial lane 为 81 / 18 / 17 / 1 / 40 / 23 pass；typecheck、GUI lint/build、docs-site build、privacy scan 及 prepush 整体 exit 0 |
 | 发布动作 | 本表是 Tag 前快照；双审、push、CI 和 Release 的最终结果由本会话与同名 Release Notes 记录，不为回填外部结果移动 Tag |
+
+最终候选在上述已验证实现后，只修改 `FORK_CHANGES.md`、`AGENTS.local.md` 和
+`docs/fork-sync-automation.md`。生产代码、依赖、测试、GUI 和文档站输入均未改动，按当前规则
+复用 `ab4d7dcbfb351974d0ad93449a0da923eb253439` 的完整门禁结果，不将日志改标为新 SHA。
+规则变更明确实现期定向测试、最终一次官方 prepush、未受影响结果复用及本轮有界审查；
+分支、Tag、双审和 CI 的发布约束保留。最终文档另跑维护真值测试、privacy scan 和 diff check，
+结果及文档快照留在本轮审查证据中。
 
 ### v2.46.0 本轮能力与覆盖核对
 
@@ -85,7 +92,7 @@ overlap_paths=.github/workflows/ci.yml,docs-site/src/content/docs/guides/provide
 content_conflicts=.github/workflows/ci.yml,package.json,src/server/responses/core.ts
 content_hunk_ids=55da5b1107b476698ebdf7191b912dcf0a7487610d2190496f65593223bc336a,97f7db7951f960d0c7babe229b896e0955cc3f35a55247acba7422dc657f7db7,cfc535725e6ac9764b5fbf30d1b2aa1a3bb38b16dbba03b4a8d021f02a89d542,d8da9b93350ecfbc24ccd896d0f9d41d8e4e4e1048eb8cffd2ce3b17f5ecb0ea
 shadow_replay=not-triggered-linear-fixed-source-complete-stop-evidence-no-rerere
-implementation_head=ab4d7dcbfb351974d0ad93449a0da923eb253439
+implementation_head=95c0b9f4058961cceeb296a6e411ab75cc50c316
 release_commit=docs-only-current-head
 verification=pass-focused-390;prepush-21424-16skip-0fail;serial-81-18-17-1-40-23;typecheck-gui-docs-privacy-pass
 reviews=pending
