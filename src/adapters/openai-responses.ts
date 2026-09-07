@@ -5,7 +5,7 @@ import { isXaiResponsesDestination } from "../providers/xai-transport";
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import type { IncomingMeta, ProviderAdapter } from "./base";
-import { namespacedToolName, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
+import { namespacedToolName, toolChoiceToolPredicate, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
 import { catalogModelSupportsReasoningSummaries } from "../codex/catalog";
 import { applyCodexRoutingHint, CODEX_RESPONSES_LITE_HEADER, CODEX_ROUTING_HINT_HEADER } from "../codex/forward-transport-headers";
 import { COMPACT_PROMPT, compactionItemToText, decodeCompactionSummary, isCompactionItemType } from "../responses/compaction";
@@ -30,6 +30,11 @@ import { isMetaAiResponsesDestination, rewriteMuseToolNamesForUpstream } from ".
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeResponsesCodeMode } from "./responses-code-mode";
 import { stripUnicodePropertyPatterns } from "./responses-tool-schema";
+import { CODE_MODE_RESULT_ECHO_SENTENCE } from "./exec-tool-result-normalize";
+import {
+  buildNonOpenAIToolCatalogNudgeForTools,
+  shouldInjectNonOpenAIToolCatalogNudge,
+} from "./tool-catalog-nudge";
 import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "./xai-web-search";
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "./empty-tool-output-annotation";
 import { stripResponsesOnlyEncryptedMarker } from "./responses-tool-schema";
@@ -354,18 +359,6 @@ function scrubOcxCompactionItems(
   return changed ? { ...body, input } : body;
 }
 
-function stripUnsupportedReasoningParams(body: unknown): unknown {
-  if (!isPlainObject(body)) return body;
-  const model = typeof body.model === "string" ? body.model : "";
-  if (!model.includes("codex-spark")) return body;
-  if (!isPlainObject(body.reasoning)) return body;
-  const reasoning = body.reasoning as Record<string, unknown>;
-  // Spark supports reasoning.effort but rejects context, summary, and generate_summary.
-  const { context: _ctx, summary: _sum, generate_summary: _gs, ...rest } = reasoning;
-  if (_ctx === undefined && _sum === undefined && _gs === undefined) return body;
-  return { ...body, reasoning: Object.keys(rest).length > 0 ? rest : undefined };
-}
-
 /**
  * GPT-5.6 retired the legacy 24-hour retention field, and the ChatGPT backend 400s the whole
  * request when that field is present (issue #2092).
@@ -618,6 +611,30 @@ const SPARK_RESERVED_FUNCTIONS_NAMESPACE = "functions";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/** Add tool guidance only when the parsed catalog still matches every final named wire tool. */
+function applyRoutedResponsesToolCatalogNudge(body: unknown, parsed: OcxParsedRequest): unknown {
+  if (!isPlainObject(body) || typeof body.instructions !== "string") return body;
+  const declarations = collectResponsesToolGroups(body).flat();
+  if (declarations.length === 0) return body;
+  if (declarations.some(tool => !isPlainObject(tool) || typeof tool.name !== "string")) return body;
+
+  const wireNames = declarations.map(tool => (tool as Record<string, unknown>).name as string);
+  const uniqueWireNames = new Set(wireNames);
+  const tools = parsed.context.tools ?? [];
+  const visibleTools = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
+  const matchingTools = visibleTools.filter(tool => uniqueWireNames.has(namespacedToolName(tool.namespace, tool.name)));
+  const matchedNames = new Set(matchingTools.map(tool => namespacedToolName(tool.namespace, tool.name)));
+  if (matchedNames.size !== uniqueWireNames.size) return body;
+
+  const nudge = buildNonOpenAIToolCatalogNudgeForTools(matchingTools, parsed.options.toolChoice);
+  if (!nudge) return body;
+  const novelNudge = body.instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)
+    ? nudge.replace(`${CODE_MODE_RESULT_ECHO_SENTENCE} `, "")
+    : nudge;
+  if (body.instructions.includes(novelNudge)) return body;
+  return { ...body, instructions: `${body.instructions}\n\n${novelNudge}` };
 }
 
 /**
@@ -2548,30 +2565,26 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       outBody = glmKimiCompatibility.body;
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       const sanitizedBody = normalizeToolSchemas(
-        stripSparkCompatibility(
-          stripUnsupportedReasoningParams(
-            stripItemIdsWhenUnstored(
-              stripInvalidItemIds(
-                stripUnsupportedHostedTools(
-                  sanitizeReasoningInputContent(
-                    scrubOcxCompactionItems(
-                      outBody,
-                      destinationDecodesNativeCompactionBlob(provider),
-                      threadServingIdentityChanged,
-                    ),
-                    {
-                      preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
-                      dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
-                      stripEncryptedContent: threadServingIdentityChanged,
-                      stripRawContentBackedEncryptedContent: isOpenAiOperatedResponsesDestination(provider),
-                    },
-                  ),
-                  provider,
+        stripItemIdsWhenUnstored(
+          stripInvalidItemIds(
+            stripUnsupportedHostedTools(
+              sanitizeReasoningInputContent(
+                scrubOcxCompactionItems(
+                  outBody,
+                  destinationDecodesNativeCompactionBlob(provider),
+                  threadServingIdentityChanged,
+                ),
+                {
+                  preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
+                  dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
+                  stripEncryptedContent: threadServingIdentityChanged,
+                  stripRawContentBackedEncryptedContent: isOpenAiOperatedResponsesDestination(provider),
+                },
+              ),
+              provider,
                 ),
               ),
             ),
-          ),
-        ),
         isXaiSchemaTarget(provider),
         !isOpenAiOperatedResponsesDestination(provider)
           && !((provider.authMode ?? "key") === "key" && provider.allowEncryptedV2AgentTasks === true),
@@ -2598,24 +2611,11 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           model: stripBracketedModelSuffix((finalBody as { model: string }).model),
         };
       }
+      if (parsed._compactionRequest !== true && shouldInjectNonOpenAIToolCatalogNudge(provider)) {
+        finalBody = applyRoutedResponsesToolCatalogNudge(finalBody, parsed);
+      }
       if (isCanonicalOpenAiForwardProvider(provider)) {
-        // Spark closes Responses Lite streams before a terminal completion. Select compatibility
-        // from the final wire model so aliases cannot leave the caller or a static header enabled.
-        if (isPlainObject(finalBody) && finalBody.model === "gpt-5.3-codex-spark") {
-          for (const name of Object.keys(headers)) {
-            if (name.toLowerCase() === CODEX_RESPONSES_LITE_HEADER) delete headers[name];
-          }
-          if (isPlainObject(finalBody.client_metadata)
-            && Object.hasOwn(finalBody.client_metadata, "ws_request_header_x_openai_internal_codex_responses_lite")) {
-            const { ws_request_header_x_openai_internal_codex_responses_lite: _lite, ...clientMetadata } = finalBody.client_metadata;
-            finalBody = {
-              ...finalBody,
-              client_metadata: Object.keys(clientMetadata).length > 0 ? clientMetadata : undefined,
-            };
-          }
-        } else {
-          finalBody = addCanonicalForwardResponsesLiteMetadata(finalBody, incoming);
-        }
+        finalBody = addCanonicalForwardResponsesLiteMetadata(finalBody, incoming);
         const routingHeaders = new Headers(headers);
         applyCodexRoutingHint(routingHeaders, finalBody);
         // Static headers may use mixed casing. Remove every stale spelling
@@ -2642,7 +2642,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // HTTP and the WebSocket outbound, because the WS path transports this same request
       // instead of rebuilding it.
       const body = JSON.stringify(finalBody);
-      const bodyBytes = new TextEncoder().encode(body).byteLength;
+      const bodyBytes = Buffer.byteLength(body, "utf8");
       persistKimiToolSchemaCatalog({
         body: finalBody,
         provider,
