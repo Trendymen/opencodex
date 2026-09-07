@@ -23,6 +23,7 @@ export function stripResponsesOnlyEncryptedMarker(node: unknown, inNameBag = fal
   interface Frame { node: unknown; inNameBag: boolean; assign: Assign }
 
   let result: unknown;
+  let removedMarker = false;
   const stack: Frame[] = [{ node, inNameBag, assign: value => { result = value; } }];
 
   while (stack.length > 0) {
@@ -59,9 +60,11 @@ export function stripResponsesOnlyEncryptedMarker(node: unknown, inNameBag = fal
           const childInNameBag = ENCRYPTED_MARKER_NAME_BAG_KEYS.has(key);
           stack.push({ node: value, inNameBag: childInNameBag, assign: v => { out[key] = v; } });
         }
+      } else {
+        removedMarker = true;
       }
     }
   }
 
-  return result;
+  return removedMarker ? result : node;
 }

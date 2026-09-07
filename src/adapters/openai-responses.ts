@@ -25,6 +25,10 @@ import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeResponsesCodeMode } from "./responses-code-mode";
 import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "./xai-web-search";
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "./empty-tool-output-annotation";
+import { stripResponsesOnlyEncryptedMarker } from "./responses-tool-schema";
+import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../fork/glm-kimi-compat";
+import { applyRoutedProgressContractToResponsesBody } from "../fork/routed-progress-contract";
+import { debugResponsesOutboundShape } from "../fork/outbound-debug";
 import {
   isXaiSchemaTarget,
   normalizeXaiToolParameters,
@@ -72,6 +76,7 @@ export function sanitizeReasoningInputContent(
     preserveRawReasoningContent?: boolean;
     dropNullContentChannel?: boolean;
     stripEncryptedContent?: boolean;
+    stripRawContentBackedEncryptedContent?: boolean;
   },
 ): unknown {
   if (!body || typeof body !== "object" || Array.isArray(body)) return body;
@@ -84,13 +89,27 @@ export function sanitizeReasoningInputContent(
     const rec = item as Record<string, unknown>;
     if (rec.type !== "reasoning") return item;
     const hasRawContent = Array.isArray(rec.content) && rec.content.length > 0;
+    const hasRawReasoningText = Array.isArray(rec.content)
+      && rec.content.some(part => part && typeof part === "object" && !Array.isArray(part)
+        && (part as Record<string, unknown>).type === "reasoning_text");
     // ocxr1 envelopes are proxy-minted (Anthropic signatures), not OpenAI encryption — the native
     // backend cannot decrypt them and would reject the request. Strip regardless of content shape.
     const hasOcxEnvelope = typeof rec.encrypted_content === "string" && rec.encrypted_content.startsWith(OCX_REASONING_PREFIX);
     const hasOutputStatus = Object.prototype.hasOwnProperty.call(rec, "status");
     const hasEncryptedContent = Object.prototype.hasOwnProperty.call(rec, "encrypted_content");
     const stripEncryptedContent = hasOcxEnvelope
-      || (opts?.stripEncryptedContent === true && hasEncryptedContent);
+      || (opts?.stripEncryptedContent === true && hasEncryptedContent)
+      // A third-party Responses turn can be interrupted after it has emitted raw reasoning but
+      // before it records a terminal route identity. A later native GPT replay must not carry
+      // that provider's opaque continuation token alongside the raw content it came with. Native
+      // OpenAI reasoning items are summary-only on replay, so this leaves their own opaque blobs
+      // intact while dropping the observed cross-provider shape.
+      || (
+        opts?.stripRawContentBackedEncryptedContent === true
+        && hasRawReasoningText
+        && hasEncryptedContent
+        && !(typeof rec.encrypted_content === "string" && rec.encrypted_content.startsWith("gAAAA"))
+      );
     // Codex serializes an absent reasoning content channel as `"content": null`. The field is
     // optional and null carries nothing, but a strict gateway rejects the item on its declared type
     // — xAI answers `Could not decode the compaction blob`, naming the sibling `encrypted_content`
@@ -645,16 +664,24 @@ function mapRoutedResponsesReasoningEffort(
   return { ...body, reasoning: { ...body.reasoning, effort: mapped } };
 }
 
-function normalizeFunctionToolSchema(tool: unknown, xaiTarget: boolean): unknown | undefined {
+function normalizeFunctionToolSchema(
+  tool: unknown,
+  xaiTarget: boolean,
+  stripEncryptedMarker: boolean,
+): unknown | undefined {
   if (!isPlainObject(tool) || tool.type !== "function") return tool;
   if (xaiTarget) {
     const parameters = normalizeXaiToolParameters(isPlainObject(tool.parameters) ? tool.parameters : {});
-    return parameters === undefined ? undefined : { ...tool, parameters };
+    if (parameters === undefined) return undefined;
+    return { ...tool, parameters: stripEncryptedMarker ? stripResponsesOnlyEncryptedMarker(parameters) : parameters };
   }
-  if (isPlainObject(tool.parameters) && tool.parameters.type === "object") return tool;
+  const parameters = isPlainObject(tool.parameters) && tool.parameters.type === "object"
+    ? tool.parameters
+    : { ...(isPlainObject(tool.parameters) ? tool.parameters : {}), type: "object" };
+  if (!stripEncryptedMarker && parameters === tool.parameters) return tool;
   return {
     ...tool,
-    parameters: { ...(isPlainObject(tool.parameters) ? tool.parameters : {}), type: "object" },
+    parameters: stripEncryptedMarker ? stripResponsesOnlyEncryptedMarker(parameters) : parameters,
   };
 }
 
@@ -704,7 +731,7 @@ function reconcileToolChoiceForOmittedTools(
   return body;
 }
 
-function normalizeToolSchemas(body: unknown, xaiTarget: boolean): unknown {
+function normalizeToolSchemas(body: unknown, xaiTarget: boolean, stripEncryptedMarker: boolean): unknown {
   if (!isPlainObject(body)) return body;
 
   const omittedFunctionNames = new Set<string>();
@@ -712,7 +739,7 @@ function normalizeToolSchemas(body: unknown, xaiTarget: boolean): unknown {
     let changed = false;
     const normalized: unknown[] = [];
     for (const tool of tools) {
-      const fixed = normalizeFunctionToolSchema(tool, xaiTarget);
+      const fixed = normalizeFunctionToolSchema(tool, xaiTarget, stripEncryptedMarker);
       if (fixed === undefined) {
         changed = true;
         if (isPlainObject(tool) && typeof tool.name === "string") omittedFunctionNames.add(tool.name);
@@ -1372,6 +1399,7 @@ function normalizeResponsesToolResultAdjacency(body: unknown): unknown {
  *   strictly better even when the local replay state missed. API-key mode keeps the field on
  *   unexpanded requests: the platform `/v1/responses` supports real server-side storage.
  */
+
 function stripPreviousResponseId(body: unknown, strip: boolean): unknown {
   if (!strip || !isPlainObject(body) || !Object.prototype.hasOwnProperty.call(body, "previous_response_id")) return body;
   const { previous_response_id: _previousResponseId, ...rest } = body;
@@ -1436,6 +1464,25 @@ function stripUnsupportedForwardParams(body: unknown): unknown {
   if (!hasMot && !hasMeta) return body;
   const { max_output_tokens: _mot, metadata: _meta, ...rest } = body;
   return rest;
+}
+
+function addCanonicalForwardResponsesLiteMetadata(body: unknown, incoming: IncomingMeta): unknown {
+  if (incoming.headers.get("x-openai-internal-codex-responses-lite") !== "true" || !isPlainObject(body)) {
+    return body;
+  }
+  if (Object.hasOwn(body, "client_metadata") && !isPlainObject(body.client_metadata)) return body;
+  const clientMetadata = body.client_metadata;
+  if (isPlainObject(clientMetadata)
+    && Object.hasOwn(clientMetadata, "ws_request_header_x_openai_internal_codex_responses_lite")) {
+    return body;
+  }
+  return {
+    ...body,
+    client_metadata: {
+      ...(isPlainObject(clientMetadata) ? clientMetadata : {}),
+      ws_request_header_x_openai_internal_codex_responses_lite: "true",
+    },
+  };
 }
 
 /** Return the lossless text represented by one system message, or null when it is multimodal. */
@@ -2464,6 +2511,17 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // Run after routed compaction so nested input_image parts are replaced before a malformed
       // tool output is flattened to text and can no longer be inspected structurally.
       outBody = repairUnidentifiedToolOutputItems(outBody);
+      if (parsed._compactionRequest !== true && !isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = applyRoutedProgressContractToResponsesBody(outBody);
+      }
+      const glmKimiCompatibility = applyGlmKimiOutboundCompatibility({
+        body: outBody,
+        provider,
+        modelId: parsed.modelId,
+        threadId: incoming.headers.get("thread-id") ?? incoming.headers.get("thread_id"),
+        url,
+      });
+      outBody = glmKimiCompatibility.body;
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       const sanitizedBody = normalizeToolSchemas(
         stripSparkCompatibility(
@@ -2481,6 +2539,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
                       preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
                       dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
                       stripEncryptedContent: threadServingIdentityChanged,
+                      stripRawContentBackedEncryptedContent: isOpenAiOperatedResponsesDestination(provider),
                     },
                   ),
                   provider,
@@ -2490,8 +2549,10 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           ),
         ),
         isXaiSchemaTarget(provider),
+        !isOpenAiOperatedResponsesDestination(provider)
+          && !((provider.authMode ?? "key") === "key" && provider.allowEncryptedV2AgentTasks === true),
       );
-      const finalBody = stripDisabledVerbosity(
+      let finalBody = stripDisabledVerbosity(
         stripDisabledReasoningSummaries(
           normalizeConfiguredReasoningSummaryDelivery(sanitizedBody, provider, parsed.modelId),
           provider,
@@ -2501,6 +2562,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         parsed.modelId,
       );
       if (isCanonicalOpenAiForwardProvider(provider)) {
+        finalBody = addCanonicalForwardResponsesLiteMetadata(finalBody, incoming);
         const routingHeaders = new Headers(headers);
         applyCodexRoutingHint(routingHeaders, finalBody);
         // Static headers may use mixed casing. Remove every stale spelling
@@ -2521,9 +2583,29 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         actualServiceTier,
       );
       const body = JSON.stringify(finalBody);
+      const bodyBytes = new TextEncoder().encode(body).byteLength;
+      persistKimiToolSchemaCatalog({
+        body: finalBody,
+        provider,
+        modelId: parsed.modelId,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+        url,
+      });
+      debugResponsesOutboundShape({
+        url,
+        provider,
+        model: parsed.modelId,
+        body: finalBody,
+        bodyBytes,
+        convertedCustomToolNames: convertedRoutedCustomToolNames,
+        convertedToolSearchNames: convertedRoutedToolSearchNames,
+        convertedNamespaceAliases: convertedRoutedNamespaceToolAliases,
+        kimiToolSchemaLowering: glmKimiCompatibility.kimiToolSchemaLowering,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+      });
       const releaseBodyObservation = translatorBudget.observeExternallyCapped(
         "passthrough_serialization",
-        new TextEncoder().encode(body).byteLength,
+        bodyBytes,
       );
       return {
         url,
@@ -2531,6 +2613,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         headers,
         body,
         releaseBodyObservation,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
         ...(convertedRoutedCustomToolNames ? { convertedRoutedCustomToolNames } : {}),
         ...(routedCustomToolRepairNames ? { routedCustomToolRepairNames } : {}),
         ...(convertedRoutedToolSearchNames ? { convertedRoutedToolSearchNames } : {}),

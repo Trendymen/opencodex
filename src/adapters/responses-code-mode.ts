@@ -29,17 +29,46 @@ function withExecInputGuidance(tool: unknown): unknown {
   } } };
 }
 
+function uniqueBareCustomExecCallIds(body: unknown): Set<string> {
+  if (!record(body) || !Array.isArray(body.input)) return new Set();
+  const provenance = new Map<string, {
+    itemCount: number;
+    bareCustomExecCallCount: number;
+    customOutputCount: number;
+  }>();
+  for (const item of body.input) {
+    if (!record(item) || typeof item.call_id !== "string" || item.call_id.trim().length === 0) continue;
+    const occurrence = provenance.get(item.call_id) ?? {
+      itemCount: 0,
+      bareCustomExecCallCount: 0,
+      customOutputCount: 0,
+    };
+    occurrence.itemCount += 1;
+    if (item.type === "custom_tool_call") {
+      if (item.name === "exec" && item.namespace === undefined) occurrence.bareCustomExecCallCount += 1;
+    } else if (item.type === "custom_tool_call_output") {
+      occurrence.customOutputCount += 1;
+    }
+    provenance.set(item.call_id, occurrence);
+  }
+  return new Set([...provenance].flatMap(([callId, occurrence]) => (
+    occurrence.itemCount === 2
+    && occurrence.bareCustomExecCallCount === 1
+    && occurrence.customOutputCount === 1
+      ? [callId]
+      : []
+  )));
+}
+
 /** Native routed Responses needs the same first-call/output contract as translated adapters. */
 export function normalizeResponsesCodeMode(body: unknown, parsed: OcxParsedRequest, provider: OcxProviderConfig): unknown {
   if (!record(body) || parsed._compactionRequest || isOpenAiOperatedResponsesDestination(provider)) return body;
   const visible = parsed.context.tools?.filter(toolChoiceToolPredicate(parsed.options.toolChoice, parsed.context.tools));
   if (!visible?.some(isCodexCodeModeExecTool) || visible.some(isBareShellBridgeTool)) return body;
-  const instructions = typeof body.instructions === "string" ? body.instructions : "";
+  if (typeof body.instructions !== "string") return body;
+  const instructions = body.instructions;
   const input = Array.isArray(body.input) ? body.input : undefined;
-  const execCalls = new Set(input?.filter(item => record(item)
-    && (item.type === "function_call" || item.type === "custom_tool_call")
-    && item.name === "exec" && item.namespace === undefined && typeof item.call_id === "string")
-    .map(item => item.call_id));
+  const execCalls = uniqueBareCustomExecCallIds(parsed._rawBody);
   return {
     ...body,
     instructions: instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)
@@ -50,7 +79,8 @@ export function normalizeResponsesCodeMode(body: unknown, parsed: OcxParsedReque
       if (item.type === "additional_tools" && Array.isArray(item.tools)) {
         return { ...item, tools: item.tools.map(withExecInputGuidance) };
       }
-      if ((item.type !== "function_call_output" && item.type !== "custom_tool_call_output") || !execCalls.has(item.call_id)) return item;
+      if ((item.type !== "function_call_output" && item.type !== "custom_tool_call_output")
+        || typeof item.call_id !== "string" || !execCalls.has(item.call_id)) return item;
       const text = textOnlyOutput(item.output);
       const normalized = text === undefined ? undefined : normalizeEmptyExecToolResultText(text, { toolName: "exec" });
       return normalized === undefined ? item : { ...item, output: normalized };
