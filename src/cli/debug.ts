@@ -2,7 +2,7 @@ import { findLiveProxy, probeHostname } from "../server/proxy-liveness";
 import { DEBUG_ENV, type DebugSettingsView } from "../lib/debug-settings";
 import { runningProxyUpdateHeaders } from "../oauth/login-cli";
 
-type DebugScope = "provider" | "usage" | "injection" | "claude";
+type DebugScope = "provider" | "provider-text" | "usage" | "injection" | "claude";
 
 async function requireLiveProxy() {
   const live = await findLiveProxy();
@@ -50,6 +50,10 @@ function printScopeStatus(scope: DebugScope, view: DebugSettingsView): void {
     console.log(`Provider debug: ${view.enabled ? "ON" : "off"}`);
     console.log(`  env=${view.env.debug ? "on" : "off"}, runtime=${view.runtimeOverride.debug === undefined ? "env/default" : view.runtimeOverride.debug ? "on" : "off"}`);
     console.log("  Tail: ocx debug provider logs [-f]");
+  } else if (scope === "provider-text") {
+    console.log(`Provider response/reasoning text capture: ${view.providerText ? "ON" : "off"}`);
+    console.log(`  env=${view.env.providerText ? "on" : "off"}, runtime=${view.runtimeOverride.providerText === undefined ? "env/default" : view.runtimeOverride.providerText ? "on" : "off"}`);
+    console.log("  Persists bounded text samples under OPENCODEX_HOME/provider-debug-artifacts.");
   } else if (scope === "usage") {
     console.log(`Usage debug: ${view.usage ? "ON" : "off"}`);
     console.log(`  env=${view.env.usage ? "on" : "off"}, runtime=${view.runtimeOverride.usage === undefined ? "env/default" : view.runtimeOverride.usage ? "on" : "off"}`);
@@ -147,6 +151,7 @@ async function handleScopeCommand(scope: DebugScope, actionArgv: string[]): Prom
   if (action === "on" || action === "off") {
     const enabled = action === "on";
     const body = scope === "provider" ? { debug: enabled }
+      : scope === "provider-text" ? { providerText: enabled }
       : scope === "usage" ? { usage: enabled }
         : scope === "injection" ? { injection: enabled }
           : { claude: enabled };
@@ -161,15 +166,17 @@ async function handleScopeCommand(scope: DebugScope, actionArgv: string[]): Prom
   }
 
   if (action === "reset") {
-    const resetKey = scope === "provider" ? "provider" : scope;
+    const resetKey = scope === "provider" ? "provider" : scope === "provider-text" ? "providerText" : scope;
     printScopeStatus(scope, await putDebugSettings({ reset: resetKey }));
     console.log(`\nRuntime override cleared for ${scope}; effective value follows env again.`);
     return;
   }
 
   if (action === "logs") {
-    if (scope === "injection" || scope === "claude") {
-      console.error(scope === "claude"
+    if (scope === "provider-text" || scope === "injection" || scope === "claude") {
+      console.error(scope === "provider-text"
+        ? "Provider text capture has no separate log stream; use: ocx debug provider logs"
+        : scope === "claude"
         ? "Use: ocx observe claude-inbound"
         : "Injection debug has no buffered log stream; use: ocx observe injection");
       process.exit(1);
@@ -180,7 +187,7 @@ async function handleScopeCommand(scope: DebugScope, actionArgv: string[]): Prom
     return;
   }
 
-  console.error(scope === "injection" || scope === "claude"
+  console.error(scope === "provider-text" || scope === "injection" || scope === "claude"
     ? `Usage: ocx debug ${scope} on|off|status|reset`
     : `Usage: ocx debug ${scope} on|off|status|reset|logs [-f]`);
   process.exit(1);
@@ -190,12 +197,14 @@ function printTopLevelHelp(): void {
   console.log("Debug commands (proxy must be running):");
   console.log("");
   console.log("  ocx debug provider on|off|status|reset|logs [-f]");
+  console.log("  ocx debug provider-text on|off|status|reset");
   console.log("  ocx debug usage on|off|status|reset|logs [-f]");
   console.log("  ocx debug injection on|off|status|reset");
   console.log("  ocx debug claude on|off|status|reset");
   console.log("");
   console.log("Env defaults on start:");
   console.log("  provider → OCX_DEBUG=1 (legacy OCX_DEBUG_FRAMES still works)");
+  console.log(`  provider text → ${DEBUG_ENV.providerText}=1 (default off; persists bounded response/reasoning samples)`);
   console.log(`  usage    → ${DEBUG_ENV.usage}=1`);
   console.log(`  injection→ ${DEBUG_ENV.injection}=1`);
   console.log(`  claude   → ${DEBUG_ENV.claude}=1`);
@@ -204,7 +213,7 @@ function printTopLevelHelp(): void {
 export async function handleDebugCommand(argv: string[]): Promise<void> {
   const sub = (argv[0] ?? "").trim().toLowerCase();
 
-  if (sub === "provider" || sub === "usage" || sub === "injection" || sub === "claude") {
+  if (sub === "provider" || sub === "provider-text" || sub === "usage" || sub === "injection" || sub === "claude") {
     await handleScopeCommand(sub, argv.slice(1));
     return;
   }
@@ -214,6 +223,7 @@ export async function handleDebugCommand(argv: string[]): Promise<void> {
     if (!live) {
       console.log("Proxy is not running — env defaults for the next start:");
       console.log(`  provider → OCX_DEBUG = ${envDebugEnabled() ? "on" : "off"}`);
+      console.log(`  provider text → ${DEBUG_ENV.providerText} = ${process.env[DEBUG_ENV.providerText] === "1" ? "on" : "off"}`);
       console.log(`  usage    → ${DEBUG_ENV.usage} = ${process.env[DEBUG_ENV.usage] === "1" ? "on" : "off"}`);
       console.log(`  injection→ ${DEBUG_ENV.injection} = ${process.env[DEBUG_ENV.injection] === "1" ? "on" : "off"}`);
       console.log(`  claude   → ${DEBUG_ENV.claude} = ${process.env[DEBUG_ENV.claude] === "1" ? "on" : "off"}`);

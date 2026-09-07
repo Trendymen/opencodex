@@ -93,6 +93,8 @@ export interface AdapterRequest {
     convertedRoutedNamespaceToolAliases?: ReadonlyMap<string, { namespace: string; name: string; kind: "function" | "custom" }>;
     /** Releases observation of a serialized request body after its final fetch attempt settles. */
     releaseBodyObservation?: () => void;
+    /** Opaque thread-id tag for provider diagnostics; no raw thread id on the wire. */
+    threadIdTag?: string;
     /** Exact reasoning parameter emitted by the adapter, for request-log diagnostics only. */
     reasoningLog?:
       | {

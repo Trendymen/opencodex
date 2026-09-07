@@ -1,5 +1,7 @@
 /** In-memory ring buffer of debug log lines for `ocx debug logs` / GUI tailing. */
 
+import { persistDebugEntry } from "../fork/debug-persistence";
+
 export interface DebugLogEntry {
   /** Monotonic cursor for pagination; survives same-millisecond bursts. */
   seq: number;
@@ -25,11 +27,14 @@ function removeOldestEntry(): number {
   return bytes;
 }
 
-export function appendDebugLogLine(line: string): void {
+export function appendDebugLogLine(line: string, options?: { durableLine?: string }): void {
   const retainedLine = truncateRetainedUtf8(line, MAX_DEBUG_LINE_BYTES);
   const entry: DebugLogEntry = { seq: nextSeq++, at: Date.now(), line: retainedLine };
   buffer.push(entry);
   bufferBytes += retainedUtf8Bytes(retainedLine);
+  // The management/UI ring keeps its historical compact preview. Selected operator diagnostics
+  // can preserve their full, already-redacted structural line in the durable legacy JSONL file.
+  persistDebugEntry(options?.durableLine === undefined ? entry : { ...entry, line: options.durableLine });
   while (buffer.length > MAX_LINES) removeOldestEntry();
   enforceAppOwnedMemoryBudget();
   for (const listener of listeners.keys()) {
