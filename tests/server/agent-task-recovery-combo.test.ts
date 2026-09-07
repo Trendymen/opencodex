@@ -16,6 +16,11 @@ import {
   setCachedProviderQuotaForTests,
 } from "../../src/providers/quota-routing-cache";
 import {
+  resetProviderRequestPacingForTest,
+  setProviderRequestPacingRuntimeForTest,
+  waitForProviderRequestSlot,
+} from "../../src/providers/request-pacing";
+import {
   codexHeaders,
   encryptedInput,
   FERNET_TASK,
@@ -62,6 +67,7 @@ describe("combo path encrypted agent task recovery", () => {
     resetAgentTaskRecoveryState();
     clearCachedProviderQuotas();
     clearComboTargetCooldowns();
+    resetProviderRequestPacingForTest();
   });
 
   afterEach(() => {
@@ -69,6 +75,7 @@ describe("combo path encrypted agent task recovery", () => {
     resetAgentTaskRecoveryState();
     clearCachedProviderQuotas();
     clearComboTargetCooldowns();
+    resetProviderRequestPacingForTest();
     clearResponseStateForTests();
     removeTreeWithRetry(home);
     if (priorHome === undefined) delete process.env["OPENCODEX_HOME"];
@@ -324,6 +331,127 @@ describe("combo path encrypted agent task recovery", () => {
     expect(forwardedBodies).toHaveLength(1);
     expect(forwardedBodies[0]).toContain(FERNET_TASK);
     expect(forwardedBodies[0]).not.toContain("capture_assignment");
+  });
+
+  test("strips a trusted relay's backend-only tool marker on a combo child without changing its configured direct trust", async () => {
+    const config = comboConfig([{ provider: "relay", model: "relay-model" }]);
+    config.providers.relay = {
+      adapter: "openai-responses",
+      baseUrl: "https://relay.example.test/v1",
+      authMode: "key",
+      apiKey: "test-relay-key",
+      allowEncryptedV2AgentTasks: true,
+    };
+    const forwardedBodies: string[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      forwardedBodies.push(typeof init?.body === "string" ? init.body : "");
+      return providerResponse();
+    }) as typeof fetch;
+
+    const response = await post(
+      config,
+      "combo/routed",
+      [{ type: "message", role: "user", content: [{ type: "input_text", text: "delegate" }] }],
+      codexHeaders(),
+      undefined,
+      {
+        tools: [{
+          type: "function",
+          name: "spawn_agent",
+          parameters: {
+            type: "object",
+            encrypted: true,
+            properties: { message: { type: "string", encrypted: true } },
+          },
+        }],
+      },
+    );
+    await response.text();
+
+    expect(response.status).toBe(200);
+    expect(config.providers.relay?.allowEncryptedV2AgentTasks).toBe(true);
+    expect(forwardedBodies).toHaveLength(1);
+    const parameters = (JSON.parse(forwardedBodies[0]!) as {
+      tools: Array<{ parameters: Record<string, unknown> }>;
+    }).tools[0]!.parameters;
+    expect(parameters.encrypted).toBeUndefined();
+    expect((parameters.properties as Record<string, Record<string, unknown>>).message?.encrypted).toBeUndefined();
+  });
+
+  test("keeps a trusted relay's marker stripped when key selection changes before a combo send", async () => {
+    let now = 0;
+    let resumePacing: (() => void) | undefined;
+    const queued = Promise.withResolvers<void>();
+    setProviderRequestPacingRuntimeForTest({
+      now: () => now,
+      setTimer(callback, delayMs) {
+        resumePacing = () => { now += delayMs; callback(); };
+        queued.resolve();
+        return callback;
+      },
+      clearTimer() {},
+      enqueueMicrotask: queueMicrotask,
+    });
+    const config = comboConfig([{ provider: "relay", model: "relay-model" }]);
+    config.providers.relay = {
+      adapter: "openai-responses",
+      baseUrl: "https://relay.example.test/v1",
+      authMode: "key",
+      apiKey: "relay-key-one",
+      apiKeyPool: [
+        { id: "k1", key: "relay-key-one", addedAt: 1 },
+        { id: "k2", key: "relay-key-two", addedAt: 2 },
+      ],
+      apiKeySelectionRevision: "first",
+      allowEncryptedV2AgentTasks: true,
+      requestPacing: { enabled: true, minIntervalMs: 100 },
+    };
+    await waitForProviderRequestSlot("relay", config.providers.relay);
+    const forwardedBodies: string[] = [];
+    const sentAuthorizations: string[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      forwardedBodies.push(typeof init?.body === "string" ? init.body : "");
+      sentAuthorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+      return providerResponse();
+    }) as typeof fetch;
+
+    const pending = post(
+      config,
+      "combo/routed",
+      [{ type: "message", role: "user", content: [{ type: "input_text", text: "delegate" }] }],
+      codexHeaders(),
+      undefined,
+      {
+        tools: [{
+          type: "function",
+          name: "spawn_agent",
+          parameters: {
+            type: "object",
+            encrypted: true,
+            properties: { message: { type: "string", encrypted: true } },
+          },
+        }],
+      },
+    );
+    await queued.promise;
+    config.providers.relay = {
+      ...config.providers.relay,
+      apiKey: "relay-key-two",
+      apiKeySelectionRevision: "second",
+    };
+    resumePacing!();
+    const response = await pending;
+    await response.text();
+
+    expect(response.status).toBe(200);
+    expect(config.providers.relay?.allowEncryptedV2AgentTasks).toBe(true);
+    expect(forwardedBodies).toHaveLength(1);
+    expect(sentAuthorizations).toEqual(["Bearer relay-key-two"]);
+    const parameters = (JSON.parse(forwardedBodies[0]!) as {
+      tools: Array<{ parameters: Record<string, unknown> }>;
+    }).tools[0]!.parameters;
+    expect(parameters.encrypted).toBeUndefined();
+    expect((parameters.properties as Record<string, Record<string, unknown>>).message?.encrypted).toBeUndefined();
   });
 
   test("keeps fallback combo aliases out of direct encrypted dispatch", async () => {
