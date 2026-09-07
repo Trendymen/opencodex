@@ -106,6 +106,9 @@ const EXPECTED_V242_CONFLICT_FIELDS = [
 const EXPECTED_V245_KEYS = EXPECTED_V242_KEYS.flatMap(key =>
   key === "auto_merge_path_count" ? ["non_overlap_conflicts", key] : [key]
 );
+const EXPECTED_V246_KEYS = EXPECTED_V245_KEYS.filter(
+  key => key !== "replay_manifest_sha256",
+);
 const EXPECTED_RELEASE_LIFECYCLE = [
   "rebase_branch=dev",
   "rebase_request=full_steps_1_to_15_unless_user_explicitly_stops",
@@ -615,8 +618,7 @@ describe("Fork maintenance truth", () => {
     });
   });
 
-  test("records the current v2.45.0 rebase inputs and complete conflict ledger", () => {
-    expect(JSON.parse(packageText).version).toBe("2.45.0-ben.1");
+  test("preserves the v2.45.0 rebase inputs and complete conflict ledger as history", () => {
     const rows = strictKeyValueBlock(
       changes,
       "v245-rebase",
@@ -691,6 +693,71 @@ describe("Fork maintenance truth", () => {
     }
     expect(nonOverlaps).toEqual(conflicts.filter(path => !overlaps.includes(path)));
     expect(overlaps.filter(path => !conflicts.includes(path))).toHaveLength(67);
+  });
+
+  test("records the current v2.46.0 rebase inputs and complete conflict ledger", () => {
+    expect(JSON.parse(packageText).version).toBe("2.46.0-ben.1");
+    const rows = strictKeyValueBlock(changes, "v246-rebase", EXPECTED_V246_KEYS);
+    expect(rows).toMatchObject({
+      official_old: "v2.45.0",
+      official_new: "v2.46.0",
+      old_official_commit: "b0900e556e50984a651a4c72db000e9285a6952a",
+      new_official_commit: "bba63222d3eeb5c8e397edae35798225e4fa1a6f",
+      pre_rebase_dev: "f5a83db0377659ef079c74bf449fadd9bdd17fa9",
+      post_rebase_head: "bbccacdd3d3dba17c36eec1add1bf5dfa016e3bb",
+      candidate_branch: "dev",
+      package_version: "2.46.0-ben.1",
+      fork_tag: "v2.46.0-ben.1",
+      release_sync_ref: "refs/heads/sync/v2.46.0",
+      official_changed_path_count: "202",
+      old_fork_net_path_count: "210",
+      old_fork_touched_path_count: "272",
+      net_overlap_path_count: "33",
+      overlap_path_count: "33",
+      content_conflict_count: "3",
+      content_hunk_count: "4",
+      non_overlap_conflict_count: "0",
+      non_overlap_conflicts: "none",
+      auto_merge_path_count: "30",
+      implementation_head: expect.stringMatching(/^[0-9a-f]{40}$/),
+      release_commit: "docs-only-current-head",
+      verification: expect.stringMatching(/^(pending|pass)-/),
+      reviews: expect.stringMatching(/^(pending|re-review-required|pass(?:-|$))/),
+      tag_state: "pending",
+      atomic_push: "pending",
+      github_release: "pending",
+    });
+
+    const overlaps = rows.overlap_paths.split(",");
+    const conflicts = rows.content_conflicts.split(",");
+    const nonOverlaps = rows.non_overlap_conflicts === "none" ? [] : rows.non_overlap_conflicts.split(",");
+    const hunks = rows.content_hunk_ids.split(",");
+    expect(overlaps).toHaveLength(33);
+    expect(conflicts).toEqual([
+      ".github/workflows/ci.yml",
+      "package.json",
+      "src/server/responses/core.ts",
+    ]);
+    expect(nonOverlaps).toHaveLength(0);
+    expect(hunks).toHaveLength(4);
+    expect(new Set(overlaps).size).toBe(overlaps.length);
+    expect(new Set(conflicts).size).toBe(conflicts.length);
+    expect(new Set(hunks).size).toBe(hunks.length);
+    expect(hunks.every(value => /^[0-9a-f]{64}$/.test(value))).toBeTrue();
+    for (const path of conflicts) {
+      const id = path.replaceAll("/", "_").replaceAll(".", "_").replaceAll("-", "_");
+      const ledger = strictKeyValueBlock(changes, `v246-conflict-${id}`, EXPECTED_V242_CONFLICT_FIELDS);
+      expect(ledger.path).toBe(path);
+      for (const field of EXPECTED_V242_CONFLICT_FIELDS.slice(1)) {
+        const value = ledger[field];
+        expect(value, `${path} missing ${field}`).toBeDefined();
+        expect(value!.trim(), `${path} has empty ${field}`).not.toBe("");
+        if (value!.startsWith("n/a")) expect(value).toMatch(/^n\/a:.+/);
+      }
+      expect(ledger.conflict_snapshots).toMatch(/step=(?:1|2|6);REBASE_HEAD=[0-9a-f]{40};hunk_ids=(?:none|[0-9a-f]{64})/);
+    }
+    expect(nonOverlaps).toEqual(conflicts.filter(path => !overlaps.includes(path)));
+    expect(overlaps.filter(path => !conflicts.includes(path))).toHaveLength(30);
   });
 
   test("preserves the fixed v2.42.0 rebase summary as history", () => {
