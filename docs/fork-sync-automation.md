@@ -29,7 +29,7 @@
 - `RELEASE_COMMIT`：父提交等于 `IMPLEMENTATION_HEAD`、且只修改 `FORK_CHANGES.md` 的末尾文档提交。
 - `OFFICIAL_COMMIT`：固定官方稳定 Tag 的 peeled commit。
 
-本修复、审查与验证阶段不得移动本地或远端 `main`、`dev`、任何既有 sync ref、`upstream-release` 或任何 Tag。只有全部验证与审查通过后的发布动作才使用下列唯一完整 refset：
+实现、rebase 与验证在本地 `dev` 上进行，允许它随提交推进；此阶段不移动本地 `main`、既有 sync ref、`upstream-release`、任何 Tag 或远端发布引用。压缩任务的单独 `dev` candidate push 按下文专用规则执行。发布动作使用下列唯一完整 refset：
 
 <!-- official-atomic-refset:start -->
 branch|main|leased-force|RELEASE_COMMIT:refs/heads/main
@@ -158,6 +158,14 @@ FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维�
 - 验证命令失败时，先在 `NEW_OFFICIAL` 的干净临时工作区运行同一命令。官方基线同样失败且不影响本轮 Fork 修改路径或发布产物时，记录为 upstream-baseline residual risk，不算 Fork 回归；不能借此忽略只在 Fork 候选出现的失败，也不能改弱断言。
 - 测试文件使用官方 `tests/<domain>/` 布局；当前命令和维护文档更新真实路径，已经结束的历史 Spec/Plan 不做纯路径批量改写。
 
+### 验证选择与结果复用
+
+- 实现和冲突修复期间只跑相关定向测试；跨模块时用 `bun scripts/test.ts --changed=origin/dev`，并记录该次 `origin/dev` 的完整 SHA。若远端已经包含候选而使 changed 集合失去覆盖意义，直接指定受影响的测试文件；不能把空集合当作验证通过。源码读取、子进程、fixture 等间接依赖需显式补测。
+- 新官方基线完成适配后，对最终实现运行一次当前官方 `prepush`；它已包含的 typecheck、全量测试、privacy scan 等不再逐项重复执行。GUI 或文档站构建按本轮实际影响和官方规则补充。保持官方 runner 的默认并发，不以降并发、加 timeout 或删除断言替代通过。
+- 同一实现、依赖、测试输入、runner 和环境未变时，复用已通过的检查，不因进入双审、补附件或整理日志重跑。只改说明文字时，先证明其不是测试/构建输入；若文档被源码真值测试读取，重跑对应测试；若影响文档站则构建文档站。更新后的文本仍需 privacy scan 和 `git diff --check`。
+- 生产代码、依赖、测试或构建/runner 的实质变化仍须在最终实现上完成适用的完整门禁。修复期间先跑定向检查，修复收敛后再跑全量；不要每修一条 finding 就重复全量。这里的“完整验证”指本节适用检查，不要求未受影响的 GUI/docs 构建重复运行。
+- 验证记录保留命令、工作目录、实际执行 SHA、退出码和日志。复用时列出旧 SHA 到当前 SHA 的差异及未受影响依据，不把旧日志改标成新 SHA 的执行结果。需要 exact-SHA CI 的发布任务仍按原要求检查最终 SHA；本地验证复用不豁免 CI 或未关闭 finding。
+
 ## 官方 Tag 保留规则
 
 每个官方稳定基线 Tag（vX.Y.Z，非 preview/beta/rc/draft）必须同时保留在本地与 origin 远端：
@@ -172,7 +180,7 @@ FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维�
 
 - 按用户级 requesting-code-review 规则派发两个独立 reviewer（SPEC_COMPLIANCE 与 CODE_QUALITY），以 fork_turns "none" 派发。
 - 审查包只包含当前任务 brief、官方旧/新 Tag SHA、scoped diff（相对新官方 Tag 的完整 Fork 修改面）、冲突处理说明与验证证据；不得携带主会话历史。
-- 任一 Critical/Important finding 阻塞推送与发布：修复后重跑完整验证门禁，用新实现 SHA 重写 FORK_CHANGES.md 并重建末尾文档提交，再以 REVIEW_PHASE RE_REVIEW 携带完整 PRIOR_FINDINGS、FIX_DIFF 与真实 VERIFICATION_EVIDENCE 复用原 reviewer 复审。
+- 任一 Critical/Important finding 阻塞推送与发布：修复后按“验证选择与结果复用”完成适用检查，用当前实现 SHA 更新 FORK_CHANGES.md 并重建末尾文档提交，再以 REVIEW_PHASE RE_REVIEW 携带完整 PRIOR_FINDINGS、FIX_DIFF 与真实 VERIFICATION_EVIDENCE 复用原 reviewer 复审。
 - 两个 reviewer 的固定 verdict 均为 `PASS`，且无未决 Critical/Important finding 后，才进入 Tag / push / Release；正式 verdict 只使用 `PASS` / `FAIL`。
 - 无双审通过证据时执行 push 或 Release 视为违规，必须回滚未发布状态并登记失败。
 
@@ -378,10 +386,17 @@ implementation_change=requires-new-round-and-full-verification
 所有 diff 都必须标明生成命令和端点完整 SHA；过大时可按文件分片，但不得截断或只提供
 shortstat。reviewer 可自行读取固定 commit 中的文件和运行只读命令，不得依赖主会话口述。
 
+完整 Fork diff 用于核对能力和定位上下文，不表示每次 rebase 都重新审计全部历史功能。
+本轮深审范围是冲突决定、官方与 Fork 的交叠改动、rebase 后修复，以及这些改动实际影响的
+消费者和失败路径。finding 必须说明是本轮引入、因官方改动暴露，还是与本轮无关的既有问题，
+并给出差异或调用链依据。无关既有问题单列，不自动混入同步修复；明确影响本次发布安全、
+数据完整性或能力可用性的问题仍须停止并处理。复审聚焦原 finding、FIX_DIFF 及受影响链路，
+不重新开始无边界扫描；已经捕获的 SHA、集合和冲突附件用原记录引用，无需复制重写。
+
 ### CODE_QUALITY 命名风险清单
 
-`CODE_QUALITY` reviewer 必须逐项检查下列风险，并沿每个冲突符号追到最终消费者与错误路径；
-“测试通过”不能替代数据流审查：
+`CODE_QUALITY` reviewer 按本轮涉及的行为选择下列风险，沿相关冲突符号检查最终消费者与错误路径；
+不适用项简述理由，不为纯文档或版本改动构造流式、缓存等检查任务。“测试通过”不能替代相关数据流审查：
 
 <!-- rebase-conflict-named-risks:start -->
 final_consumers=secondary-defaulting-and-final-projection
@@ -424,9 +439,10 @@ narrow_review_scope=exact-unresolved-paths-symbols-and-edges-only
 generic_reviewer_expansion=forbidden
 <!-- rebase-review-escalation:end -->
 
-若本地安装了 `pre-push` hook，它可以执行 `bun run prepush`，并运行
-`tests/ci-workflows/fork-maintenance-truth.test.ts`；没有 hook 时，发布者必须在 push 前显式运行
-该 focused test 和完整验证。hook 不是发布状态真源，只能证明它实际执行过的静态契约与测试通过，
+不自动安装或恢复用户已删除的 `pre-push` hook。若本地安装了 `pre-push` hook，它执行的检查可以作为真实验证证据，
+没有 hook 时按“验证选择与结果复用”显式验证；完整测试已覆盖
+`tests/ci-workflows/fork-maintenance-truth.test.ts` 且相关输入未变时，不再单独重复执行。
+hook 不是发布状态真源，只能证明它实际执行过的静态契约与测试通过，
 不能证明双审通过，也不能证明 reviewer 真正完成了 SHA 重算、数据流检查或复审。禁止 hook
 自动生成 approval、自动清除 finding、自动移动 ref，自动化也不得用 `--no-verify` 绕过它。
 
@@ -459,7 +475,7 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 5. revision：新官方 vX.Y.Z 首次派生固定 X.Y.Z-ben.1 / vX.Y.Z-ben.1。同基线已有 Release 不自动递增；仅用户明确要求才允许 ben.2、ben.3。`ben.N` 按官方基线独立维护：即使完整 Tag 集已有更新官方稳定版，明确授权的旧基线维护修订仍可继续，但必须存在精确官方基线 Tag、不得低于同基线最高有效 ben revision、不得复用或移动既有 Fork Tag，也不得声称包含更新官方版本能力。普通 stable/preview 仍遵守全局单调版本门禁。重复 heartbeat 幂等。
 6. 完成并提交全部 rebase、冲突、版本与实现修复。
 7. 创建下一个候选尝试 `AK`（首次为 `A1`，否则最大 `K + 1`），捕获 `CANDIDATE_IMPLEMENTATION_HEAD_AK`，不得从后续 HEAD 反推。按该 SHA 中文更新 FORK_CHANGES.md：官方 Release/Tag/SHA、实现 commit、shortstat、包版本、目标 Tag、能力状态、官方覆盖证据、逐冲突 ledger、已移除方向、已知缺口与验收边界。历史移除记录不删，旧 PASS 不沿用。
-8. 文档更新后执行最终验证：定向测试；共享 runtime/adapter/server/script/runner/version 改动跑一次 bun run prepush；GUI 改动按规则构建；privacy scan 必须通过。验证促成实现修改时把当前 `AK` 标记为 abandoned，以最大 `K + 1` 回到第 7 步；验证失败的 `AK` 不得占用 `RN`，也不得写入 `PRIOR_FINDINGS`。
+8. 文档更新后按“验证选择与结果复用”完成最终验证；新基线的最终实现必须有当前官方 prepush 的通过证据。验证促成实现修改时把当前 `AK` 标记为 abandoned，以最大 `K + 1` 回到第 7 步；验证失败的 `AK` 不得占用 `RN`，也不得写入 `PRIOR_FINDINGS`。
 9. 验证通过后只暂存 `FORK_CHANGES.md`，核对 staged list 与 diff check，创建 docs-only commit，并机械验证其父提交等于当前 `CANDIDATE_IMPLEMENTATION_HEAD_AK`。此时才将完整 SHA 对晋升为下一个审查轮次：尚无轮次时创建 `R1`；已有 reviewed round 时使用当前最大 `N + 1`。令 `IMPLEMENTATION_HEAD_RN=CANDIDATE_IMPLEMENTATION_HEAD_AK`、`RELEASE_COMMIT_RN=<docs-only commit>`，两者同时存在后才算分配成功。
 10. 生成最新完整 `RN` 的 review package，执行机械集合/冲突 replay 对账、命名风险检查与双审门禁（见上）。首次真实派发使用 `REVIEW_PHASE: INITIAL`。任一 Critical/Important finding 都从新 `AK` 回到第 7 步；新候选经第 7–9 步晋升为下一完整 `RN` 后，按 `REVIEW_PHASE: RE_REVIEW` 复用原 reviewer 并保留完整 `PRIOR_FINDINGS`。未取得两个 `PASS`，以及仅在明确未收敛跨边界风险时所需的窄审 `PASS` 前，禁止后续 push、Tag、Release。
 11. 双审通过后创建中文注释 annotated Tag vX.Y.Z-ben.N；raw 类型必须是 tag，peeled 等于 `RELEASE_COMMIT`。远端已存在时核对 OID，否则 fail closed。禁止 force Tag。

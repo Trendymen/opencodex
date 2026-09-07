@@ -7,6 +7,7 @@
 - 每小时上游稳定版同步自动化（含官方 Tag 保留、双审门禁、幂等收敛与完整发布流程）的规则真源见 docs/fork-sync-automation.md；该自动化相关任务必须先读取并遵循该文档。
 - 分支职责以该文档为准：main 只指向最新已发布 Fork Release；dev 是自由开发线，同时是上游稳定版 rebase、候选验证、双审和 Release 发布的候选来源。同步不得把 dev 仅当作只读证据。
 - rebase 冲突审查必须执行该文档规定的逐冲突证据账本、固定 SHA 独立机械重算、三层 diff、命名风险清单与默认双审；只给汇总计数、总括性解决说明或测试通过结论均不够。explorer 仅作可选取证，不因敏感路径、冲突数量或 hunk 数量自动成为发布门禁；只有 reviewer 或主线程指出未收敛的具体跨边界 path、symbol 或 edge 时，才补一个窄范围质量审查。
+- 验证选择、结果复用与有界审查按该文档执行：实现期定向检查，最终实现一次官方 prepush；未受影响且已通过的检查不因补文档或审查附件重跑。全量 Fork diff 是能力核对材料，深审聚焦本轮冲突、交叠变化、修复及受影响链路。不自动恢复已删除的 push hook。
 - 每个官方基线只使用一个 `sync/vX.Y.Z` Release 指针；同基线 `ben.N` 发布时，用一次 `git push --atomic` 同时更新 `main`、`dev`、`sync/vX.Y.Z`、`upstream-release`、Fork Tag 和官方 Tag，其中允许用该 sync ref 的精确 expected-OID lease 强制更新；禁止创建 `sync/vX.Y.Z-ben.N`。Fork Tag 仍不可变，sync 的可移动性不得放宽 Tag 规则。
 
 <!-- fork-squash-release-policy:start -->
@@ -30,7 +31,7 @@ external_evidence=task-and-release-notes-not-candidate-tree
 
 ## 测试文件与官方布局
 
-- 测试遵循官方 `tests/<domain>/` 布局。新增文件放到对应 domain；resolver 无法归类时，同时更新 `scripts/test-layout/layout.json` 与 `tests/fixtures/test-layout-expected.json`。
+- 测试遵循官方 `tests/<domain>/` 布局。新增文件放到对应 domain，并按官方要求同时更新 `scripts/test-layout/layout.json` 的 explicit 与 `tests/fixtures/test-layout-expected.json`；resolver 能临时归类不免除登记。
 - 同一行为已有官方测试文件时，优先在原文件补充回归，不为“Fork 专项”重复建根目录测试。源码真值测试通过 `tests/helpers/repo-root.ts` 取仓库路径。
 - rebase 时，当前官方源码与测试已经完整覆盖 Fork 行为的，可以移动、改写或删除旧 Fork 测试；必须在 `FORK_CHANGES.md` 记录覆盖证据，不能只为通过测试降低断言。
 
