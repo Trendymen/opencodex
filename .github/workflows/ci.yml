@@ -16,8 +16,10 @@ on:
     # An allowlist cannot express "base is another PR's head" — stacked bases
     # carry contributor prefixes (`fix/`, `feat/`, `agent/`) as readily as
     # `codex/`, and contributor stacks need CI most. The `changes` job below is
-    # authoritative only for pull-request cost scoping; branch pushes have no
-    # path allowlist and execute every producer. Safe to widen here
+    # authoritative for pull-request cost scoping. Branch pushes have no
+    # workflow-level path allowlist, so every SHA creates an aggregate run;
+    # individual official jobs and steps may still use path conditions. This is safe to widen
+    # here
     # because this workflow is `pull_request` (not `pull_request_target`),
     # declares `contents: read`, and reads no secrets.
     #
@@ -108,10 +110,10 @@ jobs:
             echo 'label=windows-latest' >> "$GITHUB_OUTPUT"
           fi
 
-  # Pull-request cost/surface filter. Every branch push above deliberately runs
-  # the complete producer set, so a same-tree message-only candidate amend can
-  # never inherit CI from an older SHA. Pull requests still start the aggregate
-  # workflow while these outputs scope their expensive jobs.
+  # Pull-request cost/surface filter. Every branch push above creates an
+  # exact-SHA aggregate run, so a same-tree message-only candidate amend cannot
+  # inherit CI from an older SHA. Official path-scoped jobs and steps keep their
+  # conditions; pull requests also use these outputs to scope expensive jobs.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -145,9 +147,10 @@ jobs:
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         with:
           # On `pull_request` the action ignores this and uses the PR's own file
-          # list. On a branch push the outputs remain diagnostic only—push jobs
-          # deliberately do not use them to skip—and compare against the previous
-          # commit instead of the older default-branch release.
+          # list. On a branch push the workflow still creates an exact-SHA
+          # aggregate run, while official path-scoped jobs and steps may use
+          # these outputs. Compare against the previous commit instead of the
+          # older default-branch release.
           base: ${{ github.ref }}
           filters: |
             # Pull requests always start the workflow so the aggregate check

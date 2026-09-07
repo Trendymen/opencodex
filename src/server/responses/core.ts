@@ -6157,8 +6157,6 @@ async function handleResponsesInner(
         }
       }
       commitReasoningReplayServingRoute();
-      nestedExecInspection?.dispose();
-      nestedExecRepairCoordinator?.dispose();
       if (rememberPassthroughResponseChecked) {
         try {
           rememberPassthroughResponseChecked(
@@ -6166,6 +6164,10 @@ async function handleResponsesInner(
           );
         } catch { /* non-JSON despite content-type; recording is best-effort */ }
       }
+      // Prepare the repaired continuation while inspection is live. Disposing first rejects it.
+      nestedExecRepairCoordinator?.markClientCommitted();
+      nestedExecInspection?.dispose();
+      nestedExecRepairCoordinator?.dispose();
       // #875: the transport-neutral reliability policy forced a bounded JSON
       // upstream for a client that asked for SSE. Reframe the completed JSON
       // as the canonical terminal SSE sequence (created → output_item.done →

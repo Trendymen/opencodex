@@ -31,23 +31,30 @@ function withExecInputGuidance(tool: unknown): unknown {
 
 function uniqueBareCustomExecCallIds(body: unknown): Set<string> {
   if (!record(body) || !Array.isArray(body.input)) return new Set();
-  const calls = new Map<string, { count: number; call: Record<string, unknown> }>();
-  const outputs = new Map<string, number>();
+  const provenance = new Map<string, {
+    itemCount: number;
+    bareCustomExecCallCount: number;
+    customOutputCount: number;
+  }>();
   for (const item of body.input) {
     if (!record(item) || typeof item.call_id !== "string" || item.call_id.trim().length === 0) continue;
+    const occurrence = provenance.get(item.call_id) ?? {
+      itemCount: 0,
+      bareCustomExecCallCount: 0,
+      customOutputCount: 0,
+    };
+    occurrence.itemCount += 1;
     if (item.type === "custom_tool_call") {
-      const occurrence = calls.get(item.call_id);
-      if (occurrence) occurrence.count += 1;
-      else calls.set(item.call_id, { count: 1, call: item });
+      if (item.name === "exec" && item.namespace === undefined) occurrence.bareCustomExecCallCount += 1;
     } else if (item.type === "custom_tool_call_output") {
-      outputs.set(item.call_id, (outputs.get(item.call_id) ?? 0) + 1);
+      occurrence.customOutputCount += 1;
     }
+    provenance.set(item.call_id, occurrence);
   }
-  return new Set([...calls].flatMap(([callId, occurrence]) => (
-    occurrence.count === 1
-    && occurrence.call.name === "exec"
-    && occurrence.call.namespace === undefined
-    && outputs.get(callId) === 1
+  return new Set([...provenance].flatMap(([callId, occurrence]) => (
+    occurrence.itemCount === 2
+    && occurrence.bareCustomExecCallCount === 1
+    && occurrence.customOutputCount === 1
       ? [callId]
       : []
   )));

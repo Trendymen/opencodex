@@ -230,8 +230,9 @@ export function createSseTerminalOutputBoundary(): SseTerminalOutputBoundary {
         ))
         : frame.block;
       if (isDone) {
+        const firstDone = !done;
         done = true;
-        if (responsesTerminal) {
+        if (responsesTerminal && firstDone) {
           output.push(outboundBlock, frame.delimiter);
         } else if (!pendingDone) {
           // Do not expose a sentinel before a Responses terminal. If EOF

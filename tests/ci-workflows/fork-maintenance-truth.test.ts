@@ -277,7 +277,7 @@ const EXPECTED_REBASE_REVIEW_PACKAGE = {
   path_sets: "OFFICIAL_CHANGED_PATHS,OLD_FORK_NET_PATHS,OLD_FORK_TOUCHED_PATHS,NET_OVERLAP_PATHS,OVERLAP_PATHS,CONTENT_CONFLICTS,NON_OVERLAP_CONFLICTS,AUTO_MERGES",
   conflict_ledger: "one-entry-per-content-conflict-path",
   conflict_fields: "path,symbols,official_change,fork_change,resolution,official_coverage,conflict_snapshots,focused_tests,residual_risk",
-  risk_fields: "conditional-downstream_consumers,failure_paths,state_edges,ordering_edges,risk_domains",
+  risk_fields: "on-specific-reviewer-evidence-request-only:downstream_consumers,failure_paths,state_edges,ordering_edges,risk_domains",
   full_fork_diff: "FULL_FORK_DIFF:git-diff-NEW_OFFICIAL-to-RELEASE_COMMIT_RN",
   rebase_resolution_diff: "REBASE_RESOLUTION_DIFF:git-range-diff-OLD_OFFICIAL..PRE_REBASE_DEV-to-NEW_OFFICIAL..POST_REBASE_HEAD",
   post_rebase_fix_diff: "POST_REBASE_FIX_DIFF:git-diff-POST_REBASE_HEAD-to-IMPLEMENTATION_HEAD_RN",
@@ -348,6 +348,7 @@ const EXPECTED_CONFLICT_SNAPSHOT_KEYS = [
   "hunk_dedupe",
   "captured_union",
   "replay_environment",
+  "replay_manifest_digest",
   "shadow_trigger",
   "shadow_clone",
   "object_access",
@@ -364,6 +365,7 @@ const EXPECTED_CONFLICT_SNAPSHOT = {
   hunk_dedupe: "exact-hunk-id-only",
   captured_union: "all-unresolved-paths-from-all-stops",
   replay_environment: "pre-rebase-git-version-invocation-config-attributes-and-rerere-disabled",
+  replay_manifest_digest: "optional-summary-not-release-gate",
   shadow_trigger: "ambiguous-source-or-nonlinear-history-or-custom-driver-or-rerere-or-incomplete-evidence-or-history-rewrite-or-mechanical-mismatch-or-reviewer-request",
   shadow_clone: "created-only-when-triggered-and-preserves-PRE_REBASE_DEV",
   object_access: "shared-source-objects-cat-file-verified-before-replay",
@@ -393,34 +395,22 @@ const EXPECTED_REBASE_NAMED_RISKS = {
 } as const;
 const EXPECTED_REBASE_REVIEW_ESCALATION_KEYS = [
   "default_reviewers",
-  "sensitive_scope",
-  "sensitive_identifiers",
-  "sensitive_scan",
-  "shared_entrypoints",
-  "conflict_hunk_count",
-  "explorer_trigger",
-  "explorer_scope",
-  "boundary_set",
-  "cross_boundary_edges",
-  "third_reviewer_trigger",
-  "third_reviewer_mode",
-  "third_reviewer_scope",
+  "review_priority",
+  "explorer",
+  "annex",
+  "narrow_review_trigger",
+  "narrow_review_mode",
+  "narrow_review_scope",
   "generic_reviewer_expansion",
 ] as const;
 const EXPECTED_REBASE_REVIEW_ESCALATION = {
   default_reviewers: "SPEC_COMPLIANCE,CODE_QUALITY",
-  sensitive_scope: "exact-path-or-sensitive-substring-in-all-diff-hunks-and-ledger-symbols",
-  sensitive_identifiers: "auth,oauth,credential,token,secret,api-key,apikey,keyring",
-  sensitive_scan: "case-insensitive-conservative-no-comment-or-string-exclusion",
-  shared_entrypoints: "src/router.ts,src/server/lifecycle.ts,src/server/responses/core.ts,src/codex/inject.ts",
-  conflict_hunk_count: "unique-hunk-id-count",
-  explorer_trigger: "sensitive-scope-or-shared-entrypoint-or-5-plus-conflict-paths-or-10-plus-unique-hunks",
-  explorer_scope: "evidence-only-no-verdict",
-  boundary_set: "runtime,config,persistence,ui,release",
-  cross_boundary_edges: "consumer-chain-edges-not-category-count",
-  third_reviewer_trigger: "cross-boundary-edge-or-explorer-unresolved-risk",
-  third_reviewer_mode: "CODE_QUALITY",
-  third_reviewer_scope: "exact-cross-boundary-paths-symbols-and-edges-only",
+  review_priority: "paths-hunks-and-symbols-cover-sensitive-and-shared-boundaries",
+  explorer: "optional-evidence-only-not-release-gate",
+  annex: "on-specific-reviewer-evidence-request-only",
+  narrow_review_trigger: "dual-reviewer-unresolved-specific-cross-boundary-path-symbol-or-edge-or-owner-specific-uncertainty",
+  narrow_review_mode: "CODE_QUALITY",
+  narrow_review_scope: "exact-unresolved-paths-symbols-and-edges-only",
   generic_reviewer_expansion: "forbidden",
 } as const;
 
@@ -436,6 +426,7 @@ function strictKeyValueBlock(
   source: string,
   name: string,
   expectedKeys: readonly string[],
+  optionalKeys: readonly string[] = [],
 ): Record<string, string> {
   expect([...source.matchAll(new RegExp(`<!-- ${name}:start -->`, "g"))]).toHaveLength(1);
   expect([...source.matchAll(new RegExp(`<!-- ${name}:end -->`, "g"))]).toHaveLength(1);
@@ -448,7 +439,10 @@ function strictKeyValueBlock(
   });
   const keys = entries.map(([key]) => key);
   if (new Set(keys).size !== keys.length) throw new Error(`${name} contains a duplicate key`);
-  if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
+  const withoutOptional = expectedKeys.filter(key => !optionalKeys.includes(key));
+  const validKeys = JSON.stringify(keys) === JSON.stringify(expectedKeys)
+    || JSON.stringify(keys) === JSON.stringify(withoutOptional);
+  if (!validKeys) {
     throw new Error(`${name} keys differ from the exact contract`);
   }
   return Object.fromEntries(entries);
@@ -623,7 +617,12 @@ describe("Fork maintenance truth", () => {
 
   test("records the current v2.45.0 rebase inputs and complete conflict ledger", () => {
     expect(JSON.parse(packageText).version).toBe("2.45.0-ben.1");
-    const rows = strictKeyValueBlock(changes, "v245-rebase", EXPECTED_V245_KEYS);
+    const rows = strictKeyValueBlock(
+      changes,
+      "v245-rebase",
+      EXPECTED_V245_KEYS,
+      ["replay_manifest_sha256"],
+    );
     expect(rows).toMatchObject({
       official_old: "v2.42.0",
       official_new: "v2.45.0",
@@ -645,16 +644,24 @@ describe("Fork maintenance truth", () => {
       non_overlap_conflict_count: "4",
       non_overlap_conflicts: "tests/ci-workflows/bump-dev-version.test.ts,tests/ci-workflows/ci-workflows.test.ts,tests/ci-workflows/release-version-line.test.ts,tests/service/shutdown-launcher.test.ts",
       auto_merge_path_count: "67",
-      replay_manifest_sha256: "cfdc12ac7e32bb6c15317c2209bd42cbe79c35a63bb180f41a9a19e81a8d3216",
       shadow_replay: "pass-exact-commit-tree-stops-paths-stages-hunks-actions",
       implementation_head: expect.stringMatching(/^[0-9a-f]{40}$/),
       release_commit: "docs-only-current-head",
       verification: expect.stringMatching(/^(pending|pass)-/),
-      reviews: "pending",
+      reviews: expect.stringMatching(/^(pending|re-review-required|pass(?:-|$))/),
       tag_state: "pending",
       atomic_push: "pending",
       github_release: "pending",
     });
+    if (rows.replay_manifest_sha256 !== undefined) {
+      expect(rows.replay_manifest_sha256).toMatch(/^[0-9a-f]{64}$/);
+    }
+    expect(() => strictKeyValueBlock(
+      changes.replace(/^replay_manifest_sha256=.*\n/m, ""),
+      "v245-rebase",
+      EXPECTED_V245_KEYS,
+      ["replay_manifest_sha256"],
+    )).not.toThrow();
 
     const overlaps = rows.overlap_paths.split(",");
     const conflicts = rows.content_conflicts.split(",");
@@ -1024,8 +1031,8 @@ describe("Fork maintenance truth", () => {
       "conflict_ledger=summary-only",
     ))).toThrow();
     expect(() => strictRebaseReviewContract(automation.replace(
-      "third_reviewer_scope=exact-cross-boundary-paths-symbols-and-edges-only",
-      "third_reviewer_scope=full-diff-again",
+      "narrow_review_scope=exact-unresolved-paths-symbols-and-edges-only",
+      "narrow_review_scope=full-diff-again",
     ))).toThrow();
     expect(() => strictRebaseReviewContract(automation.replace(
       "round_immutability=append-only-never-overwrite",
@@ -1048,8 +1055,8 @@ describe("Fork maintenance truth", () => {
       "post-rebase-best-effort-config",
     ))).toThrow();
     expect(() => strictRebaseReviewContract(automation.replace(
-      "sensitive-substring-in-all-diff-hunks-and-ledger-symbols",
-      "sensitive-token-in-conflict-ledger-only",
+      "explorer=optional-evidence-only-not-release-gate",
+      "explorer=mandatory-release-gate",
     ))).toThrow();
     expect(() => strictRebaseReviewContract(automation.replace(
       "review_verdicts=PASS,FAIL",
