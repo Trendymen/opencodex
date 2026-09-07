@@ -4,6 +4,9 @@ dist/
 *.log
 .DS_Store
 
+# Root-local archives produced by `npm pack` / `bun run install:local`.
+/bitkyc08-opencodex-*.tgz
+
 # Generated CL compatibility identity embedded by prepare:package. It must stay
 # untracked so the manifest cannot hash itself.
 src/generated/compatibility-version.json
