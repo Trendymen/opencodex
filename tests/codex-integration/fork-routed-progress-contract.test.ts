@@ -59,17 +59,6 @@ const CODE_MODE_WIRE_TOOLS = [{
   }],
 }];
 
-const CODE_MODE_CONTEXT_TOOLS = [{
-  name: "exec",
-  description: "Run JavaScript to call deferred tools.",
-  parameters: { type: "object", properties: {} },
-  freeform: true,
-}, {
-  namespace: "mcp__cua_repl",
-  name: "js",
-  description: "Control the current UI surface.",
-  parameters: { type: "object", properties: {} },
-}];
 
 function buildResponsesBody(
   provider: OcxProviderConfig,
@@ -460,14 +449,12 @@ describe("fork routed progress contract", () => {
   test("third-party Responses explains flattened code-mode and deferred tools", () => {
     const body = buildResponsesBody(routedProvider(), "Existing caller instructions.", {
       wireTools: CODE_MODE_WIRE_TOOLS,
-      contextTools: CODE_MODE_CONTEXT_TOOLS,
     });
     const names = (body.tools as Array<{ name?: string }>).map(tool => tool.name);
 
     expect(names).toEqual(["exec", "mcp__cua_repl__js"]);
     expect(body.instructions).toContain("Valid tool names for this turn are exactly `exec`, `mcp__cua_repl__js`.");
-    expect(body.instructions).toContain("Nested helpers are called INSIDE that body");
-    expect(body.instructions).toContain("Discover them from the isolate global `ALL_TOOLS`");
+    expect(body.instructions).toContain("If a listed tool exposes nested helpers such as a tools.* API");
   });
 
   test("partial prose does not spoof a complete delivered progress contract", () => {

@@ -28,7 +28,8 @@ import { normalizeResponsesCodeMode } from "./responses-code-mode";
 import { stripUnicodePropertyPatterns } from "./responses-tool-schema";
 import { CODE_MODE_RESULT_ECHO_SENTENCE } from "./exec-tool-result-normalize";
 import {
-  buildNonOpenAIToolCatalogNudgeForTools,
+  buildNonOpenAIToolCatalogNudgeFromNames,
+  isCodexCodeModeExecTool,
   shouldInjectNonOpenAIToolCatalogNudge,
 } from "./tool-catalog-nudge";
 import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "./xai-web-search";
@@ -641,22 +642,28 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
-/** Add tool guidance only when the parsed catalog still matches every final named wire tool. */
+/** Add tool guidance from the final wire catalog so routed models see every callable name. */
 function applyRoutedResponsesToolCatalogNudge(body: unknown, parsed: OcxParsedRequest): unknown {
   if (!isPlainObject(body) || typeof body.instructions !== "string") return body;
   const declarations = collectResponsesToolGroups(body).flat();
   if (declarations.length === 0) return body;
   if (declarations.some(tool => !isPlainObject(tool) || typeof tool.name !== "string")) return body;
 
-  const wireNames = declarations.map(tool => (tool as Record<string, unknown>).name as string);
-  const uniqueWireNames = new Set(wireNames);
-  const tools = parsed.context.tools ?? [];
-  const visibleTools = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
-  const matchingTools = visibleTools.filter(tool => uniqueWireNames.has(namespacedToolName(tool.namespace, tool.name)));
-  const matchedNames = new Set(matchingTools.map(tool => namespacedToolName(tool.namespace, tool.name)));
-  if (matchedNames.size !== uniqueWireNames.size) return body;
+  const wireNames = [...new Set(declarations.map(tool => (tool as Record<string, unknown>).name as string))];
+  const wireNameSet = new Set(wireNames);
+  let codeModeExecName: string | undefined;
+  const tools = parsed.context.tools;
+  if (tools?.length) {
+    const visible = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
+    for (const tool of visible) {
+      if (wireNameSet.has(namespacedToolName(tool.namespace, tool.name)) && isCodexCodeModeExecTool(tool)) {
+        codeModeExecName = namespacedToolName(tool.namespace, tool.name);
+        break;
+      }
+    }
+  }
 
-  const nudge = buildNonOpenAIToolCatalogNudgeForTools(matchingTools, parsed.options.toolChoice);
+  const nudge = buildNonOpenAIToolCatalogNudgeFromNames(wireNames, undefined, codeModeExecName);
   if (!nudge) return body;
   const novelNudge = body.instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)
     ? nudge.replace(`${CODE_MODE_RESULT_ECHO_SENTENCE} `, "")
