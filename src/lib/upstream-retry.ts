@@ -286,6 +286,8 @@ export interface TransientRetryOptions extends ResetRetryOptions {
    * keep them on ONE budget instead of handing each leg a fresh one.
    */
   onSendsConsumed?: (sends: number) => void;
+  /** Called only when every configured transient-status attempt returned a retryable status. */
+  onTransientExhausted?: () => void;
 }
 
 export type UpstreamSendRecovery = "connection-reset" | "transient-5xx";
@@ -456,6 +458,9 @@ export async function fetchWithTransientRetry(
       // this rejection is not pre-connection and must not classify as neutral.
       throw new UpstreamRetryEvidenceError(transientStatuses, err);
     }
+  }
+  if (isTransientUpstreamStatus(res.status) && !opts.abortSignal?.aborted) {
+    opts.onTransientExhausted?.();
   }
   // Budget exhausted: the last response is returned with its body intact.
   return res;

@@ -315,6 +315,46 @@ describe("the bridged client stream", () => {
     expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
   });
 
+  test("观察两个原始上游 leg，客户端仍只收到 hosted search 和最终答案", async () => {
+    const observed: Record<string, unknown>[] = [];
+    const stream = createPassthroughWebSearchBridgeStream({
+      plan,
+      firstLeg: streamFromText(searchLeg()),
+      requestBody: initialBody,
+      send: async () => new Response(streamFromText(answerLeg())),
+      execute: async () => ({ text: "a result", sources: [] }),
+      onRawPayload: payload => observed.push(payload),
+    });
+
+    const events = clientEvents(await new Response(stream).text());
+
+    expect(observed.some(payload => payload.type === "response.output_item.added"
+      && ((payload.item as Record<string, unknown> | undefined)?.name === "web_search"))).toBe(true);
+    expect(observed.filter(payload => payload.type === "response.completed")).toHaveLength(2);
+    expect(events.some(event => event.type === "response.output_item.done"
+      && (event.item as Record<string, unknown>).type === "web_search_call")).toBe(true);
+    expect(events.some(event => event.type === "response.completed"
+      && JSON.stringify(event).includes("The current release is 2.50.0."))).toBe(true);
+    expect(JSON.stringify(events)).not.toContain('"name":"web_search"');
+  });
+
+  test("原始上游观察器抛错不影响 bridge 转发", async () => {
+    const stream = createPassthroughWebSearchBridgeStream({
+      plan,
+      firstLeg: streamFromText(searchLeg()),
+      requestBody: initialBody,
+      send: async () => new Response(streamFromText(answerLeg())),
+      execute: async () => ({ text: "a result", sources: [] }),
+      onRawPayload: () => { throw new Error("diagnostic observer failure"); },
+    });
+
+    const events = clientEvents(await new Response(stream).text());
+    expect(events.some(event => event.type === "response.output_item.done"
+      && (event.item as Record<string, unknown>).type === "web_search_call")).toBe(true);
+    expect(events.some(event => event.type === "response.completed"
+      && JSON.stringify(event).includes("The current release is 2.50.0."))).toBe(true);
+  });
+
   test("a turn with no search is relayed untouched and never re-sends", async () => {
     let sends = 0;
     const stream = createPassthroughWebSearchBridgeStream({

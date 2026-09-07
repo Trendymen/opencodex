@@ -58,6 +58,7 @@ import {
 } from "./request-log";
 import { jsonCompletionSse, nativeChatSse, structuredError, usageFromChat } from "./chat-native-sse";
 import { registerTurn, unregisterTurn } from "./lifecycle";
+import { carriesCodeModeNestedExecSurface } from "../chat/nested-exec-eligibility";
 
 type Rec = Record<string, unknown>;
 
@@ -153,6 +154,8 @@ export function isNativeChatRouteEligible(route: RouteResult, rawBody: Rec): boo
       }
     }
   }
+  // Nested exec surfaces need request-scoped alias repair; skip the byte-forward fast path.
+  if (carriesCodeModeNestedExecSurface(rawBody)) return false;
   return true;
 }
 

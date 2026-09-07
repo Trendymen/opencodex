@@ -164,16 +164,9 @@ on a mid-thread model switch.
 
 ## Encrypted v2 task recovery
 
-`agentTaskRecovery` is an experimental compatibility path for backend-encrypted v2 tasks that reach
-a routed provider. Two request shapes qualify: a native ChatGPT parent spawning a routed v2 child,
-and a live thread switched from a native ChatGPT model to a routed one, whose history replays a
-backend-minted encrypted agent message on every later turn
-([#4089](https://github.com/lidge-jun/opencodex/issues/4089)). It is disabled by default. When
-explicitly enabled and the final routed task contains an otherwise unreadable Fernet payload,
-opencodex uses a raw Responses passthrough request to the fixed
-`https://chatgpt.com/backend-api/codex/responses` endpoint with forward-mode authentication.
-ChatGPT returns the plaintext assignment through a forced function call; opencodex then converts
-only that task item to a standard user message before routed-provider dispatch.
+`agentTaskRecovery` 是面向到达路由 provider 的后端加密 v2 任务的实验性兼容路径，默认关闭。它支持两类请求：原生 ChatGPT 父任务派生路由 v2 子任务，以及从原生 ChatGPT 模型切换到路由模型的存活线程；后者会在之后的每一轮历史中重放后端签发的加密 agent message（[#4089](https://github.com/lidge-jun/opencodex/issues/4089)）。当最终路由任务带有无法读取的 Fernet payload 时，opencodex 会向固定的 `https://chatgpt.com/backend-api/codex/responses` 端点发送一条使用 forward-mode authentication 的原始 Responses passthrough 请求。ChatGPT 通过强制 function call 返回明文任务，opencodex 只将该任务项改写为标准 user message，再分派给路由 provider。
+
+它也支持原生 ChatGPT 子任务的严格后端密文 `NEW_TASK` envelope：原生目标会先直接执行，只有正常的输出前 transient-5xx 重试全部耗尽后的最后一次可重试失败，才会触发一次上述恢复请求。恢复后，opencodex 只改写该任务项，并对同一原生目标重试一次；原生请求直接成功时不会执行恢复。
 
 This is not local decryption and does not fix the Codex wire protocol. It depends on undocumented
 ChatGPT backend behavior and may stop working after a backend change. The recovered assignment is
@@ -200,9 +193,13 @@ Admission and retention are deliberately narrow:
 - recovered plaintext is never logged or persisted; the process-local cache is credential-, parent-
   thread-, and ciphertext-scoped, expires after 15 minutes, and is bounded by both configured entry
   count (200 by default, 512 maximum) and 8 MiB total;
+- only a current, complete `NEW_TASK` envelope with matching `author`, `recipient`, task name, and
+  sender; exactly one encrypted part; and no plaintext task body may use the backend-ciphertext
+  branch. Reasoning, compaction, history, ordinary `gAAAA…` text, malformed envelopes, and combo
+  attempts cannot activate it;
 - any malformed envelope, failed recovery, timeout, or validation failure preserves the existing
-  fail-closed error; client cancellation returns 499. Neither path forwards ciphertext to the
-  routed provider.
+  terminal response or fail-closed error; client cancellation returns 499. Neither path forwards
+  ciphertext to the routed provider.
 
 ### Threat model
 
@@ -233,13 +230,15 @@ Enable this only when the additional authenticated request, quota use, plaintext
 and private-backend dependency are acceptable. Prefer a native ChatGPT child or v1 heterogeneous
 delegation when they are not.
 
-This recovery path applies to direct-routed children and encrypted combo `NEW_TASK` spawns. At
-most 32 recovery requests can be active at once; additional misses fail closed. A combo with an
-available canonical native target still sends ciphertext directly; recovery runs only when no
-native target is selectable. After a stored Pool account's refresh and same-account replay are
-exhausted, recovery can use the incoming caller credential for one available routed target without
-trying another native account. Policy refusals remain terminal. Failed recovery, exhausted targets,
-or unavailable targets still fail closed without forwarding ciphertext to a routed provider.
+This recovery path applies to direct-routed children, the bounded canonical-native retry described
+above, and encrypted combo `NEW_TASK` spawns that have no selectable native target. All paths use the
+same `agentTaskRecovery.enabled` switch. With the switch off there is no backend-ciphertext
+classification, recovery request, extra retry, or recovery-cache effect. At most 32 recovery requests
+can be active at once; additional misses fail closed. A combo with an available canonical native
+target still sends ciphertext directly. After a stored Pool account's refresh and same-account replay
+are exhausted, recovery can use the incoming caller credential for one available routed target
+without trying another native account. Policy refusals remain terminal. Failed recovery, exhausted
+targets, or unavailable targets still fail closed without forwarding ciphertext to a routed provider.
 
 ## Effort caps
 
