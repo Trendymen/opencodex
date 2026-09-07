@@ -64,6 +64,7 @@ const INITIAL_OWNED_PATHS = [
   "opencodex-tray-online.ico",
   "opencodex-tray-warning.ico",
   "opencodex-tray.ps1",
+  "provider-debug.jsonl",
   "responses-state.json",
   "runtime-port.json",
   "service-api-token",
@@ -262,6 +263,12 @@ function removeOwnedEntry(root: string, path: string): void {
     removeOwnedEntry(root, join(path, name));
   }
   rmdirSync(path);
+}
+
+export function isOwnedConfigPath(configDir: string, candidatePath: string): boolean {
+  const rel = manifestRelativePath(configDir, candidatePath);
+  if (!rel) return false;
+  return loadOwnership(configDir)?.manifest.paths.includes(rel) === true;
 }
 
 export function recordOwnedConfigPath(configDir: string, candidatePath: string): boolean {

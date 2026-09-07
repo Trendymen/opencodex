@@ -99,6 +99,8 @@ export interface AdapterRequest {
     convertedMuseToolNameAliases?: ReadonlyMap<string, string>;
     /** Releases observation of a serialized request body after its final fetch attempt settles. */
     releaseBodyObservation?: () => void;
+    /** Opaque thread-id tag for provider diagnostics; no raw thread id on the wire. */
+    threadIdTag?: string;
     /** Exact reasoning parameter emitted by the adapter, for request-log diagnostics only. */
     reasoningLog?:
       | {

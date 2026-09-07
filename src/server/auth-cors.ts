@@ -834,6 +834,11 @@ export function providerManagementConfigError(
     "omitReasoningEffortWithToolsModels",
   );
   if (toolReasoningOptOutError) return `provider ${name} ${toolReasoningOptOutError}`;
+  const messagePhaseInferenceError = nonBlankStringArrayConfigError(
+    raw.inferResponsesMessagePhaseModels,
+    "inferResponsesMessagePhaseModels",
+  );
+  if (messagePhaseInferenceError) return `provider ${name} ${messagePhaseInferenceError}`;
   const openRouterError = openRouterRoutingConfigError(typed);
   if (openRouterError) return `provider ${name} ${openRouterError}`;
   const vercelError = vercelGatewayRoutingConfigError(typed);
@@ -913,6 +918,7 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   commandCodeVersion: "editor",
   statelessResponses: "editor",
   requiresAdjacentResponsesToolResults: "editor",
+  inferResponsesMessagePhaseModels: "editor",
   annotateEmptyToolOutputs: "editor",
   supportsServiceTier: "editor",
   modelSupportsServiceTier: "editor",
