@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { compareReleaseTags } from "../../scripts/release-notes";
+import { forkVersionTagError } from "../../src/fork/version-policy.mjs";
 import { repoPath, repoRoot as resolveRepoRoot } from "../helpers/repo-root";
 
 const repoRoot = resolveRepoRoot();
@@ -95,6 +96,15 @@ describe("release version line", () => {
     if (tags.length === 0) return;
 
     const version = inTreeVersion();
+    const forkTagError = forkVersionTagError(version, tags, tagPointsAtHead);
+    if (forkTagError !== undefined) {
+      expect(
+        forkTagError,
+        "Fork package version " + version +
+          " must have its exact official base and may not trail an existing same-base ben revision",
+      ).toBeNull();
+      return;
+    }
     const highest = highestReleaseTag(tags);
     expect(highest).not.toBeNull();
 

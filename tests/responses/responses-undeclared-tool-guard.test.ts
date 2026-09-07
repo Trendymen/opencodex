@@ -627,8 +627,17 @@ describe("a refused turn does not become continuation state", () => {
   const declaredTools = [
     { type: "custom", name: "exec", description: "Run JavaScript", format: { type: "grammar", syntax: "lark" } },
   ];
+  const nestedExecTools = [{
+    type: "namespace",
+    name: "functions",
+    tools: declaredTools,
+  }];
 
-  async function turn(responseId: string, outputItem: Record<string, unknown>): Promise<Response> {
+  async function turn(
+    responseId: string,
+    outputItem: Record<string, unknown>,
+    tools: unknown[] = declaredTools,
+  ): Promise<Response> {
     const savedFetch = globalThis.fetch;
     globalThis.fetch = (async () => new Response(
       JSON.stringify({ id: responseId, status: "completed", output: [outputItem] }),
@@ -642,7 +651,7 @@ describe("a refused turn does not become continuation state", () => {
           model: "fixture/deepseek-v4-flash",
           stream: false,
           input: [{ role: "user", content: [{ type: "input_text", text: "edit the file" }] }],
-          tools: declaredTools,
+          tools,
         }),
       }), config, { model: "", provider: "" });
     } finally {
@@ -718,6 +727,33 @@ describe("a refused turn does not become continuation state", () => {
     expect(rememberedCall).toMatchObject({ type: "custom_tool_call", name: "exec" });
     expect(rememberedCall?.input).toContain("tools.write_stdin");
     expect(JSON.stringify(expanded)).not.toContain('"name":"write_stdin"');
+  });
+
+  test("a bounded nested web__run repair is remembered for the next previous_response_id turn", async () => {
+    const responseId = "resp_bounded_nested_web_run";
+    const accepted = await turn(responseId, {
+      type: "function_call",
+      id: "fc_bounded_web_run",
+      call_id: "call_bounded_web_run",
+      name: "web__run",
+      arguments: JSON.stringify({ search_query: [{ q: "OpenAI" }], response_length: "short" }),
+      status: "completed",
+    }, nestedExecTools);
+
+    expect(accepted.status).toBe(200);
+    const visible = await accepted.json() as { output?: Array<Record<string, unknown>> };
+    expect(visible.output?.[0]).toMatchObject({ type: "custom_tool_call", name: "exec" });
+
+    const expanded = expandPreviousResponseInput({
+      model: "fixture/deepseek-v4-flash",
+      previous_response_id: responseId,
+      input: [{ role: "user", content: [{ type: "input_text", text: "continue" }] }],
+      tools: nestedExecTools,
+    }) as { input?: Array<Record<string, unknown>> };
+    const rememberedCall = expanded.input?.find(item => item.call_id === "call_bounded_web_run");
+
+    expect(rememberedCall).toMatchObject({ type: "custom_tool_call", name: "exec" });
+    expect(rememberedCall?.input).toContain("tools.web__run");
   });
 
   test("a streamed bridged apply_patch turn is remembered as the declared exec call", async () => {
