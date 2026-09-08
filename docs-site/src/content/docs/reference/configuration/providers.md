@@ -992,13 +992,8 @@ their previous behavior. See the
 
 ## Routed agent messages
 
-With the [`openai-responses` adapter](/reference/adapters/#openai-responses), Codex
-`agent_message` items containing nonempty arrays of supported plaintext parts become user messages when `authMode` is not `"forward"`
-(for example, `"key"`). Providers using `authMode: "forward"` retain these items unchanged.
-`agent_message` is private to the ChatGPT Codex backend, and the routed destinations
-reported so far answer the whole request with
-`422 unknown item type "agent_message"`; Codex replays sub-agent history on every
-subsequent turn, so the thread keeps failing until the item is converted.
+使用 [`openai-responses` adapter](/reference/adapters/#openai-responses) 时，非 OpenAI 目的地的非 GPT 模型会将合法的结构化明文 `agent_message` 转为普通 user message，包含第三方 `forward` 路由。
+OpenCode Go 的 `https://opencode.ai/zen/go/v1` 非 `forward` 路由保留既有跨模型转换，其 `forward` 路由按上述非 GPT 规则处理。Provider 改名不改变目的地判定。
 Author and recipient remain explicit text metadata, and the content parts are preserved.
 For HTTPS `api.x.ai` and `cli-chat-proxy.grok.com` on the standard port, non-forward
 Responses dispatch also accepts a nonblank string child result and turns it into one

@@ -1,6 +1,7 @@
 import { normalizeRoutedAgentMessages } from "./routed-agent-messages";
 import { normalizeOpenCodeGoAdditionalTools } from "./opencode-go-additional-tools";
 import { isXaiResponsesDestination } from "../providers/xai-transport";
+import { isThirdPartyNonGptResponsesRoute } from "../providers/openai-tiers-destination";
 import { createHash } from "node:crypto";
 import type { IncomingMeta, ProviderAdapter } from "./base";
 import { namespacedToolName, toolChoiceToolPredicate, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
@@ -71,6 +72,16 @@ export const FORWARD_HEADERS = [
   "x-responsesapi-include-timing-metrics",
   CODEX_RESPONSES_LITE_HEADER,
 ];
+
+/** Keep the pre-existing Console Go non-forward structured-message compatibility boundary. */
+function isOpenCodeGoBaseUrl(baseUrl: string | undefined): boolean {
+  try {
+    const url = new URL(baseUrl ?? "");
+    return url.origin === "https://opencode.ai" && url.pathname.replace(/\/+$/, "") === "/zen/go/v1";
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Sanitize reasoning input by field policy, not by preserving each item's shape. Retaining a
@@ -2466,9 +2477,12 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         parsed._rawBody,
         forward || parsed._previousResponseInputExpanded === true,
       );
-      if (!forward) outBody = normalizeRoutedAgentMessages(outBody, {
-        allowStringContent: isXaiResponsesDestination(provider),
-      });
+      const thirdPartyNonGptRoute = isThirdPartyNonGptResponsesRoute(provider, parsed.modelId);
+      const normalizeGoStructuredMessages = !forward && isOpenCodeGoBaseUrl(provider.baseUrl);
+      const normalizeXaiMessages = !forward && isXaiResponsesDestination(provider) && thirdPartyNonGptRoute;
+      if (normalizeGoStructuredMessages || normalizeXaiMessages) {
+        outBody = normalizeRoutedAgentMessages(outBody, { allowStringContent: normalizeXaiMessages });
+      }
       outBody = mapRoutedResponsesReasoningEffort(outBody, provider, parsed.modelId);
       // stripPreviousResponseId() intentionally returns its input on a no-op. Detach before the
       // tier write so a force-fast/default decision can never mutate parsed._rawBody.
