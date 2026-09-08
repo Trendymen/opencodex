@@ -88,7 +88,8 @@ import {
   type ProviderCostOverlay,
 } from "./types";
 import type { OcxRuntimeRole } from "./types/config";
-import { OPENAI_CODEX_PROVIDER_ID } from "./providers/openai-tiers";
+import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "./providers/openai-tiers";
+import { isReservedNativeOpenAiAlias } from "./providers/openai-model-identity";
 import { modelAutoCompactTokenLimitsConfigError } from "./providers/auto-compact-budget";
 import { fastWireDeclarationError, hasFastWireCapabilityConflict } from "./providers/fastwire";
 import {
@@ -1568,11 +1569,7 @@ const configSchema = z.object({
     if (Object.hasOwn(provider, "codexAccountMode") && provider.codexAccountMode !== undefined) {
       // Persisted account mode is valid ONLY on the canonical built-in `openai` forward provider.
       // Old openai-multi rows stay parseable (they never carry a mode) so startup can migrate them.
-      const canonicalOpenAiShape = name === "openai"
-        && provider.adapter === "openai-responses"
-        && (provider as { authMode?: unknown }).authMode === "forward"
-        && typeof provider.baseUrl === "string"
-        && provider.baseUrl.replace(/\/+$/, "") === "https://chatgpt.com/backend-api/codex";
+      const canonicalOpenAiShape = name === "openai" && isCanonicalOpenAiForwardProvider(provider);
       if (!canonicalOpenAiShape) {
         ctx.addIssue({
           code: "custom",
@@ -2450,7 +2447,7 @@ function sanitizeAliasesForLoad(raw: unknown): void {
     for (const [id, value] of Object.entries(aliases)) {
       const lower = typeof value === "string" ? value.toLowerCase() : "";
       if (typeof value !== "string" || !MODEL_ALIAS_PATTERN.test(value) || claimed.has(lower)
-        || nativeIds.has(lower) || comboAliases.has(lower) || /^(?:gpt-|o1-|o3-|o4-|codex-)/i.test(value)) {
+        || nativeIds.has(lower) || comboAliases.has(lower) || isReservedNativeOpenAiAlias(value)) {
         console.warn(`Ignoring invalid or colliding model alias for ${id} in config.json`);
         delete aliases[id];
       } else claimed.add(lower);
