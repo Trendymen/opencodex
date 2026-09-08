@@ -26,16 +26,19 @@ import { ownedServiceHomeInspection } from "../helpers/owned-service-home-inspec
 
 import { watchdogMs } from "../helpers/ci-watchdog";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 /** These cases sandbox CODEX_HOME/OPENCODEX_HOME, so the installed service is not their evidence. */
 const inspectNativeCodexOwnership = ownedServiceHomeInspection("native-profile drain server test");
 
 const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
 const previousOpencodexHome = process.env.OPENCODEX_HOME;
 const previousCodexHome = process.env.CODEX_HOME;
 let opencodexHome = "";
 let codexHome = "";
 
 beforeEach(() => {
+  installHttpOnlyCodexWebSocket();
   opencodexHome = mkdtempSync(join(tmpdir(), "ocx-main-drain-server-"));
   codexHome = mkdtempSync(join(tmpdir(), "ocx-main-drain-codex-"));
   process.env.OPENCODEX_HOME = opencodexHome;
@@ -53,6 +56,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  globalThis.WebSocket = originalWebSocket;
   resetLifecycleDrainStateForTests();
   clearAccountQuota();
   clearThreadAccountMap();
