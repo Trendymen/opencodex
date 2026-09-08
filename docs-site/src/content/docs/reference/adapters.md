@@ -133,19 +133,10 @@ collision-safe public function tool. Matching request history and JSON/SSE funct
 translated back to the private `tool_search` lifecycle for the client. Canonical OpenAI forward
 keeps the native private type unchanged.
 
-Requests with `authMode` other than `"forward"` convert Codex `agent_message`
-items containing nonempty arrays of supported plaintext parts into public user messages, preserving those parts and readable author/recipient
-metadata. `agent_message` is private to the ChatGPT Codex backend, and the routed
-destinations reported so far reject the entire body with
-`422 unknown item type "agent_message"` — and because Codex replays sub-agent history on
-every turn, that failure repeats for the rest of the thread. This conversion leaves
-encrypted or unknown content unchanged. Providers using `authMode: "forward"` retain
-these items unchanged. For xAI Responses on HTTPS `api.x.ai` or `cli-chat-proxy.grok.com`
-using the standard port, a nonblank string child result is also converted into an `input_text`
-part with its exact whitespace and newlines. Other destinations retain string-valued items;
-blank strings and mixed encrypted/unknown parts are not partially converted.
-See [agent messages](/reference/configuration/providers/#routed-agent-messages)
-for the separate opt-in encrypted-task recovery behavior.
+第三方 Responses 路由为非 GPT 模型转换可读的结构化 `agent_message`，包含第三方 `forward`；保留正文、发送者和接收者。OpenAI 目的地不参与转换。
+OpenCode Go 的非 `forward` 路由保留既有的跨模型转换；其 `forward` 路由仍按第三方非 GPT 规则处理。
+xAI 非 `forward` 路由另外支持非空字符串正文，保留原始空白和换行。其他目标默认保留字符串形态；密文、空内容和未知 part 不做部分转换。
+加密任务仍使用独立的 [task recovery](/reference/configuration/providers/#routed-agent-messages)，不通过明文转换绕过恢复检查。
 
 The canonical ChatGPT Codex forward destination also normalizes two public Responses shapes that
 its stricter backend rejects: fully textual `system` messages inside `input` are appended to the

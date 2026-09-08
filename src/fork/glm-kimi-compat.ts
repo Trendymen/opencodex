@@ -1,22 +1,17 @@
-/** Exact Ark/Kimi and Zhipu GLM Responses compatibility for the relay fork. */
+/** Third-party Responses message compatibility plus exact Ark/Kimi and Zhipu GLM schema handling. */
 
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import type { OcxProviderConfig } from "../types";
-import { isOpenAiOperatedResponsesDestination } from "../providers/openai-tiers";
+import { isThirdPartyNonGptResponsesRoute } from "../providers/openai-tiers-destination";
+import { normalizeRoutedAgentMessages } from "../adapters/routed-agent-messages";
 import { debugProviderDiagnostic } from "../lib/debug";
 import { getConfigDir } from "../config/paths";
 import { isOwnedConfigPath, recordOwnedConfigPath } from "../lib/config-ownership";
 
 const ARK_AGENT_PLAN_V3 = "https://ark.cn-beijing.volces.com/api/plan/v3";
 
-/** True when the model family is OpenAI's own GPT line (gpt-*, o3/o4-mini, codex-*,
- *  chatgpt-*). Third-party re-hosts of other families never match this. */
-function isOpenAiGptModelFamily(modelId: string): boolean {
-  const normalized = typeof modelId === "string" ? modelId.trim().toLowerCase() : "";
-  return /^(chatgpt|gpt|codex)([-_.]|$)/.test(normalized) || /^o[34]([-_]|$)/.test(normalized);
-}
 const ZHIPU_CODEX_RESPONSES = "https://open.bigmodel.cn/api/v1";
 const KIMI_SCHEMA_MAX_DEPTH = 32;
 const KIMI_SCHEMA_MAX_NODES = 4_096;
@@ -169,9 +164,7 @@ function appendTrailingUserTurnForPrefillRestrictedModel(
   // GPT-family models served by third parties may legitimately rely on prefill. Every
   // other openai-responses destination gets a trailing user turn when the input ends
   // with an assistant message.
-  if (provider.adapter !== "openai-responses") return body;
-  if (isOpenAiOperatedResponsesDestination(provider)) return body;
-  if (isOpenAiGptModelFamily(modelId)) return body;
+  if (!isThirdPartyNonGptResponsesRoute(provider, modelId)) return body;
   if (!isPlainObject(body) || !Array.isArray(body.input) || body.input.length === 0) return body;
   const last = body.input[body.input.length - 1];
   if (!isPlainObject(last) || last.type !== "message" || last.role !== "assistant") return body;
@@ -182,6 +175,15 @@ function appendTrailingUserTurnForPrefillRestrictedModel(
       { type: "message", role: "user", content: [{ type: "input_text", text: "(continue)" }] },
     ],
   };
+}
+
+function normalizeThirdPartyPlaintextAgentMessages(
+  body: unknown,
+  provider: OcxProviderConfig,
+  modelId: string,
+): unknown {
+  if (!isThirdPartyNonGptResponsesRoute(provider, modelId)) return body;
+  return normalizeRoutedAgentMessages(body);
 }
 
 function normalizeVolcengineAgentPlanAssistantContent(body: unknown, provider: OcxProviderConfig): unknown {
@@ -375,6 +377,7 @@ export function applyGlmKimiOutboundCompatibility(args: {
     });
   }
   let body = normalizeVolcengineAgentPlanAssistantContent(args.body, args.provider);
+  body = normalizeThirdPartyPlaintextAgentMessages(body, args.provider, args.modelId);
   body = appendTrailingUserTurnForPrefillRestrictedModel(body, args.provider, args.modelId);
   let lowered: { body: unknown; diagnostic?: KimiToolSchemaLoweringDiagnostic };
   try {

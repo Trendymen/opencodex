@@ -16,14 +16,17 @@ function payloads(blocks: readonly string[]): Record<string, unknown>[] {
 }
 
 describe("native Responses message-phase repair", () => {
-  test("enables only configured non-GPT and non-OpenAI model ids", () => {
-    const provider = { inferResponsesMessagePhaseModels: ["glm-5.3", "KIMI-K3", "gpt-5.6"] };
+  test("enables only explicitly configured non-GPT family model ids", () => {
+    const provider = { inferResponsesMessagePhaseModels: ["glm-5.3", "KIMI-K3", "my-gpt-helper", "openai-compatible-glm", "gpt-5.6", "o1"] };
 
     expect(routeUsesResponsesMessagePhaseInference(provider, "glm-5.3")).toBe(true);
     expect(routeUsesResponsesMessagePhaseInference(provider, "kimi-k3")).toBe(true);
+    expect(routeUsesResponsesMessagePhaseInference(provider, "my-gpt-helper")).toBe(true);
+    expect(routeUsesResponsesMessagePhaseInference(provider, "openai-compatible-glm")).toBe(true);
     expect(routeUsesResponsesMessagePhaseInference(provider, "gpt-5.6")).toBe(false);
-    expect(routeUsesResponsesMessagePhaseInference({ inferResponsesMessagePhaseModels: ["openai-compatible"] }, "openai-compatible")).toBe(false);
+    expect(routeUsesResponsesMessagePhaseInference(provider, "o1")).toBe(false);
     expect(routeUsesResponsesMessagePhaseInference(provider, "deepseek-v4-flash")).toBe(false);
+    expect(routeUsesResponsesMessagePhaseInference({ inferResponsesMessagePhaseModels: ["my-gpt-helper"] }, "openai-compatible-glm")).toBe(false);
   });
 
   test("never enables inference on an OpenAI-operated Responses destination", () => {
@@ -50,7 +53,7 @@ describe("native Responses message-phase repair", () => {
       adapter: "openai-responses",
       baseUrl: "https://third-party.example/v1",
       inferResponsesMessagePhaseModels: ["o3"],
-    }, "o3")).toBe(true);
+    }, "o3")).toBe(false);
   });
 
   test("labels a terminal unphased assistant message final_answer without changing its text", () => {
