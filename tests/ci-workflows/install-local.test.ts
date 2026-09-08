@@ -50,6 +50,7 @@ describe("local installer provider debug handling", () => {
 
       expect(ensureProviderDebugLaunchdDefault(plist)).toBe(true);
       expect(readFileSync(plist, "utf8")).toMatch(/<key>OCX_DEBUG<\/key>\s*<string>1<\/string>/);
+      expect(readFileSync(plist, "utf8")).toMatch(/<key>OCX_PROVIDER_TEXT_DEBUG<\/key>\s*<string>1<\/string>/);
       expect(statSync(plist).mode & 0o777).toBe(0o600);
       expect(ensureProviderDebugLaunchdDefault(plist)).toBe(false);
       expect(readFileSync(plist, "utf8")).not.toBe(original);
@@ -67,6 +68,20 @@ describe("local installer provider debug handling", () => {
       const updated = readFileSync(plist, "utf8");
       expect(updated.match(/<key>OCX_DEBUG<\/key>/g)).toHaveLength(1);
       expect(updated).toMatch(/<key>OCX_DEBUG<\/key>\s*<string>1<\/string>/);
+    },
+  );
+
+  test.skipIf(process.platform !== "darwin")(
+    "replaces an existing non-default OCX_PROVIDER_TEXT_DEBUG value without duplicating it",
+    () => {
+      const plist = tempPlist(basePlist.replace(
+        "    <key>OCX_SERVICE</key><string>1</string>",
+        "    <key>OCX_SERVICE</key><string>1</string>\n    <key>OCX_PROVIDER_TEXT_DEBUG</key><string>0</string>",
+      ));
+      expect(ensureProviderDebugLaunchdDefault(plist)).toBe(true);
+      const updated = readFileSync(plist, "utf8");
+      expect(updated.match(/<key>OCX_PROVIDER_TEXT_DEBUG<\/key>/g)).toHaveLength(1);
+      expect(updated).toMatch(/<key>OCX_PROVIDER_TEXT_DEBUG<\/key>\s*<string>1<\/string>/);
     },
   );
 
@@ -244,10 +259,11 @@ describe("local installer provider debug handling", () => {
     })).resolves.toBeUndefined();
   });
 
-  test("restart environment preserves existing variables while forcing provider debug", () => {
-    expect(localInstallRestartEnv({ PATH: "/usr/bin", OCX_DEBUG: "0" }, "darwin")).toEqual({
+  test("restart environment forces both provider debug flags on darwin", () => {
+    expect(localInstallRestartEnv({ PATH: "/usr/bin", OCX_DEBUG: "0", OCX_PROVIDER_TEXT_DEBUG: "0" }, "darwin")).toEqual({
       PATH: "/usr/bin",
       OCX_DEBUG: "1",
+      OCX_PROVIDER_TEXT_DEBUG: "1",
     });
   });
 
