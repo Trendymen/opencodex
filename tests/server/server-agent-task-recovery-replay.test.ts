@@ -99,7 +99,8 @@ test("Responses handler restores a cached task in a continued child turn", async
 });
 
 function encryptedMessage(): unknown[] {
-  return JSON.parse(JSON.stringify(encryptedInput()).replace("Message Type: NEW_TASK", "Message Type: MESSAGE"));
+  return JSON.parse(JSON.stringify(encryptedInput({ taskName: "/root", sender: "/root/worker" }))
+    .replace("Message Type: NEW_TASK", "Message Type: MESSAGE"));
 }
 
 test.each([true, false, undefined])("fresh recovery and cache-only reparse preserve cohort marker %s and replay metadata", async (cohort) => {
@@ -237,6 +238,104 @@ test("a routed parent without spawn markers recovers a worker's encrypted MESSAG
   expect(bodies).toHaveLength(1);
   expect(bodies[0]).toContain("Clothing fly starts at the item node.");
   expect(bodies[0]).not.toContain(FERNET_TASK);
+});
+
+test("a timed-out routed-parent MESSAGE becomes a non-persistent retry notice and later recovers", async () => {
+  const { post, providerResponse } = await import("../helpers/agent-task-recovery");
+  let recoveryAttempts = 0;
+  const providerBodies: string[] = [];
+  globalThis.fetch = ((url: unknown, init?: RequestInit) => {
+    if (String(url).includes("chatgpt.com")) {
+      recoveryAttempts += 1;
+      if (recoveryAttempts <= 2) {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          const rejectAbort = () => reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
+          if (signal?.aborted) rejectAbort();
+          else signal?.addEventListener("abort", rejectAbort, { once: true });
+        });
+      }
+      return Promise.resolve(new Response(recoverySse("The child later resent this result."), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }));
+    }
+    providerBodies.push(String(init?.body));
+    return Promise.resolve(providerResponse());
+  }) as typeof fetch;
+  const config = routedConfig({ enabled: true, timeoutMs: 1_000, maxRetries: 1 });
+  const headers = codexHeaders();
+  headers.delete("x-openai-subagent");
+  const baseNow = Date.now();
+  let now = baseNow;
+  const clock = spyOn(Date, "now").mockImplementation(() => now);
+
+  try {
+
+  const timedOut = await post(config, "xai/grok-4.5", encryptedMessage(), headers);
+  expect(timedOut.status).toBe(200);
+  expect(recoveryAttempts).toBe(2);
+  expect(providerBodies).toHaveLength(1);
+  expect(providerBodies[0]).toContain("/root");
+  expect(providerBodies[0]).toContain("重新发送");
+  expect(providerBodies[0]).toContain("最多 2 次");
+  expect(providerBodies[0]).toContain("最终回复");
+  expect(providerBodies[0]).not.toContain(FERNET_TASK);
+
+  now = baseNow + 14 * 60 * 1_000;
+  const continued = await post(config, "xai/grok-4.5", [...encryptedMessage(), {
+    type: "function_call_output", call_id: "read-child", output: "still unavailable",
+  }], headers);
+  expect(continued.status).toBe(200);
+  expect(recoveryAttempts).toBe(2);
+  expect(providerBodies).toHaveLength(2);
+  expect(providerBodies[1]).toContain("重新发送");
+  expect(providerBodies[1]).not.toContain(FERNET_TASK);
+
+  now = baseNow + 16 * 60 * 1_000;
+  const extended = await post(config, "xai/grok-4.5", [...encryptedMessage(), {
+    type: "function_call_output", call_id: "read-child-again", output: "still unavailable",
+  }], headers);
+  expect(extended.status).toBe(200);
+  expect(recoveryAttempts).toBe(2);
+  expect(providerBodies).toHaveLength(3);
+  expect(providerBodies[2]).toContain("重新发送");
+
+  const recovered = await post(config, "xai/grok-4.5", encryptedMessage(), headers);
+  expect(recovered.status).toBe(200);
+  expect(recoveryAttempts).toBe(3);
+  expect(providerBodies).toHaveLength(4);
+  expect(providerBodies[3]).toContain("The child later resent this result.");
+  expect(providerBodies[3]).not.toContain(FERNET_TASK);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test("a parent-to-child MESSAGE timeout remains fail-closed", async () => {
+  const { post } = await import("../helpers/agent-task-recovery");
+  let providerAttempts = 0;
+  globalThis.fetch = ((url: unknown, init?: RequestInit) => {
+    if (!String(url).includes("chatgpt.com")) {
+      providerAttempts += 1;
+      return Promise.resolve(Response.json({ unexpected: true }));
+    }
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      const rejectAbort = () => reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
+      if (signal?.aborted) rejectAbort();
+      else signal?.addEventListener("abort", rejectAbort, { once: true });
+    });
+  }) as typeof fetch;
+  const parentToChild = JSON.parse(JSON.stringify(encryptedInput()).replace("Message Type: NEW_TASK", "Message Type: MESSAGE"));
+  const response = await post(
+    routedConfig({ enabled: true, timeoutMs: 1_000, maxRetries: 0 }),
+    "xai/grok-4.5",
+    parentToChild,
+    codexHeaders(),
+  );
+  expect(response.status).toBe(400);
+  expect(providerAttempts).toBe(0);
 });
 
 test("a changed valid token cannot read another credential snapshot's recovery", async () => {

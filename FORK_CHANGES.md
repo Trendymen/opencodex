@@ -146,6 +146,8 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 Slow 5xx、abort、直接成功、非 transient 和非原生 direct/combo 不触发该重试恢复。
 严格 backend 子任务派发到非官方转发 Provider 前也经同一恢复路径；失败拒转，重放不再进入其他 OAuth/429/account/opaque/combo 重试，canonical OpenAI 转发保持拒转边界。
 路由到第三方模型的父任务收到 worker 的加密 `MESSAGE` 时，也进入相同恢复入口；不再要求当前请求本身是 spawned child。既有 admission、缓存作用域和严格 envelope 校验仍决定是否允许恢复。
+恢复默认使用 `gpt-5.6-luna`、`medium`，单次总时限 120 秒，响应头返回后的首字节与空闲等待最多 45 秒；超时最多重试两次。配置可通过 `reasoningEffort`、`timeoutMs`、`maxRetries` 调整。
+已准入的子到父 `MESSAGE` 在超时重试耗尽后转为不含密文的未恢复提示：要求父任务向子任务请求重发，最多两次，仍失败则读取子任务最终回复。按调用者、父任务和密文隔离的短期状态支持后续历史重放；提示不代表正文已读或审查通过。`NEW_TASK`、父到子指令、拒绝、无效输出及取消仍保留原有失败边界。
 严格 envelope 只接受精确 header/author/recipient/task、两段 content 与单个完整 ciphertext；成功和恢复后的 body 都不得写入 continuation state。
 
 代码：`src/server/responses/encrypted-payload.ts`、`src/server/responses/agent-task-recovery.ts`、`src/server/responses/core.ts`、`src/lib/upstream-retry.ts`、`src/usage/log.ts`。
