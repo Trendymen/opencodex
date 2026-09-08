@@ -32,6 +32,7 @@ import { redactSecretString } from "../lib/redact";
 import { effectiveGoogleMode, getProviderRegistryEntry, providerCodexAccountMode, providerMatchesRegistryTransport, registryEntryForProviderDestination } from "../providers/registry";
 import { providerConfigSeed } from "../providers/derive";
 import type { OcxConfig, OcxProviderConfig } from "../types";
+import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers";
 import { openRouterRoutingConfigError } from "../providers/openrouter-routing";
 import { modelAutoCompactTokenLimitsConfigError } from "../providers/auto-compact-budget";
 import { vercelGatewayRoutingConfigError } from "../providers/vercel-gateway-routing";
@@ -854,10 +855,8 @@ export function providerManagementConfigError(
   }
   if (typed.authMode === "forward") {
     const normalizedName = name.trim().toLowerCase();
-    const base = typed.baseUrl.replace(/\/+$/, "");
     const isBuiltInChatGptForward = normalizedName === "openai"
-      && typed.adapter === "openai-responses"
-      && base === "https://chatgpt.com/backend-api/codex";
+      && isCanonicalOpenAiForwardProvider(typed);
     if (isBuiltInChatGptForward) return null;
     return `provider ${name} uses reserved authMode "forward"; configure ChatGPT passthrough via the built-in provider`;
   }

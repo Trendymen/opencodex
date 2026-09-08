@@ -2,6 +2,7 @@ import { hasShrinkableOpenAIChatImages, normalizeOpenAIChatImages } from "./open
 import type { AdapterRequest, IncomingMeta, ProviderAdapter } from "./base";
 import type { AdapterEvent, OcxAssistantMessage, OcxContentPart, OcxMessage, OcxParsedRequest, OcxProviderConfig, OcxTextContent, OcxThinkingContent, OcxToolCall, OcxUsage } from "../types";
 import { isAllowedToolChoice, modelInList, namespacedToolName, resolveToolChoiceWireName, toolChoiceToolPredicate } from "../types";
+import { isOfficialOpenAiApiHost } from "../providers/openai-tiers-destination";
 import { mapReasoningEffort, modelRecordValue } from "../reasoning-effort";
 import { registryEntryForProviderDestination } from "../providers/registry";
 import { debugProviderDiagnostic } from "../lib/debug";
@@ -639,11 +640,7 @@ function developerSystemText(message: OcxMessage): string | undefined {
 }
 
 function isNativeOpenAIChatTarget(provider: OcxProviderConfig): boolean {
-  try {
-    return new URL(provider.baseUrl).hostname === "api.openai.com";
-  } catch {
-    return false;
-  }
+  return isOfficialOpenAiApiHost(provider.baseUrl);
 }
 
 /**

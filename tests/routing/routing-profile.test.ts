@@ -11,6 +11,7 @@ import { closeRequestHistoryIndex } from "../../src/routing/history/indexer";
 import {
   getRoutingProfile,
   listRoutingProfileIds,
+  NATIVE_OPENAI_FAMILY_PATTERN,
   normalizeRoutingProfile,
   parsePolicyModelId,
   policyPublicModelId,
@@ -155,6 +156,14 @@ describe("routing profiles (RI-04)", () => {
       alias: "gpt-5.6",
     }, config);
     expect(nativeCollision.some(issue => issue.message.includes("native family"))).toBe(true);
+    expect(NATIVE_OPENAI_FAMILY_PATTERN.test("gpt-5.6")).toBe(true);
+    expect(NATIVE_OPENAI_FAMILY_PATTERN.test("GPT-5.6")).toBe(false);
+
+    const uppercaseNativeCollision = routingProfileIssues("p", {
+      candidates: [{ provider: "a", model: "m1" }],
+      alias: "GPT-5.6",
+    }, config);
+    expect(uppercaseNativeCollision.some(issue => issue.message.includes("native family"))).toBe(true);
 
     const providerNamespaceCollision = routingProfileIssues("p", {
       candidates: [{ provider: "a", model: "m1" }],
