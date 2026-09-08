@@ -284,6 +284,27 @@ Codex `apply_patch` 工具或已识别的 code-mode `exec` 还会收到补丁顺
 Kiro 当前通过已识别的 code-mode `exec` 接收该提示，直接 `apply_patch` 路径不适用。
 这项提示不会重排补丁块、改写 `exec` JavaScript 或非空失败输出，也不会自动重试补丁。
 
+## spawn_agent 参数兼容
+
+向第三方目的地发送原生 Responses 请求时，如果当前可用的 `collaboration.spawn_agent`
+函数为 `fork_turns` 声明了受支持的 string schema，opencodex 会保留原描述并补充说明：
+`{"fork_turns":"3"}` 传入的是只含字符 `3` 的字符串，内容不包含引号字符。
+原始请求和 schema 的其他字段保持不变。
+
+在使用普通函数参数修复的原生 Responses 路径中，opencodex 可以为已完成调用的
+`fork_turns` 去掉一层多余的 JSON 字符串编码。修复要求当前工具声明授权这个具体函数，
+且解包后的值是 `none`、`all` 或受支持的正整数字符串。不支持的 schema、非法值和更多层
+编码保持原样；其他字段和其他工具不会被去引号。去引号时只替换该字段的字符串片段，
+保留其余参数原文；原始参数中存在重复的顶层 `fork_turns` 键时跳过去引号，其他已有参数转换仍按原规则处理。
+
+这条去引号规则仅支持普通 object 参数 schema，且 `fork_turns` 字段只能包含
+`type: "string"` 和可选的字符串 description。引用、组合关键字、字段 enum/pattern 及未知约束
+不参与处理。带引号的整数仅修复无前导零的规范十进制形式，范围为 `1` 到 `9007199254740991`。
+超出修复范围的值继续按已有参数规则处理，代理不会推断另一个轮次数值。
+
+流式预览保持不变，权威完成项、JSON 响应与重放使用修复后的值。
+规范 ChatGPT 登录转发不参与这项完成参数修复，代理也不会因此执行或重试工具。
+
 ## 子代理消息
 
 向第三方 Responses 目的地发送非 GPT 模型请求前，opencodex 会将可读的 Codex `agent_message`
