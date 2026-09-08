@@ -279,7 +279,10 @@ test("a timed-out routed-parent MESSAGE becomes a non-persistent retry notice an
   expect(providerBodies[0]).toContain("/root");
   expect(providerBodies[0]).toContain("重新发送");
   expect(providerBodies[0]).toContain("最多 2 次");
-  expect(providerBodies[0]).toContain("最终回复");
+  expect(providerBodies[0]).toContain("如果已经收到该子 agent 的完整 FINAL_ANSWER，请直接使用它，无需重发。");
+  expect(providerBodies[0]).toContain("真正返回最终正文的可用工具，例如 read_thread（若可用）");
+  expect(providerBodies[0]).toContain("不要把 list_agents 等状态列表当作正文。");
+  expect(providerBodies[0]).toContain("没有可用的正文读取工具时，请等待 FINAL_ANSWER。");
   expect(providerBodies[0]).not.toContain(FERNET_TASK);
 
   now = baseNow + 14 * 60 * 1_000;
