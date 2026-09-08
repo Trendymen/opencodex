@@ -1,4 +1,5 @@
 import type { ModelOption, ProviderOption } from "./combo-workspace-types";
+import { isCanonicalOpenAiForwardProvider } from "../../../src/providers/openai-tiers-destination";
 
 export function enabledProviders(providers: ProviderOption[]): ProviderOption[] {
   return providers
@@ -22,10 +23,7 @@ export function isChatGptForwardOption(p: ProviderOption | undefined): boolean {
   if (!p) return false;
   const id = p.name.toLowerCase();
   if (id !== "openai" && id !== "chatgpt") return false;
-  if ((p.authMode ?? "").toLowerCase() !== "forward") return false;
-  if ((p.adapter ?? "").toLowerCase() !== "openai-responses") return false;
-  const base = (p.baseUrl ?? "").replace(/\/+$/, "");
-  return !base || base.includes("chatgpt.com/backend-api/codex");
+  return isCanonicalOpenAiForwardProvider(p);
 }
 
 export function modelsForProvider(
