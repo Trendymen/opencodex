@@ -5,6 +5,11 @@ description: 提供者条目、身份验证、端点、模型目录、配额、�
 
 提供者用于告诉 opencodex 模型位于哪里、使用哪种线协议适配器，以及请求如何进行身份验证。
 
+## 子任务消息格式配置
+
+Provider 可设置 `agentMessageFormat: "preserve" | "user_message"`。`preserve` 保留原生 `agent_message`；`user_message` 将第三方 Responses 的合法明文数组或非空字符串转换为普通 user message，保留身份与原始正文。官方 OpenAI/ChatGPT 目的地不转换，密文和未知内容仍受原有检查保护。
+未配置时沿用现有兼容策略；POST 省略字段保留最新值，POST null 拒绝，PATCH null 清除并恢复默认。当前通过配置文件和管理 API 使用，没有新增 GUI 控件。完整规则见 [Routed agent messages](/reference/configuration/providers/#routed-agent-messages)。
+
 ## 首次注册时的模型选择
 
 新的非 OAuth 连接会等待可靠的模型列表，再公开模型。如果 Models 标签页中去重后的模型行达到20个，所有模型开关初始为 OFF，但提供者本身保持 ACTIVE。实际认证方式为 OAuth 或 ChatGPT 登录的连接保留默认设置。
