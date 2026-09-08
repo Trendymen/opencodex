@@ -24,6 +24,7 @@ import type { TranslatorBudget } from "../lib/translator-budget";
 import { rewriteRoutedCustomToolsForUpstream } from "../responses/custom-tool-compat";
 import { rewriteRoutedToolSearchForUpstream } from "../responses/tool-search-compat";
 import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-tool-compat";
+import { collectFunctionCallRepairSchemas } from "../responses/function-call-compat";
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeResponsesCodeMode } from "./responses-code-mode";
 import { CODE_MODE_RESULT_ECHO_SENTENCE } from "./exec-tool-result-normalize";
@@ -38,6 +39,7 @@ import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "./xai
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "./empty-tool-output-annotation";
 import { stripResponsesOnlyEncryptedMarker } from "./responses-tool-schema";
 import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../fork/glm-kimi-compat";
+import { addSpawnAgentForkTurnsGuidance } from "../fork/spawn-agent-compat";
 import { applyRoutedProgressContractToResponsesBody } from "../fork/routed-progress-contract";
 import { debugResponsesOutboundShape } from "../fork/outbound-debug";
 import {
@@ -2559,6 +2561,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         outBody = stripInternalChatMessageMetadataPassthrough(outBody);
         outBody = promoteClientLoadedTools(outBody);
+      }
+      if (!isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = addSpawnAgentForkTurnsGuidance(outBody, collectFunctionCallRepairSchemas(outBody));
       }
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         const rewritten = rewriteRoutedCustomToolsForUpstream(

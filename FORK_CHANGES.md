@@ -54,6 +54,16 @@ Kiro 当前通过已识别的 code-mode `exec` 接收该提示，仅有直接 `a
 代码：`src/adapters/tool-catalog-nudge.ts`，复用 `src/adapters/openai-responses.ts` 的工具提示入口。
 测试：`tests/adapters/tool-catalog-nudge.test.ts`、`tests/adapters/adapter-usage.test.ts`、`tests/responses/openai-responses-passthrough.test.ts`。
 
+### spawn_agent fork_turns 字段说明与修复
+
+原生 Responses 向第三方发送当前可用的 `collaboration.spawn_agent` 工具声明时，为受支持的 `fork_turns` string 字段保留原描述并补充完整 JSON 示例，说明值内容不包含引号字符。
+返回侧复用普通函数完成项修复入口，只对当前已授权的该工具字段解包一层多余 JSON 字符串编码；解包后还须是合法的受支持值。不支持的 schema、非法值、多层编码、其他工具和其他字段保持原样，保留已有 unsafe-number 与工具身份检查。流式预览不变，完成项、JSON 与重放使用同一修复路径；规范 ChatGPT 登录转发不参与该完成参数修复。
+去引号规则只支持普通 object 参数 schema 中仅含 `type: "string"` 和可选字符串 description 的字段，跳过引用、组合、enum/pattern 等未知约束。整数候选限于 `1..9007199254740991` 的无前导零十进制字符串，超范围值不推断或改写为其他轮次。
+修复只替换该字段的字符串片段，保留其余参数原文；原始参数中存在重复的顶层 `fork_turns` 键时跳过去引号，其他已有参数转换仍按原规则处理。
+
+代码：`src/fork/spawn-agent-compat.ts`、`src/adapters/openai-responses.ts`、`src/responses/function-call-compat.ts`。
+测试：`tests/responses/openai-responses-passthrough.test.ts`、`tests/responses/responses-function-tool-repair.test.ts`。
+
 ### Nested code-mode 工具修复
 
 上游已将裸 `exec_command` / `apply_patch` 接入统一 exec。Fork 额外修复 `functions.exec` / `web__run`，要求当前 turn 的 `functions` namespace 内恰有一个 `custom:exec`，且 lowering 来源一致。

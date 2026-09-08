@@ -1,4 +1,5 @@
 import { coerceIntegerToolArguments } from "../lib/tool-argument-integers";
+import { repairSpawnAgentForkTurnsArguments } from "../fork/spawn-agent-compat";
 import { namespacedToolName } from "../types/tools";
 import { rewriteRoutedNamespaceToolsForUpstream } from "./namespace-tool-compat";
 import { collectResponsesToolGroups } from "./tool-groups";
@@ -131,8 +132,9 @@ function repairItem(item: unknown, schemas: FunctionCallRepairSchemas, completed
       if (unsafe) return item;
     } catch { return item; }
   }
-  const argumentsText = coerceIntegerToolArguments(raw || "{}", schema.parameters, schema.namespace ? undefined : schema.name);
-  return argumentsText === raw ? item : { ...item, arguments: argumentsText };
+  const forkTurnsArguments = repairSpawnAgentForkTurnsArguments(raw, schema);
+  const repairedArguments = coerceIntegerToolArguments(forkTurnsArguments || "{}", schema.parameters, schema.namespace ? undefined : schema.name);
+  return repairedArguments === raw ? item : { ...item, arguments: repairedArguments };
 }
 
 /** Only executable completion slots are visited; metadata and custom input are opaque. */
