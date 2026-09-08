@@ -2,6 +2,7 @@ import { waitForNativeMainStartupGate } from "../../src/codex/native-profile-sta
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { logsFromApiBody } from "../helpers/logs-api";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
@@ -124,20 +125,7 @@ function poolProviders(): OcxConfig["providers"] {
 
 function redirectCanonicalCodexTo(baseUrl: string): void {
   const prefix = "/backend-api/codex";
-  const currentWebSocket = globalThis.WebSocket;
-  // These fixtures serve HTTP/SSE only. Refuse the native upstream upgrade
-  // deterministically so its existing SSE fallback stays on the mocked fetch;
-  // downstream loopback WebSockets and other destinations remain real.
-  globalThis.WebSocket = new Proxy(currentWebSocket, {
-    construct(target, args, newTarget) {
-      const url = new URL(String(args[0]));
-      if (url.protocol === "wss:" && url.hostname === "chatgpt.com"
-        && (url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))) {
-        throw new Error("HTTP-only Codex fixture rejects native upstream WebSocket");
-      }
-      return Reflect.construct(target, args, newTarget);
-    },
-  });
+  installHttpOnlyCodexWebSocket();
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const requestUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const url = new URL(requestUrl);
@@ -1704,6 +1692,7 @@ describe("server local API auth", () => {
       return originalGlobalFetch(input, init);
     }) as typeof fetch;
     globalThis.fetch = matrixFetch;
+    installHttpOnlyCodexWebSocket();
 
     const request = (server: ReturnType<typeof startServer>, headers?: HeadersInit, model = "gpt-test") => {
       const requestHeaders = new Headers(headers);
