@@ -28,6 +28,7 @@ import { rewriteRoutedToolSearchForUpstream } from "../responses/tool-search-com
 import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-tool-compat";
 import { preparePlaintextV2AgentMessages } from "../responses/plaintext-v2-agent-messages";
 import { isMetaAiResponsesDestination, rewriteMuseToolNamesForUpstream } from "../responses/muse-tool-name-alias";
+import { collectFunctionCallRepairSchemas } from "../responses/function-call-compat";
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeResponsesCodeMode } from "./responses-code-mode";
 import { stripUnicodePropertyPatterns } from "./responses-tool-schema";
@@ -43,6 +44,7 @@ import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "./xai
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "./empty-tool-output-annotation";
 import { stripResponsesOnlyEncryptedMarker } from "./responses-tool-schema";
 import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../fork/glm-kimi-compat";
+import { addSpawnAgentForkTurnsGuidance } from "../fork/spawn-agent-compat";
 import { applyRoutedProgressContractToResponsesBody } from "../fork/routed-progress-contract";
 import { debugResponsesOutboundShape } from "../fork/outbound-debug";
 import {
@@ -2548,6 +2550,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         outBody = stripInternalChatMessageMetadataPassthrough(outBody);
         outBody = promoteClientLoadedTools(outBody);
+      }
+      if (!isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = addSpawnAgentForkTurnsGuidance(outBody, collectFunctionCallRepairSchemas(outBody));
       }
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         const rewritten = rewriteRoutedCustomToolsForUpstream(
