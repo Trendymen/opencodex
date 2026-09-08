@@ -138,8 +138,14 @@ function runCaptured(command: string[], env = process.env): CapturedCommandResul
   }
 }
 
+const LAUNCHD_DEBUG_ENV_KEYS = ["OCX_DEBUG", "OCX_PROVIDER_TEXT_DEBUG"] as const;
+
 function plistHasProviderDebug(plistPath: string): boolean {
-  const keyPath = "EnvironmentVariables.OCX_DEBUG";
+  return LAUNCHD_DEBUG_ENV_KEYS.every(key => plistHasStringEnvValue(plistPath, key, "1"));
+}
+
+function plistHasStringEnvValue(plistPath: string, key: string, value: string): boolean {
+  const keyPath = `EnvironmentVariables.${key}`;
   const type = runCaptured(["plutil", "-type", keyPath, plistPath]);
   if (type.status !== 0 || type.stdout.trim().toLowerCase() !== "string") return false;
   const result = runCaptured([
@@ -155,13 +161,15 @@ function plistHasProviderDebug(plistPath: string): boolean {
 }
 
 function patchProviderDebugWithPlutil(plistPath: string): void {
-  const keyPath = "EnvironmentVariables.OCX_DEBUG";
-  const replace = runCaptured(["plutil", "-replace", keyPath, "-string", "1", plistPath]);
-  if (replace.status === 0) return;
-  const insert = runCaptured(["plutil", "-insert", keyPath, "-string", "1", plistPath]);
-  if (insert.status !== 0) {
-    const detail = insert.stderr.trim() || replace.stderr.trim() || `exit ${insert.status}`;
-    throw new Error(`could not set OCX_DEBUG in launchd plist: ${detail}`);
+  for (const key of LAUNCHD_DEBUG_ENV_KEYS) {
+    const keyPath = `EnvironmentVariables.${key}`;
+    const replace = runCaptured(["plutil", "-replace", keyPath, "-string", "1", plistPath]);
+    if (replace.status === 0) continue;
+    const insert = runCaptured(["plutil", "-insert", keyPath, "-string", "1", plistPath]);
+    if (insert.status !== 0) {
+      const detail = insert.stderr.trim() || replace.stderr.trim() || `exit ${insert.status}`;
+      throw new Error(`could not set ${key} in launchd plist: ${detail}`);
+    }
   }
 }
 
@@ -225,7 +233,9 @@ export function localInstallRestartEnv(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
-  return platform === "darwin" ? { ...env, OCX_DEBUG: "1" } : { ...env };
+  return platform === "darwin"
+    ? { ...env, OCX_DEBUG: "1", OCX_PROVIDER_TEXT_DEBUG: "1" }
+    : { ...env };
 }
 
 export type LocalInstallRuntime = {
