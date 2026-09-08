@@ -191,6 +191,9 @@ Such a thread replays a backend-minted encrypted agent message on every later tu
 only workaround was to start a new thread. That switch turn is not a spawn, so the direct routed
 path no longer restricts recovery to spawned child turns; combo recovery still does.
 
+同一开关也覆盖路由父任务收到 worker 加密 `MESSAGE` 的情况；当前请求不必是派生子任务。
+既有准入检查、缓存作用域和严格消息 envelope 校验仍然生效。
+
 Combo routing prefers a selectable canonical native ChatGPT target for encrypted tasks. If none
 is usable, or native authorization attempts are exhausted, an explicitly enabled recovery may
 make the task readable for one available routed target. All recovery trust and no-persistence
