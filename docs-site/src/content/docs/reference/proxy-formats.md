@@ -518,6 +518,18 @@ Errors use the client dialect's envelope where needed, but these status/code mea
 Anthropic-origin failures are rendered in Anthropic's error envelope, so the origin rejection is a
 403 `permission_error` on that dialect rather than the OpenAI-style `origin_rejected` body.
 
+## Patch ordering and recovery guidance
+
+On OpenAI-compatible Chat and native Responses routes using the non-OpenAI tool-catalog guidance,
+a visible Codex `apply_patch` tool or verified code-mode `exec` also receives patch-order and
+recovery instructions. The model is asked to order hunks within each file from top to bottom.
+After `Failed to find expected lines`, it should check for reversed hunks, reread the current
+file, and use smaller separate patches if necessary.
+
+Kiro currently receives this guidance through verified code-mode `exec`; its direct `apply_patch`
+path does not receive it. The guidance does not reorder hunks, rewrite `exec` JavaScript or
+nonempty failure output, or retry patches automatically.
+
 ## Encrypted-content hygiene
 
 The proxy treats genuine backend ciphertext as opaque. Structurally valid ciphertext is preserved
