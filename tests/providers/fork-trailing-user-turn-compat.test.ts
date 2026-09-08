@@ -50,7 +50,7 @@ describe("fork trailing-user-turn compatibility for prefill-restricted Responses
   });
 
   test("never appends for GPT-family models even on third-party destinations", () => {
-    for (const modelId of ["gpt-5.1", "gpt-4o", "codex-mini", "chatgpt-4o-latest", "o3", "o3-mini", "o4-mini"]) {
+    for (const modelId of ["gpt-5.1", "gpt-4o", "openai/gpt-5.6", "codex-mini", "chatgpt-4o-latest", "o1", "o1-mini", "o3", "o3-mini", "o4-mini"]) {
       const result = applyGlmKimiOutboundCompatibility({
         body: assistantTailBody(),
         provider: responsesProvider("https://example.test/v1"),
