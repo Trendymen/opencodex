@@ -612,6 +612,17 @@ function applyProviderPatchFields(
     }
     touched = true;
   }
+  if (Object.hasOwn(rawBody, "agentMessageFormat")) {
+    const value = rawBody.agentMessageFormat;
+    if (value === null) {
+      delete next.agentMessageFormat;
+    } else if (value === "preserve" || value === "user_message") {
+      next.agentMessageFormat = value;
+    } else {
+      return { error: "agentMessageFormat must be preserve, user_message, or null" };
+    }
+    touched = true;
+  }
 
   // headers is the one object-valued field in the mask. PATCH semantics merge it
   // shallowly into the existing block so a single fingerprint header can be added
@@ -746,6 +757,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       retainModels: p.retainModels,
       omitReasoningEffortWithToolsModels: p.omitReasoningEffortWithToolsModels,
       inferResponsesMessagePhaseModels: p.inferResponsesMessagePhaseModels,
+      agentMessageFormat: p.agentMessageFormat,
       upstreamHttpVersion: p.upstreamHttpVersion,
       upstreamWebsocket: p.upstreamWebsocket === true,
       authMode: p.authMode,
@@ -1071,6 +1083,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       const submittedUpstreamWebsocket = Object.hasOwn(replayProv, "upstreamWebsocket");
       const submittedModelAdapters = Object.hasOwn(replayProv, "modelAdapters");
       const submittedInferResponsesMessagePhaseModels = Object.hasOwn(replayProv, "inferResponsesMessagePhaseModels");
+      const submittedAgentMessageFormat = Object.hasOwn(replayProv, "agentMessageFormat");
       const submittedAnnotateEmptyToolOutputs = Object.hasOwn(replayProv, "annotateEmptyToolOutputs");
       enrichProviderFromCatalog(name, replayProv);
       const existingPool = existing?.apiKeyPool;
@@ -1096,6 +1109,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       }
       if (!submittedInferResponsesMessagePhaseModels && existing?.inferResponsesMessagePhaseModels) {
         replayProv.inferResponsesMessagePhaseModels = [...existing.inferResponsesMessagePhaseModels];
+      }
+      if (!submittedAgentMessageFormat && existing?.agentMessageFormat !== undefined) {
+        replayProv.agentMessageFormat = existing.agentMessageFormat;
       }
       if (existing?.modelContextWindows) {
         replayProv.modelContextWindows = submittedModelContextWindows

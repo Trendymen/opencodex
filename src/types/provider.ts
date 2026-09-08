@@ -292,6 +292,7 @@ export interface OcxProviderConfig {
    */
   requiresAdjacentResponsesToolResults?: boolean;
   inferResponsesMessagePhaseModels?: string[];
+  agentMessageFormat?: "preserve" | "user_message";
   /**
    * When enabled, a tool result that is present but empty (no usable text or content
    * part) is rewritten to an explicit annotation before it reaches the upstream wire,

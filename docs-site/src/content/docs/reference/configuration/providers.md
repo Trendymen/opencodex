@@ -992,6 +992,18 @@ their previous behavior. See the
 
 ## Routed agent messages
 
+Provider 可配置 `agentMessageFormat`，在原生消息与普通 user message 之间显式选择：
+
+```json
+{ "agentMessageFormat": "preserve" }
+```
+
+- `preserve`：保留 `agent_message`，后置兼容处理也不转换。
+- `user_message`：将第三方 Responses 的合法明文数组或非空字符串转为 user message，保留 author、recipient 和原始正文；官方 OpenAI/ChatGPT 目的地不转换。
+- 未配置：使用下述默认策略。POST 省略字段保留最新值；POST null 拒绝，PATCH null 清除配置并恢复默认。非法值返回校验错误。
+
+该选项不解密内容，也不关闭密文保护或任务恢复。当前可通过配置文件和管理 API 使用，尚无 GUI 控件。
+
 使用 [`openai-responses` adapter](/reference/adapters/#openai-responses) 时，非 OpenAI 目的地的非 GPT 模型会将合法的结构化明文 `agent_message` 转为普通 user message，包含第三方 `forward` 路由。
 OpenCode Go 的 `https://opencode.ai/zen/go/v1` 非 `forward` 路由保留既有跨模型转换，其 `forward` 路由按上述非 GPT 规则处理。Provider 改名不改变目的地判定。
 Author and recipient remain explicit text metadata, and the content parts are preserved.
