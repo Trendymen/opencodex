@@ -187,6 +187,15 @@ for the full trust boundary and configuration.
 The same option also covers a routed parent receiving a worker's encrypted `MESSAGE`;
 the request does not have to be a spawned child. Recovery still requires the existing
 admission checks, cache scope, and strict message-envelope validation.
+Recovery uses `gpt-5.6-luna` with `reasoning.effort: "medium"` by default. Each attempt may run
+for up to 120 seconds. After response headers arrive, first-byte and inactivity stalls remain
+limited to 45 seconds. Only timeout
+attempts retry, at most twice after the first attempt. When those retries are exhausted for an
+admitted parent `MESSAGE`, opencodex sends the routed parent a non-persistent notice instead of
+stopping it with `unreadable_encrypted_agent_task`. The notice identifies the sender, asks for up to
+two resends, and then instructs the parent to use its available child-result reading path or wait
+for completion. It does not expose ciphertext or claim the message was read or reviewed. Other
+recovery failures, malformed envelopes, and cancellation keep their existing fail-closed behavior.
 Combo routing prefers a selectable canonical native ChatGPT target for encrypted tasks. If none
 is usable, or native authorization attempts are exhausted, an explicitly enabled recovery may
 make the task readable for one available routed target. All recovery trust and no-persistence

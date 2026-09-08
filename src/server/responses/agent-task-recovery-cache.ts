@@ -1,6 +1,7 @@
 const MAX_CACHE_BYTES = 8 * 1024 * 1024;
 const MAX_CONCURRENT_RECOVERIES = 32;
 const CACHE_TTL_MS = 15 * 60 * 1000;
+const DEFERRED_TIMEOUT_TTL_MS = CACHE_TTL_MS;
 
 export type AgentTaskRecoveryResolutionFailureReason =
   | "recovery_unavailable"
@@ -30,8 +31,14 @@ interface RecoveryFlight {
   settled: boolean;
 }
 
+interface DeferredTimeoutEntry {
+  expiresAt: number;
+  expiryTimer: ReturnType<typeof setTimeout> | null;
+}
+
 const RECOVERY_CACHE = new Map<string, RecoveryCacheEntry>();
 const RECOVERY_FLIGHTS = new Map<string, RecoveryFlight>();
+const DEFERRED_TIMEOUTS = new Map<string, DeferredTimeoutEntry>();
 let recoveryCacheBytes = 0;
 
 function deleteRecoveryCacheEntry(key: string, expected?: RecoveryCacheEntry): void {
@@ -40,6 +47,24 @@ function deleteRecoveryCacheEntry(key: string, expected?: RecoveryCacheEntry): v
   RECOVERY_CACHE.delete(key);
   if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
   recoveryCacheBytes = Math.max(0, recoveryCacheBytes - entry.bytes);
+}
+
+function deleteDeferredTimeout(key: string, expected?: DeferredTimeoutEntry): void {
+  const entry = DEFERRED_TIMEOUTS.get(key);
+  if (!entry || (expected && entry !== expected)) return;
+  DEFERRED_TIMEOUTS.delete(key);
+  if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
+}
+
+function sweepDeferredTimeouts(now: number, maxEntries: number): void {
+  for (const [key, entry] of DEFERRED_TIMEOUTS) {
+    if (entry.expiresAt <= now) deleteDeferredTimeout(key, entry);
+  }
+  while (DEFERRED_TIMEOUTS.size > maxEntries) {
+    const oldest = DEFERRED_TIMEOUTS.keys().next().value;
+    if (oldest === undefined) break;
+    deleteDeferredTimeout(oldest);
+  }
 }
 
 function sweepRecoveryCache(now: number, maxEntries: number): void {
@@ -93,7 +118,10 @@ function startRecoveryFlight(
   flight.promise = request(controller.signal)
     .then((result): AgentTaskRecoveryResolution => {
       if (controller.signal.aborted) return { recovered: false, reason: "recovery_aborted" };
-      if (result.recovered) insertRecoveryCacheEntry(key, result.assignment, maxEntries);
+      if (result.recovered) {
+        deleteDeferredTimeout(key);
+        insertRecoveryCacheEntry(key, result.assignment, maxEntries);
+      }
       return result;
     })
     .finally(() => {
@@ -167,6 +195,7 @@ export function resetAgentTaskRecoveryCache(): void {
   }
   RECOVERY_FLIGHTS.clear();
   for (const key of [...RECOVERY_CACHE.keys()]) deleteRecoveryCacheEntry(key);
+  for (const key of [...DEFERRED_TIMEOUTS.keys()]) deleteDeferredTimeout(key);
 }
 
 export function agentTaskRecoveryWaiterCountForTests(): number {
@@ -188,4 +217,39 @@ export function cachedAgentTaskRecovery(key: string): string | null {
     return null;
   }
   return entry.assignment;
+}
+
+/** Remember only a scoped timeout marker; no plaintext or ciphertext is retained. */
+export function rememberDeferredAgentTaskRecoveryTimeout(key: string, maxEntries: number): void {
+  deleteDeferredTimeout(key);
+  const insertedAt = Date.now();
+  const entry: DeferredTimeoutEntry = {
+    expiresAt: insertedAt + DEFERRED_TIMEOUT_TTL_MS,
+    expiryTimer: null,
+  };
+  entry.expiryTimer = setTimeout(() => deleteDeferredTimeout(key, entry), DEFERRED_TIMEOUT_TTL_MS);
+  entry.expiryTimer.unref?.();
+  DEFERRED_TIMEOUTS.set(key, entry);
+  sweepDeferredTimeouts(insertedAt, maxEntries);
+}
+
+export function hasDeferredAgentTaskRecoveryTimeout(key: string): boolean {
+  const entry = DEFERRED_TIMEOUTS.get(key);
+  if (!entry) return false;
+  const now = Date.now();
+  if (entry.expiresAt <= now) {
+    deleteDeferredTimeout(key, entry);
+    return false;
+  }
+  if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
+  entry.expiresAt = now + DEFERRED_TIMEOUT_TTL_MS;
+  entry.expiryTimer = setTimeout(() => deleteDeferredTimeout(key, entry), DEFERRED_TIMEOUT_TTL_MS);
+  entry.expiryTimer.unref?.();
+  DEFERRED_TIMEOUTS.delete(key);
+  DEFERRED_TIMEOUTS.set(key, entry);
+  return true;
+}
+
+export function clearDeferredAgentTaskRecoveryTimeout(key: string): void {
+  deleteDeferredTimeout(key);
 }
