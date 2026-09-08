@@ -28,6 +28,8 @@ const NEIGHBOR_AGENT_TOOL_NAMES = ["Read", "Grep", "Glob", "Bash", "LS"] as cons
  */
 const CODEX_UNIFIED_EXEC_TOOL_NAME = "exec";
 const CODEX_SHELL_BRIDGE_TOOL_NAMES = ["exec_command", "shell_command"] as const;
+const CODEX_APPLY_PATCH_TOOL_NAME = "apply_patch";
+const APPLY_PATCH_RECOVERY_GUIDANCE = "For multiple hunks in the same file, put them in source order (top to bottom). If apply_patch reports `Failed to find expected lines`, do not assume one cause: check whether hunks are reversed, re-read the current file, then use separate small patches if needed.";
 
 export function isCodexCodeModeExecTool(tool: Pick<OcxTool, "namespace" | "name" | "freeform">): boolean {
   return !tool.namespace && tool.name === CODEX_UNIFIED_EXEC_TOOL_NAME && tool.freeform === true;
@@ -48,6 +50,10 @@ export function isCodexCodeModeExecTool(tool: Pick<OcxTool, "namespace" | "name"
  */
 export function isBareShellBridgeTool(tool: Pick<OcxTool, "namespace" | "name">): boolean {
   return !tool.namespace && (CODEX_SHELL_BRIDGE_TOOL_NAMES as readonly string[]).includes(tool.name);
+}
+
+export function isCodexApplyPatchTool(tool: Pick<OcxTool, "namespace" | "name">): boolean {
+  return !tool.namespace && tool.name === CODEX_APPLY_PATCH_TOOL_NAME;
 }
 
 function quoteNames(names: readonly string[]): string {
@@ -100,6 +106,7 @@ export function buildNonOpenAIToolCatalogNudgeFromNames(
   wireNames: readonly string[] | undefined,
   toWireName: (name: string) => string = name => name,
   codeModeExecName?: string,
+  directApplyPatchName?: string,
 ): string | undefined {
   const names = uniqueNames(wireNames ?? []);
   if (names.length === 0) return undefined;
@@ -113,6 +120,7 @@ export function buildNonOpenAIToolCatalogNudgeFromNames(
     name => !advertised.has(name) && !advertised.has(toWireName(name)),
   );
   const verifiedCodeModeExecName = codeModeExecWireName(advertised, codeModeExecName);
+  const verifiedDirectApplyPatchName = codeModeExecWireName(advertised, directApplyPatchName);
 
   return [
     "Tool contract: use the current tool catalog as ground truth.",
@@ -123,6 +131,11 @@ export function buildNonOpenAIToolCatalogNudgeFromNames(
     verifiedCodeModeExecName
       ? "`" + verifiedCodeModeExecName + "` is Codex code mode: its body is JavaScript evaluated in a V8 isolate. Nested helpers are called INSIDE that body as `await tools.<name>(...)`, for example `await tools.exec_command({cmd: \"ls\"})` or `await tools.mcp__codex_app__list_threads({})`. Absence from the top-level catalog or from `" + verifiedCodeModeExecName + "`'s description is not absence: deferred helpers stay callable on `tools.<name>`. Discover them from the isolate global `ALL_TOOLS`, not `tools.ALL_TOOLS`. Do not skip an available nested helper because it is omitted from the listed top-level names. " + CODE_MODE_RESULT_ECHO_SENTENCE + " Nested `tools.apply_patch(input)` is host-executed: the string must begin exactly with `*** Begin Patch` and end with `*** End Patch`, each marker line being three asterisks, one space, the two words, then end of line with no further asterisks. OpenCodex does not rewrite JavaScript inside exec, so extra asterisks on a marker line are rejected by Codex before the file is touched. " + CODE_MODE_HOST_CONTRACT_SENTENCE
       : "If a listed tool exposes nested helpers such as a tools.* API, call the listed parent tool and use those helpers only inside that tool's input.",
+    verifiedCodeModeExecName || verifiedDirectApplyPatchName
+      ? (verifiedDirectApplyPatchName
+        ? "`" + verifiedDirectApplyPatchName + "` is Codex's apply_patch tool. "
+        : "Nested `tools.apply_patch(input)` follows the same rule. ") + APPLY_PATCH_RECOVERY_GUIDANCE
+      : undefined,
     unavailableNeighborNames.length > 0
       ? "Do not use neighboring-agent tool names " + quoteNames(unavailableNeighborNames) + " unless this turn's catalog lists those exact names."
       : undefined,
@@ -146,10 +159,13 @@ export function buildNonOpenAIToolCatalogNudgeForTools(
     && !visible?.some(isBareShellBridgeTool)
     ? toWireName(codeModeExecTool)
     : undefined;
+  const directApplyPatchTool = visible?.find(isCodexApplyPatchTool);
+  const directApplyPatchName = directApplyPatchTool ? toWireName(directApplyPatchTool) : undefined;
   // Neighbor names are bare and un-namespaced, so probe the same transform with a bare tool.
   return buildNonOpenAIToolCatalogNudgeFromNames(
     visibleNames,
     name => toWireName({ name }),
     codeModeExecName,
+    directApplyPatchName,
   );
 }
