@@ -601,6 +601,7 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
     // Validated operator overlays do not change the canonical auth/transport seed.
     delete canonicalCandidate.pinnedReasoningEffort;
     delete canonicalCandidate.modelPinnedReasoningEfforts;
+    delete canonicalCandidate.agentMessageFormat;
     delete canonicalCandidate.responsesSnapshotRepair;
     // modelCosts is a user-owned display overlay, not part of the canonical
     // forward seed; it is validated separately below (providerModelCostsConfigError).
@@ -715,6 +716,11 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
     "inferResponsesMessagePhaseModels",
   );
   if (messagePhaseInferenceError) return `provider ${name} ${messagePhaseInferenceError}`;
+  if (raw.agentMessageFormat !== undefined
+    && raw.agentMessageFormat !== "preserve"
+    && raw.agentMessageFormat !== "user_message") {
+    return `provider ${name} agentMessageFormat must be preserve or user_message`;
+  }
   const openRouterError = openRouterRoutingConfigError(typed);
   if (openRouterError) return `provider ${name} ${openRouterError}`;
   const vercelError = vercelGatewayRoutingConfigError(typed);
@@ -792,6 +798,7 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   statelessResponses: "editor",
   requiresAdjacentResponsesToolResults: "editor",
   inferResponsesMessagePhaseModels: "editor",
+  agentMessageFormat: "editor",
   annotateEmptyToolOutputs: "editor",
   supportsServiceTier: "editor",
   modelSupportsServiceTier: "editor",

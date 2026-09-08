@@ -568,6 +568,7 @@ const providerConfigSchema = z.object({
   inferResponsesMessagePhaseModels: z.array(z.string().min(1))
     .transform(normalizeNonBlankStringArray)
     .optional(),
+  agentMessageFormat: z.enum(["preserve", "user_message"]).optional(),
   fastWire: fastWireSchema.nullable().optional(),
   supportsServiceTier: z.boolean().optional(),
   modelSupportsServiceTier: z.record(z.string().min(1), z.boolean()).optional(),
@@ -2142,6 +2143,18 @@ function rawConfigRecord(rawParsed: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function configAgentMessageFormatError(value: unknown): string | null {
+  const providers = rawConfigRecord(rawConfigRecord(value)?.providers);
+  if (!providers) return null;
+  for (const [name, provider] of Object.entries(providers)) {
+    const format = rawConfigRecord(provider)?.agentMessageFormat;
+    if (format !== undefined && format !== "preserve" && format !== "user_message") {
+      return `schema_invalid: providers.${redactSecretString(name)}.agentMessageFormat: must be preserve or user_message`;
+    }
+  }
+  return null;
+}
+
 function malformedNativeSubagentFields(rawParsed: unknown): NativeSubagentPersistedField[] {
   const raw = rawConfigRecord(rawParsed);
   if (!raw) return [];
@@ -2872,6 +2885,7 @@ function managementIngressConfigError(value: unknown): string | null {
 
 export function validateConfigCandidate(value: unknown): { ok: true; config: OcxConfig } | { ok: false; error: string } {
   const boundaryError = configReasoningPinsConfigError(value)
+    ?? configAgentMessageFormatError(value)
     ?? blankHostnameError(value)
     ?? claudeSubagentEffortError(value)
     ?? appOwnedMemoryBudgetError(value)
@@ -3266,6 +3280,8 @@ export const withExpectedConfigGenerationSync: WithExpectedConfigGenerationSync 
 function persistConfigUnlocked(config: OcxConfig): boolean {
   const pinError = configReasoningPinsConfigError(config);
   if (pinError) throw new Error(pinError);
+  const agentMessageFormatError = configAgentMessageFormatError(config);
+  if (agentMessageFormatError) throw new Error(agentMessageFormatError);
   const configPath = getConfigPath();
   const rawBeforeWrite = readRawConfigJson();
   const clientPersistenceError = failClosedClientPersistenceError(rawBeforeWrite, config);
