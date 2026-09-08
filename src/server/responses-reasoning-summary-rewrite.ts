@@ -267,7 +267,9 @@ function rewriteTerminalItems(payload: Record<string, unknown>, parts: string[])
  * raw text into additional parts (3 sentences or 500 code points, whichever
  * comes first) with a complete added/delta/done lifecycle per part.
  */
-export function createReasoningSummaryChannelBlockRewrite(): SseBlockRewrite {
+export function createReasoningSummaryChannelBlockRewrite(options?: {
+  onCompletedResponse?: (response: Record<string, unknown>) => void;
+}): SseBlockRewrite {
   const pending = new Map<string, PendingReasoning>();
   const closed = new Map<string, ClosedReasoning>();
 
@@ -576,7 +578,9 @@ export function createReasoningSummaryChannelBlockRewrite(): SseBlockRewrite {
               changed = true;
               return withPartsSummary(item, prior.parts);
             }
-            return reasoningItemToSummaryShape(item, projectRawReasoningSummary);
+            const rewritten = reasoningItemToSummaryShape(item, projectRawReasoningSummary);
+            if (rewritten !== item) changed = true;
+            return rewritten;
           }
           const anchor = state.lastEvent ?? { item_id: item.id, output_index: 0 };
           output.push(...closeForTerminal(block, anchor, state, reasoningTextOf(item) || state.buffer));
@@ -596,12 +600,15 @@ export function createReasoningSummaryChannelBlockRewrite(): SseBlockRewrite {
         }
         pending.clear();
         if (changed || output.length > 0) {
-          output.push(replaceSseDataPayload(block, JSON.stringify({
+          const completedPayload = {
             ...payload,
             response: { ...response, output: rewrittenItems },
-          })));
+          };
+          options?.onCompletedResponse?.(completedPayload.response);
+          output.push(replaceSseDataPayload(block, JSON.stringify(completedPayload)));
           return output;
         }
+        options?.onCompletedResponse?.(response);
       }
       if (pending.size > 0) {
         const output: string[] = [];
@@ -661,6 +668,37 @@ export function createReasoningSummaryChannelBlockRewrite(): SseBlockRewrite {
     closed.clear();
   };
   return rewrite;
+}
+
+/** 用客户端 reasoning 重写规则投影 inspector 重建出的终态 response。 */
+export function createReasoningSummaryReplayProjection(): {
+  notePayload(payload: unknown): void;
+  projectSnapshot(response: Record<string, unknown>): Record<string, unknown> | undefined;
+  dispose(): void;
+} {
+  let completedResponse: Record<string, unknown> | undefined;
+  const rewrite = createReasoningSummaryChannelBlockRewrite({
+    onCompletedResponse: response => { completedResponse = response; },
+  });
+  const dispatch = (payload: unknown): Record<string, unknown> | undefined => {
+    completedResponse = undefined;
+    rewrite(`data: ${JSON.stringify(payload)}\n\n`);
+    return completedResponse;
+  };
+  return {
+    notePayload(payload) {
+      dispatch(payload);
+    },
+    projectSnapshot(response) {
+      if (Array.isArray(completedResponse?.output) && completedResponse.output.length > 0) {
+        return completedResponse;
+      }
+      return dispatch({ type: "response.completed", response });
+    },
+    dispose() {
+      rewrite.dispose?.();
+    },
+  };
 }
 
 /** Payload rewrite for passthrough relays whose upstream emits content-channel reasoning. */
