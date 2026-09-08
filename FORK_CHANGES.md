@@ -142,7 +142,7 @@ Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预�
 同一历史转向原生 OpenAI GPT 时，只删除由第三方 `reasoning_text` 支撑的 opaque token，保留真正的 OpenAI blob。summary 只追加 `summary_text`，保留 `reasoning.content`、原始字段与 replay state。
 有状态 rewrite 按第三句或 500 code point 中先到的边界分段，每个 `summary_index` 独立闭合。
 EOF、稀疏 terminal、failed/incomplete 会先收尾；terminal-only reasoning 尾部仍投影。重复/迟到 part 不重开 index，终态后迟到 close 被抑制，空 part 不造 `**Thinking**`，SSE `event:` 与 JSON `type` 一致。
-SSE continuation cache 复用相同的分段摘要规则，并保留官方 inspector 的稀疏 output 重建；完整历史回传不因摘要格式不同而重复追加工具调用。首个失败终态后的 completed 不写缓存，重复 completed 不覆盖首份候选。
+SSE continuation cache 复用相同的分段摘要规则，并保留官方 inspector 的稀疏 output 重建与已确定的 response ID；完整历史回传不因摘要格式不同而重复追加工具调用，Copilot 固定首个 ID 后仍能用该 ID 续接。首个失败终态后的 completed 不写缓存，重复 completed 不覆盖首份候选。
 
 代码：`src/server/responses-reasoning-summary-rewrite.ts`、`src/adapters/openai-responses.ts`。
 测试：`tests/providers/deepseek-reasoning-replay.test.ts`、`tests/providers/opencode-go-luna-wire.test.ts`、`tests/responses/responses-original-field-preservation.test.ts` 及同目录 `responses-reasoning-summary-*.test.ts`。
