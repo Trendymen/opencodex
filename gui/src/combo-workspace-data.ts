@@ -4,6 +4,7 @@
  */
 
 import { SUPPORTED_NATIVE_OPENAI_SLUGS } from "../../src/codex/catalog/native-models";
+import { isReservedNativeOpenAiAlias } from "../../src/providers/openai-model-identity";
 import type { TKey } from "./i18n/shared";
 
 export { SUPPORTED_NATIVE_OPENAI_SLUGS };
@@ -151,7 +152,6 @@ export interface ComboAttentionItem {
 export const COMBO_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 /** One optional "/" segment, each segment id-shaped — mirrors src/combos/types.ts. */
 export const COMBO_ALIAS_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}(\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,63})?$/;
-const NATIVE_OPENAI_FAMILY_RE = /^(?:gpt-|o1-|o3-|o4-|codex-)/;
 
 export function isValidComboId(id: string): boolean {
   return COMBO_ID_RE.test(id.trim());
@@ -171,7 +171,7 @@ export function comboPublicModelId(id: string, alias: string | null | undefined)
 export function updateComboAliasDraft(item: ComboItem, rawAlias: string): ComboItem {
   const trimmed = rawAlias.trim();
   const leavesNativeAliasFamily = item.nativeAlias
-    && (!trimmed || trimmed.includes("/") || !NATIVE_OPENAI_FAMILY_RE.test(trimmed));
+    && (!trimmed || trimmed.includes("/") || !isReservedNativeOpenAiAlias(trimmed));
   return {
     ...item,
     alias: trimmed ? rawAlias : null,
@@ -588,7 +588,7 @@ export function validateComboDraft(
   if (alias) {
     if (!COMBO_ALIAS_RE.test(alias)) return "invalidAlias";
     if (alias === "combo" || alias.startsWith("combo/")) return "aliasReservedNamespace";
-    if (!alias.includes("/") && NATIVE_OPENAI_FAMILY_RE.test(alias) && !item.nativeAlias) return "aliasNativeFamily";
+    if (!alias.includes("/") && isReservedNativeOpenAiAlias(alias) && !item.nativeAlias) return "aliasNativeFamily";
     if ((options.existingAliases ?? []).includes(alias)) return "duplicateAlias";
   }
   const displayNameHasControlCharacter = [...(item.displayName ?? "")].some((character) => {

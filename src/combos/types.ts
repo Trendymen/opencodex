@@ -2,6 +2,7 @@ import { isCodexReasoningEffort } from "../reasoning-effort";
 import { SUPPORTED_NATIVE_OPENAI_SLUGS } from "../codex/catalog/native-models";
 import type { OcxComboConfig, OcxComboDefaultEffort, OcxComboReasoningEffortMode, OcxComboStrategy, OcxComboTarget, OcxProviderConfig } from "../types";
 import { COMBO_NAMESPACE, isValidComboId, targetKey } from "./identifiers";
+import { isReservedNativeOpenAiAlias } from "../providers/openai-model-identity";
 
 export const COMBO_DEFAULT_WAIT_FOR_COOLDOWN_MS = 0;
 export { COMBO_NAMESPACE, preservesPhysicalComboProvider, isNativeAliasCombo, targetKey, parseComboModelId, comboModelId, comboPublicModelId, comboDisabledModelId, comboDisabledModelSelectors, resolveComboId, isValidComboId } from "./identifiers";
@@ -12,8 +13,6 @@ export { COMBO_NAMESPACE, preservesPhysicalComboProvider, isNativeAliasCombo, ta
  * `combo/` prefix. Codex-facing slugs tolerate at most one "/", so deeper paths reject.
  */
 const COMBO_ALIAS_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$/;
-/** Bare aliases in this family require the explicit `nativeAlias` opt-in below. */
-const NATIVE_OPENAI_FAMILY_PATTERN = /^(?:gpt-|o1-|o3-|o4-|codex-)/;
 
 export interface ComboValidationIssue {
   path: Array<string | number>;
@@ -64,7 +63,7 @@ export function comboAliasIssues(
     });
   }
   if (!alias.includes("/")
-    && NATIVE_OPENAI_FAMILY_PATTERN.test(alias)
+    && isReservedNativeOpenAiAlias(alias)
     && options.allowNativeAlias !== true) {
     issues.push({
       path: ["alias"],
