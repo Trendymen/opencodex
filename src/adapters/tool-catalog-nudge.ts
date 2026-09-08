@@ -6,6 +6,7 @@ import {
   type OcxProviderConfig,
 } from "../types";
 import { CODE_MODE_RESULT_ECHO_SENTENCE } from "./exec-tool-result-normalize";
+import { isOpenAiOrChatGptHost } from "../providers/openai-tiers-destination";
 
 // Tool names that exist only in OTHER agent harnesses (Claude Code and friends). Naming one
 // here tells a routed model not to call it unless this turn's catalog really lists it.
@@ -64,19 +65,8 @@ function uniqueNames(names: readonly string[]): string[] {
   return [...new Set(names.filter(name => name.trim().length > 0))];
 }
 
-function isOpenAIOrChatGPTHost(hostname: string): boolean {
-  return hostname === "openai.com"
-    || hostname.endsWith(".openai.com")
-    || hostname === "chatgpt.com"
-    || hostname.endsWith(".chatgpt.com");
-}
-
 export function shouldInjectNonOpenAIToolCatalogNudge(provider: Pick<OcxProviderConfig, "baseUrl">): boolean {
-  try {
-    return !isOpenAIOrChatGPTHost(new URL(provider.baseUrl).hostname);
-  } catch {
-    return true;
-  }
+  return !isOpenAiOrChatGptHost(provider.baseUrl);
 }
 
 /**

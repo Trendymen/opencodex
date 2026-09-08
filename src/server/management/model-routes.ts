@@ -131,6 +131,7 @@ import { comboPublicModelId } from "../../combos/types";
 import { COMBO_NAMESPACE, comboDisabledModelSelectors, comboModelId, preservesPhysicalComboProvider } from "../../combos";
 import { clearProviderQuotaCache, fetchProviderQuotaReports } from "../../providers/quota";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
+import { isReservedNativeOpenAiAlias } from "../../providers/openai-model-identity";
 import { clearThreadAccountMap } from "../../codex/routing";
 import { primeCodexPoolQuotas } from "../../codex/auth-api";
 import { DEFAULT_PROVIDER_CONTEXT_CAP, globalContextCapValue, providerContextCap, providerContextCaps, setAllProviderContextCaps, setGlobalContextCapValue, setProviderContextCap } from "../../providers/context-cap";
@@ -346,7 +347,7 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
       const heldBy = Object.entries(next).find(([other, alias]) => other !== id && alias.toLowerCase() === lower)?.[0]
         ?? known.find(native => native.toLowerCase() === lower)
         ?? Object.entries(config.combos ?? {}).find(([, combo]) => comboPublicModelId("", combo).toLowerCase() === lower)?.[0];
-      if (heldBy || /^(?:gpt-|o1-|o3-|o4-|codex-)/i.test(value)) conflicts.push({ alias: value, heldBy: heldBy ?? "native OpenAI family" });
+      if (heldBy || isReservedNativeOpenAiAlias(value)) conflicts.push({ alias: value, heldBy: heldBy ?? "native OpenAI family" });
       else next[id] = value;
     }
     if (conflicts.length) return jsonResponse({ error: "model alias collision", conflicts }, 409, req, config);
