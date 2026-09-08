@@ -29,6 +29,8 @@ import { stripUnicodePropertyPatterns } from "./responses-tool-schema";
 import { CODE_MODE_RESULT_ECHO_SENTENCE } from "./exec-tool-result-normalize";
 import {
   buildNonOpenAIToolCatalogNudgeFromNames,
+  isBareShellBridgeTool,
+  isCodexApplyPatchTool,
   isCodexCodeModeExecTool,
   shouldInjectNonOpenAIToolCatalogNudge,
 } from "./tool-catalog-nudge";
@@ -652,18 +654,25 @@ function applyRoutedResponsesToolCatalogNudge(body: unknown, parsed: OcxParsedRe
   const wireNames = [...new Set(declarations.map(tool => (tool as Record<string, unknown>).name as string))];
   const wireNameSet = new Set(wireNames);
   let codeModeExecName: string | undefined;
+  let directApplyPatchName: string | undefined;
   const tools = parsed.context.tools;
   if (tools?.length) {
     const visible = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
+    const codeModeVisible = !visible.some(isBareShellBridgeTool);
     for (const tool of visible) {
-      if (wireNameSet.has(namespacedToolName(tool.namespace, tool.name)) && isCodexCodeModeExecTool(tool)) {
-        codeModeExecName = namespacedToolName(tool.namespace, tool.name);
-        break;
-      }
+      const wireName = namespacedToolName(tool.namespace, tool.name);
+      if (!wireNameSet.has(wireName)) continue;
+      if (codeModeVisible && !codeModeExecName && isCodexCodeModeExecTool(tool)) codeModeExecName = wireName;
+      if (isCodexApplyPatchTool(tool)) directApplyPatchName = wireName;
     }
   }
 
-  const nudge = buildNonOpenAIToolCatalogNudgeFromNames(wireNames, undefined, codeModeExecName);
+  const nudge = buildNonOpenAIToolCatalogNudgeFromNames(
+    wireNames,
+    undefined,
+    codeModeExecName,
+    directApplyPatchName,
+  );
   if (!nudge) return body;
   const novelNudge = body.instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)
     ? nudge.replace(`${CODE_MODE_RESULT_ECHO_SENTENCE} `, "")

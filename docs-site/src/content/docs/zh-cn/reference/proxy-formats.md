@@ -284,6 +284,17 @@ Claude replay 只会以当前 turn 已取得所有权的内存 snapshot 保留 m
 Anthropic 来源的失败会以 Anthropic 的错误封装呈现，因此该方言中的 origin 拒绝会是
 403 `permission_error`，而不是 OpenAI 风格的 `origin_rejected` body。
 
+## 补丁顺序与失败恢复提示
+
+在使用非 OpenAI 工具目录提示的 OpenAI 兼容 Chat 和原生 Responses 路由中，当前可见的
+Codex `apply_patch` 工具或已识别的 code-mode `exec` 还会收到补丁顺序和失败恢复说明：
+同一文件的补丁块按源码从上到下排列；
+遇到 `Failed to find expected lines` 时，检查补丁块是否倒序，重新读取当前文件，必要时拆成
+较小的独立补丁。
+
+Kiro 当前通过已识别的 code-mode `exec` 接收该提示，直接 `apply_patch` 路径不适用。
+这项提示不会重排补丁块、改写 `exec` JavaScript 或非空失败输出，也不会自动重试补丁。
+
 ## 加密内容卫生
 
 代理把真正的后端密文视为不透明数据。结构有效的密文会逐字节保留：opencodex 不会对其解密、翻译其内容，或为另一个提供方重新加密。
