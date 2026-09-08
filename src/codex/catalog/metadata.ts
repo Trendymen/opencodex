@@ -20,6 +20,7 @@ import { identifyRoutedModel } from "../../adapters/identity";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
 import { fetchCursorUsableModels } from "../../adapters/cursor/live-models";
 import { isCanonicalOpenAiForwardProvider, OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
+import { isBareOpenAiGptOrReasoningSlug, isOpenAiNativeCleanupCandidate } from "../../providers/openai-model-identity";
 import {
   COMBO_NAMESPACE,
   comboModelId,
@@ -114,7 +115,7 @@ export function isNativeAliasCatalogEntry(entry: RawEntry): boolean {
 export function isUnsupportedOpenAiNativeSlug(slug: string): boolean {
   if (slug.includes("/")) return false;
   if (SUPPORTED_NATIVE_OPENAI_SLUGS.has(slug)) return false;
-  return /^(?:gpt|codex)-/.test(slug);
+  return isOpenAiNativeCleanupCandidate(slug);
 }
 
 /**
@@ -653,12 +654,11 @@ export function nativeOpenAiSlugs(): string[] {
   ));
 }
 
-const ACCOUNT_BOUND_OPENAI_NATIVE_PREFIX = /^(?:gpt-|o1-|o3-|o4-)/;
 const ACCOUNT_BOUND_OBSERVED_NATIVE_MARKER = "opencodex_account_observed_native";
 const ACCOUNT_BOUND_OBSERVED_SELECTORS_MARKER = "opencodex_account_observed_selectors";
 
 function isAccountBoundOpenAiNativeSlug(slug: string): boolean {
-  return !slug.includes("/") && ACCOUNT_BOUND_OPENAI_NATIVE_PREFIX.test(slug);
+  return isBareOpenAiGptOrReasoningSlug(slug);
 }
 
 /**
