@@ -381,6 +381,7 @@ import {
 } from "../responses-item-id-repair";
 import {
   createReasoningSummaryChannelBlockRewrite,
+  createReasoningSummaryReplayProjection,
   rewriteReasoningSummaryInJson,
   rewriteReasoningSummaryInJsonString,
   routeUsesContentChannelReasoning,
@@ -5296,7 +5297,12 @@ async function handleResponsesInner(
     };
     const passiveQuotaObserved = hasPassiveAccountQuota(route.providerName)
       && route.provider.authMode === "oauth";
+    const reasoningReplayProjection = parsed.options.hideThinkingSummary !== true
+      && routeUsesContentChannelReasoning(route.provider, route.modelId)
+      ? createReasoningSummaryReplayProjection()
+      : undefined;
     const noteInspectedPayload = (payload: unknown) => {
+      reasoningReplayProjection?.notePayload(payload);
       // First terminal stays authoritative even in metadata-only inspection, which
       // intentionally continues parsing after a failed/incomplete terminal.
       const terminal = terminalStatusFromParsed(payload);
@@ -5367,6 +5373,8 @@ async function handleResponsesInner(
       response: { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
     ) => {
       if (inspectionSawUndeclaredTool) return;
+      if (isEventStream && inspectedTerminal !== "completed") return;
+      if (inspectedCompletionSeen) return;
       const nestedDecision = nestedExecInspection?.prepareResponseForCache(response);
       if (nestedDecision?.action === "reject") {
         inspectionSawUndeclaredTool = true;
@@ -5436,6 +5444,13 @@ async function handleResponsesInner(
       } else {
         publishAcceptedResponse(normalizedReplayResponse);
       }
+    };
+    const rememberClientVisiblePassthroughResponse = (
+      response: { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
+    ) => {
+      const projected = reasoningReplayProjection?.projectSnapshot(response as Record<string, unknown>);
+      if (reasoningReplayProjection && projected === undefined) return;
+      rememberPassthroughResponseChecked(projected ?? response);
     };
     recordAdapterReasoning(logCtx, request);
     recordAdapterTier(logCtx, request);
@@ -6708,7 +6723,9 @@ async function handleResponsesInner(
         const inspector = createSseInspector({
           onTerminal: reportNativeTerminal,
           logCtx,
-          onCompletedResponse: rememberPassthroughResponse && plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
+          onCompletedResponse: rememberPassthroughResponse && plaintextV2AgentMessageToolNames.size === 0
+            ? rememberClientVisiblePassthroughResponse
+            : undefined,
           onParsedPayload: noteInspectedPayload,
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
@@ -6722,6 +6739,7 @@ async function handleResponsesInner(
           finishInspection: () => inspector.finish(),
           disposeInspection: () => {
             inspector.dispose();
+            reasoningReplayProjection?.dispose();
             persistInboundDebugOnce();
             nestedExecInspection?.dispose();
           },
@@ -6758,6 +6776,7 @@ async function handleResponsesInner(
           onDone: () => {
             try { clientInspector?.finish(); } catch { /* bounded diagnostics only */ }
             clientInspector?.dispose();
+            reasoningReplayProjection?.dispose();
             persistInboundDebugOnce();
             persistDownstreamOnce();
             unregisterTurn(turnAc);
@@ -6824,6 +6843,7 @@ async function handleResponsesInner(
           turnAc.signal,
           () => {
             persistInboundDebugOnce();
+            reasoningReplayProjection?.dispose();
             nestedExecInspection?.dispose();
             unregisterTurn(turnAc);
           },
@@ -6832,7 +6852,9 @@ async function handleResponsesInner(
             responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
           },
-          rememberPassthroughResponse && plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
+          rememberPassthroughResponse && plaintextV2AgentMessageToolNames.size === 0
+            ? rememberClientVisiblePassthroughResponse
+            : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -6843,10 +6865,13 @@ async function handleResponsesInner(
           turnAc.signal,
           () => {
             persistInboundDebugOnce();
+            reasoningReplayProjection?.dispose();
             nestedExecInspection?.dispose();
             unregisterTurn(turnAc);
           },
-          rememberPassthroughResponse && plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
+          rememberPassthroughResponse && plaintextV2AgentMessageToolNames.size === 0
+            ? rememberClientVisiblePassthroughResponse
+            : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -6995,7 +7020,7 @@ async function handleResponsesInner(
       commitReasoningReplayServingRoute(request.headers);
       try {
         rememberPassthroughResponseChecked(
-          JSON.parse(nestedUpstreamJson) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
+          JSON.parse(clientJson) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
         );
       } catch { /* non-JSON despite content-type; recording is best-effort */ }
       // Prepare the repaired continuation while inspection is live. Disposing first rejects it.
