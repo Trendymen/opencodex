@@ -163,10 +163,17 @@ describe("OpenCode Go stateless reasoning and continuation routes", () => {
       const initial = { type: "message", role: "user", content: [{ type: "input_text", text: "Run probe" }] };
       const first = await drive({ input: [initial] });
       expect(first.document.output[0]).toEqual(reasoning[0]);
+      const visibleSummary = streaming ? "**Visible thinking**\n\nVisible thinking" : "Visible thinking";
+      const opaqueSummary = streaming ? "**Opaque item trace**\n\nOpaque item trace" : "Opaque item trace";
       expect(first.document.output[1]).toEqual(continuation.summary === "auto" ? {
-        type: "reasoning", id: `rs_${prefix}_content`, status: "completed", summary: [{ type: "summary_text", text: "Visible thinking" }],
+        type: "reasoning", id: `rs_${prefix}_content`, status: "completed",
+        content: [{ type: "reasoning_text", text: "Visible thinking" }],
+        summary: [{ type: "summary_text", text: visibleSummary }],
       } : reasoning[1]);
-      expect(first.document.output[2]).toEqual(reasoning[2]);
+      expect(first.document.output[2]).toEqual(continuation.summary === "auto" ? {
+        ...reasoning[2],
+        summary: [{ type: "summary_text", text: opaqueSummary }],
+      } : reasoning[2]);
       expect(first.document.output[3]).toMatchObject(call);
       expect(first.document.output[4]).toEqual(priorMessage);
       if (streaming) {
@@ -208,11 +215,162 @@ describe("OpenCode Go stateless reasoning and continuation routes", () => {
       expect(replay).toContainEqual(expect.objectContaining({ type: "reasoning", encrypted_content: blob }));
       expect(JSON.stringify(replay)).toContain("Already summarized");
       if (continuation.summary === "auto") expect(replay).toContainEqual(expect.objectContaining({
-        type: "reasoning", summary: [{ type: "summary_text", text: "Visible thinking" }],
+        type: "reasoning", summary: [{ type: "summary_text", text: visibleSummary }],
       }));
       expect(JSON.stringify(replay)).not.toContain("no tool result was recorded");
     });
   }
+
+  test("replays a sparse SSE terminal through the inspector's reconstructed client-visible history", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const reasoning = {
+      type: "reasoning", id: "rs_sparse", status: "completed",
+      content: [{ type: "reasoning_text", text: "Sparse reasoning" }],
+      summary: [], encrypted_content: "opaque-sparse-state",
+    };
+    const call = {
+      type: "function_call", id: "fc_sparse", status: "completed",
+      call_id: "call_sparse", name: "probe", arguments: "{}",
+    };
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      if (requests.length > 1) return Response.json({
+        id: "resp_sparse_next", object: "response", status: "completed", model: MODEL, output: [],
+      });
+      const response = { id: "resp_sparse", object: "response", status: "completed", model: MODEL, output: [] };
+      const events = [
+        { type: "response.created", response: { ...response, status: "in_progress" } },
+        ...[reasoning, call].flatMap((item, outputIndex) => [
+          { type: "response.output_item.added", output_index: outputIndex, item },
+          ...(item === reasoning ? [{
+            type: "response.reasoning_text.delta", item_id: reasoning.id, output_index: outputIndex,
+            content_index: 0, delta: "Sparse reasoning",
+          }] : []),
+          { type: "response.output_item.done", output_index: outputIndex, item },
+        ]),
+        { type: "response.completed", response },
+      ];
+      return new Response(events.map((event, sequence_number) =>
+        `data: ${JSON.stringify({ ...event, sequence_number })}\n\n`
+      ).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    }) as typeof fetch;
+    const config = { providers: { "opencode-go": opencodeGo() } } as unknown as OcxConfig;
+    const initial = { type: "message", role: "user", content: [{ type: "input_text", text: "Run sparse probe" }] };
+    const first = await handleResponses(new Request("http://localhost/v1/responses", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: `opencode-go/${MODEL}`, stream: true, reasoning: { summary: "auto" }, input: [initial] }),
+    }), config, { model: "", provider: "" }, { inboundWire: "responses" });
+    expect(first.status).toBe(200);
+    expect(await first.text()).toContain("**Sparse reasoning**");
+
+    const second = await handleResponses(new Request("http://localhost/v1/responses", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: `opencode-go/${MODEL}`, stream: false, previous_response_id: "resp_sparse",
+        input: [{ type: "function_call_output", call_id: call.call_id, output: "sparse result" }],
+      }),
+    }), config, { model: "", provider: "" }, { inboundWire: "responses" });
+    expect(second.status).toBe(200);
+    await second.text();
+    const replay = requests[1]!.input as Array<Record<string, unknown>>;
+    expect(replay.filter(item => item.type === "function_call")).toEqual([expect.objectContaining({ call_id: call.call_id })]);
+    expect(replay).toContainEqual(expect.objectContaining({
+      type: "reasoning", encrypted_content: reasoning.encrypted_content,
+      summary: [{ type: "summary_text", text: "**Sparse reasoning**\n\nSparse reasoning" }],
+    }));
+  });
+
+  test("replays a terminal-only SSE reasoning item with the same bold summary shown to the client", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const reasoning = {
+      type: "reasoning", id: "rs_terminal_only", status: "completed",
+      content: [{ type: "reasoning_text", text: "Terminal only reasoning" }],
+      summary: [], encrypted_content: "opaque-terminal-only-state",
+    };
+    const call = {
+      type: "function_call", id: "fc_terminal_only", status: "completed",
+      call_id: "call_terminal_only", name: "probe", arguments: "{}",
+    };
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      if (requests.length > 1) return Response.json({
+        id: "resp_terminal_only_next", object: "response", status: "completed", model: MODEL, output: [],
+      });
+      const response = {
+        id: "resp_terminal_only", object: "response", status: "completed", model: MODEL, output: [reasoning, call],
+      };
+      return new Response(`data: ${JSON.stringify({ type: "response.completed", response, sequence_number: 1 })}\n\ndata: [DONE]\n\n`, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+    const config = { providers: { "opencode-go": opencodeGo() } } as unknown as OcxConfig;
+    const first = await handleResponses(new Request("http://localhost/v1/responses", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: `opencode-go/${MODEL}`, stream: true, reasoning: { summary: "auto" }, input: "terminal only" }),
+    }), config, { model: "", provider: "" }, { inboundWire: "responses" });
+    expect(first.status).toBe(200);
+    expect(await first.text()).toContain("**Terminal only reasoning**");
+
+    const second = await handleResponses(new Request("http://localhost/v1/responses", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: `opencode-go/${MODEL}`, stream: false, previous_response_id: "resp_terminal_only",
+        input: [{ type: "function_call_output", call_id: call.call_id, output: "terminal result" }],
+      }),
+    }), config, { model: "", provider: "" }, { inboundWire: "responses" });
+    expect(second.status).toBe(200);
+    await second.text();
+    const replay = requests[1]!.input as Array<Record<string, unknown>>;
+    expect(replay.filter(item => item.type === "function_call")).toEqual([expect.objectContaining({ call_id: call.call_id })]);
+    expect(replay).toContainEqual(expect.objectContaining({
+      type: "reasoning", encrypted_content: reasoning.encrypted_content,
+      summary: [{ type: "summary_text", text: "**Terminal only reasoning**\n\nTerminal only reasoning" }],
+    }));
+  });
+
+  test("does not cache a later completed snapshot after the first SSE terminal failed", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const lateCall = {
+      type: "function_call", id: "fc_late", status: "completed",
+      call_id: "call_late", name: "probe", arguments: "{}",
+    };
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      if (requests.length > 1) return Response.json({
+        id: "resp_after_failed", object: "response", status: "completed", model: MODEL, output: [],
+      });
+      const failed = {
+        type: "response.failed",
+        response: { id: "resp_failed_first", status: "failed", error: { message: "first terminal wins" } },
+      };
+      const late = {
+        type: "response.completed",
+        response: { id: "resp_late_after_failed", object: "response", status: "completed", model: MODEL, output: [lateCall] },
+      };
+      return new Response([failed, late].map((event, sequence_number) =>
+        `data: ${JSON.stringify({ ...event, sequence_number })}\n\n`
+      ).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    }) as typeof fetch;
+    const config = { providers: { "opencode-go": opencodeGo() } } as unknown as OcxConfig;
+    const first = await handleResponses(new Request("http://localhost/v1/responses", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: `opencode-go/${MODEL}`, stream: true, input: "first" }),
+    }), config, { model: "", provider: "" }, { inboundWire: "responses" });
+    expect(first.status).toBe(200);
+    expect(await first.text()).toContain("response.failed");
+
+    const second = await handleResponses(new Request("http://localhost/v1/responses", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: `opencode-go/${MODEL}`, stream: false, previous_response_id: "resp_late_after_failed",
+        input: [{ type: "function_call_output", call_id: lateCall.call_id, output: "must not inherit late call" }],
+      }),
+    }), config, { model: "", provider: "" }, { inboundWire: "responses" });
+    expect(second.status).toBe(200);
+    await second.text();
+    const replay = requests[1]!.input as Array<Record<string, unknown>>;
+    expect(replay).not.toContainEqual(expect.objectContaining({ type: "function_call", call_id: lateCall.call_id }));
+  });
 });
 
 describe("OpenCode Go Luna Responses route (#1482)", () => {
