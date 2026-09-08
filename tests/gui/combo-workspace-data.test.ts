@@ -18,6 +18,7 @@ import {
   validateComboDraft,
 } from "../../gui/src/combo-workspace-data";
 import { comboImagesSupported } from "../../gui/src/combo-capabilities";
+import { isChatGptForwardOption } from "../../gui/src/components/combo-workspace-utils";
 
 const configuredProviders = {
   a: {},
@@ -441,6 +442,7 @@ describe("combo-workspace-data", () => {
     expect(validate(combo({ alias: "combo/other" }))).toBe("aliasReservedNamespace");
     expect(validate(combo({ alias: "combo" }))).toBe("aliasReservedNamespace");
     expect(validate(combo({ alias: "gpt-5" }))).toBe("aliasNativeFamily");
+    expect(validate(combo({ alias: "GPT-5" }))).toBe("aliasNativeFamily");
     expect(validate(combo({ alias: "codex-latest" }))).toBe("aliasNativeFamily");
     expect(validate(combo({
       alias: "gpt-5.6-sol",
@@ -498,6 +500,10 @@ describe("combo-workspace-data", () => {
       displayName: null,
     });
     expect(updateComboAliasDraft(native, "gpt-5.6-terra")).toMatchObject({
+      nativeAlias: true,
+      displayName: "Nova1 - Sol",
+    });
+    expect(updateComboAliasDraft(native, "GPT-5.6-terra")).toMatchObject({
       nativeAlias: true,
       displayName: "Nova1 - Sol",
     });
@@ -778,5 +784,13 @@ describe("combo imageInput draft persistence", () => {
     expect(toPutBody(auto).combo).not.toHaveProperty("imageInput");
     const disabled = { ...auto, imageInput: "disabled" as const };
     expect(toPutBody(disabled).combo.imageInput).toBe("disabled");
+  });
+});
+
+describe("ChatGPT combo provider option", () => {
+  test("requires a complete canonical forward destination", () => {
+    expect(isChatGptForwardOption({ name: "openai", adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex" })).toBe(true);
+    expect(isChatGptForwardOption({ name: "openai", adapter: "openai-responses", authMode: "forward" })).toBe(false);
+    expect(isChatGptForwardOption({ name: "openai", adapter: "openai-responses", authMode: "forward", baseUrl: "https://gateway.example.test/chatgpt.com/backend-api/codex" })).toBe(false);
   });
 });

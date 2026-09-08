@@ -33,6 +33,7 @@ import {
   OPENAI_API_PROVIDER_ID,
   OPENAI_CODEX_PROVIDER_ID,
 } from "./providers/openai-tiers";
+import { isImplicitNativeOpenAiRouteModel } from "./providers/openai-model-identity";
 import { decodeRoutedModelIdOrThrow, encodeRoutedModelId } from "./providers/slug-codec";
 import { resolveModelAlias } from "./providers/default-aliases";
 import { resolveBlockedModelRedirect } from "./lib/shadow-call";
@@ -509,15 +510,6 @@ export function comboRouteDecisionTrace(
   });
 }
 
-// Codex uses a small number of control-plane model ids that are not part of the public GPT/o
-// naming families. Keep this exact: a broad `codex-*` rule could capture a third-party model.
-const CODEX_INTERNAL_OPENAI_MODELS = new Set(["codex-auto-review"]);
-
-function isBareOpenAiFamilyModel(modelId: string): boolean {
-  return !modelId.includes("/")
-    && (/^(?:gpt-|o1-|o3-|o4-)/.test(modelId) || CODEX_INTERNAL_OPENAI_MODELS.has(modelId));
-}
-
 function routeResult(
   config: OcxConfig | undefined,
   providerName: string,
@@ -625,7 +617,7 @@ function routeModelInternal(
       .find(([candidate]) => candidate === namespace);
     if (binding) {
       const nativeModelId = modelId.slice(slash + 1);
-      if (!isBareOpenAiFamilyModel(nativeModelId)) {
+      if (!isImplicitNativeOpenAiRouteModel(nativeModelId)) {
         throw new Error(`Codex account namespace ${namespace} only supports native OpenAI model ids`);
       }
       const provider = config.providers[OPENAI_CODEX_PROVIDER_ID];
@@ -739,7 +731,7 @@ function routeModelInternal(
     }
   }
 
-  if (isBareOpenAiFamilyModel(modelId)) {
+  if (isImplicitNativeOpenAiRouteModel(modelId)) {
     const provider = config.providers[OPENAI_CODEX_PROVIDER_ID];
     if (provider && provider.disabled !== true) {
       return routeResult(config, OPENAI_CODEX_PROVIDER_ID, provider, modelId, "native", "native-family");
