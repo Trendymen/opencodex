@@ -11,6 +11,11 @@
 
 ## 当前运行时差异
 
+### 模型家族与官方目的地判断
+
+模型家族与请求目的地分别判断：共用 `src/providers/openai-model-identity.ts` 的具名函数，保留原生路由、保留别名、清理候选各自的匹配范围，不把第三方托管的 GPT 模型视为官方服务。官方 Responses 目的地按实际请求 URL 判断，第三方消息兼容另要求非 GPT/OpenAI 模型族。
+代码入口：`src/providers/openai-tiers-destination.ts`、router、config、catalog 及 GUI 的调用点。测试：`tests/providers/openai-model-identity.test.ts`、`tests/routing/routing-profile.test.ts`、`tests/gui/combo-workspace-data.test.ts`。
+
 ### 火山方舟 Agent Plan GLM/Kimi 与智谱 GLM Responses 兼容
 
 Fork 补充第三方 Responses 的消息转换，并保留以下 schema 和历史消息兼容：
