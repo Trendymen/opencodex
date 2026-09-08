@@ -198,6 +198,8 @@
     "fork-overload-error-eof-fidelity.test.ts": "server",
     "fork-passthrough-opaque-reasoning.test.ts": "responses",
     "fork-provider-debug-safety.test.ts": "server",
+    "fork-provider-agent-message-format.test.ts": "server",
+    "agent-message-format.test.ts": "responses",
     "fork-provider-message-phase-config.test.ts": "server",
     "fork-reasoning-summary-upstream-preserved.test.ts": "responses",
     "fork-relay-eager-client-observation.test.ts": "server",
