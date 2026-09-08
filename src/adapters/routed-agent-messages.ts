@@ -7,7 +7,8 @@
  *
  * Genuine ciphertext and unknown part types keep their existing fail-closed path: the
  * encrypted v2 task surface owns those, through `unreadable_encrypted_agent_task` and the
- * opt-in recovery route. Providers using `authMode: "forward"` never reach this function.
+ * opt-in recovery route. Callers gate the destination and model; `allowStringContent` is reserved
+ * for the xAI non-forward boundary, so other and forwarded destinations keep string content raw.
  */
 export function normalizeRoutedAgentMessages(
   body: unknown,

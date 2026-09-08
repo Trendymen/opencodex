@@ -33,6 +33,9 @@ opencodex resolves the requested model in this order:
 Disabled providers are excluded. An explicit namespace for a disabled provider fails instead of
 falling through. Provider entries are checked in their JSON insertion order for rules that can match
 more than one provider, so use explicit namespaces when a bare model could be ambiguous.
+Only the reserved bare native shapes take step 5. A name such as `my-gpt-helper` or
+`openai-compatible-glm` remains an ordinary model id or configured alias; `nativeAlias: true` is the
+separate opt-in for an eligible bare native id and does not change provider-qualified routing.
 
 ### Blocked-model redirects
 

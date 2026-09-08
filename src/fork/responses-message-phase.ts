@@ -8,7 +8,8 @@ import {
   MAX_COMPLETED_OUTPUT_ITEMS,
   MAX_COMPLETED_OUTPUT_ITEM_SOURCE_BYTES,
 } from "../server/relay";
-import { isOpenAiOperatedResponsesDestination } from "../providers/openai-tiers";
+import { isOpenAiOperatedResponsesDestination } from "../providers/openai-tiers-destination";
+import { isOpenAiGptFamilyModel } from "../providers/openai-model-identity";
 import type { OcxProviderConfig } from "../types";
 
 type Rec = Record<string, unknown>;
@@ -46,9 +47,9 @@ export function routeUsesResponsesMessagePhaseInference(
   modelId: string,
 ): boolean {
   const normalized = modelId.trim().toLowerCase();
-  if (!normalized || normalized.includes("gpt") || normalized.includes("openai")) return false;
+  if (!normalized || isOpenAiGptFamilyModel(normalized)) return false;
   if (provider.adapter !== undefined && provider.baseUrl !== undefined
-    && isOpenAiOperatedResponsesDestination(provider as OcxProviderConfig)) return false;
+    && isOpenAiOperatedResponsesDestination(provider)) return false;
   return provider.inferResponsesMessagePhaseModels?.some(candidate =>
     typeof candidate === "string" && candidate.trim().toLowerCase() === normalized,
   ) === true;
