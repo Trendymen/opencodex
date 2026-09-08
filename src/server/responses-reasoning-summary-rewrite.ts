@@ -690,9 +690,6 @@ export function createReasoningSummaryReplayProjection(): {
       dispatch(payload);
     },
     projectSnapshot(response) {
-      if (Array.isArray(completedResponse?.output) && completedResponse.output.length > 0) {
-        return completedResponse;
-      }
       return dispatch({ type: "response.completed", response });
     },
     dispose() {

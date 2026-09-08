@@ -245,4 +245,108 @@ describe("GitHub Copilot Responses client stream contract", () => {
     expect(payloads.map(event => event.sequence_number)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(events.at(-1)?.data).toBe("[DONE]");
   });
+
+  test.each([
+    ["stateless Responses", { statelessResponses: true }],
+    ["preserved reasoning model", { preserveReasoningContentModels: ["gpt-5.6-luna"] }],
+  ] as const)("keeps the client-visible id in replay state with %s", async (_name, routeConfig) => {
+    const requests: Array<Record<string, unknown>> = [];
+    const createdId = `resp_created_${_name.replaceAll(" ", "_")}`;
+    const terminalId = `resp_terminal_${_name.replaceAll(" ", "_")}`;
+    const callId = `call_${_name.replaceAll(" ", "_")}`;
+    const reasoning = {
+      type: "reasoning",
+      id: `rs_${_name.replaceAll(" ", "_")}`,
+      status: "completed",
+      content: [{ type: "reasoning_text", text: "Copilot replay reasoning" }],
+      summary: [],
+    };
+    const call = {
+      type: "function_call",
+      id: `fc_${_name.replaceAll(" ", "_")}`,
+      status: "completed",
+      call_id: callId,
+      name: "probe",
+      arguments: "{}",
+    };
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      if (requests.length > 1) {
+        return Response.json({
+          id: `resp_next_${_name.replaceAll(" ", "_")}`,
+          object: "response",
+          status: "completed",
+          model: "gpt-5.6-luna",
+          output: [],
+        });
+      }
+      return new Response([
+        sse("response.created", {
+          type: "response.created",
+          response: { id: createdId, status: "in_progress", output: [] },
+        }),
+        sse("response.completed", {
+          type: "response.completed",
+          response: {
+            id: terminalId,
+            object: "response",
+            status: "completed",
+            model: "gpt-5.6-luna",
+            output: [reasoning, call],
+          },
+        }),
+        "data: [DONE]\n\n",
+      ].join(""), { headers: { "content-type": "text/event-stream" } });
+    }) as typeof fetch;
+
+    const config = {
+      providers: { "github-copilot": { ...copilotProvider(), ...routeConfig } },
+    } as unknown as OcxConfig;
+    const first = await handleResponses(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "github-copilot/gpt-5.6-luna",
+          input: "start replay",
+          stream: true,
+          reasoning: { summary: "auto" },
+        }),
+      }),
+      config,
+      { model: "", provider: "" },
+    );
+    expect(first.status).toBe(200);
+    const terminal = parseSse(await first.text()).find(event => event.payload?.type === "response.completed");
+    expect((terminal?.payload?.response as { id?: unknown } | undefined)?.id).toBe(createdId);
+
+    const second = await handleResponses(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "github-copilot/gpt-5.6-luna",
+          previous_response_id: createdId,
+          input: [{ type: "function_call_output", call_id: callId, output: "probe complete" }],
+          stream: false,
+        }),
+      }),
+      config,
+      { model: "", provider: "" },
+    );
+    expect(second.status).toBe(200);
+    await second.text();
+
+    const replay = requests[1]?.input as Array<Record<string, unknown>>;
+    expect(replay).toContainEqual(expect.objectContaining({ type: "function_call", call_id: callId }));
+    expect(replay).toContainEqual(expect.objectContaining({
+      type: "function_call_output",
+      call_id: callId,
+      output: "probe complete",
+    }));
+    expect(replay).toContainEqual(expect.objectContaining({
+      type: "reasoning",
+      summary: [{ type: "summary_text", text: "**Copilot replay reasoning**\n\nCopilot replay reasoning" }],
+    }));
+  });
 });
