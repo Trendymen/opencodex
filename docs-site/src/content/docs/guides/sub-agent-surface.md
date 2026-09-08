@@ -184,6 +184,9 @@ byte-for-byte fidelity is not guaranteed. It rejects generic/API-key proxy calle
 `unreadable_encrypted_agent_task`; after native attempts have failed, their last error is retained. See
 [Agent configuration: Encrypted v2 task recovery](/reference/configuration/agents/#encrypted-v2-task-recovery)
 for the full trust boundary and configuration.
+The same option also covers a routed parent receiving a worker's encrypted `MESSAGE`;
+the request does not have to be a spawned child. Recovery still requires the existing
+admission checks, cache scope, and strict message-envelope validation.
 Combo routing prefers a selectable canonical native ChatGPT target for encrypted tasks. If none
 is usable, or native authorization attempts are exhausted, an explicitly enabled recovery may
 make the task readable for one available routed target. All recovery trust and no-persistence
