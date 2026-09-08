@@ -545,8 +545,9 @@ async function requestRecovery(
 function deferredTimeoutNotice(sender: string): string {
   return [
     `来自子 agent ${sender} 的一条消息尚未恢复，不能当作已读或已审查。`,
-    `请先要求该子 agent 重新发送这条消息，最多 2 次。`,
-    "如果仍失败，请通过当前可用的任务或子 agent 读取能力取得该子 agent 的最终回复；若它仍在运行，先等待最终结果。未实际取得正文前，不要声称已经收到、阅读或审查通过。",
+    "如果已经收到该子 agent 的完整 FINAL_ANSWER，请直接使用它，无需重发。",
+    `否则，请要求该子 agent 重新发送这条消息，最多 2 次。`,
+    "如果仍失败，请使用真正返回最终正文的可用工具，例如 read_thread（若可用）；不要把 list_agents 等状态列表当作正文。没有可用的正文读取工具时，请等待 FINAL_ANSWER。未实际取得正文前，不要声称已经收到、阅读或审查通过。",
   ].join("\n");
 }
 
