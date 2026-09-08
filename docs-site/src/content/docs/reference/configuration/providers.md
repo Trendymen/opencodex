@@ -900,8 +900,11 @@ their previous behavior. See the
 With the [`openai-responses` adapter](/reference/adapters/#openai-responses) and
 base URL `https://opencode.ai/zen/go/v1`, plaintext Codex `agent_message` items
 become user messages when `authMode` is not `"forward"` (for example, `"key"`).
-Providers using `authMode: "forward"` retain these items unchanged. This conversion is scoped to that destination, including
-renamed provider entries; other Responses destinations keep their input unchanged.
+This existing Go-specific conversion applies regardless of model family. A Go route using
+`authMode: "forward"` follows the general third-party Responses rule: readable messages convert
+for a non-GPT resolved model and stay private for a GPT/OpenAI model. Other third-party Responses
+destinations use that same non-GPT rule. The Go-specific conversion remains scoped to the Go
+destination, including renamed provider entries.
 Author and recipient remain explicit text metadata, and the content parts are preserved.
 Encrypted and unknown content is not normalized; native encrypted tasks still require the
 separate opt-in [task recovery](/reference/configuration/agents/#encrypted-v2-task-recovery).

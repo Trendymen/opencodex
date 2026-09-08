@@ -497,6 +497,23 @@ Kiro currently receives this guidance through verified code-mode `exec`; its dir
 path does not receive it. The guidance does not reorder hunks, rewrite `exec` JavaScript or
 nonempty failure output, or retry patches automatically.
 
+## Sub-agent messages
+
+For non-GPT model families at third-party Responses destinations, opencodex converts readable
+Codex `agent_message` items into ordinary user messages before sending the request. This applies
+to both key-auth and third-party `forward` routes, so task assignments, peer messages, and reviewer
+results remain visible to models that do not read the Codex-private item type.
+
+The conversion preserves the text, sender and recipient identities, message order, and image/file
+parts without modifying the original input or replay data. It only converts nonempty messages
+whose parts are all `input_text`, `input_image`, or `input_file`; mixed ciphertext and unknown part
+types retain their existing handling. OpenAI-operated destinations and GPT/OpenAI model families
+are excluded from this broader conversion; existing destination-specific handling remains in place.
+The check uses the resolved model id. It recognizes `gpt`, `chatgpt`, `codex`, `o1`, `o3`, and
+`o4` at a name boundary, plus `openai/gpt-*` and `openai-gpt-*`. A name that only contains one of
+those words, such as `my-gpt-helper` or `openai-compatible-glm`, remains an ordinary alias or model
+id until routing resolves it.
+
 ## Encrypted-content hygiene
 
 The proxy treats genuine backend ciphertext as opaque. Structurally valid ciphertext is preserved

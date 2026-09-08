@@ -216,7 +216,7 @@ function functionOutputRequest(stream = false): Request {
   });
 }
 
-function agentMessageRequest(stream = false): Request {
+function agentMessageRequest(stream = false, provider = "first", modelId = "model-a"): Request {
   return new Request("http://localhost/v1/responses", {
     method: "POST",
     headers: {
@@ -224,12 +224,36 @@ function agentMessageRequest(stream = false): Request {
       "x-codex-parent-thread-id": "thread-encrypted-agent-message",
     },
     body: JSON.stringify({
-      model: "first/model-a",
+      model: `${provider}/${modelId}`,
       stream,
       store: false,
       input: agentMessageReplayInput(),
     }),
   });
+}
+
+function recoveredAgentMessagePublicWire(): Record<string, unknown> {
+  return {
+    type: "message",
+    role: "user",
+    content: [
+      { type: "input_text", text: "Agent message {\"author\":\"/root/child_task\",\"recipient\":\"/root\"}" },
+      { type: "input_text", text: "Message Type: MESSAGE\nTask name: /root\nSender: /root/child_task\nPayload:" },
+      { type: "input_text", text: "[encrypted content omitted]" },
+    ],
+  };
+}
+
+function recoveredAgentMessagePrivateWire(): Record<string, unknown> {
+  return {
+    type: "agent_message",
+    author: "/root/child_task",
+    recipient: "/root",
+    content: [
+      { type: "input_text", text: "Message Type: MESSAGE\nTask name: /root\nSender: /root/child_task\nPayload:" },
+      { type: "input_text", text: "[encrypted content omitted]" },
+    ],
+  };
 }
 
 function decryptStreamResponse(wire: string, contentType: string | null): Response {
@@ -549,16 +573,10 @@ describe("opaque blob recovery through /v1/responses", () => {
     await response.text();
 
     expect(outbound).toHaveLength(4);
+    const initialInput = outbound.at(0)?.input as Array<Record<string, unknown>> | undefined;
     const retriedInput = outbound.at(3)?.input as Array<Record<string, unknown>> | undefined;
-    expect(retriedInput?.at(0)).toEqual({
-      type: "agent_message",
-      author: "/root/child_task",
-      recipient: "/root",
-      content: [
-        { type: "input_text", text: "Message Type: MESSAGE\nTask name: /root\nSender: /root/child_task\nPayload:" },
-        { type: "input_text", text: "[encrypted content omitted]" },
-      ],
-    });
+    expect(initialInput?.at(0)).toEqual(agentMessageReplayInput().at(0));
+    expect(retriedInput?.at(0)).toEqual(recoveredAgentMessagePublicWire());
     expect(retriedInput?.at(1)).toEqual(agentMessageReplayInput().at(1));
     expect(logCtx.activeAttempt?.recoveryKinds).toEqual(["transient-5xx", "opaque-blob-rejection"]);
   });
@@ -579,16 +597,10 @@ describe("opaque blob recovery through /v1/responses", () => {
     expect(body).toContain("response.completed");
     expect(body).not.toContain(FUNCTION_OUTPUT_DECRYPT_MESSAGE);
     expect(outbound).toHaveLength(2);
+    const initialInput = outbound.at(0)?.input as Array<Record<string, unknown>> | undefined;
     const retriedInput = outbound.at(1)?.input as Array<Record<string, unknown>> | undefined;
-    expect(retriedInput?.at(0)).toEqual({
-      type: "agent_message",
-      author: "/root/child_task",
-      recipient: "/root",
-      content: [
-        { type: "input_text", text: "Message Type: MESSAGE\nTask name: /root\nSender: /root/child_task\nPayload:" },
-        { type: "input_text", text: "[encrypted content omitted]" },
-      ],
-    });
+    expect(initialInput?.at(0)).toEqual(agentMessageReplayInput().at(0));
+    expect(retriedInput?.at(0)).toEqual(recoveredAgentMessagePublicWire());
   });
 
   test("recovers a zero-output error-event decrypt failure before client relay", async () => {
@@ -607,16 +619,10 @@ describe("opaque blob recovery through /v1/responses", () => {
     expect(body).toContain("response.completed");
     expect(body).not.toContain(FUNCTION_OUTPUT_DECRYPT_MESSAGE);
     expect(outbound).toHaveLength(2);
+    const initialInput = outbound.at(0)?.input as Array<Record<string, unknown>> | undefined;
     const retriedInput = outbound.at(1)?.input as Array<Record<string, unknown>> | undefined;
-    expect(retriedInput?.at(0)).toEqual({
-      type: "agent_message",
-      author: "/root/child_task",
-      recipient: "/root",
-      content: [
-        { type: "input_text", text: "Message Type: MESSAGE\nTask name: /root\nSender: /root/child_task\nPayload:" },
-        { type: "input_text", text: "[encrypted content omitted]" },
-      ],
-    });
+    expect(initialInput?.at(0)).toEqual(agentMessageReplayInput().at(0));
+    expect(retriedInput?.at(0)).toEqual(recoveredAgentMessagePublicWire());
   });
 
   for (const streamMode of ["legacy-tee", "eager-relay"] as const) {
@@ -750,16 +756,48 @@ describe("opaque blob recovery through /v1/responses", () => {
     expect(body).toContain("response.completed");
     expect(body).not.toContain(FUNCTION_OUTPUT_DECRYPT_MESSAGE);
     expect(outbound).toHaveLength(2);
+    const initialInput = outbound.at(0)?.input as Array<Record<string, unknown>> | undefined;
     const retriedInput = outbound.at(1)?.input as Array<Record<string, unknown>> | undefined;
-    expect(retriedInput?.at(0)).toEqual({
-      type: "agent_message",
-      author: "/root/child_task",
-      recipient: "/root",
-      content: [
-        { type: "input_text", text: "Message Type: MESSAGE\nTask name: /root\nSender: /root/child_task\nPayload:" },
-        { type: "input_text", text: "[encrypted content omitted]" },
-      ],
-    });
+    expect(initialInput?.at(0)).toEqual(agentMessageReplayInput().at(0));
+    expect(retriedInput?.at(0)).toEqual(recoveredAgentMessagePublicWire());
+  });
+
+  test("keeps recovered agent messages private for official and third-party GPT routes", async () => {
+    const officialConfig = config();
+    officialConfig.providers.first = {
+      ...officialConfig.providers.first!,
+      baseUrl: "https://api.openai.com/v1",
+    };
+    const cases = [
+      { request: agentMessageRequest(), testConfig: officialConfig },
+      { request: agentMessageRequest(false, "first", "gpt-5.6"), testConfig: config() },
+    ];
+
+    for (const { request: currentRequest, testConfig } of cases) {
+      const outbound: Array<Record<string, unknown>> = [];
+      globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        outbound.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return outbound.length <= 3
+          ? new Response(CHATGPT_FUNCTION_OUTPUT_DECRYPT_ERROR, {
+            status: 502,
+            headers: { "content-type": "application/json" },
+          })
+          : success("resp-agent-message-private-recovery");
+      }) as typeof fetch;
+      const logCtx: RequestLogContext = { model: "", provider: "" };
+
+      const response = await handleResponses(currentRequest, testConfig, logCtx);
+      expect(response.status).toBe(200);
+      await response.text();
+
+      expect(outbound).toHaveLength(4);
+      const initialInput = outbound.at(0)?.input as Array<Record<string, unknown>> | undefined;
+      const retriedInput = outbound.at(3)?.input as Array<Record<string, unknown>> | undefined;
+      expect(initialInput?.at(0)).toEqual(agentMessageReplayInput().at(0));
+      expect(retriedInput?.at(0)).toEqual(recoveredAgentMessagePrivateWire());
+      expect(retriedInput?.at(1)).toEqual(agentMessageReplayInput().at(1));
+      expect(logCtx.activeAttempt?.recoveryKinds).toEqual(["transient-5xx", "opaque-blob-rejection"]);
+    }
   });
 
   test("absent Content-Type decrypt stream does not recover a non-stream request", async () => {
