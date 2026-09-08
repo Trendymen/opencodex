@@ -28,6 +28,21 @@ function buildCanonicalRequest(
 }
 
 describe("canonical forward responses-lite metadata", () => {
+  test.each([
+    [undefined, undefined],
+    [{ ws_request_header_x_openai_internal_codex_responses_lite: "true" }, undefined],
+    [{ request_source: "codex-cli", ws_request_header_x_openai_internal_codex_responses_lite: "true" }, { request_source: "codex-cli" }],
+  ])("Spark 禁用 Lite header 与 body 标记，但保留其他 metadata：%j", (metadata, expected) => {
+    const rawBody = { model: "gpt-5.3-codex-spark", input: "ping", ...(metadata ? { client_metadata: metadata } : {}) };
+    const original = structuredClone(rawBody);
+    const request = createResponsesPassthroughAdapter(canonicalProvider).buildRequest({
+      modelId: "gpt-5.3-codex-spark", context: { messages: [] }, stream: true, options: {}, _rawBody: rawBody,
+    }, { headers: new Headers({ "x-openai-internal-codex-responses-lite": "true" }) });
+    expect(new Headers(request.headers).get("x-openai-internal-codex-responses-lite")).toBeNull();
+    expect(JSON.parse(request.body).client_metadata).toEqual(expected);
+    expect(rawBody).toEqual(original);
+  });
+
   test("copies a true HTTP responses-lite header into client metadata without mutating the caller body", () => {
     const rawBody = {
       model: "gpt-5.6-sol",
