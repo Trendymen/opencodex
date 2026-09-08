@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.46.0`（`bba63222d3eeb5c8e397edae35798225e4fa1a6f`）。
+- 上游基线：`v2.48.0`（`9a27e86992d7a014e0aa92c046199b9fac148201`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -14,21 +14,21 @@
 ### Codex 官方转发的 HTTP Responses Lite 元数据
 
 在上游已有的 Codex 请求头转发与 WebSocket metadata 处理上，Fork 补充 HTTP 入站 Lite 标识到出站 body 的映射：使用 Codex 账号转发到官方 ChatGPT 后端时，若 `x-openai-internal-codex-responses-lite` 请求头为 `true`，将缺失的 `client_metadata.ws_request_header_x_openai_internal_codex_responses_lite` 补为字符串 `"true"`，使上游 WebSocket `response.create` 帧保留该标识。
-保留已有 metadata 字段和显式 Lite 值，不修改调用方原始 body；请求头缺失或值不是 `true`、已存在的 `client_metadata` 不是普通对象时不补写。公共 OpenAI API-key 提供方与第三方 forward 不参与此映射。
+保留已有 metadata 字段和显式 Lite 值，不修改调用方原始 body；请求头缺失或值不是 `true`、已存在的 `client_metadata` 不是普通对象时不补写。最终 wire model 为 `gpt-5.3-codex-spark` 时遵循官方的 Lite 禁用策略，同时移除 Lite header 和对应 body metadata，保留其他 metadata。公共 OpenAI API-key 提供方与第三方 forward 不参与此映射。
 
 代码：`src/adapters/openai-responses.ts` 的 `addCanonicalForwardResponsesLiteMetadata()`。
 测试：`tests/codex-integration/codex-responses-lite-metadata.test.ts`，覆盖请求头转发、映射边界、原始输入保真与上游 WebSocket 帧；使用模拟 WebSocket，不代表真实服务端验收。
 
 ### 模型家族与官方目的地判断
 
-模型家族与请求目的地分别判断：共用 `src/providers/openai-model-identity.ts` 的具名函数，保留原生路由、保留别名、清理候选各自的匹配范围，不把第三方托管的 GPT 模型视为官方服务。官方 Responses 目的地按实际请求 URL 判断，第三方消息兼容另要求非 GPT/OpenAI 模型族。
+模型家族与请求目的地分别判断：共用 `src/providers/openai-model-identity.ts` 的具名函数，保留原生路由、保留别名、清理候选各自的匹配范围，不把第三方托管的 GPT 模型视为官方服务。官方 Responses 目的地按实际请求 URL 判断，第三方消息兼容的默认策略另要求非 GPT/OpenAI 模型族；显式 `agentMessageFormat` 的覆盖边界见下文。
 代码入口：`src/providers/openai-tiers-destination.ts`、router、config、catalog 及 GUI 的调用点。测试：`tests/providers/openai-model-identity.test.ts`、`tests/routing/routing-profile.test.ts`、`tests/gui/combo-workspace-data.test.ts`。
 
 ### 火山方舟 Agent Plan GLM/Kimi 与智谱 GLM Responses 兼容
 
 Fork 补充第三方 Responses 的消息转换，并保留以下 schema 和历史消息兼容：
 
-- 对第三方非 GPT/OpenAI 模型的原生 Responses 请求，将可读 `agent_message` 转为普通 user message，保留正文、发送者、接收者、消息顺序及图片/文件；覆盖 key-auth 和第三方 forward，转换不修改原始输入或重放数据。新增转换排除 OpenAI 运营目的地与 GPT/OpenAI 模型族，已有 Go 专用处理保留；包含真正密文、未知 part 或空内容时不做部分转换。
+- 默认对第三方非 GPT/OpenAI 模型的原生 Responses 请求，将可读 `agent_message` 转为普通 user message，保留正文、发送者、接收者、消息顺序及图片/文件；覆盖 key-auth 和第三方 forward，转换不修改原始输入或重放数据。默认转换排除 OpenAI 运营目的地与 GPT/OpenAI 模型族，已有 Go 专用处理保留；包含真正密文、未知 part 或空内容时不做部分转换。显式配置可切换明文格式，见下文。
 - Ark `https://ark.cn-beijing.volces.com/api/plan/v3` 的 GLM/Kimi-K3，以及 BigModel `https://open.bigmodel.cn/api/v1` 的 `glm-5.3` / `glm-5.3-flash` schema lowering。仅用于 `openai-responses`，保留 App 原始 schema；GLM 不写 Kimi schema catalog。
 - 在深度和节点预算内处理 `$defs`、`$ref`、`oneOf`、`allOf` 与根级 `anyOf`，保留嵌套 `anyOf`、工具名、描述和可见 properties。
 - 对拒绝 assistant prefill 的第三方 Responses 请求补尾部 user turn；OpenAI 运营目的地与 GPT 模型族硬排除。Volcengine 历史中的空 assistant text 会先清理，保留 refusal、非文本 part 和其他有效字段。
@@ -37,8 +37,17 @@ Fork 补充第三方 Responses 的消息转换，并保留以下 schema 和历�
 OpenAI 运营目标，以及显式设置 `allowEncryptedV2AgentTasks=true` 的 key-auth 直接 relay 保留注解。combo 成员不继承该直接路由例外，发送前刷新 key selection 后仍执行清理，原 route/global 配置保持不变。
 这项清理不改变密文 guard、strict-backend 分类或 recovery/auth，也不保证恢复旧异常密文。真实 GLM 小型请求已验证注解清理和明文工具参数，尚不代表 Codex App 子任务全链路验收。
 
-代码：`src/fork/glm-kimi-compat.ts` 复用 `src/adapters/opencode-go.ts` 的明文消息转换，schema 清理位于 `src/adapters/responses-tool-schema.ts`；通过 `src/adapters/openai-responses.ts` 和 `src/server/responses/core.ts` 接线。
-测试：`tests/providers/opencode-go-agent-messages.test.ts`、`tests/providers/fork-glm-kimi-compat.test.ts`、`tests/providers/fork-kimi-schema-compiler.test.ts`、`tests/providers/fork-zhipu-glm-schema-lowering.test.ts`、`tests/providers/fork-trailing-user-turn-compat.test.ts`、`tests/providers/fork-volcengine-empty-assistant-content.test.ts`、`tests/responses/openai-responses-passthrough.test.ts`、`tests/server/agent-task-recovery-combo.test.ts`。
+代码：`src/fork/glm-kimi-compat.ts` 复用官方 `src/adapters/routed-agent-messages.ts` 的明文消息转换，schema 清理位于 `src/adapters/responses-tool-schema.ts`；通过 `src/adapters/openai-responses.ts` 和 `src/server/responses/core.ts` 接线。旧 `opencode-go.ts` 已由官方通用转换模块替代，不恢复重复实现。
+测试：`tests/adapters/routed-agent-messages.test.ts`、`tests/providers/fork-glm-kimi-compat.test.ts`、`tests/providers/fork-kimi-schema-compiler.test.ts`、`tests/providers/fork-zhipu-glm-schema-lowering.test.ts`、`tests/providers/fork-trailing-user-turn-compat.test.ts`、`tests/providers/fork-volcengine-empty-assistant-content.test.ts`、`tests/responses/openai-responses-passthrough.test.ts`、`tests/server/agent-task-recovery-combo.test.ts`。
+
+### 可配置的 agent_message 明文格式
+
+Provider 可设置 `agentMessageFormat: "preserve" | "user_message"`。`preserve` 在前后两次 adapter 处理中均保留原生消息项；`user_message` 对第三方 Responses 显式转换合法明文数组和非空字符串，保留身份与原始正文。显式转换可用于第三方 GPT 模型，但官方 OpenAI/ChatGPT 目的地始终保留原生格式。
+未配置时保持既有策略：Go 非 forward 的结构化明文跨模型转换，其他第三方非 GPT 路由（含 forward）转换结构化明文，xAI 非 forward 的非 GPT 模型另支持字符串正文。密文、空内容和未知 part 不做部分转换，不绕过原有恢复与安全检查。
+配置 schema 和直接写入拒绝非法枚举；GET/DTO 返回字段。POST 省略字段时保留 mutation lock 内最新值，显式值覆盖；POST null 拒绝，PATCH null 清除并恢复默认。当前通过配置文件和管理 API 使用，没有新增 GUI 控件。
+
+代码：`src/fork/agent-message-format.ts`、`src/adapters/routed-agent-messages.ts`、`src/config.ts`、`src/server/management/provider-routes.ts`。
+测试：`tests/responses/agent-message-format.test.ts`、`tests/server/fork-provider-agent-message-format.test.ts`。
 
 ### 原生 Responses message phase 推断
 
@@ -133,9 +142,10 @@ Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预�
 同一历史转向原生 OpenAI GPT 时，只删除由第三方 `reasoning_text` 支撑的 opaque token，保留真正的 OpenAI blob。summary 只追加 `summary_text`，保留 `reasoning.content`、原始字段与 replay state。
 有状态 rewrite 按第三句或 500 code point 中先到的边界分段，每个 `summary_index` 独立闭合。
 EOF、稀疏 terminal、failed/incomplete 会先收尾；terminal-only reasoning 尾部仍投影。重复/迟到 part 不重开 index，终态后迟到 close 被抑制，空 part 不造 `**Thinking**`，SSE `event:` 与 JSON `type` 一致。
+SSE continuation cache 复用相同的分段摘要规则，并保留官方 inspector 的稀疏 output 重建；完整历史回传不因摘要格式不同而重复追加工具调用。首个失败终态后的 completed 不写缓存，重复 completed 不覆盖首份候选。
 
 代码：`src/server/responses-reasoning-summary-rewrite.ts`、`src/adapters/openai-responses.ts`。
-测试：`tests/providers/deepseek-reasoning-replay.test.ts`、`tests/responses/responses-original-field-preservation.test.ts` 及同目录 `responses-reasoning-summary-*.test.ts`。
+测试：`tests/providers/deepseek-reasoning-replay.test.ts`、`tests/providers/opencode-go-luna-wire.test.ts`、`tests/responses/responses-original-field-preservation.test.ts` 及同目录 `responses-reasoning-summary-*.test.ts`。
 
 ### SSE block rewrite flush 与终态兼容
 
