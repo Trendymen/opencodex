@@ -2589,40 +2589,138 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(rawDeltaBody.input).toHaveLength(1);
   });
 
-  test("api-key mode preserves delegated tool output text when call_id is missing", () => {
+  test.each([
+    {
+      name: "canonical ChatGPT GPT call-id-less cross-task message",
+      configuredProvider: provider,
+      model: "gpt-5.6-sol",
+      item: {
+        type: "function_call_output",
+        namespace: "codex_app",
+        name: "send_message_to_thread",
+        output: "<codex_delegation><source_thread_id>fixture</source_thread_id><input>Inspect the adapter.</input></codex_delegation>",
+      },
+      marker: "[Cross-task message via codex_app.send_message_to_thread]",
+    },
+    {
+      name: "third-party non-GPT custom task delegation",
+      configuredProvider: {
+        adapter: "openai-responses",
+        baseUrl: "https://api.x.ai/v1",
+        authMode: "key" as const,
+        apiKey: "xai-test",
+      },
+      model: "grok-4.6",
+      item: {
+        type: "custom_tool_call_output",
+        namespace: "codex_app",
+        name: "create_thread",
+        output: "created",
+      },
+      marker: "[Task delegation via codex_app.create_thread]",
+    },
+    {
+      name: "third-party stateless cross-task message",
+      configuredProvider: {
+        adapter: "openai-responses",
+        baseUrl: "https://api.x.ai/v1",
+        authMode: "key" as const,
+        apiKey: "xai-test",
+        statelessResponses: true,
+      },
+      model: "grok-4.6",
+      item: {
+        type: "function_call_output",
+        namespace: "codex_app",
+        name: "send_message_to_thread",
+        output: "<codex_delegation><source_thread_id>fixture</source_thread_id><input>Continue the task.</input></codex_delegation>",
+      },
+      marker: "[Cross-task message via codex_app.send_message_to_thread]",
+    },
+  ])("labels $name from structured metadata", ({ configuredProvider, model, item, marker }) => {
+    const adapter = createResponsesPassthroughAdapter(configuredProvider);
+    const raw = { model, input: [item] };
+    const original = structuredClone(raw);
+    const body = JSON.parse(adapter.buildRequest({
+      ...parsedBase,
+      modelId: model,
+      previousResponseId: undefined,
+      _rawBody: raw,
+    }, meta).body) as { input: Array<{ content: Array<{ text?: string }> }> };
+
+    expect(body.input[0]?.content).toEqual([
+      { type: "input_text", text: `${marker}\n${item.output}` },
+    ]);
+    expect(raw).toEqual(original);
+  });
+
+  test("labels generic, namespace-only, and metadata-free outputs without reading their bodies", () => {
     const adapter = createResponsesPassthroughAdapter({
       adapter: "openai-responses",
       baseUrl: "https://api.x.ai/v1",
       authMode: "key" as const,
       apiKey: "xai-test",
     });
-
     const body = JSON.parse(adapter.buildRequest({
       ...parsedBase,
       previousResponseId: undefined,
       _rawBody: {
         model: "grok-4.6",
         input: [
-          {
-            type: "function_call_output",
-            id: "fco_delegation",
-            output: "<codex_delegation>Inspect the adapter.</codex_delegation>",
-          },
+          { type: "function_call_output", namespace: "functions", name: "exec_command", output: "done" },
+          { type: "function_call_output", namespace: "task_inbox", output: "received" },
+          { type: "function_call_output", output: "<codex_delegation><source_thread_id>fixture</source_thread_id><input>Create a task.</input></codex_delegation>" },
         ],
       },
-    }, meta).body) as { input: Record<string, unknown>[] };
+    }, meta).body) as { input: Array<{ content: Array<{ text?: string }> }> };
 
-    expect(body.input).toEqual([{
-      type: "message",
-      role: "user",
-      content: [{
-        type: "input_text",
-        text: "[tool output for unknown call]\n<codex_delegation>Inspect the adapter.</codex_delegation>",
-      }],
-    }]);
+    expect(body.input.map(item => item.content[0]?.text)).toEqual([
+      "[Tool output: functions.exec_command; call_id not provided]\ndone",
+      "[Tool output in namespace task_inbox; call_id not provided]\nreceived",
+      "[Tool output without call identification]\n<codex_delegation><source_thread_id>fixture</source_thread_id><input>Create a task.</input></codex_delegation>",
+    ]);
   });
 
-  test("external task parsing preserves the existing raw passthrough repair", () => {
+  test("treats invalid call-id-less metadata as unknown instead of rendering it into the marker", () => {
+    const adapter = createResponsesPassthroughAdapter({
+      adapter: "openai-responses",
+      baseUrl: "https://api.x.ai/v1",
+      authMode: "key" as const,
+      apiKey: "xai-test",
+    });
+    const trailingNewlineNamespace = `codex_app${String.fromCharCode(10)}`;
+    const raw = {
+      model: "grok-4.6",
+      input: [
+        {
+          type: "function_call_output",
+          namespace: { value: "codex_app" },
+          name: 42,
+          output: "untrusted metadata",
+        },
+        {
+          type: "function_call_output",
+          namespace: trailingNewlineNamespace,
+          name: "create_thread",
+          output: "trailing newline metadata",
+        },
+      ],
+    };
+    const original = structuredClone(raw);
+    const body = JSON.parse(adapter.buildRequest({
+      ...parsedBase,
+      previousResponseId: undefined,
+      _rawBody: raw,
+    }, meta).body) as { input: Array<{ content: Array<{ text?: string }> }> };
+
+    expect(body.input.map(item => item.content[0]?.text)).toEqual([
+      "[Tool output without call identification]\nuntrusted metadata",
+      "[Tool output without call identification]\ntrailing newline metadata",
+    ]);
+    expect(raw).toEqual(original);
+  });
+
+  test("external task parsing preserves the raw passthrough repair with its structured source", () => {
     const adapter = createResponsesPassthroughAdapter({
       adapter: "openai-responses", baseUrl: "https://api.x.ai/v1", authMode: "key" as const, apiKey: "xai-test",
     });
@@ -2636,7 +2734,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(raw).toEqual(original);
     const body = JSON.parse(adapter.buildRequest(parsed, meta).body) as { input: unknown[] };
     expect(body.input).toEqual([{ type: "message", role: "user", content: [
-      { type: "input_text", text: "[tool output for unknown call]\nexternal input" },
+      { type: "input_text", text: "[Tool output: task_inbox.handoff_input; call_id not provided]\nexternal input" },
     ] }]);
   });
 
@@ -2695,7 +2793,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     }, meta).body) as { input: Array<{ content: Record<string, unknown>[] }> };
 
     expect(body.input[0]?.content).toEqual([
-      { type: "input_text", text: "[tool output for unknown call]" },
+      { type: "input_text", text: "[Tool output without call identification]" },
       { type: "input_text", text: "screenshot" },
       image,
       { type: "input_text", text: "[encrypted content omitted]" },

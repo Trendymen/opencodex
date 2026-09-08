@@ -1018,9 +1018,41 @@ function isRepairableToolOutput(output: unknown): output is string | Record<stri
   });
 }
 
+function validToolOutputSourcePart(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value)
+    ? value
+    : undefined;
+}
+
+function unidentifiedToolOutputMarker(item: Record<string, unknown>): string {
+  const namespace = validToolOutputSourcePart(item.namespace);
+  const name = validToolOutputSourcePart(item.name);
+  if ((item.namespace !== undefined && !namespace) || (item.name !== undefined && !name)) {
+    return "[Tool output without call identification]";
+  }
+  if (namespace === "codex_app" && name === "send_message_to_thread") {
+    return "[Cross-task message via codex_app.send_message_to_thread]";
+  }
+  if (namespace === "codex_app" && name === "create_thread") {
+    return "[Task delegation via codex_app.create_thread]";
+  }
+  if (namespace && name) return `[Tool output: ${namespace}.${name}; call_id not provided]`;
+  if (namespace) return `[Tool output in namespace ${namespace}; call_id not provided]`;
+  if (name) return `[Tool output: ${name}; call_id not provided]`;
+  return "[Tool output without call identification]";
+}
+
 /** Convert orphaned tool output to user-message content without discarding valid images. */
-function orphanedToolOutputContent(output: unknown, callId = ""): Record<string, unknown>[] {
-  const marker = `[tool output for ${callId || "unknown call"}]`;
+function orphanedToolOutputContent(
+  output: unknown,
+  callId = "",
+  unidentifiedItem?: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const marker = callId
+    ? `[tool output for ${callId}]`
+    : unidentifiedItem
+      ? unidentifiedToolOutputMarker(unidentifiedItem)
+      : "[Tool output without call identification]";
   if (typeof output !== "string" && !Array.isArray(output)) {
     return [{ type: "input_text", text: marker }];
   }
@@ -1098,7 +1130,7 @@ function repairUnidentifiedToolOutputItems(body: unknown): unknown {
     return {
       type: "message",
       role: "user",
-      content: orphanedToolOutputContent(item.output),
+      content: orphanedToolOutputContent(item.output, "", item),
     };
   });
   return changed ? { ...body, input } : body;
@@ -1234,7 +1266,7 @@ function repairOrphanedInputItems(body: unknown, dropReasoning: boolean, synthes
         repaired.push({
           type: "message",
           role: "user",
-          content: orphanedToolOutputContent(item.output, callId),
+          content: orphanedToolOutputContent(item.output, callId, callId ? undefined : item),
         });
         continue;
       }

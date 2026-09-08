@@ -1586,7 +1586,7 @@ test("a no-eligible policy compact request persists the evaluation trace", async
  *
  * The guard cannot live in the schema. parseRequest runs before the passthrough branch, and
  * passthrough / routed compaction build from _rawBody, never reading context.messages — they
- * already degrade an unpaired output to "[tool output for unknown call]" on their own.
+ * already degrade an unpaired output to "[Tool output without call identification]" on their own.
  */
 describe("computer screenshot output translation boundary", () => {
   const screenshot = {
@@ -1710,7 +1710,7 @@ describe("external task-input envelopes (#3735)", () => {
     await res.text();
     expect(captured).toHaveLength(1);
     expect(captured[0]!.messages).toEqual([{ role: "user", content: "  preserve this input\n" }]);
-    expect(JSON.stringify(captured)).not.toContain("[tool output for unknown call]");
+    expect(JSON.stringify(captured)).not.toMatch(/\[(?:Tool output|Cross-task message|Task delegation)/);
   });
 
   test("preserves ordered text and image content through translation", async () => {
@@ -1834,7 +1834,7 @@ describe("established-history external task input (#3807)", () => {
     // Exactly one original pair: delivery must not acquire a synthesized tool identity.
     expect(messages.flatMap(message => message.tool_calls ?? [])).toEqual(wireHistory[1]!.tool_calls);
     expect(messages.filter(message => message.role === "tool")).toEqual([wireHistory[2]]);
-    expect(JSON.stringify(sent)).not.toContain("[tool output for unknown call]");
+    expect(JSON.stringify(sent)).not.toMatch(/\[(?:Tool output|Cross-task message|Task delegation)/);
   }
 
   test("ordinary response preserves inter-task delivery after an established tool pair", async () => {
@@ -2022,7 +2022,7 @@ describe("unpaired tool result boundary (#3259)", () => {
 
     expect(res.status).toBe(200);
     expect(bodies.length).toBe(1);
-    expect(bodies[0]).toContain("[tool output for unknown call]");
+    expect(bodies[0]).toContain("[Tool output without call identification]");
     expect(bodies[0]).not.toContain("undefined");
   });
 });
