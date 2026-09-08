@@ -190,9 +190,10 @@ for up to 120 seconds. After response headers arrive, first-byte and inactivity 
 limited to 45 seconds. Only timeout
 attempts retry, at most twice after the first attempt. When those retries are exhausted for an
 admitted parent `MESSAGE`, opencodex sends the routed parent a non-persistent notice instead of
-stopping it with `unreadable_encrypted_agent_task`. The notice identifies the sender, asks for up to
-two resends, and then instructs the parent to use its available child-result reading path or wait
-for completion. It does not expose ciphertext or claim the message was read or reviewed. Other
+stopping it with `unreadable_encrypted_agent_task`. The notice first tells the parent to use an
+already received complete final answer when available; otherwise it asks for up to two resends, then
+to use a tool that returns the child's final text or wait for completion. It does not expose
+ciphertext or claim the message was read or reviewed. Other
 recovery failures, malformed envelopes, and cancellation keep their existing fail-closed behavior.
 Combo routing prefers a selectable canonical native ChatGPT target for encrypted tasks. If none
 is usable, or native authorization attempts are exhausted, an explicitly enabled recovery may
