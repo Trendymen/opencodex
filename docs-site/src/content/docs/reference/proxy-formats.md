@@ -523,6 +523,33 @@ Kiro currently receives this guidance through verified code-mode `exec`; its dir
 path does not receive it. The guidance does not reorder hunks, rewrite `exec` JavaScript or
 nonempty failure output, or retry patches automatically.
 
+## spawn_agent argument compatibility
+
+For native Responses requests sent to third-party destinations, opencodex clarifies the
+`fork_turns` description on a currently available `collaboration.spawn_agent` function with a
+supported string schema. The description preserves the existing text and explains that
+`{"fork_turns":"3"}` passes a string containing the character `3`, without quote characters.
+The original request and the other schema fields are preserved.
+
+On native Responses paths that use ordinary function-argument repair, opencodex can unwrap one
+extra JSON-string layer in a completed call's `fork_turns`. Repair requires the current tool
+declaration to authorize that exact function and the decoded value to be `none`, `all`, or a
+supported positive integer string. Unsupported schemas, invalid values, and extra encoding
+layers are left unchanged. Other fields and unrelated tools are not unquoted. Unquoting replaces
+only that field's string token, preserving the rest of the argument text. Duplicate top-level
+`fork_turns` keys in the original arguments skip unquoting; existing argument conversions still apply.
+
+This unquoting rule supports plain object parameter schemas whose `fork_turns` field contains
+only `type: "string"` and an optional string description. References, composition keywords,
+field enums/patterns, and unknown constraints are excluded. Quoted integers are repaired only
+in canonical decimal form without leading zeroes, from `1` to `9007199254740991`. Values outside
+this repair range continue through the existing argument handling; the proxy does not infer a
+different turn count.
+
+Streamed previews remain unchanged; authoritative completions, JSON responses, and replay use
+the repaired value. Canonical ChatGPT login forwarding is excluded from this completion repair.
+The proxy does not execute or retry the tool as part of this conversion.
+
 ## Sub-agent messages
 
 For non-GPT model families at third-party Responses destinations, opencodex converts readable
