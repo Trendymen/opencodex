@@ -5,6 +5,7 @@ import {
   discardEncryptedAgentTaskRecovery,
   recoverEncryptedAgentTask,
   recoverEncryptedAgentTaskWithResult,
+  replaceTimedOutEncryptedAgentTaskWithNotice,
   resetAgentTaskRecoveryState,
   restoreCachedEncryptedAgentTasks,
   type AgentTaskRecoveryFailureReason,
@@ -34,6 +35,58 @@ describe("agent task recovery (opt-in, default off)", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     resetAgentTaskRecoveryState();
+  });
+
+  const childMessage = (): unknown[] => JSON.parse(JSON.stringify(encryptedInput({
+    taskName: "/root",
+    sender: "/root/worker",
+  })).replace("Message Type: NEW_TASK", "Message Type: MESSAGE"));
+
+  test("retains a deferred child MESSAGE notice after cancelled or rejected current recovery", async () => {
+    const req = new Request("http://localhost/v1/responses", { headers: codexHeaders() });
+    const config = routedConfig({ enabled: true });
+    const history = () => [...childMessage(), { type: "function_call_output", call_id: "read-child", output: "pending" }];
+
+    for (const outcome of ["cancelled", "rejected"] as const) {
+      resetAgentTaskRecoveryState();
+      expect(replaceTimedOutEncryptedAgentTaskWithNotice(req, childMessage(), {}, config)).toBe(true);
+      if (outcome === "cancelled") {
+        const controller = new AbortController();
+        controller.abort(new DOMException("client disconnected", "AbortError"));
+        expect(await recoverEncryptedAgentTaskWithResult(req, childMessage(), {}, config, {
+          abortSignal: controller.signal,
+        })).toEqual({ recovered: false, reason: "caller_cancelled" });
+      } else {
+        globalThis.fetch = (async () => new Response("rejected", { status: 401 })) as typeof fetch;
+        expect(await recoverEncryptedAgentTaskWithResult(req, childMessage(), {}, config))
+          .toEqual({ recovered: false, reason: "recovery_http_rejected" });
+      }
+      const replay = history();
+      expect(restoreCachedEncryptedAgentTasks(req, replay, config)).toBe(1);
+      expect(JSON.stringify(replay)).toContain("重新发送");
+      expect(JSON.stringify(replay)).not.toContain(FERNET_TASK);
+    }
+  });
+
+  test("refuses notice replacement and deferred history restoration for child MESSAGE envelopes with extra parts", () => {
+    const req = new Request("http://localhost/v1/responses", { headers: codexHeaders() });
+    const config = routedConfig({ enabled: true });
+    expect(replaceTimedOutEncryptedAgentTaskWithNotice(req, childMessage(), {}, config)).toBe(true);
+    const extras = [
+      { type: "input_text", text: "" },
+      { type: "input_image", image_url: "data:image/png;base64,AA==" },
+      { type: "input_file", file_id: "file-extra" },
+      { type: "unknown_part" },
+    ];
+
+    for (const extra of extras) {
+      const malformed = childMessage();
+      (malformed[0] as { content: unknown[] }).content.push(extra);
+      expect(replaceTimedOutEncryptedAgentTaskWithNotice(req, malformed, {}, config)).toBe(false);
+      const history = [...malformed, { type: "function_call_output", call_id: "read-child", output: "pending" }];
+      expect(restoreCachedEncryptedAgentTasks(req, history, config)).toBe(0);
+      expect(JSON.stringify(history)).toContain(FERNET_TASK);
+    }
   });
 
   for (const messageType of ["NEW_TASK", "MESSAGE"] as const) {
@@ -176,7 +229,7 @@ describe("agent task recovery (opt-in, default off)", () => {
     }) as typeof fetch;
     try {
       const pending = recoverEncryptedAgentTaskWithResult(
-        new Request("http://localhost/v1/responses", { headers: codexHeaders() }), encryptedInput(), {}, routedConfig(),
+        new Request("http://localhost/v1/responses", { headers: codexHeaders() }), encryptedInput(), { maxRetries: 0 }, routedConfig(),
         { abortSignal: caller.signal },
       );
       await ready;
@@ -637,7 +690,7 @@ describe("agent task recovery (opt-in, default off)", () => {
     }) as typeof fetch;
 
     const response = await post(
-      routedConfig({ enabled: true, timeoutMs: 1_000 }),
+      routedConfig({ enabled: true, timeoutMs: 1_000, maxRetries: 0 }),
       "xai/grok-4.5",
       encryptedInput(),
       codexHeaders(),
@@ -648,6 +701,49 @@ describe("agent task recovery (opt-in, default off)", () => {
     expect(providerFetches).toBe(0);
   });
 
+  test("retries a timed-out recovery with luna medium and dispatches only the recovered plaintext", async () => {
+    let recoveryFetches = 0;
+    let providerFetches = 0;
+    const recoveryBodies: string[] = [];
+    globalThis.fetch = ((input, init) => {
+      if (!String(input).includes("chatgpt.com")) {
+        providerFetches += 1;
+        return Promise.resolve(providerResponse());
+      }
+      recoveryFetches += 1;
+      recoveryBodies.push(String(init?.body));
+      if (recoveryFetches === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          const rejectAbort = () => reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
+          if (signal?.aborted) rejectAbort();
+          else signal?.addEventListener("abort", rejectAbort, { once: true });
+        });
+      }
+      return Promise.resolve(new Response(recoverySse("Recovered after the bounded retry."), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }));
+    }) as typeof fetch;
+
+    const response = await post(
+      routedConfig({ enabled: true, timeoutMs: 1_000, maxRetries: 1 }),
+      "xai/grok-4.5",
+      encryptedInput(),
+      codexHeaders(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(recoveryFetches).toBe(2);
+    expect(providerFetches).toBe(1);
+    for (const body of recoveryBodies) {
+      expect(JSON.parse(body)).toMatchObject({
+        model: "gpt-5.6-luna",
+        reasoning: { effort: "medium" },
+      });
+    }
+  });
+
   test("cancels recovery with the client and never reaches the routed provider", async () => {
     const controller = new AbortController();
     let markRecoveryStarted: (() => void) | undefined;
@@ -655,11 +751,13 @@ describe("agent task recovery (opt-in, default off)", () => {
       markRecoveryStarted = resolve;
     });
     let providerFetches = 0;
+    let recoveryFetches = 0;
     globalThis.fetch = ((input, init) => {
       if (!String(input).includes("chatgpt.com")) {
         providerFetches += 1;
         return Promise.resolve(providerResponse());
       }
+      recoveryFetches += 1;
       markRecoveryStarted?.();
       return new Promise<Response>((_resolve, reject) => {
         const signal = init?.signal;
@@ -681,6 +779,7 @@ describe("agent task recovery (opt-in, default off)", () => {
     const response = await pending;
 
     expect(response.status).toBe(499);
+    expect(recoveryFetches).toBe(1);
     expect(providerFetches).toBe(0);
     expect(await response.json()).toMatchObject({
       error: { code: "client_cancelled" },

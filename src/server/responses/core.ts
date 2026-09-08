@@ -345,6 +345,7 @@ import {
   discardEncryptedAgentTaskRecovery,
   recoverEncryptedAgentTask,
   recoverEncryptedAgentTaskWithResult,
+  replaceTimedOutEncryptedAgentTaskWithNotice,
   restoreCachedEncryptedAgentTasks,
   type AgentTaskRecoveryFailureReason,
 } from "./agent-task-recovery";
@@ -3698,7 +3699,8 @@ async function handleResponsesInner(
     previewSelectionAdmission?.release();
   }
 
-  let recoveryFailureReason: AgentTaskRecoveryFailureReason | undefined;
+    let recoveryFailureReason: AgentTaskRecoveryFailureReason | undefined;
+  let recoveryNoticeInjected = false;
   // 原生 fallback 和显式信任的直接 Responses 路由可以读取密文，因此先完成最终路由选择。
   // 此处不要求 threadSpawn：覆盖原生模型切换为路由模型后重放的历史（#4089），
   // 以及路由父任务收到 worker 加密 MESSAGE 的情况。recoveryAdmission 仍校验 Codex
@@ -3731,11 +3733,20 @@ async function handleResponsesInner(
       );
       recovered = result.recovered;
       recoveryFailureReason = result.recovered ? undefined : result.reason;
+      if (!result.recovered && result.reason === "recovery_timeout") {
+        recoveryNoticeInjected = replaceTimedOutEncryptedAgentTaskWithNotice(
+          req,
+          (body as { input?: unknown } | undefined)?.input,
+          agentTaskRecovery,
+          config,
+          { parentThreadId },
+        );
+      }
     } catch {
       recovered = false;
       recoveryFailureReason = undefined;
     }
-    if (recovered) {
+    if (recovered || recoveryNoticeInjected) {
       routedUnreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
         (body as { input?: unknown } | undefined)?.input,
       );
@@ -3769,6 +3780,7 @@ async function handleResponsesInner(
           // that cache is persisted to disk, which would defeat the recovery cache's TTL.
           markBodyNonPersistable(parsed._rawBody);
 
+          if (recovered) {
           // The ciphertext-only pass intentionally excludes routed candidates. Once recovery
           // makes the assignment readable, run selection again with the full configured chain
           // and keep the route in sync with any newly selected fallback.
@@ -3841,6 +3853,7 @@ async function handleResponsesInner(
                 err instanceof Error ? err.message : String(err),
               );
             }
+          }
           }
         } catch {
           unreadableEncryptedAgentTask = true;
