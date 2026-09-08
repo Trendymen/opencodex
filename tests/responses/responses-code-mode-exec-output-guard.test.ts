@@ -413,7 +413,7 @@ describe("Responses code-mode exec output guard", () => {
     const body = build({
       input: [{ type: "custom_tool_call_output", name: "exec", output: SUCCESS_EMPTY_WRAPPER }],
     }).body;
-    expect(JSON.stringify(body)).toContain("tool output for unknown call");
+    expect(JSON.stringify(body)).toContain("Tool output: exec; call_id not provided");
     expect(JSON.stringify(body)).not.toContain(EMPTY_EXEC_OUTPUT_MESSAGE);
   });
 

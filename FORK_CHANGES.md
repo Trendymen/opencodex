@@ -201,7 +201,7 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 
 | 旧差异 | 当前处理与证据入口 |
 | --- | --- |
-| 缺失/非法 `call_id` 的独立 Fork 修复与测试 | 上游 passthrough、compaction 和 parser 已覆盖，采用 `[tool output for unknown call]`；见 `tests/responses/openai-responses-passthrough.test.ts`。 |
+| 缺失/非法 `call_id` 的独立 Fork 修复与测试 | 上游 passthrough、compaction 和 parser 已覆盖。Fork 会从经过类型和字符校验的 `namespace`、`name` 写入来源提示；无可用来源时采用 `[Tool output without call identification]`。见 `tests/responses/openai-responses-passthrough.test.ts`。 |
 | 动态 `scripts/fork-test-runner.ts`、local-only worker group、quarantine list | 已移除，隔离和 serial lane 由上游 `scripts/test.ts` 管理。 |
 | 按工具名过滤 Kimi 工具、automation 专用 lowering | 已由通用 compiler 替代，不恢复 allowlist 或过滤工具目录；见 `src/fork/glm-kimi-compat.ts`。 |
 | Kimi 自动调用 `normalizeResponsesToolResultAdjacency` | 已移除；并行 `call A, call B, output A, output B` 合法。 |
