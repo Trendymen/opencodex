@@ -70,10 +70,10 @@ describe("provider debug consent and durable storage safety", () => {
     expect((getDebugSettings() as unknown as { providerText?: boolean }).providerText).toBe(true);
   });
 
-  test("install:local enables structural provider debug without authorizing text capture", () => {
+  test("install:local enables provider debug and persists text capture by default", () => {
     const env = localInstallRestartEnv({ PATH: "/usr/bin" }, "darwin");
     expect(env.OCX_DEBUG).toBe("1");
-    expect(env.OCX_PROVIDER_TEXT_DEBUG).toBeUndefined();
+    expect(env.OCX_PROVIDER_TEXT_DEBUG).toBe("1");
   });
 
   test("refuses durable writes when config ownership cannot be established", () => {
