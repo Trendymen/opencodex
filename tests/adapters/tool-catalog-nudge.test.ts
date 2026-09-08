@@ -82,6 +82,36 @@ describe("non-OpenAI tool catalog nudge", () => {
     expect(note).not.toContain("call the listed parent tool and use those helpers only inside that tool's input");
   });
 
+  test("guides nested apply_patch calls to keep same-file hunks in source order and recover from a context miss", () => {
+    const note = buildNonOpenAIToolCatalogNudgeForTools([codeModeExec()]);
+
+    expect(note).toContain("source order (top to bottom)");
+    expect(note).toContain("Failed to find expected lines");
+    expect(note).toContain("check whether hunks are reversed");
+    expect(note).toContain("re-read the current file");
+    expect(note).toContain("separate small patches");
+  });
+
+  test("guides a directly visible Codex apply_patch tool through its wire name", () => {
+    const note = buildNonOpenAIToolCatalogNudgeForTools(
+      [{ name: "apply_patch", freeform: true, parameters: {} } as OcxTool],
+      undefined,
+      tool => `custom_${tool.name}`,
+    );
+
+    expect(note).toContain("`custom_apply_patch` is Codex's apply_patch tool");
+    expect(note).toContain("source order (top to bottom)");
+    expect(note).toContain("Failed to find expected lines");
+  });
+
+  test("does not give apply_patch guidance to a foreign MCP tool with the same name", () => {
+    const note = buildNonOpenAIToolCatalogNudgeForTools([
+      { namespace: "mcp__remote", name: "apply_patch", freeform: true, parameters: {} } as OcxTool,
+    ]);
+
+    expect(note).not.toContain("source order (top to bottom)");
+  });
+
   test("keeps the generic nested-helper parent-tool rule when exec is not listed", () => {
     const note = buildNonOpenAIToolCatalogNudgeFromNames(["exec_command", "mcp__fs__read_file"]);
 

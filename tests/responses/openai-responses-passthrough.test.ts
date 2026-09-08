@@ -62,6 +62,76 @@ describe("native routed code-mode result visibility", () => {
     expect(JSON.stringify(body)).toBe(before);
   });
 
+  test("native Responses preserves a nested patch program and its non-empty context failure while adding recovery guidance", () => {
+    const patchProgram = [
+      "await tools.apply_patch(`*** Begin Patch",
+      "*** Update File: fixture.ts",
+      "@@",
+      "-later",
+      "+later changed",
+      "@@",
+      "-earlier",
+      "+earlier changed",
+      "*** End Patch`);",
+    ].join("\n");
+    const contextFailure = "Script failed\nOutput:\nFailed to find expected lines\n";
+    const body = raw(contextFailure);
+    body.input[0].input = patchProgram;
+    const before = JSON.stringify(body);
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).toContain("source order (top to bottom)");
+    expect(wire.instructions).toContain("Failed to find expected lines");
+    expect(JSON.parse(wire.input[0].arguments).input).toBe(patchProgram);
+    expect(wire.input[1].output).toBe(contextFailure);
+    expect(JSON.stringify(body)).toBe(before);
+  });
+
+  test("native Responses omits patch guidance when tool_choice hides the directly visible patch tool", () => {
+    const body = {
+      model: "grok-4.6",
+      instructions: "Keep this instruction.",
+      tool_choice: "none",
+      tools: [{ type: "custom", name: "apply_patch", description: "Apply a patch" }],
+      input: [{ role: "user", content: "do not edit" }],
+    };
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).not.toContain("source order (top to bottom)");
+  });
+
+  test("native Responses gives direct apply_patch guidance only when it is visible", () => {
+    const body = {
+      model: "grok-4.6",
+      instructions: "Keep this instruction.",
+      tools: [{ type: "custom", name: "apply_patch", description: "Apply a patch" }],
+      input: [{ role: "user", content: "edit" }],
+    };
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).toContain("`apply_patch` is Codex's apply_patch tool");
+    expect(wire.instructions).toContain("source order (top to bottom)");
+  });
+
+  test("native Responses omits patch guidance when a bare shell bridge makes exec non-code-mode", () => {
+    const body = {
+      model: "grok-4.6",
+      instructions: "Keep this instruction.",
+      tools: [
+        { type: "namespace", name: "functions", tools: [exec] },
+        { type: "function", name: "exec_command", parameters: { type: "object" } },
+      ],
+      input: [{ role: "user", content: "run a command" }],
+    };
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).not.toContain("source order (top to bottom)");
+  });
+
   test("the advertised first-call example emits a helper result exactly once", async () => {
     const example = CODE_MODE_RESULT_ECHO_SENTENCE.match(/`(text\(JSON\.stringify\(await tools\.exec_command[^`]+)`/)?.[1];
     if (!example) throw new Error("Missing executable result-emission example");
