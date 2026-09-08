@@ -7,13 +7,26 @@
  * the reserved `functions` group intact so the backend stops answering that way; this scrub is
  * the belt to that suspender on the client-facing passthrough (SSE and bounded JSON).
  */
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { handleResponses } from "../../src/server/responses";
 import { scrubSelfNamedToolCallNamespace } from "../../src/server/responses-self-named-namespace-scrub";
 import type { OcxConfig } from "../../src/types";
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+const originalWebSocket = globalThis.WebSocket;
+// 本文件验证 HTTP/SSE 改写；WS 构造拒绝后进入已有 HTTP fallback，不访问外网。
+class SseOnlyWebSocket {
+  constructor() {
+    throw new Error("HTTP/SSE namespace fixture does not open WebSockets");
+  }
+}
+beforeEach(() => {
+  globalThis.WebSocket = SseOnlyWebSocket as unknown as typeof WebSocket;
+});
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  globalThis.WebSocket = originalWebSocket;
+});
 
 function forwardConfig(): OcxConfig {
   return {
