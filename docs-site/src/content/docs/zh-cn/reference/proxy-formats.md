@@ -297,6 +297,20 @@ Codex `apply_patch` 工具或已识别的 code-mode `exec` 还会收到补丁顺
 Kiro 当前通过已识别的 code-mode `exec` 接收该提示，直接 `apply_patch` 路径不适用。
 这项提示不会重排补丁块、改写 `exec` JavaScript 或非空失败输出，也不会自动重试补丁。
 
+## 子代理消息
+
+向第三方 Responses 目的地发送非 GPT 模型请求前，opencodex 会将可读的 Codex `agent_message`
+转换为普通 user message。转换覆盖 key-auth 和第三方 `forward` 路由，让不读取 Codex 私有消息类型的模型
+能够接收任务分派、代理间消息和 reviewer 结果。
+
+转换保留正文、发送者和接收者、消息顺序以及图片/文件，不修改原始输入或重放数据。
+只有内容非空、且全部由 `input_text`、`input_image` 或 `input_file` 组成的消息才会转换；
+混合密文或未知 part 继续按已有规则处理。OpenAI 运营目的地与 GPT/OpenAI 模型族不适用这项扩展转换，
+已有的目的地专用处理仍保留。
+判断使用解析后的 model id：`gpt`、`chatgpt`、`codex`、`o1`、`o3`、`o4` 在名称边界出现时，以及
+`openai/gpt-*` 和 `openai-gpt-*` 都属于排除范围。`my-gpt-helper`、`openai-compatible-glm` 这类
+只包含相关词的名称仍是普通别名或模型 id，先按路由结果处理。
+
 ## 加密内容卫生
 
 代理把真正的后端密文视为不透明数据。结构有效的密文会逐字节保留：opencodex 不会对其解密、翻译其内容，或为另一个提供方重新加密。
