@@ -6,6 +6,7 @@ import { isAbsolute, join, relative } from "node:path";
 import type { OcxProviderConfig } from "../types";
 import { isThirdPartyNonGptResponsesRoute } from "../providers/openai-tiers-destination";
 import { normalizeRoutedAgentMessages } from "../adapters/routed-agent-messages";
+import { agentMessageConversionOptions } from "./agent-message-format";
 import { debugProviderDiagnostic } from "../lib/debug";
 import { getConfigDir } from "../config/paths";
 import { isOwnedConfigPath, recordOwnedConfigPath } from "../lib/config-ownership";
@@ -182,8 +183,8 @@ function normalizeThirdPartyPlaintextAgentMessages(
   provider: OcxProviderConfig,
   modelId: string,
 ): unknown {
-  if (!isThirdPartyNonGptResponsesRoute(provider, modelId)) return body;
-  return normalizeRoutedAgentMessages(body);
+  const options = agentMessageConversionOptions({ provider, resolvedModelId: modelId, phase: "late" });
+  return options ? normalizeRoutedAgentMessages(body, options) : body;
 }
 
 function normalizeVolcengineAgentPlanAssistantContent(body: unknown, provider: OcxProviderConfig): unknown {

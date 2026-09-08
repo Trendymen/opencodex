@@ -1,14 +1,9 @@
 /**
- * `agent_message` is Codex's private multi-agent input item: it exists only in the ChatGPT
- * Codex backend's schema. Codex replays every sub-agent reply in the history it sends, so
- * once a thread has used sub-agents, a routed Responses destination answers the whole body
- * with `422 unknown item type "agent_message"` and every later turn of that thread fails the
- * same way. Rewrite the item as the public user message it already is.
+ * 将 Codex 的 agent_message 明文项改成公共 user message。
+ * 部分第三方接口会拒绝该私有类型；是否转换由调用方的目的地、模型和配置策略决定。
  *
- * Genuine ciphertext and unknown part types keep their existing fail-closed path: the
- * encrypted v2 task surface owns those, through `unreadable_encrypted_agent_task` and the
- * opt-in recovery route. Callers gate the destination and model; `allowStringContent` is reserved
- * for the xAI non-forward boundary, so other and forwarded destinations keep string content raw.
+ * 密文和未知 part 保留原有失败保护，由 unreadable_encrypted_agent_task 和可选恢复路径处理。
+ * 本函数只负责结构转换；字符串正文是否允许转换同样由调用方明确指定。
  */
 export function normalizeRoutedAgentMessages(
   body: unknown,
