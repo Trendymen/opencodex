@@ -34,6 +34,157 @@ const provider = {
   authMode: "forward" as const,
 };
 
+describe("collaboration.spawn_agent fork_turns outbound compatibility", () => {
+  const originalDescription = "How much recent conversation context the child receives.";
+  const forkTurnsGuidance = "This field's JSON type is string. Its value must be `none`, `all`, or a positive integer string. For three turns, use `{\"fork_turns\":\"3\"}`; the string content is only `3`, without quote characters. Do not JSON.stringify this field value separately.";
+  const spawnAgent = (forkTurns: Record<string, unknown> = {
+    type: "string",
+    description: originalDescription,
+  }) => ({
+    type: "namespace",
+    name: "collaboration",
+    tools: [{
+      type: "function",
+      name: "spawn_agent",
+      parameters: {
+        type: "object",
+        properties: {
+          fork_turns: forkTurns,
+          message: { type: "string", description: "Task for the child." },
+        },
+        required: ["message"],
+        additionalProperties: false,
+      },
+    }],
+  });
+
+  function build(target: Parameters<typeof createResponsesPassthroughAdapter>[0], body: Record<string, unknown>) {
+    return JSON.parse(createResponsesPassthroughAdapter(target).buildRequest({
+      modelId: body.model as string,
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: body,
+    }, { headers: new Headers() }).body) as Record<string, unknown>;
+  }
+
+  test("adds one exact field-level instruction before third-party namespace lowering without changing the caller catalog", () => {
+    const body = {
+      model: "glm-5.3-flash",
+      tool_choice: { type: "function", namespace: "collaboration", name: "spawn_agent" },
+      tools: [
+        spawnAgent(),
+        { type: "namespace", name: "foreign", tools: [{ type: "function", name: "spawn_agent", parameters: { type: "object", properties: { fork_turns: { type: "string", description: "foreign namespace" } } } }] },
+      ],
+      input: [],
+    };
+    const original = structuredClone(body);
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "test" };
+
+    const wire = build(target, body);
+    const tools = wire.tools as Array<Record<string, unknown>>;
+    const native = tools.find(tool => tool.name === "collaboration__spawn_agent");
+    const properties = (native?.parameters as { properties: Record<string, Record<string, unknown>> }).properties;
+
+    expect(properties.fork_turns?.description).toBe(`${originalDescription}\n\n${forkTurnsGuidance}`);
+    expect(properties.message).toEqual({ type: "string", description: "Task for the child." });
+    expect((tools.find(tool => tool.name === "foreign__spawn_agent")?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns?.description)
+      .toBe("foreign namespace");
+    expect(wire.tool_choice).toEqual({ type: "function", name: "collaboration__spawn_agent" });
+    expect(body).toEqual(original);
+    expect(build(target, body)).toEqual(wire);
+  });
+
+  test("leaves OpenAI destinations and ref-constrained fork_turns declarations unchanged", () => {
+    const ref = { $ref: "#/$defs/fork_turns", description: originalDescription };
+    const body = {
+      model: "gpt-5.6-sol",
+      tools: [spawnAgent(ref)],
+      input: [],
+      $defs: { fork_turns: { type: "string" } },
+    };
+
+    const thirdParty = build({ adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key", apiKey: "test" }, body);
+    const official = build({ adapter: "openai-responses", baseUrl: "https://api.openai.com/v1", authMode: "key", apiKey: "test" }, {
+      ...body,
+      tools: [spawnAgent()],
+    });
+
+    expect(((thirdParty.tools as Array<Record<string, unknown>>)[0]?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns)
+      .toEqual(ref);
+    expect((((official.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent")?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns?.description))
+      .toBe(originalDescription);
+  });
+
+  test("adds the same instruction to a current Responses Lite additional_tools declaration", () => {
+    const wire = build({ adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key", apiKey: "test" }, {
+      model: "glm-5.3-flash",
+      input: [{ type: "additional_tools", tools: [spawnAgent()] }],
+    });
+    const additional = (wire.input as Array<Record<string, unknown>>).find(item => item.type === "additional_tools");
+    const tool = (additional?.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+
+    expect(((tool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+      .toBe(`${originalDescription}\n\n${forkTurnsGuidance}`);
+  });
+
+  test("does not describe constrained string variants as the native fork_turns contract", () => {
+    for (const forkTurns of [
+      { type: "string", description: originalDescription, enum: ["none"] },
+      { type: "string", description: originalDescription, pattern: "^x$" },
+      { type: ["string", "null"], description: originalDescription },
+    ]) {
+      const wire = build({ adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key", apiKey: "test" }, {
+        model: "glm-5.3-flash", tools: [spawnAgent(forkTurns)], input: [],
+      });
+      const tool = (wire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+      expect(((tool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+        .toBe(originalDescription);
+    }
+  });
+
+  test("does not add guidance when tool_choice hides spawn_agent", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "test" };
+    const other = { type: "function", name: "get_state", parameters: { type: "object", properties: {} } };
+    for (const tool_choice of [
+      "none",
+      { type: "function", name: "get_state" },
+      { type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "get_state" }] },
+    ]) {
+      const wire = build(target, { model: "glm-5.3-flash", tool_choice, tools: [spawnAgent(), other], input: [] });
+      const tool = (wire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+      expect(((tool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+        .toBe(originalDescription);
+    }
+  });
+
+  test("does not overwrite an unknown description or add a wider claim beside root composition", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "test" };
+    const nonStringDescription = { source: "foreign schema" };
+    const nonStringWire = build(target, { model: "glm-5.3-flash", tools: [spawnAgent({ type: "string", description: nonStringDescription })], input: [] });
+    const nonStringTool = (nonStringWire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+    expect(((nonStringTool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+      .toEqual(nonStringDescription);
+
+    const composedWire = build(target, {
+      model: "glm-5.3-flash",
+      tools: [{
+        type: "namespace",
+        name: "collaboration",
+        tools: [{ type: "function", name: "spawn_agent", parameters: {
+          type: "object",
+          properties: { fork_turns: { type: "string", description: originalDescription } },
+          allOf: [],
+        } }],
+      }],
+      input: [],
+    });
+    const composedTool = (composedWire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+    expect(((composedTool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+      .toBe(originalDescription);
+  });
+});
+
 describe("native routed code-mode result visibility", () => {
   const routed = { adapter: "openai-responses", baseUrl: "https://api.x.ai/v1", authMode: "key" as const };
   const exec = { type: "custom", name: "exec", description: "Run JavaScript in a V8 isolate." };
