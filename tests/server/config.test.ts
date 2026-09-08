@@ -1066,8 +1066,10 @@ describe("opencodex config defaults", () => {
 
     const recovery = {
       enabled: true,
-      model: "gpt-5.6-sol",
-      timeoutMs: 45_000,
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
+      timeoutMs: 120_000,
+      maxRetries: 2,
       cacheEntries: 200,
     };
     writeConfig({ ...base, agentTaskRecovery: recovery });
@@ -1081,8 +1083,11 @@ describe("opencodex config defaults", () => {
       true,
       { enabled: "true" },
       { enabled: true, model: " " },
+      { enabled: true, reasoningEffort: "unsupported" },
       { enabled: true, timeoutMs: 999 },
       { enabled: true, timeoutMs: 120_001 },
+      { enabled: true, maxRetries: -1 },
+      { enabled: true, maxRetries: 3 },
       { enabled: true, cacheEntries: 0 },
       { enabled: true, cacheEntries: 513 },
       { enabled: true, url: "https://attacker.example/responses" },

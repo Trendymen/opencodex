@@ -192,14 +192,25 @@ Admission and retention are deliberately narrow:
   and `accept` itself, and no other caller headers cross this boundary;
 - recovered plaintext is never logged or persisted; the process-local cache is credential-, parent-
   thread-, and ciphertext-scoped, expires after 15 minutes, and is bounded by both configured entry
-  count (200 by default, 512 maximum) and 8 MiB total;
-- only a current, complete `NEW_TASK` envelope with matching `author`, `recipient`, task name, and
-  sender; exactly one encrypted part; and no plaintext task body may use the backend-ciphertext
-  branch. Reasoning, compaction, history, ordinary `gAAAA…` text, malformed envelopes, and combo
+  count (200 by default, 512 maximum) and 8 MiB total. A timed-out parent `MESSAGE` stores only a
+  scoped 15-minute timeout marker, never its plaintext or ciphertext;
+- only a current, complete envelope with matching `author`, `recipient`, task name, and sender;
+  exactly one encrypted part; and no plaintext task body may use recovery. The native replay branch
+  remains limited to strict `NEW_TASK`; the routed-parent exception below is limited to an admitted
+  strict `MESSAGE`. Reasoning, compaction, ordinary `gAAAA…` text, malformed envelopes, and combo
   attempts cannot activate it;
-- any malformed envelope, failed recovery, timeout, or validation failure preserves the existing
-  terminal response or fail-closed error; client cancellation returns 499. Neither path forwards
-  ciphertext to the routed provider.
+- each recovery request uses `gpt-5.6-luna` with `reasoning.effort: "medium"` by default. An
+  attempt may run for 120 seconds. After response headers arrive, first-byte and inactivity stalls
+  remain capped at 45 seconds. Only a timeout is retried, with at most two retries after the first attempt; HTTP
+  refusal, invalid output, admission denial, and cancellation are terminal;
+- malformed envelopes, failed recovery, and validation failure preserve the existing terminal
+  response or fail-closed error; client cancellation returns 499. Neither path forwards ciphertext
+  to the routed provider. An admitted routed-parent `MESSAGE` whose timeout retries are exhausted
+  is the sole exception: opencodex replaces that item for the current request with a non-persistent
+  notice that names the sender, asks the parent to request up to two resends, then to use its
+  available child-result reading path or wait for completion. The notice never claims the message
+  was read or reviewed and never includes ciphertext. A later current copy of that same message may
+  start recovery again.
 
 ### Threat model
 
@@ -219,8 +230,10 @@ model output rather than authenticated plaintext.
 {
   "agentTaskRecovery": {
     "enabled": true,
-    "model": "gpt-5.6-sol",
-    "timeoutMs": 45000,
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "timeoutMs": 120000,
+    "maxRetries": 2,
     "cacheEntries": 200
   }
 }
