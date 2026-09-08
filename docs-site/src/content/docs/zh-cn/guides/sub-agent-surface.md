@@ -94,6 +94,8 @@ opencodex 会安全失败，而不是转发空任务或不可读任务：
 
 同一个开关也覆盖路由父任务收到 worker 加密 `MESSAGE` 的情况，不要求当前请求本身是 spawned child。恢复仍须通过既有 admission、缓存作用域和严格消息 envelope 校验。
 
+默认恢复请求使用 `gpt-5.6-luna` 和 `reasoning.effort: "medium"`。每次请求最多运行 120 秒；收到响应头之后，首字节和空闲停滞仍限制为 45 秒。只有超时会重试，首次之后最多两次。已准入的父 `MESSAGE` 耗尽这些重试后，opencodex 会发送一条不持久化的通知，让父任务先要求对应子 agent 最多重新发送两次；仍失败时，通过当前可用的子 agent 结果读取能力取得最终回复，或等待其完成。通知不包含密文，也不会声称已经读取或审查消息。其他恢复失败、错误 envelope 和取消仍保持原来的失败关闭行为。
+
 同一个开关也控制一条更窄的原生兜底：当当前子任务是完整且严格匹配路由头的后端密文 `NEW_TASK`，并且规范原生 ChatGPT 子级已经耗尽现有的 pre-output transient 5xx 重试后仍失败时，opencodex 才会恢复明文，并对**同一个原生目标**仅重发一次。原生子级正常成功时不会预先 recovery；开关关闭时不会分类、不会发送 recovery 请求，也不会增加重试或缓存副作用。推理、压缩、历史消息、普通 `gAAAA…` 文本、不完整/不匹配的 envelope 和 combo 都不能触发此路径。recovery 失败时会保留原本的终态响应；路由子级的失败仍保持 `unreadable_encrypted_agent_task`。详见[英文配置参考](/reference/configuration/agents/#encrypted-v2-task-recovery)。
 
 ## 更改模式
