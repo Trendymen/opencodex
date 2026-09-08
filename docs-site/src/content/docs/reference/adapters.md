@@ -168,6 +168,11 @@ of the HTTP retry loop.
   their matching outputs so every call stays in the reasoning-bearing assistant turn. Tolerant
   providers and ambiguous duplicate, missing, or out-of-order call IDs keep their original input order.
 
+- A repairable tool output without a usable `call_id` becomes a user message. Its marker uses only
+  validated structured `namespace` and `name`; ordinary tools keep their available source, while
+  known cross-task and delegation outputs use dedicated labels. It states that call identification is
+  unavailable only when no usable source remains. Tool-output text never decides the label.
+
 - `forward` URL → `{baseUrl}/responses`. A `key` provider defaults to the legacy `{baseUrl}/v1/responses` construction.
 - A `key` provider may set a validated relative `responsesPath`; the adapter removes one trailing slash from `baseUrl` and sends `{trimmedBaseUrl}{responsesPath}`. For Ark Agent Plan, use `baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3"` with `responsesPath: "/responses"`.
 - In `forward` mode only a safe header allowlist is relayed (`FORWARD_HEADERS`): authorization,

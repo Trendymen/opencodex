@@ -6575,7 +6575,7 @@ async function handleResponsesInner(
   // This CANNOT move into the schema. parseRequest (:2812) runs before the passthrough branch
   // (:3719), so a parse-time rejection would also kill forward/key passthrough and routed
   // compaction — paths that never read context.messages, build from _rawBody, and already
-  // degrade an unpaired output to "[tool output for unknown call]" on their own.
+  // degrade an unpaired output to "[Tool output without call identification]" on their own.
   //
   // Keyed on the adapter, not on position: routedCompaction skips the passthrough branch above
   // yet still builds from _rawBody (see the :3703 comment).
