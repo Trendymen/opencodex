@@ -25,6 +25,13 @@ import { INTERNAL_DEADLINE_MS, SERVER_BUDGET_MS } from "../helpers/test-budget";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
+// 本文件验证 HTTP/SSE 重放；WS 构造拒绝后进入已有 HTTP fallback，不访问外网。
+class SseOnlyWebSocket {
+  constructor() {
+    throw new Error("HTTP/SSE replay fixture does not open WebSockets");
+  }
+}
 const previousOpencodexHome = process.env.OPENCODEX_HOME;
 const previousApiToken = process.env.OPENCODEX_API_AUTH_TOKEN;
 const EXPIRED_AGE_MS = 2 * 60 * 60 * 1_000;
@@ -263,6 +270,7 @@ async function runForwardScenario(
 }
 
 beforeEach(() => {
+  globalThis.WebSocket = SseOnlyWebSocket as unknown as typeof WebSocket;
   testHome = mkdtempSync(join(tmpdir(), "ocx-issue-702-"));
   process.env.OPENCODEX_HOME = testHome;
   delete process.env.OPENCODEX_API_AUTH_TOKEN;
@@ -273,6 +281,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  globalThis.WebSocket = originalWebSocket;
   clearResponseStateForTests();
   setResponseStateByteCapForTests(null);
   resetSubagentModelFallbackStateForTests();
