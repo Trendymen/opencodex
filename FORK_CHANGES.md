@@ -11,6 +11,14 @@
 
 ## 当前运行时差异
 
+### Codex 官方转发的 HTTP Responses Lite 元数据
+
+在上游已有的 Codex 请求头转发与 WebSocket metadata 处理上，Fork 补充 HTTP 入站 Lite 标识到出站 body 的映射：使用 Codex 账号转发到官方 ChatGPT 后端时，若 `x-openai-internal-codex-responses-lite` 请求头为 `true`，将缺失的 `client_metadata.ws_request_header_x_openai_internal_codex_responses_lite` 补为字符串 `"true"`，使上游 WebSocket `response.create` 帧保留该标识。
+保留已有 metadata 字段和显式 Lite 值，不修改调用方原始 body；请求头缺失或值不是 `true`、已存在的 `client_metadata` 不是普通对象时不补写。公共 OpenAI API-key 提供方与第三方 forward 不参与此映射。
+
+代码：`src/adapters/openai-responses.ts` 的 `addCanonicalForwardResponsesLiteMetadata()`。
+测试：`tests/codex-integration/codex-responses-lite-metadata.test.ts`，覆盖请求头转发、映射边界、原始输入保真与上游 WebSocket 帧；使用模拟 WebSocket，不代表真实服务端验收。
+
 ### 模型家族与官方目的地判断
 
 模型家族与请求目的地分别判断：共用 `src/providers/openai-model-identity.ts` 的具名函数，保留原生路由、保留别名、清理候选各自的匹配范围，不把第三方托管的 GPT 模型视为官方服务。官方 Responses 目的地按实际请求 URL 判断，第三方消息兼容另要求非 GPT/OpenAI 模型族。
