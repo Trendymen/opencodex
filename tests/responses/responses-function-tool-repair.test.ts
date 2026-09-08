@@ -6,6 +6,7 @@ import {
   repairFunctionCalls,
   repairFunctionCallsInJson,
 } from "../../src/responses/function-call-compat";
+import { addSpawnAgentForkTurnsGuidance } from "../../src/fork/spawn-agent-compat";
 import { createResponsesFunctionToolRepairBlockRewrite } from "../../src/server/responses-function-tool-repair";
 import { createTranslatorBudget, TranslatorBudgetExceededError } from "../../src/lib/translator-budget";
 import { sseDataPayload } from "../../src/server/sse-payload-rewrite";
@@ -192,6 +193,154 @@ describe("original function declaration authority", () => {
 });
 
 describe("pure function completion repair", () => {
+  test("unwraps one JSON-quoted fork_turns value only for the declared native collaboration tool", () => {
+    const spawnAgent = {
+      type: "namespace",
+      name: "collaboration",
+      tools: [{
+        type: "function",
+        name: "spawn_agent",
+        parameters: {
+          type: "object",
+          properties: {
+            fork_turns: { type: "string" },
+            message: { type: "string" },
+          },
+        },
+      }],
+    };
+    const map = collectFunctionCallRepairSchemas({ tools: [spawnAgent] });
+    const withQuotedValue = (forkTurns: string, extra: Record<string, unknown> = {}) => item(JSON.stringify({
+      fork_turns: forkTurns,
+      message: "keep \"quotes\" and\na newline",
+      ...extra,
+    }), { name: "spawn_agent", namespace: "collaboration" });
+
+    for (const [quoted, expected] of [["\"3\"", "3"], ["\"none\"", "none"], ["\"all\"", "all"]]) {
+      expect(repairFunctionCalls(withQuotedValue(quoted), map).value).toEqual(withQuotedValue(expected));
+    }
+    const legal = withQuotedValue("3");
+    expect(repairFunctionCalls(legal, map)).toEqual({ value: legal, changed: false });
+
+    const quotedThree = withQuotedValue("\"3\"");
+    expect(repairFunctionCalls({ type: "response.output_item.done", item: quotedThree }, map).value)
+      .toEqual({ type: "response.output_item.done", item: withQuotedValue("3") });
+    expect(repairFunctionCalls({ type: "response.completed", response: { output: [quotedThree] } }, map).value)
+      .toEqual({ type: "response.completed", response: { output: [withQuotedValue("3")] } });
+    expect(JSON.parse(repairFunctionCallsInJson(JSON.stringify({ status: "completed", output: [quotedThree] }), map)))
+      .toEqual({ status: "completed", output: [withQuotedValue("3")] });
+
+    for (const invalid of ["\"0\"", "\"-1\"", "\"1.5\"", "\" 3\"", "\"03\"", "\"9007199254740992\"", "\"\"3\"\"", JSON.stringify(JSON.stringify("3"))]) {
+      const value = withQuotedValue(invalid);
+      expect(repairFunctionCalls(value, map)).toEqual({ value, changed: false });
+    }
+    const unsafe = withQuotedValue("\"3\"", { sibling: 9007199254740993 });
+    expect(repairFunctionCalls(unsafe, map)).toEqual({ value: unsafe, changed: false });
+  });
+
+  test("replaces only the top-level fork_turns token without rounding sibling numbers or nested values", () => {
+    const spawnAgent = {
+      type: "namespace", name: "collaboration", tools: [{
+        type: "function", name: "spawn_agent", parameters: { type: "object", properties: { fork_turns: { type: "string" } } },
+      }],
+    };
+    const map = collectFunctionCallRepairSchemas({ tools: [spawnAgent] });
+    const rawArguments = [
+      '{',
+      '  "fork_turns":"\\\"3\\\"",',
+      '  "fraction":0.1234567890123456789,',
+      '  "underflow":1e-400,',
+      '  "negative_zero":-0,',
+      '  "nested":{"fork_turns":"\\\"all\\\""},',
+      '  "text":"a fork_turns key inside text"',
+      '}',
+    ].join("\n");
+    const expected = [
+      '{',
+      '  "fork_turns":"3",',
+      '  "fraction":0.1234567890123456789,',
+      '  "underflow":1e-400,',
+      '  "negative_zero":-0,',
+      '  "nested":{"fork_turns":"\\\"all\\\""},',
+      '  "text":"a fork_turns key inside text"',
+      '}',
+    ].join("\n");
+    const value = item(rawArguments, { name: "spawn_agent", namespace: "collaboration" });
+
+    expect(repairFunctionCalls(value, map).value).toEqual({ ...value, arguments: expected });
+  });
+
+  test("keeps duplicate decoded top-level fork_turns keys unchanged", () => {
+    const spawnAgent = {
+      type: "namespace", name: "collaboration", tools: [{
+        type: "function", name: "spawn_agent", parameters: { type: "object", properties: { fork_turns: { type: "string" } } },
+      }],
+    };
+    const map = collectFunctionCallRepairSchemas({ tools: [spawnAgent] });
+    for (const argumentsText of [
+      '{"fork_turns":"\\\"3\\\"","fork_turns":"\\\"all\\\""}',
+      '{"fork_turns":"\\\"all\\\"","fork_turns":"\\\"3\\\""}',
+      '{"fork_turns":"\\\"3\\\"","f\\u006frk_turns":"\\\"all\\\""}',
+      '{"f\\u006frk_turns":"\\\"all\\\"","fork_turns":"\\\"3\\\""}',
+    ]) {
+      const value = item(argumentsText, { name: "spawn_agent", namespace: "collaboration" });
+      expect(repairFunctionCalls(value, map)).toEqual({ value, changed: false });
+    }
+  });
+
+  test("detects duplicate fork_turns before sibling number-to-string repair rewrites their raw keys", () => {
+    const spawnAgent = {
+      type: "namespace", name: "collaboration", tools: [{
+        type: "function", name: "spawn_agent", parameters: { type: "object", properties: {
+          fork_turns: { type: "string" }, message: { type: "string" },
+        } },
+      }],
+    };
+    const map = collectFunctionCallRepairSchemas({ tools: [spawnAgent] });
+    for (const argumentsText of [
+      '{"fork_turns":"\\\"all\\\"","fork_turns":"\\\"3\\\"","message":4}',
+      '{"fork_turns":"\\\"all\\\"","f\\u006frk_turns":"\\\"3\\\"","message":4}',
+    ]) {
+      const value = item(argumentsText, { name: "spawn_agent", namespace: "collaboration" });
+      const result = repairFunctionCalls(value, map).value as { arguments: string };
+      expect(JSON.parse(result.arguments)).toEqual({ fork_turns: '"3"', message: "4" });
+    }
+  });
+
+  test("does not authorize fork_turns repair for hidden, foreign, or ambiguous declarations", () => {
+    const parameters = { type: "object", properties: { fork_turns: { type: "string" } } };
+    const call = item('{"fork_turns":"\\\"3\\\""}', { name: "spawn_agent", namespace: "collaboration" });
+    const bodies = [
+      { tool_choice: "none", tools: [{ type: "namespace", name: "collaboration", tools: [{ type: "function", name: "spawn_agent", parameters }] }] },
+      { tools: [{ type: "namespace", name: "foreign", tools: [{ type: "function", name: "spawn_agent", parameters }] }] },
+      { tools: [{ type: "namespace", name: "collaboration", tools: [{ type: "function", name: "spawn_agent", parameters: { type: "object", properties: { fork_turns: { type: "string", pattern: "^x$" } } } }] }] },
+      { tools: [{ type: "namespace", name: "collaboration", tools: [{ type: "function", name: "spawn_agent", parameters: { type: "object", properties: { fork_turns: { type: "string" } }, allOf: [] } }] }] },
+      { tools: [
+        { type: "namespace", name: "collaboration", tools: [{ type: "function", name: "spawn_agent", parameters }] },
+        { type: "namespace", name: "collaboration", tools: [{ type: "function", name: "spawn_agent", parameters: { type: "object", properties: { fork_turns: { type: "string", pattern: "^x$" } } } }] },
+      ] },
+    ];
+    for (const body of bodies) {
+      const map = collectFunctionCallRepairSchemas(body);
+      expect(repairFunctionCalls(call, map)).toEqual({ value: call, changed: false });
+    }
+  });
+
+  test("keeps equivalent native spawn_agent declarations equally authorized for outbound guidance", () => {
+    const tool = () => ({
+      type: "function",
+      name: "spawn_agent",
+      parameters: { type: "object", properties: { fork_turns: { type: "string", description: "Original." } } },
+    });
+    const body = { tools: [{ type: "namespace", name: "collaboration", tools: [tool(), tool()] }] };
+    const enriched = addSpawnAgentForkTurnsGuidance(body, collectFunctionCallRepairSchemas(body)) as typeof body;
+    const declarations = enriched.tools[0]!.tools;
+
+    expect(declarations.map(tool => (tool.parameters.properties.fork_turns as { description: string }).description))
+      .toEqual([expect.stringContaining("This field's JSON type is string."), expect.stringContaining("This field's JSON type is string.")]);
+    expect(collectFunctionCallRepairSchemas(enriched).size).toBe(1);
+  });
+
   test("repairs integer/string arguments and explicit completed empty arguments", () => {
     expect(repairedItem(raw)).toEqual(item(canonical));
     expect(repairedItem("", { name: "get_state" })).toEqual(item("{}", { name: "get_state" }));
@@ -237,6 +386,29 @@ describe("pure function completion repair", () => {
 });
 
 describe("native function completion SSE", () => {
+  test("keeps spawn_agent previews exact and repairs only its completed fork_turns value", () => {
+    const spawnSchemas = collectFunctionCallRepairSchemas({ tools: [{
+      type: "namespace",
+      name: "collaboration",
+      tools: [{ type: "function", name: "spawn_agent", parameters: { type: "object", properties: { fork_turns: { type: "string" } } } }],
+    }] });
+    const quoted = '{"fork_turns":"\\\"3\\\""}';
+    const repaired = '{"fork_turns":"3"}';
+    const call = item("", { name: "spawn_agent", namespace: "collaboration", status: "in_progress" });
+    const rewrite = createResponsesFunctionToolRepairBlockRewrite(spawnSchemas);
+    try {
+      const delta = frame("response.function_call_arguments.delta", { item_id: "fc_one", delta: quoted });
+      expect(rewrite(delta)).toEqual([delta]);
+      expect(rewrite(frame("response.output_item.added", { output_index: 0, item: call }))).toHaveLength(1);
+      const done = rewrite(frame("response.function_call_arguments.done", { item_id: "fc_one", arguments: quoted }));
+      expect(payload(done[0]!)).toMatchObject({ type: "response.function_call_arguments.done", arguments: repaired });
+      const itemDone = rewrite(frame("response.output_item.done", { output_index: 0, item: { ...call, status: "completed", arguments: quoted } }));
+      expect(payload(itemDone[0]!).item).toMatchObject({ arguments: repaired });
+      const terminal = rewrite(frame("response.completed", { response: { output: [{ ...call, status: "completed", arguments: quoted }] } }));
+      expect(payload(terminal[0]!).response).toMatchObject({ output: [{ arguments: repaired }] });
+    } finally { rewrite.dispose?.(); }
+  });
+
   test("keeps previews exact and repairs every authoritative completion without synthetic deltas", () => {
     const budget = createTranslatorBudget();
     const rewrite = createResponsesFunctionToolRepairBlockRewrite(schemas, budget);
@@ -405,6 +577,60 @@ test("native Responses JSON/SSE and replay share the original function schema re
       const followup = await handleResponses(request({ previous_response_id: previous, input: [{ type: "function_call_output", call_id: "call_wait", output: "done" }] }), config, { model: "", provider: "" });
       await followup.text();
       expect(captured?.input?.find(item => item.type === "function_call" && item.call_id === "call_wait")?.arguments).toBe(expected);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("native Responses JSON/SSE and replay share spawn_agent fork_turns repair", async () => {
+  const originalFetch = globalThis.fetch;
+  const expected = '{"fork_turns":"3"}';
+  const output = { type: "function_call", id: "fc_spawn", call_id: "call_spawn", name: "spawn_agent", namespace: "collaboration", arguments: '{"fork_turns":"\\\"3\\\""}', status: "completed" };
+  const tools = [{ type: "namespace", name: "collaboration", tools: [{
+    type: "function", name: "spawn_agent", parameters: { type: "object", properties: { fork_turns: { type: "string" } } },
+  }] }];
+  const config = {
+    port: 0, defaultProvider: "fixture",
+    providers: { fixture: { adapter: "openai-responses", baseUrl: "https://spawn-function-parity.invalid/v1", authMode: "key", apiKey: "fixture-key" } },
+  } as OcxConfig;
+  let activeId = "";
+  let captured: { input?: Array<Record<string, unknown>> } | undefined;
+  const sse = (type: string, payload: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...payload })}\n\n`;
+  globalThis.fetch = (async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (!url.startsWith("https://spawn-function-parity.invalid/")) throw new Error("unexpected spawn parity fixture destination");
+    const body = JSON.parse(String(init?.body));
+    captured = body;
+    const response = { id: activeId, status: "completed", output: [output] };
+    return body.stream ? new Response([
+      sse("response.output_item.added", { output_index: 0, item: { ...output, arguments: "", status: "in_progress" } }),
+      sse("response.function_call_arguments.delta", { output_index: 0, item_id: output.id, delta: output.arguments }),
+      sse("response.function_call_arguments.done", { output_index: 0, item_id: output.id, arguments: output.arguments }),
+      sse("response.output_item.done", { output_index: 0, item: output }),
+      sse("response.completed", { response }), "data: [DONE]\n\n",
+    ].join(""), { headers: { "content-type": "text/event-stream" } }) : Response.json(response);
+  }) as typeof fetch;
+  try {
+    for (const stream of [false, true]) {
+      activeId = `resp_spawn_${crypto.randomUUID()}`;
+      const request = (extra: object = {}) => new Request("http://localhost/v1/responses", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "fixture/grok-probe", stream, input: [{ role: "user", content: "synthetic" }], tools, ...extra }),
+      });
+      const response = await handleResponses(request(), config, { model: "", provider: "" });
+      expect(response.status).toBe(200);
+      const raw = await response.text();
+      if (stream) {
+        const events = raw.split("\n").filter(line => line.startsWith("data:") && !line.includes("[DONE]")).map(line => JSON.parse(line.slice(5)));
+        expect(events.find(event => event.type === "response.function_call_arguments.delta")?.delta).toBe(output.arguments);
+        expect(events.find(event => event.type === "response.function_call_arguments.done")?.arguments).toBe(expected);
+        expect(events.find(event => event.type === "response.output_item.done")?.item.arguments).toBe(expected);
+        expect(events.find(event => event.type === "response.completed")?.response.output[0].arguments).toBe(expected);
+      } else expect(JSON.parse(raw).output[0].arguments).toBe(expected);
+      const previous = activeId;
+      activeId = `resp_spawn_followup_${crypto.randomUUID()}`;
+      const followup = await handleResponses(request({ previous_response_id: previous, input: [{ type: "function_call_output", call_id: "call_spawn", output: "done" }] }), config, { model: "", provider: "" });
+      await followup.text();
+      expect(captured?.input?.find(item => item.type === "function_call" && item.call_id === "call_spawn")?.arguments).toBe(expected);
     }
   } finally { globalThis.fetch = originalFetch; }
 });
