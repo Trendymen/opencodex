@@ -9,6 +9,7 @@ import {
   structurallyValidFernetTokens,
 } from "../../src/server/responses/encrypted-payload";
 import type { OcxConfig } from "../../src/types";
+import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
 
 const originalFetch = globalThis.fetch;
 
@@ -207,8 +208,12 @@ describe("fork V2 strict backend ciphertext envelope guard", () => {
     const config = mixedComboConfig();
     config.agentTaskRecovery = { enabled: true };
     const fetchedUrls: string[] = [];
-    globalThis.fetch = (async input => {
+    const nativeToken = fakeChatGptJwt({ chatgpt_account_id: "native-combo-caller" });
+    const forwardedAuth: Array<{ authorization: string | null; account: string | null }> = [];
+    globalThis.fetch = (async (input, init) => {
       fetchedUrls.push(String(input));
+      const headers = new Headers(init?.headers);
+      forwardedAuth.push({ authorization: headers.get("authorization"), account: headers.get("chatgpt-account-id") });
       return Response.json({
         id: "resp_combo_backend_native",
         object: "response",
@@ -222,12 +227,13 @@ describe("fork V2 strict backend ciphertext envelope guard", () => {
     const response = await post(config, "combo/mixed", agentMessage([
       { type: "input_text", text: ROUTING_ENVELOPE },
       { type: "encrypted_content", encrypted_content: BACKEND_TASK },
-    ]), { authorization: "Bearer caller-codex-token" });
+    ]), { authorization: `Bearer ${nativeToken}`, "chatgpt-account-id": "native-combo-caller" });
 
     expect(response.status).toBe(200);
     expect(fetchedUrls).toHaveLength(1);
     expect(fetchedUrls[0]).toContain("chatgpt.com/backend-api/codex");
     expect(fetchedUrls[0]).not.toContain("api.x.ai");
+    expect(forwardedAuth).toEqual([{ authorization: `Bearer ${nativeToken}`, account: "native-combo-caller" }]);
   });
 
 });
