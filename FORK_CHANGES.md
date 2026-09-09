@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.48.0`（`9a27e86992d7a014e0aa92c046199b9fac148201`）。
+- 上游基线：`v2.49.0`（`2f3f736299dca38861f8fb9c4326a4b4d7c664bc`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -34,6 +34,7 @@ Fork 补充第三方 Responses 的消息转换，并保留以下 schema 和历�
 - 对拒绝 assistant prefill 的第三方 Responses 请求补尾部 user turn；OpenAI 运营目的地与 GPT 模型族硬排除。Volcengine 历史中的空 assistant text 会先清理，保留 refusal、非文本 part 和其他有效字段。
 
 普通第三方 Responses（含智谱 GLM）还会在最终 `function.parameters` 中清理 ChatGPT 专用的 `encrypted` 注解，覆盖顶层工具、namespace 降低后的工具和 `additional_tools`。保留名为 `encrypted` 的属性、定义及 literal values，不修改 App 原始 schema；无注解时序列化保持不变。
+官方 `stripUnicodePropertyPatterns()` 先处理不兼容的 schema pattern；Fork 在其结果上按原有条件清理 `encrypted`，不恢复已移除的 pattern，也不扩大注解清理范围。
 OpenAI 运营目标，以及显式设置 `allowEncryptedV2AgentTasks=true` 的 key-auth 直接 relay 保留注解。combo 成员不继承该直接路由例外，发送前刷新 key selection 后仍执行清理，原 route/global 配置保持不变。
 这项清理不改变密文 guard、strict-backend 分类或 recovery/auth，也不保证恢复旧异常密文。真实 GLM 小型请求已验证注解清理和明文工具参数，尚不代表 Codex App 子任务全链路验收。
 
@@ -222,6 +223,8 @@ Fork Tag 不可变，同基线 revision 单调，官方 Tag 必须保持原 type
 测试：`tests/update/fork-version-policy.test.ts`、`tests/update/fork-update-downgrade.test.ts`、`tests/update/fork-update-monotonicity.test.ts`、`tests/ci-workflows/bump-dev-version.test.ts`、`tests/ci-workflows/release-version-line.test.ts`。
 
 ### 测试、CI 与维护规则
+
+Fork 暂时固定 Bun 与 `@types/bun` 为 `1.4.0`，lockfile、Docker 镜像和显式 workflow 版本同步。官方 `v2.49.0` 固定的 `1.4.2` 在本机默认并发门禁中重复发生 `SIGSEGV`，干净官方基线也复现；用户已授权这一运行时差异。该现象不证明其他平台同样失败，升级前需重新验证。
 
 沿用上游 domain 布局、runner、并发、shard 和 timeout。Fork 保留 launcher/update 的真实 Node executable 与 PATH 可用性检查，以及 Responses state 的定向回归，不维护旧 runner 拓扑。
 HTTP/SSE fixture 显式隔离 canonical ChatGPT 上游 WebSocket，避免真实外网握手影响本地测试；需要本地 WebSocket 的鉴权与 profile admission 测试保留真实客户端。共享隔离入口为 `tests/helpers/http-only-codex-websocket.ts`，不改变产品的 WS 选择或回退行为。
