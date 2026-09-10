@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { appendDebugLogLine, getDebugLogEntries, resetDebugLogBufferForTests } from "../../src/lib/debug-log-buffer";
@@ -7,6 +7,7 @@ import {
   providerDebugLogPath,
   resetProviderDebugWarningForTests,
 } from "../../src/fork/debug-persistence";
+import { removeOwnedConfigState } from "../../src/lib/config-ownership";
 
 let previousHome: string | undefined;
 let testDir = "";
@@ -45,6 +46,21 @@ describe("fork provider debug persistence", () => {
     expect(() => appendDebugLogLine("fork-persist-resilient")).not.toThrow();
     const entries = getDebugLogEntries();
     expect(entries.at(-1)?.line).toBe("fork-persist-resilient");
+  });
+
+  test("refuses an adopted existing debug directory without touching its sentinel", () => {
+    writeFileSync(join(testDir, "runtime-port.json"), "{\"port\":10100}\n");
+    const debugDir = join(testDir, "provider-debug");
+    mkdirSync(debugDir);
+    const sentinel = join(debugDir, "keep.txt");
+    writeFileSync(sentinel, "keep\n");
+
+    appendDebugLogLine("must-not-adopt-debug-directory");
+
+    expect(readFileSync(sentinel, "utf8")).toBe("keep\n");
+    expect(existsSync(providerDebugLogPath())).toBe(false);
+    expect(removeOwnedConfigState(testDir).status).toBe("partial");
+    expect(readFileSync(sentinel, "utf8")).toBe("keep\n");
   });
 
   test("a refused capture warns once per process instead of failing silently", () => {

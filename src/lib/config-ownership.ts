@@ -27,6 +27,7 @@ type ConfigOwner = {
   version: 1;
   ownerId: string;
   root: string;
+  adopted?: true;
 };
 
 type ConfigUninstallManifest = ConfigOwner & {
@@ -98,6 +99,7 @@ const OWNERSHIP_ADOPTION_MARKERS = [
 const ownershipCache = new Map<string, {
   owner: ConfigOwner;
   manifest: ConfigUninstallManifest;
+  adopted?: boolean;
 } | null>();
 let lastReconciledGeneration = 0;
 
@@ -111,6 +113,11 @@ export function listLiveConfigOwnershipRoots(currentConfigDir: string): Readonly
     }
   }
   return roots;
+}
+
+export function resetConfigOwnershipForTests(): void {
+  ownershipCache.clear();
+  lastReconciledGeneration = 0;
 }
 
 export function reconcileConfigOwnershipRoots(context: GenerationContext): number {
@@ -154,7 +161,8 @@ function isOwner(value: unknown): value is ConfigOwner {
   return owner.version === 1
     && typeof owner.ownerId === "string"
     && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(owner.ownerId)
-    && typeof owner.root === "string";
+    && typeof owner.root === "string"
+    && (owner.adopted === undefined || owner.adopted === true);
 }
 
 function isManifest(value: unknown): value is ConfigUninstallManifest {
@@ -208,6 +216,7 @@ function loadOwnership(configDir: string): { owner: ConfigOwner; manifest: Confi
       !isOwner(owner)
       || !isManifest(manifest)
       || owner.ownerId !== manifest.ownerId
+      || owner.adopted !== manifest.adopted
       || !samePath(owner.root, root)
       || !samePath(manifest.root, root)
     ) return null;
@@ -266,7 +275,7 @@ function adoptOwnership(configDir: string): { owner: ConfigOwner; manifest: Conf
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
     const names = readdirSync(configDir);
     if (!OWNERSHIP_ADOPTION_MARKERS.some(marker => names.includes(marker))) return null;
-    owner = { version: 1, ownerId: randomUUID(), root: canonicalRoot(configDir) };
+    owner = { version: 1, ownerId: randomUUID(), root: canonicalRoot(configDir), adopted: true };
   } catch {
     return null;
   }
@@ -339,11 +348,28 @@ export function recordOwnedConfigPath(configDir: string, candidatePath: string):
   }
   let ownership = ownershipCache.get(cacheKey);
   if (ownership === undefined) {
-    ownership = loadOwnership(configDir) ?? createOwnership(configDir) ?? adoptOwnership(configDir);
+    const loaded = loadOwnership(configDir) ?? createOwnership(configDir);
+    const adopted = loaded ? null : adoptOwnership(configDir);
+    ownership = loaded ?? adopted;
     ownershipCache.set(cacheKey, ownership);
   }
   if (!ownership) return false;
   if (ownership.manifest.paths.includes(rel)) return true;
+  if (ownership.owner.adopted === true) {
+    try {
+      const root = canonicalRoot(configDir);
+      const segments = rel.split("/");
+      let current = root;
+      for (let index = 0; index < segments.length; index += 1) {
+        current = join(current, segments[index]!);
+        const entry = lstatSync(current);
+        if (entry.isSymbolicLink() || index === segments.length - 1) return false;
+        if (!entry.isDirectory() || !isWithinRoot(root, realpathSync.native(current))) return false;
+      }
+    } catch (error) {
+      if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) return false;
+    }
+  }
   const manifest = {
     ...ownership.manifest,
     paths: [...ownership.manifest.paths, rel].sort(),
