@@ -7,6 +7,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -205,10 +206,7 @@ describe("Agent Plan Kimi function-tool schema compiler", () => {
     }
   });
 
-  test("claims a catalog directory that predates ownership metadata", () => {
-    // The directory can exist while the home has no ownership metadata (an older
-    // build created it, or the home was copied without the hidden metadata files).
-    // Refusing that combination left this diagnostic silently dead.
+  test("does not claim a catalog directory that predates ownership metadata", () => {
     const catalogDir = join(testHome, "kimi-tool-schema-catalogs");
     mkdirSync(catalogDir, { mode: 0o700 });
     writeFileSync(join(testHome, "runtime-port.json"), '{"port":10100}\n');
@@ -222,11 +220,29 @@ describe("Agent Plan Kimi function-tool schema compiler", () => {
     });
 
     expect(existsSync(join(testHome, CONFIG_OWNER_FILE))).toBe(true);
-    expect(readdirSync(catalogDir).filter(name => name.endsWith(".json"))).toHaveLength(1);
+    expect(readdirSync(catalogDir).filter(name => name.endsWith(".json"))).toHaveLength(0);
     const manifest = JSON.parse(
       readFileSync(join(testHome, CONFIG_UNINSTALL_MANIFEST), "utf8"),
     ) as { paths: string[] };
-    expect(manifest.paths).toContain("kimi-tool-schema-catalogs");
+    expect(manifest.paths).not.toContain("kimi-tool-schema-catalogs");
+  });
+
+  test.skipIf(process.platform === "win32")("preserves adopted catalog links and non-directories", () => {
+    const tools = [functionTool("legacy", { type: "object" })];
+    writeFileSync(join(testHome, "runtime-port.json"), '{"port":10100}\n');
+    const outside = mkdtempSync(join(tmpdir(), "ocx-kimi-catalog-outside-"));
+    const catalogPath = join(testHome, "kimi-tool-schema-catalogs");
+    try {
+      symlinkSync(outside, catalogPath, "dir");
+      persistKimiToolSchemaCatalog({ body: { tools }, provider: arkProvider(), modelId: "kimi-k3", url: ARK_PLAN_URL });
+      expect(readdirSync(outside)).toEqual([]);
+      rmSync(catalogPath);
+      writeFileSync(catalogPath, "keep\n");
+      persistKimiToolSchemaCatalog({ body: { tools }, provider: arkProvider(), modelId: "kimi-k3", url: ARK_PLAN_URL });
+      expect(readFileSync(catalogPath, "utf8")).toBe("keep\n");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   test("oversized or unserializable diagnostic catalogs never write or affect a request", () => {
