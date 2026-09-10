@@ -114,9 +114,10 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 - 按 stable-ID 三方合并，正确处理首次新增、删除最后一行与并发新增；reasoning efforts 规范化，未知 opaque 字段只在内部保存，公开 API/CLI/export 使用已知字段投影。
 - `codexToolMode` 创建时省略为 inherit；更新时省略保留、枚举设置、`null` 清除。CLI 支持 `--tool-mode code_mode_only|shell|inherit`，列表展示存储值。
 - 管理 API 按字段是否存在严格验证 provider、modelId、displayName、contextWindow、modalities、reasoning/default effort 和 tool mode；非法输入在持久化与 catalog 更新前返回 400。
+- 自定义模型替换相同 Provider/模型的发现行时，管理 API 保留官方发现得到的 `pricingStatus`；免费、付费和未分类三种状态不互相替换。该字段只用于管理 API、CLI 和 GUI 筛选，不写入 Codex catalog。
 
 代码：`src/config/custom-models.ts`、`src/config.ts`、`src/server/management/model-routes.ts`，router、catalog、CLI 的窄接线。
-测试：`tests/config/fork-custom-model-config-schema.test.ts`、`tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts`。
+测试：`tests/config/fork-custom-model-config-schema.test.ts`、`tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts`、`tests/codex-integration/catalog-free-pricing-status.test.ts`。
 
 ### Routed custom tool output 字符串化
 
@@ -133,10 +134,11 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 文本样本要求 Provider debug 和独立、默认关闭的 `providerText` 同时开启，可经 `OCX_PROVIDER_TEXT_DEBUG=1`、`ocx debug provider-text on`、API 或 GUI 明确授权。
 样本经脱敏并保存为引用型 artifact；每字符串默认 256B、上限 8KB，UTF-8 安全截断，每轮最多 512 条并受总预算约束。
 持久化统一经 `persistProviderDebugFile()`：单文件 4 MiB、总量 16 MiB、最多 256 文件、保留 7 天。ownership、canonical containment 或安全创建不确定即拒写；拒绝 symlink 与非普通文件。诊断失败不影响 relay。
-Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预算。
+旧版本创建、尚无 ownership 元数据的非空 OpenCodex home，只有存在 `runtime-port.json`、`service-state.json` 等 OpenCodex 运行时标记时才会被收养。新 manifest 从空路径集开始，不声明或删除收养前的文件；只登记之后由 OpenCodex 写入的路径。元数据存在但损坏、没有运行时标记或其他 ownership 检查失败时仍拒写。Provider debug 拒写时每个进程最多输出一次不含内容的告警。
+Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预算；既有目录也必须完成 ownership 登记后才能继续写入。
 
-代码：`src/fork/outbound-debug.ts`、`src/fork/inbound-response-debug.ts`、`src/fork/debug-persistence.ts`、`src/lib/debug-settings.ts`、`src/web-search/passthrough-bridge.ts` 及 CLI/API/GUI 接线。
-测试：`tests/server/fork-debug-persistence.test.ts`、`tests/server/fork-inbound-response-debug.test.ts`、`tests/server/fork-provider-debug-safety.test.ts`、`tests/server/fork-relay-eager-client-observation.test.ts`、`tests/web-search/web-search-passthrough-bridge.test.ts`。
+代码：`src/fork/outbound-debug.ts`、`src/fork/inbound-response-debug.ts`、`src/fork/debug-persistence.ts`、`src/fork/glm-kimi-compat.ts`、`src/lib/config-ownership.ts`、`src/lib/debug-settings.ts`、`src/web-search/passthrough-bridge.ts` 及 CLI/API/GUI 接线。
+测试：`tests/config/config-ownership-uninstall.test.ts`、`tests/providers/fork-kimi-schema-compiler.test.ts`、`tests/server/fork-debug-persistence.test.ts`、`tests/server/fork-inbound-response-debug.test.ts`、`tests/server/fork-provider-debug-safety.test.ts`、`tests/server/fork-relay-eager-client-observation.test.ts`、`tests/web-search/web-search-passthrough-bridge.test.ts`。
 
 ### 第三方 reasoning summary 与 GPT continuation 清理
 
@@ -270,7 +272,7 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 
 - 合成测试和静态断言不替代真实 Provider/Codex App 验收。Standalone web search、真实 minted backend ciphertext + recovery SSE，以及 weekly quota、empty-assistant、custom model 的客户端终态仍需绑定具体实现验证。
 - Reasoning 合成事件没有统一分配新的 `sequence_number`；closed-state 到 terminal teardown 才释放。
-- Provider debug ownership manifest 仍可能随 unique artifact 增长到上限并拒写，不承诺自动压缩。独立 `ocx service repair/install` 可能覆盖本地安装写入的 `OCX_DEBUG=1`。
+- Provider debug ownership manifest 仍可能随 unique artifact 增长到上限并拒写，不承诺自动压缩。旧 home 只有存在已知 OpenCodex 运行时标记时才会被收养；仅含通用 `config.json` 等文件的目录继续拒绝。独立 `ocx service repair/install` 可能覆盖本地安装写入的 `OCX_DEBUG=1`。
 - 安装与恢复的 isolated/unit/static 测试不证明 Windows PowerShell/junction、真实全局替换与服务恢复均已验收。PID reuse、断电持久化及路径检查到 rename/remove 的竞态仍是边界；损坏安装下的 launcher 启动仍需动态验证。
 - Node 缺少通用 `openat`，诊断持久化和安装器的路径防护不能完全排除父目录并发替换。
 - Windows 跳过 package-shaped npm launcher 子进程用例；Bun `runUpdate()` 缺真实 package-shaped smoke。GUI update badge 尚不显示同基线更高 `ben.N`，preview parser 仍是既有单数字形态。
