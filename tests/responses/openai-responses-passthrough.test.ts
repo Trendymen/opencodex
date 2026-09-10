@@ -4540,6 +4540,76 @@ describe("OpenAI Responses forward-mode unsupported param stripping", () => {
   });
 });
 
+describe("configured Responses output budget", () => {
+  const keyProvider = {
+    adapter: "openai-responses",
+    baseUrl: "https://api.deepseek.com",
+    responsesPath: "/responses",
+    authMode: "key" as const,
+    apiKey: "sk-test",
+  };
+  const meta = { headers: new Headers() };
+
+  function build(
+    target: Parameters<typeof createResponsesPassthroughAdapter>[0],
+    body: Record<string, unknown>,
+  ) {
+    return JSON.parse(createResponsesPassthroughAdapter(target).buildRequest({
+      modelId: body.model as string,
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: body,
+    }, meta).body) as Record<string, unknown>;
+  }
+
+  test("fills the provider default when the caller omits the field", () => {
+    // Codex bounds length through reasoning.effort and never sends max_output_tokens, so an
+    // upstream default far below the model ceiling truncates long answers without this fill.
+    const body = build({ ...keyProvider, defaultMaxOutputTokens: 393_216 }, {
+      model: "deepseek-v4-flash",
+      input: "ping",
+    });
+
+    expect(body.max_output_tokens).toBe(393_216);
+  });
+
+  test("a model-specific budget wins over the provider default", () => {
+    const body = build({
+      ...keyProvider,
+      defaultMaxOutputTokens: 100_000,
+      modelMaxOutputTokens: { "deepseek-v4-flash": 393_216 },
+    }, { model: "deepseek-v4-flash", input: "ping" });
+
+    expect(body.max_output_tokens).toBe(393_216);
+  });
+
+  test("an explicit caller value still wins", () => {
+    const body = build({ ...keyProvider, defaultMaxOutputTokens: 393_216 }, {
+      model: "deepseek-v4-flash",
+      input: "ping",
+      max_output_tokens: 5_000,
+    });
+
+    expect(body.max_output_tokens).toBe(5_000);
+  });
+
+  test("a provider without a configured budget keeps the upstream default", () => {
+    const body = build(keyProvider, { model: "deepseek-v4-flash", input: "ping" });
+
+    expect(body).not.toHaveProperty("max_output_tokens");
+  });
+
+  test("forward mode never receives an injected budget", () => {
+    const body = build({ ...provider, defaultMaxOutputTokens: 393_216 }, {
+      model: "gpt-5.6-sol",
+      input: "ping",
+    });
+
+    expect(body).not.toHaveProperty("max_output_tokens");
+  });
+});
+
 describe("replayed compaction blobs", () => {
   type PassthroughProvider = Parameters<typeof createResponsesPassthroughAdapter>[0];
 

@@ -1553,6 +1553,31 @@ function stripUnsupportedForwardParams(body: unknown): unknown {
   return rest;
 }
 
+/**
+ * Fill `max_output_tokens` from the provider's configured output budget when the caller omitted
+ * it. Codex bounds answer length through `reasoning.effort` and never sends this field, so an
+ * upstream whose own default sits far below the model ceiling silently truncates long answers as
+ * `incomplete: max_output_tokens` (DeepSeek's Responses route stops at 65,536 while accepting
+ * 393,216). Opt-in by configuration: a provider that sets neither `modelMaxOutputTokens` nor
+ * `defaultMaxOutputTokens` keeps the upstream default. Precedence matches the Chat wire — a
+ * model-specific budget wins over the provider default, and an explicit caller value always wins
+ * because this only runs when the field is absent. The ChatGPT forward backend rejects the
+ * parameter, so forward mode is never given it.
+ */
+export function applyConfiguredResponsesMaxOutputTokens(
+  body: unknown,
+  provider: Pick<OcxProviderConfig, "defaultMaxOutputTokens" | "modelMaxOutputTokens"> & { authMode?: OcxProviderConfig["authMode"] },
+  modelId: string,
+): unknown {
+  if (!isPlainObject(body)) return body;
+  if (provider.authMode === "forward") return body;
+  if (Object.prototype.hasOwnProperty.call(body, "max_output_tokens")) return body;
+  const configured = modelRecordValue(provider.modelMaxOutputTokens, modelId)
+    ?? provider.defaultMaxOutputTokens;
+  if (configured === undefined) return body;
+  return { ...body, max_output_tokens: configured };
+}
+
 function addCanonicalForwardResponsesLiteMetadata(body: unknown, incoming: IncomingMeta): unknown {
   if (incoming.headers.get("x-openai-internal-codex-responses-lite") !== "true" || !isPlainObject(body)) {
     return body;
@@ -2666,6 +2691,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (parsed._compactionRequest !== true && shouldInjectNonOpenAIToolCatalogNudge(provider)) {
         finalBody = applyRoutedResponsesToolCatalogNudge(finalBody, parsed);
       }
+      // Last body write before serialization: an upstream that caps output far below the model
+      // ceiling truncates long answers unless the caller states a budget, and Codex never does.
+      finalBody = applyConfiguredResponsesMaxOutputTokens(finalBody, provider, parsed.modelId);
       if (isCanonicalOpenAiForwardProvider(provider)) {
         // Spark closes Responses Lite streams before a terminal completion. Select compatibility
         // from the final wire model so aliases cannot leave the caller or a static header enabled.
