@@ -103,9 +103,8 @@ export function persistKimiToolSchemaCatalog(args: {
     const dir = getConfigDir();
     const catalogDir = join(dir, KIMI_TOOL_SCHEMA_CATALOG_DIR);
     const existed = existsSync(catalogDir);
-    // An existing directory can outlive its ownership metadata: an older build created it,
-    // or the home was copied without the hidden metadata files. Claim it here instead of
-    // refusing to write for the rest of that home's life.
+    // An adopted home does not claim a pre-existing catalog container. This diagnostic treats
+    // ownership registration as a write gate, so it leaves that container untouched.
     if (!recordOwnedConfigPath(dir, catalogDir)) return;
     if (!existed) mkdirSync(catalogDir, { mode: 0o700 });
     const entry = lstatSync(catalogDir);
