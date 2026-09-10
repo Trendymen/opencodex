@@ -145,4 +145,32 @@ describe("pricingStatus on the /api/models wire (#3666)", () => {
       clearModelCache(PROVIDER);
     }
   });
+
+  test("a custom replacement keeps discovered pricing only on its management row", async () => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async () => Response.json({
+      data: [
+        { id: "gemma-free", pricing: { prompt: "0", completion: "0" } },
+        { id: "sonnet-paid", pricing: { prompt: "0.000003", completion: "0.000015" } },
+        { id: "unpriced" },
+      ],
+    })) as typeof fetch;
+    const config = fixture();
+    config.customModels = [
+      { id: "custom-free", provider: PROVIDER, modelId: "gemma-free" },
+      { id: "custom-paid", provider: PROVIDER, modelId: "sonnet-paid" },
+      { id: "custom-unpriced", provider: PROVIDER, modelId: "unpriced" },
+    ];
+    try {
+      const rows = await listManagementModelRows(config, { entitlementWaitMs: 0 });
+      const custom = (id: string) => rows.find(row => row.customId === id);
+      expect(custom("custom-free")).toMatchObject({ namespaced: `${PROVIDER}/gemma-free`, pricingStatus: "free" });
+      expect(custom("custom-paid")).toMatchObject({ namespaced: `${PROVIDER}/sonnet-paid`, pricingStatus: "paid" });
+      expect(custom("custom-unpriced")).toBeDefined();
+      expect(Object.hasOwn(custom("custom-unpriced")!, "pricingStatus")).toBe(false);
+    } finally {
+      globalThis.fetch = previousFetch;
+      clearModelCache(PROVIDER);
+    }
+  });
 });

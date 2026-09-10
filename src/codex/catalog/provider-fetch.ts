@@ -2677,6 +2677,9 @@ async function gatherRoutedModelsUncached(
       ...(base.supportsReasoningSummaries === undefined && replaced.supportsReasoningSummaries !== undefined ? { supportsReasoningSummaries: replaced.supportsReasoningSummaries } : {}),
       ...(base.codexToolMode === undefined && replaced.codexToolMode !== undefined ? { codexToolMode: replaced.codexToolMode } : {}),
       ...(base.capabilities === undefined && replaced.capabilities !== undefined ? { capabilities: replaced.capabilities } : {}),
+      ...(base.pricingStatus === undefined && replaced.pricingStatus !== undefined
+        ? { pricingStatus: replaced.pricingStatus }
+        : {}),
       ...(base.routedProgressContractEligible === undefined
         && replaced.routedProgressContractEligible !== undefined
         ? { routedProgressContractEligible: replaced.routedProgressContractEligible }
