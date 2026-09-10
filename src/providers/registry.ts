@@ -2180,8 +2180,12 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     // Official DeepSeek Codex setup (codex-deepseek-setup.sh) advertises 1,048,576
     // for both V4 models; the older 1,000,000 figure was a rounded approximation.
     modelContextWindows: { "deepseek-flash": 1_048_576, "deepseek-v4-flash": 1_048_576, [DEEPSEEK_VISION_PREVIEW_MODEL]: 1_048_576 },
+    // V4 Flash accepted image input on the legacy id in the 2026-09-10 live probe. The official
+    // transition now routes that id to `deepseek-flash`, so both names expose the same modality;
+    // the canonical spelling has not been probed separately after the rename.
     modelInputModalities: {
       "deepseek-flash": ["text", "image"],
+      "deepseek-v4-flash": ["text", "image"],
       [DEEPSEEK_VISION_PREVIEW_MODEL]: ["text", "image"],
     },
     // DeepSeek documents both V4 models as native Responses API models adapted for Codex
@@ -2253,10 +2257,9 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     modelReasoningEffortMap: Object.fromEntries(DEEPSEEK_NATIVE_THINKING_MODELS.map(id => [id, deepseekReasoningMapFor(id)])),
     modelSupportsReasoningSummaries: Object.fromEntries(DEEPSEEK_NATIVE_THINKING_MODELS.map(id => [id, true])),
     preserveReasoningContentModels: DEEPSEEK_NATIVE_THINKING_MODELS,
-    // #4436: first-party deepseek-flash accepts native images on Chat and Responses.
-    // Keep unprobed compatibility aliases on the #88 sidecar path. This must be fixed
-    // here: router enrichment unions this list with saved config, so config cannot remove it.
-    noVisionModels: ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash"],
+    // The retired chat/reasoner ids remain sidecar-covered. Both V4 Flash spellings declare image
+    // input above; `deepseek-v4-pro` is no longer advertised by this first-party registry row.
+    noVisionModels: ["deepseek-chat", "deepseek-reasoner"],
   },
   // llama-3.3-70b was deprecated by Cerebras on 2026-02-16. Evidence: devlog/_plan/260710_provider_hardening/003_research_aggregators.md.
   { id: "cerebras", label: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", adapter: "openai-chat", authKind: "key", dashboardUrl: "https://cloud.cerebras.ai/platform/apikeys", defaultModel: "gpt-oss-120b" },

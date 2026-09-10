@@ -196,6 +196,14 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 测试：`tests/responses/openai-responses-passthrough.test.ts`，覆盖未配置时不注入、模型级覆盖 provider 默认、调用方值优先与 forward 不注入。
 文档：`docs-site` 的 provider 配置参考与 `structure/02_config-and-codex-home.md` 已同步。
 
+### DeepSeek V4 Flash 直连图片输入
+
+上游按 issue #88 把 DeepSeek 的全部 API 模型列入 `noVisionModels`，由视觉 sidecar 代读图片。
+`deepseek-v4-flash` 现在自己接受图片输入：2026-09-10 直连 `https://api.deepseek.com/chat/completions` 实测，携带图片返回 200，模型在自己的 reasoning 里描述了图片内容；同日 `deepseek-v4-flash-vision-exp` 对照同样返回 200 并答出颜色。Fork 把该模型移出 `noVisionModels` 并在 registry 声明 `["text", "image"]`，图片按原样发给上游，不再经过 sidecar；`deepseek-chat`、`deepseek-reasoner` 与 `deepseek-v4-pro` 保留 sidecar 覆盖，Pro 的图片路径未验证。
+生效边界：`routedProviderConfig()` 把 registry 与配置中的 `noVisionModels` 取并集，配置里仍写有 `deepseek-v4-flash` 的安装要删除该条目才会生效。
+代码：`src/providers/registry.ts` 的 deepseek 条目。
+测试：`tests/providers/provider-registry-parity.test.ts`，覆盖 registry 声明与合并后的路由判定。
+
 ## 当前维护、安装与测试差异
 
 ### 本地源码包安装
