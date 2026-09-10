@@ -59,7 +59,7 @@ Réparez l'historique d'une tâche compactée par un fournisseur routé avant de
 
 ### `ocx uninstall` · `ocx remove`
 
-Arrête le service et le proxy, supprime le service et le shim Codex, rétablit le fonctionnement natif de Codex, puis supprime la configuration locale d’opencodex uniquement si toutes les étapes de restauration ont réussi. `remove` est un alias de `uninstall`. Le nettoyage de la configuration exige les métadonnées de propriété créées par une installation récente ; les répertoires anciens ou partagés sont conservés.
+Arrête le service et le proxy, supprime le service et le shim Codex, rétablit le fonctionnement natif de Codex, puis supprime la configuration locale d’opencodex uniquement si toutes les étapes de restauration ont réussi. `remove` est un alias de `uninstall`. Le nettoyage de la configuration a besoin des métadonnées de propriété : une installation récente les écrit dans un répertoire vide, et un répertoire qui contient déjà un fichier d’état d’exécution opencodex tel que `runtime-port.json` les récupère à la prochaine écriture. Le nettoyage supprime les chemins enregistrés par opencodex, ainsi que ses propres sauvegardes de catalogue par répertoire ; tout le reste reste en place et est signalé comme résidu.
 
 ## État et santé
 

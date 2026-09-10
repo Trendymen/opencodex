@@ -112,8 +112,10 @@ replacing the file.
 
 Stop the service and proxy, remove the service and Codex shim, restore native Codex, then remove
 opencodex local config only if all restore steps succeeded. `remove` is an alias of `uninstall`.
-Config cleanup requires ownership metadata created by a fresh install; legacy or shared directories
-are left in place.
+Config cleanup needs ownership metadata: a fresh install writes it into an empty directory, and a
+home that already holds an opencodex runtime state file such as `runtime-port.json` picks it up on
+the next write. Cleanup removes the paths opencodex registered, plus its own per-home catalog
+backups; anything else stays in place and is reported as a residual.
 
 ## Status and health
 
