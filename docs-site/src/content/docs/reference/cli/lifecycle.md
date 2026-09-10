@@ -114,8 +114,10 @@ Stop the service and proxy, remove the service and Codex shim, restore native Co
 opencodex local config only if all restore steps succeeded. `remove` is an alias of `uninstall`.
 Config cleanup needs ownership metadata: a fresh install writes it into an empty directory, and a
 home that already holds an opencodex runtime state file such as `runtime-port.json` picks it up on
-the next write. Cleanup removes the paths opencodex registered, plus its own per-home catalog
-backups; anything else stays in place and is reported as a residual.
+the next write. Adoption starts with no owned paths. A path that already existed when the home was
+adopted is not registered, overwritten, rotated, or removed; a diagnostic or schema write that
+would need that path is refused. Cleanup removes only paths opencodex registered after adoption,
+plus its own per-home catalog backups; anything else stays in place and is reported as a residual.
 
 ## Status and health
 
