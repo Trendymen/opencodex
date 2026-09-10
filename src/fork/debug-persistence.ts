@@ -18,7 +18,11 @@ import {
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getConfigDir } from "../config/paths";
-import { recordOwnedConfigPath } from "../lib/config-ownership";
+import {
+  CONFIG_OWNER_FILE,
+  CONFIG_UNINSTALL_MANIFEST,
+  recordOwnedConfigPath,
+} from "../lib/config-ownership";
 import type { DebugLogEntry } from "../lib/debug-log-buffer";
 
 export const PROVIDER_DEBUG_MAX_FILE_BYTES = 4 * 1024 * 1024;
@@ -141,7 +145,7 @@ function rotationPath(relativePath: string, now: number): string {
  * Persist one JSONL payload under the two provider-debug roots. Any uncertain
  * ownership, link, containment, cleanup, or capacity state refuses the write.
  */
-export function persistProviderDebugFile(
+function writeProviderDebugFile(
   relativePath: string,
   content: string,
   options: ProviderDebugPersistenceOptions = {},
@@ -243,6 +247,48 @@ export function persistProviderDebugFile(
       try { closeSync(fd); } catch { /* best-effort close */ }
     }
   }
+}
+
+let refusedWriteWarned = false;
+
+/**
+ * Callers swallow the boolean, so a home that cannot register ownership collects
+ * nothing and reports nothing. One line per process keeps that visible without
+ * touching the request path: the message names the two causes an operator can act
+ * on, ownership metadata and capture size limits, and the first refusal is the
+ * only one they ever see.
+ */
+function warnRefusedWrite(relativePath: string): void {
+  if (refusedWriteWarned) return;
+  refusedWriteWarned = true;
+  console.warn(
+    `[opencodex] provider debug capture is not being written: ${relativePath} was refused; `
+    + `check ${CONFIG_OWNER_FILE} and ${CONFIG_UNINSTALL_MANIFEST} plus the capture size `
+    + `limits under ${getConfigDir()}.`,
+  );
+}
+
+/** Test isolation: the refusal notice is process-wide. */
+export function resetProviderDebugWarningForTests(): void {
+  refusedWriteWarned = false;
+}
+
+export function persistProviderDebugFile(
+  relativePath: string,
+  content: string,
+  options: ProviderDebugPersistenceOptions = {},
+): boolean {
+  let written = false;
+  try {
+    written = writeProviderDebugFile(relativePath, content, options);
+  } catch {
+    // Registering ownership can now write metadata, so a full disk or a locked
+    // manifest makes the writer throw where it used to return false. Both must
+    // stay inside the boolean contract: these callers sit on the response path.
+    written = false;
+  }
+  if (!written) warnRefusedWrite(relativePath);
+  return written;
 }
 
 export function persistDebugEntry(entry: DebugLogEntry): void {

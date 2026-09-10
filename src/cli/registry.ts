@@ -46,7 +46,7 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
     summary: "Remove service/shim/config and restore native Codex.",
     details: [
       "Alias: ocx remove",
-      "Config cleanup requires ownership metadata created by a fresh install; legacy or shared directories are left in place.",
+      "Config cleanup needs ownership metadata: a fresh install writes it into an empty directory, and a runtime home picks it up on the next write. Only paths opencodex owns are removed.",
     ],
   },
   {
@@ -56,7 +56,7 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
     summary: "Remove service/shim/config and restore native Codex.",
     details: [
       "Alias of: ocx uninstall",
-      "Config cleanup requires ownership metadata created by a fresh install; legacy or shared directories are left in place.",
+      "Config cleanup needs ownership metadata: a fresh install writes it into an empty directory, and a runtime home picks it up on the next write. Only paths opencodex owns are removed.",
     ],
   },
   {
