@@ -379,6 +379,13 @@ export function recordOwnedConfigPath(configDir: string, candidatePath: string):
   return true;
 }
 
+export function isOwnedConfigPath(configDir: string, candidatePath: string): boolean {
+  const rel = manifestRelativePath(configDir, candidatePath);
+  if (!rel) return false;
+  const ownership = loadOwnership(configDir);
+  return ownership?.manifest.paths.includes(rel) === true;
+}
+
 export function removeOwnedConfigState(configDir: string): ConfigRemovalResult {
   ownershipCache.delete(ownershipCacheKey(configDir));
   if (!existsSync(configDir)) return { status: "absent", residualPaths: [] };

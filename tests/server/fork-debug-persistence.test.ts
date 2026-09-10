@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { appendDebugLogLine, getDebugLogEntries, resetDebugLogBufferForTests } from "../../src/lib/debug-log-buffer";
 import {
+  persistProviderDebugFile,
   providerDebugLogPath,
   resetProviderDebugWarningForTests,
 } from "../../src/fork/debug-persistence";
@@ -60,6 +61,17 @@ describe("fork provider debug persistence", () => {
     expect(readFileSync(sentinel, "utf8")).toBe("keep\n");
     expect(existsSync(providerDebugLogPath())).toBe(false);
     expect(removeOwnedConfigState(testDir).status).toBe("partial");
+    expect(readFileSync(sentinel, "utf8")).toBe("keep\n");
+  });
+
+  test("does not rotate an unowned adopted sibling debug root", () => {
+    writeFileSync(join(testDir, "runtime-port.json"), "{\"port\":10100}\n");
+    const artifactDir = join(testDir, "provider-debug-artifacts");
+    mkdirSync(artifactDir);
+    const sentinel = join(artifactDir, "sentinel.jsonl");
+    writeFileSync(sentinel, "keep\n");
+
+    expect(persistProviderDebugFile("provider-debug/current.jsonl", "new\n", { maxFiles: 1 })).toBe(true);
     expect(readFileSync(sentinel, "utf8")).toBe("keep\n");
   });
 
