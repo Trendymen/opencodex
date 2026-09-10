@@ -99,7 +99,6 @@ const OWNERSHIP_ADOPTION_MARKERS = [
 const ownershipCache = new Map<string, {
   owner: ConfigOwner;
   manifest: ConfigUninstallManifest;
-  adopted?: boolean;
 } | null>();
 let lastReconciledGeneration = 0;
 
@@ -347,6 +346,15 @@ export function recordOwnedConfigPath(configDir: string, candidatePath: string):
     mkdirSync(configDir, { recursive: true, mode: 0o700 });
   }
   let ownership = ownershipCache.get(cacheKey);
+  if (ownership !== undefined) {
+    const refreshed = loadOwnership(configDir);
+    if (!refreshed) {
+      ownershipCache.set(cacheKey, null);
+      return false;
+    }
+    ownership = refreshed;
+    ownershipCache.set(cacheKey, ownership);
+  }
   if (ownership === undefined) {
     const loaded = loadOwnership(configDir) ?? createOwnership(configDir);
     const adopted = loaded ? null : adoptOwnership(configDir);
