@@ -202,7 +202,7 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 `deepseek-v4-flash` 现在自己接受图片输入：2026-09-10 直连 `https://api.deepseek.com/chat/completions` 实测，携带图片返回 200，模型在自己的 reasoning 里描述了图片内容；同日 `deepseek-v4-flash-vision-exp` 对照同样返回 200 并答出颜色。Fork 把该模型移出 `noVisionModels` 并在 registry 声明 `["text", "image"]`，图片按原样发给上游，不再经过 sidecar；`deepseek-chat`、`deepseek-reasoner` 与 `deepseek-v4-pro` 保留 sidecar 覆盖，Pro 的图片路径未验证。
 生效边界：`routedProviderConfig()` 把 registry 与配置中的 `noVisionModels` 取并集，配置里仍写有 `deepseek-v4-flash` 的安装要删除该条目才会生效。
 代码：`src/providers/registry.ts` 的 deepseek 条目。
-测试：`tests/providers/provider-registry-parity.test.ts`，覆盖 registry 声明与合并后的路由判定。
+测试：`tests/providers/provider-registry-parity.test.ts` 覆盖 registry 声明与合并后的路由判定；`tests/routing/router.test.ts` 与 `tests/routing/routing-capability-model-matching.test.ts` 原有两条按 issue #88 断言全部 DeepSeek 模型为 text-only 的用例已改按新分类断言，并补一例“registry 图片能力模型可满足图片策略要求”。
 
 ## 当前维护、安装与测试差异
 
