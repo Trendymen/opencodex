@@ -6,6 +6,7 @@ import {
   CONFIG_OWNER_FILE,
   CONFIG_UNINSTALL_MANIFEST,
   recordOwnedConfigPath,
+  resetConfigOwnershipForTests,
   removeOwnedConfigState,
 } from "../../src/lib/config-ownership";
 import { getDefaultConfig, saveConfig } from "../../src/config";
@@ -62,6 +63,42 @@ describe("owned config uninstall", () => {
       expect(readFileSync(foreignPath, "utf8")).toBe("keep me\n");
     } finally {
       removeTreeWithRetry(dir);
+    }
+  });
+
+  test("keeps adoption protection after recording a new path and after cache reload", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ocx-ownership-adopt-persistent-"));
+    writeFileSync(join(dir, "runtime-port.json"), "{\"port\":10100}\n");
+    try {
+      expect(recordOwnedConfigPath(dir, join(dir, "new.json"))).toBe(true);
+      const debugDir = join(dir, "provider-debug");
+      mkdirSync(debugDir);
+      writeFileSync(join(debugDir, "sentinel"), "keep\n");
+      expect(recordOwnedConfigPath(dir, debugDir)).toBe(false);
+      resetConfigOwnershipForTests();
+      expect(recordOwnedConfigPath(dir, debugDir)).toBe(false);
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("does not register an existing adopted diagnostic symlink", () => {
+    const parent = mkdtempSync(join(tmpdir(), "ocx-ownership-adopt-link-"));
+    const dir = join(parent, "config");
+    const outside = join(parent, "outside");
+    mkdirSync(dir);
+    mkdirSync(outside);
+    writeFileSync(join(dir, "runtime-port.json"), "{\"port\":10100}\n");
+    symlinkSync(outside, join(dir, "provider-debug"), "dir");
+
+    try {
+      expect(recordOwnedConfigPath(dir, join(dir, "provider-debug"))).toBe(false);
+      const manifest = JSON.parse(readFileSync(join(dir, CONFIG_UNINSTALL_MANIFEST), "utf8")) as { paths: string[] };
+      expect(manifest.paths).toEqual([]);
+      expect(removeOwnedConfigState(dir).status).toBe("partial");
+      expect(existsSync(join(dir, "provider-debug"))).toBe(true);
+    } finally {
+      removeTreeWithRetry(parent);
     }
   });
 
