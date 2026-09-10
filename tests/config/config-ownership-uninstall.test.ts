@@ -40,6 +40,45 @@ describe("owned config uninstall", () => {
     }
   });
 
+  test("adopts a legacy runtime home without claiming its existing files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ocx-ownership-adopt-"));
+    const foreignPath = join(dir, "personal.txt");
+    const ownedPath = join(dir, "usage.jsonl");
+    writeFileSync(join(dir, "runtime-port.json"), '{"port":10100}\n');
+    writeFileSync(foreignPath, "keep me\n");
+
+    try {
+      expect(recordOwnedConfigPath(dir, ownedPath)).toBe(true);
+      const manifest = JSON.parse(
+        readFileSync(join(dir, CONFIG_UNINSTALL_MANIFEST), "utf8"),
+      ) as { paths: string[] };
+      expect(manifest.paths).toEqual(["usage.jsonl"]);
+
+      writeFileSync(ownedPath, "{}\n");
+      const result = removeOwnedConfigState(dir);
+      expect(result.status).toBe("partial");
+      expect(result.residualPaths).toContain(foreignPath);
+      expect(existsSync(ownedPath)).toBe(false);
+      expect(readFileSync(foreignPath, "utf8")).toBe("keep me\n");
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("does not adopt a non-empty directory without a runtime marker", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ocx-ownership-unmarked-"));
+    writeFileSync(join(dir, "config.json"), "{}\n");
+    writeFileSync(join(dir, "legacy.txt"), "keep\n");
+
+    try {
+      expect(recordOwnedConfigPath(dir, join(dir, "usage.jsonl"))).toBe(false);
+      expect(existsSync(join(dir, CONFIG_OWNER_FILE))).toBe(false);
+      expect(existsSync(join(dir, CONFIG_UNINSTALL_MANIFEST))).toBe(false);
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
   test("removes manifest-owned state and the empty config directory", () => {
     const dir = mkdtempSync(join(tmpdir(), "ocx-uninstall-owned-"));
     const configPath = join(dir, "config.json");

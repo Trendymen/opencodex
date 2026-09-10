@@ -1,11 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyGlmKimiOutboundCompatibility,
   persistKimiToolSchemaCatalog,
 } from "../../src/fork/glm-kimi-compat";
+import { CONFIG_OWNER_FILE, CONFIG_UNINSTALL_MANIFEST } from "../../src/lib/config-ownership";
 import type { OcxProviderConfig } from "../../src/types";
 
 const ARK_PLAN_URL = "https://ark.cn-beijing.volces.com/api/plan/v3";
@@ -193,6 +203,30 @@ describe("Agent Plan Kimi function-tool schema compiler", () => {
       expect(statSync(catalogDir).mode & 0o777).toBe(0o700);
       expect(statSync(path).mode & 0o777).toBe(0o600);
     }
+  });
+
+  test("claims a catalog directory that predates ownership metadata", () => {
+    // The directory can exist while the home has no ownership metadata (an older
+    // build created it, or the home was copied without the hidden metadata files).
+    // Refusing that combination left this diagnostic silently dead.
+    const catalogDir = join(testHome, "kimi-tool-schema-catalogs");
+    mkdirSync(catalogDir, { mode: 0o700 });
+    writeFileSync(join(testHome, "runtime-port.json"), '{"port":10100}\n');
+    const tools = [functionTool("legacy", { type: "object", properties: { a: { type: "string" } } })];
+
+    persistKimiToolSchemaCatalog({
+      body: { tools },
+      provider: arkProvider(),
+      modelId: "kimi-k3",
+      url: `${ARK_PLAN_URL}/responses`,
+    });
+
+    expect(existsSync(join(testHome, CONFIG_OWNER_FILE))).toBe(true);
+    expect(readdirSync(catalogDir).filter(name => name.endsWith(".json"))).toHaveLength(1);
+    const manifest = JSON.parse(
+      readFileSync(join(testHome, CONFIG_UNINSTALL_MANIFEST), "utf8"),
+    ) as { paths: string[] };
+    expect(manifest.paths).toContain("kimi-tool-schema-catalogs");
   });
 
   test("oversized or unserializable diagnostic catalogs never write or affect a request", () => {

@@ -1,9 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { appendDebugLogLine, getDebugLogEntries, resetDebugLogBufferForTests } from "../../src/lib/debug-log-buffer";
-import { providerDebugLogPath } from "../../src/fork/debug-persistence";
+import {
+  providerDebugLogPath,
+  resetProviderDebugWarningForTests,
+} from "../../src/fork/debug-persistence";
 
 let previousHome: string | undefined;
 let testDir = "";
@@ -42,6 +45,31 @@ describe("fork provider debug persistence", () => {
     expect(() => appendDebugLogLine("fork-persist-resilient")).not.toThrow();
     const entries = getDebugLogEntries();
     expect(entries.at(-1)?.line).toBe("fork-persist-resilient");
+  });
+
+  test("a refused capture warns once per process instead of failing silently", () => {
+    // Same refusal as above, but the operator must be able to see it: a refused write
+    // used to leave no trace anywhere, which is how a legacy home collected nothing
+    // for six days.
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      resetProviderDebugWarningForTests();
+      rmSync(testDir, { recursive: true, force: true });
+      writeFileSync(testDir, "not-a-directory");
+
+      appendDebugLogLine("fork-persist-warned-1");
+      const firstRefusalCalls = warn.mock.calls.length;
+      expect(firstRefusalCalls).toBeGreaterThan(0);
+      const message = String(warn.mock.calls[0]![0]);
+      expect(message).toContain("not being written");
+      expect(message).toContain("provider-debug");
+
+      appendDebugLogLine("fork-persist-warned-2");
+      expect(warn.mock.calls.length).toBe(firstRefusalCalls);
+    } finally {
+      warn.mockRestore();
+      resetProviderDebugWarningForTests();
+    }
   });
 
   test("persistence rolls over after 4 MiB without truncating existing JSONL records", () => {
