@@ -2031,9 +2031,10 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     // Official DeepSeek Codex setup (codex-deepseek-setup.sh) advertises 1,048,576
     // for both V4 models; the older 1,000,000 figure was a rounded approximation.
     modelContextWindows: { "deepseek-v4-flash": 1_048_576, "deepseek-v4-pro": 1_048_576, [DEEPSEEK_VISION_PREVIEW_MODEL]: 1_048_576 },
-    // V4 Flash and its vision preview both accept images: the preview landed 2026-08-21 and the
-    // public API answers image input on the plain `deepseek-v4-flash` id (measured 2026-09-10),
-    // so neither needs the vision sidecar to describe images for it.
+    // V4 Flash and its vision preview both accept images on either wire. Measured 2026-09-10 with
+    // a solid-colour PNG: POST /chat/completions and POST /responses (input_image) each returned
+    // 200 and the model answered the colour from the pixels, so neither id needs the vision
+    // sidecar to describe images for it. The Responses route is the one Codex posts to.
     modelInputModalities: {
       "deepseek-v4-flash": ["text", "image"],
       [DEEPSEEK_VISION_PREVIEW_MODEL]: ["text", "image"],
@@ -2106,9 +2107,14 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     modelSupportsReasoningSummaries: Object.fromEntries(DEEPSEEK_THINKING_MODELS.map(id => [id, true])),
     preserveReasoningContentModels: DEEPSEEK_THINKING_MODELS,
     // Issue #88 listed every DeepSeek API model here while the API was text-only. V4 Flash now
-    // takes image input, so it carries an explicit image modality above instead; the two legacy
-    // ids and V4 Pro — whose image path is not verified — stay sidecar-covered.
-    noVisionModels: ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro"],
+    // takes image input, so it carries an explicit image modality above and is subtracted here;
+    // the two legacy ids and V4 Pro — whose image path is not verified — stay sidecar-covered.
+    // Keep the subtraction on the constant so a new upstream thinking id is still covered.
+    noVisionModels: [
+      "deepseek-chat",
+      "deepseek-reasoner",
+      ...DEEPSEEK_THINKING_MODELS.filter(id => id !== "deepseek-v4-flash"),
+    ],
   },
   // llama-3.3-70b was deprecated by Cerebras on 2026-02-16. Evidence: devlog/_plan/260710_provider_hardening/003_research_aggregators.md.
   { id: "cerebras", label: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", adapter: "openai-chat", authKind: "key", dashboardUrl: "https://cloud.cerebras.ai/platform/apikeys", defaultModel: "gpt-oss-120b" },

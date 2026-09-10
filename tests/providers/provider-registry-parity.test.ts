@@ -161,8 +161,8 @@ describe("provider registry parity", () => {
     expect(KEY_LOGIN_PROVIDERS.deepseek.modelReasoningEffortMap?.["deepseek-v4-flash"]?.max).toBe("max");
     expect(KEY_LOGIN_PROVIDERS.deepseek.preserveReasoningContentModels).toEqual(["deepseek-v4-pro", "deepseek-v4-flash"]);
     // Issue #88 covered every DeepSeek API model while the API was text-only. V4 Flash answers
-    // image input now (measured 2026-09-10), so it declares the modality instead of a sidecar
-    // entry; the two legacy ids and V4 Pro keep theirs.
+    // image input on both wires now (measured 2026-09-10), so it declares the modality instead
+    // of a sidecar entry; the two legacy ids and V4 Pro keep theirs.
     expect(KEY_LOGIN_PROVIDERS.deepseek.modelInputModalities?.["deepseek-v4-flash"]).toEqual(["text", "image"]);
     expect(KEY_LOGIN_PROVIDERS.deepseek.noVisionModels).toEqual([
       "deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro",
