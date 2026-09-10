@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -7,7 +7,11 @@ import {
   persistInboundResponsesDebugSummary,
 } from "../../src/fork/inbound-response-debug";
 import { providerDebugLogPath } from "../../src/fork/debug-persistence";
-import { CONFIG_UNINSTALL_MANIFEST, removeOwnedConfigState } from "../../src/lib/config-ownership";
+import {
+  CONFIG_OWNER_FILE,
+  CONFIG_UNINSTALL_MANIFEST,
+  removeOwnedConfigState,
+} from "../../src/lib/config-ownership";
 import { resetAppOwnedMemoryForTests } from "../../src/lib/app-owned-memory";
 import { appendDebugLogLine, getDebugLogEntries, resetDebugLogBufferForTests } from "../../src/lib/debug-log-buffer";
 import { resetDebugSettingsForTests, setDebugSettings } from "../../src/lib/debug-settings";
@@ -56,6 +60,27 @@ describe("inbound upstream Responses debug observer", () => {
     if (previousOpenCodexHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = previousOpenCodexHome;
     if (testDir) rmSync(testDir, { recursive: true, force: true });
+  });
+
+  test("captures into a home that predates ownership metadata", () => {
+    // A home created by an older build is non-empty and carries no ownership
+    // metadata, so recordOwnedConfigPath used to fail for it forever; the capture
+    // then went silent because it treats that boolean as a gate.
+    setDebugSettings({ debug: true, providerText: true });
+    writeFileSync(join(testDir, "runtime-port.json"), '{"port":10100}\n');
+    const observer = createInboundResponsesDebugObserver();
+    observer.notePayload({ type: "response.completed", response: { id: "resp_1", status: "completed", output: [] } });
+
+    persistInboundResponsesDebugSummary({
+      observer,
+      host: "example.test",
+      pathname: "/v1/responses",
+      model: "deepseek-flash",
+    });
+
+    expect(existsSync(join(testDir, CONFIG_OWNER_FILE))).toBe(true);
+    const rows = readFileSync(providerDebugLogPath(), "utf8").trim().split("\n");
+    expect(rows.some(line => line.includes("inbound-sse-summary"))).toBe(true);
   });
 
   test("aggregates native event counts, text bytes, timeline, and terminal shapes", () => {

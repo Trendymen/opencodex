@@ -58,7 +58,7 @@ ocx eject back
 
 ### `ocx uninstall` · `ocx remove`
 
-停止服務與代理、移除服務與 Codex shim、還原原生 Codex，然後僅在所有還原步驟成功時移除 opencodex 本機設定。`remove` 是 `uninstall` 的別名。設定清理需要由全新安裝建立的擁有權中繼資料；舊版或共享目錄會被原樣保留。
+停止服務與代理、移除服務與 Codex shim、還原原生 Codex，然後僅在所有還原步驟成功時移除 opencodex 本機設定。`remove` 是 `uninstall` 的別名。設定清理需要擁有權中繼資料：全新安裝會寫入空目錄；已經帶有 opencodex 執行時狀態檔（例如 `runtime-port.json`）的目錄會在下次寫入時補上。清理會刪除 opencodex 登記過的路徑，以及它自己的按目錄 catalog 備份（`catalog-backup-*.json`）；其餘內容保留原樣並作為殘留回報。
 
 ## 狀態與健康
 
