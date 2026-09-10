@@ -129,13 +129,26 @@ describe("policy capability evidence uses the effective provider", () => {
   });
 
   test("registry no-vision defaults participate before policy image requirements", () => {
+    // V4 Pro is still a registry text-only id, so a config that advertises it as image-capable
+    // must not satisfy the requirement: noVisionModels is checked before the modality list.
     const config = policyConfig("deepseek", {
       adapter: "openai-chat", baseUrl: "https://api.deepseek.com",
-      modelInputModalities: { "deepseek-v4-flash": ["text", "image"] },
-    }, "deepseek-v4-flash", { imageInput: true });
-    const routed = routeModel(config, "deepseek/deepseek-v4-flash");
+      modelInputModalities: { "deepseek-v4-pro": ["text", "image"] },
+    }, "deepseek-v4-pro", { imageInput: true });
+    const routed = routeModel(config, "deepseek/deepseek-v4-pro");
     expect(isModelTextOnly(routed.provider, routed.modelId)).toBe(true);
     expect(() => routeModel(config, "policy/guarded")).toThrow(NoEligiblePolicyCandidateError);
+  });
+
+  test("a registry image-capable model satisfies the same policy requirement", () => {
+    // Counterpart of the case above: V4 Flash left the registry no-vision list, so the same
+    // requirement resolves to the candidate instead of being rejected.
+    const config = policyConfig("deepseek", {
+      adapter: "openai-chat", baseUrl: "https://api.deepseek.com",
+    }, "deepseek-v4-flash", { imageInput: true });
+    const routed = routeModel(config, "policy/guarded");
+    expect(routed.providerName).toBe("deepseek");
+    expect(isModelTextOnly(routed.provider, routed.modelId)).toBe(false);
   });
 
   test("the effective model context ceiling gates a policy requirement", () => {
