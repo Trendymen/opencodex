@@ -17,8 +17,9 @@ import {
 import { PROVIDER_REGISTRY, registryEntryForProviderDestination } from "../../src/providers/registry";
 import { FREE_PROVIDER_DIRECTORY } from "../../src/providers/free-directory";
 import { applyProviderConfigHints } from "../../src/codex/catalog";
-import { routeModel } from "../../src/router";
+import { routeModel, routedProviderConfig } from "../../src/router";
 import { resolveAdapter } from "../../src/server";
+import { isModelVisionSidecarConsumer } from "../../src/vision/eligibility";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 
 function nativeTemplate(): Record<string, unknown> {
@@ -237,10 +238,23 @@ describe("provider registry parity", () => {
     expect(KEY_LOGIN_PROVIDERS.deepseek.modelReasoningEffortMap?.["deepseek-v4-flash"]?.max).toBe("max");
     expect(KEY_LOGIN_PROVIDERS.deepseek.preserveReasoningContentModels)
       .toEqual(["deepseek-flash", "deepseek-v4-flash"]);
-    // Issue #88: every DeepSeek API model is text-only input — the vision sidecar covers them.
+    expect(KEY_LOGIN_PROVIDERS.deepseek.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
+    expect(KEY_LOGIN_PROVIDERS.deepseek.modelInputModalities?.["deepseek-v4-flash"]).toEqual(["text", "image"]);
     expect(KEY_LOGIN_PROVIDERS.deepseek.noVisionModels).toEqual([
-      "deepseek-chat", "deepseek-reasoner", "deepseek-flash", "deepseek-v4-flash",
+      "deepseek-chat", "deepseek-reasoner",
     ]);
+  });
+
+  test("DeepSeek V4 Flash keeps its images instead of handing them to the vision sidecar", () => {
+    const entry = PROVIDER_REGISTRY.find(row => row.id === "deepseek");
+    expect(entry).toBeDefined();
+    // Assert the MERGED route provider, not the seed: routedProviderConfig unions the registry
+    // list with the saved one, so an install whose config still names `deepseek-v4-flash` stays
+    // sidecar-covered until that stale entry is removed.
+    const merged = routedProviderConfig("deepseek", providerConfigSeed(entry!));
+    expect(merged.modelInputModalities?.["deepseek-v4-flash"]).toEqual(["text", "image"]);
+    expect(isModelVisionSidecarConsumer(merged, "deepseek-v4-flash")).toBe(false);
+    expect(isModelVisionSidecarConsumer(merged, "deepseek-chat")).toBe(true);
   });
 
   test("OpenAI API route max-input metadata is trusted and user values only lower it", () => {
