@@ -191,8 +191,14 @@ Such a thread replays a backend-minted encrypted agent message on every later tu
 only workaround was to start a new thread. That switch turn is not a spawn, so the direct routed
 path no longer restricts recovery to spawned child turns; combo recovery still does.
 
-同一开关也覆盖路由父任务收到 worker 加密 `MESSAGE` 的情况；当前请求不必是派生子任务。
-既有准入检查、缓存作用域和严格消息 envelope 校验仍然生效。
+The same opt-in also covers an admitted routed parent receiving an encrypted worker `MESSAGE`; the
+current request need not be a spawned child. Existing admission checks, cache scope, and strict
+message-envelope validation still apply.
+
+For a strict backend-ciphertext `NEW_TASK` envelope on a canonical native ChatGPT child, the native
+target is attempted directly first. Only after its normal pre-output transient-5xx retries are
+exhausted can recovery run once; it converts only that task item and retries the same native target.
+A direct native success never triggers recovery.
 
 Recovery uses `gpt-5.6-luna` with `reasoning.effort: "medium"` by default. Each attempt may run
 for up to 120 seconds. After response headers arrive, first-byte and inactivity stalls remain

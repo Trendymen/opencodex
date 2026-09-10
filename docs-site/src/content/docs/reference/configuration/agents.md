@@ -164,9 +164,22 @@ on a mid-thread model switch.
 
 ## Encrypted v2 task recovery
 
-`agentTaskRecovery` 是面向到达路由 provider 的后端加密 v2 任务的实验性兼容路径，默认关闭。它支持两类请求：原生 ChatGPT 父任务派生路由 v2 子任务，以及从原生 ChatGPT 模型切换到路由模型的存活线程；后者会在之后的每一轮历史中重放后端签发的加密 agent message（[#4089](https://github.com/lidge-jun/opencodex/issues/4089)）。当最终路由任务带有无法读取的 Fernet payload 时，opencodex 会向固定的 `https://chatgpt.com/backend-api/codex/responses` 端点发送一条使用 forward-mode authentication 的原始 Responses passthrough 请求。ChatGPT 通过强制 function call 返回明文任务，opencodex 只将该任务项改写为标准 user message，再分派给路由 provider。
+`agentTaskRecovery` is an experimental, disabled-by-default compatibility path for backend-encrypted
+v2 tasks that reach a routed provider. It covers a native ChatGPT parent spawning a routed v2 child,
+a live thread switched from a native ChatGPT model to a routed one, and an admitted routed parent
+receiving an encrypted worker `MESSAGE`; the current request need not itself be a spawned child. A
+mid-thread switch replays a backend-minted encrypted agent message on every later turn
+([#4089](https://github.com/lidge-jun/opencodex/issues/4089)). When the final routed task contains an
+otherwise unreadable Fernet payload, opencodex sends a raw Responses passthrough request to the fixed
+`https://chatgpt.com/backend-api/codex/responses` endpoint with forward-mode authentication. ChatGPT
+returns the plaintext assignment through a forced function call; opencodex converts only that task
+item to a standard user message before routed-provider dispatch. Existing admission checks, cache
+scope, and strict message-envelope validation continue to apply.
 
-它也支持原生 ChatGPT 子任务的严格后端密文 `NEW_TASK` envelope：原生目标会先直接执行，只有正常的输出前 transient-5xx 重试全部耗尽后的最后一次可重试失败，才会触发一次上述恢复请求。恢复后，opencodex 只改写该任务项，并对同一原生目标重试一次；原生请求直接成功时不会执行恢复。
+It also handles a strict backend-ciphertext `NEW_TASK` envelope on a canonical native ChatGPT child.
+The native target is always attempted directly first. Only after its normal pre-output transient-5xx
+retries are exhausted can one recovery request run; opencodex then converts only that task item and
+retries the same native target once. A direct native success never performs recovery.
 
 This is not local decryption and does not fix the Codex wire protocol. It depends on undocumented
 ChatGPT backend behavior and may stop working after a backend change. The recovered assignment is
