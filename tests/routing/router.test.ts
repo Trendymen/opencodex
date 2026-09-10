@@ -431,7 +431,7 @@ describe("routeModel registry effort defaults", () => {
     expect(route.provider.modelReasoningEfforts?.["umans-kimi-k2.7"]).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 
-  test("minimal persisted DeepSeek config inherits the registry text-only classification (issue #88)", () => {
+  test("minimal persisted DeepSeek config inherits the registry classification (issue #88)", () => {
     const config: OcxConfig = {
       port: 10100,
       defaultProvider: "deepseek",
@@ -446,8 +446,10 @@ describe("routeModel registry effort defaults", () => {
 
     const route = routeModel(config, "deepseek/deepseek-v4-flash");
 
+    // V4 Flash carries an image modality now; the text-only ids keep the sidecar list.
+    expect(route.provider.modelInputModalities?.["deepseek-v4-flash"]).toEqual(["text", "image"]);
     expect(route.provider.noVisionModels).toEqual([
-      "deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro", "deepseek-v4-flash",
+      "deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro",
     ]);
   });
 
