@@ -72,8 +72,8 @@ ocx models provider openrouter on
 | `modelInputModalities?` | `Record<string, string[]>` | Per-model 輸入提示，如 `["text"]` 或 `["text", "image"]`。 |
 | `modelMaxInputTokens?` | `Record<string, number>` | 用於目錄自動壓縮提示的正數 per-model max input 限制。 |
 | `modelAutoCompactTokenLimits?` | `Record<string, number>` | Per-model 正安全整數型 soft 自動壓縮預算。此值只能降低「context 或 max input 的 90%」這個有效上限；沒有已知的權威 context window 時不會輸出。對 canonical `openai` 而言，key 必須是受支援的精確 native model ID，且不得含 provider 或 account-selector 前綴。Provider PATCH 會合併項目；將單一 key 設為 `null` 會刪除該 key，將整個欄位設為 `null` 會清空 map。這些 `null` tombstone 僅供 PATCH 使用。 |
-| `defaultMaxOutputTokens?` | `number` | 當客戶端省略 `max_output_tokens` 時的供應商範圍 `openai-chat` 後備。 |
-| `modelMaxOutputTokens?` | `Record<string, number>` | 正數 per-model `openai-chat` 後援預算；精確／模式比對勝過供應商預設。 |
+| `defaultMaxOutputTokens?` | `number` | 當客戶端省略 `max_output_tokens` 時的供應商層級後備值；適用於 `openai-chat`，以及使用 key 驗證的 `openai-responses` 請求。 |
+| `modelMaxOutputTokens?` | `Record<string, number>` | 正數型、依模型設定的後備預算；精確或模式比對優先於供應商預設值，生效線路相同。 |
 | `headers?` | `Record<string, string>` | 額外上游標頭。Authorization、cookie、API-key 標頭、內嵌換行與無效名稱被拒絕。 |
 | `openRouterRouting?` | `OpenRouterProviderRouting` | 預設 OpenRouter `order`、`only` 與 `allowFallbacks` 偏好；僅對規範 OpenRouter 搭配 `openai-chat` 有效。 |
 | `modelOpenRouterRouting?` | `Record<string, OpenRouterProviderRouting>` | 取代供應商範圍 OpenRouter 偏好的精確 model-id 覆寫。 |

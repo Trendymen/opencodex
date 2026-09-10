@@ -187,6 +187,15 @@ Slow 5xx、abort、直接成功、非 transient 和非原生 direct/combo 不触
 代码：`src/server/responses/encrypted-payload.ts`、`src/server/responses/agent-task-recovery.ts`、`src/server/responses/core.ts`、`src/lib/upstream-retry.ts`、`src/usage/log.ts`。
 测试：`tests/server/fork-agent-message-strict-envelope.test.ts`、`tests/server/fork-agent-task-recovery-backend.test.ts`、`tests/server/fork-agent-task-recovery-body-ceiling.test.ts`、`tests/server/agent-task-recovery-routed-backend.test.ts`。
 
+### key-auth Responses 的输出预算补全
+
+上游只在 `openai-chat` 上使用 `defaultMaxOutputTokens` 与 `modelMaxOutputTokens`。Codex 不发送 `max_output_tokens`，上游自身默认值又可能远低于模型上限（DeepSeek 的 Responses 路由为 65,536），长回答因此以 `incomplete: max_output_tokens` 提前结束。
+Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提供时按模型级、provider 级顺序取配置值，调用方显式值优先；两级都没有配置就保持上游默认。
+`authMode: "forward"` 不注入，ChatGPT 转发后端不接受该参数。
+代码：`src/adapters/openai-responses.ts` 的 `applyConfiguredResponsesMaxOutputTokens()`。
+测试：`tests/responses/openai-responses-passthrough.test.ts`，覆盖未配置时不注入、模型级覆盖 provider 默认、调用方值优先与 forward 不注入。
+文档：`docs-site` 的 provider 配置参考与 `structure/02_config-and-codex-home.md` 已同步。
+
 ## 当前维护、安装与测试差异
 
 ### 本地源码包安装
