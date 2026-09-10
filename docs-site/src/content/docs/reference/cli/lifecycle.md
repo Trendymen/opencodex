@@ -115,9 +115,12 @@ opencodex local config only if all restore steps succeeded. `remove` is an alias
 Config cleanup needs ownership metadata: a fresh install writes it into an empty directory, and a
 home that already holds an opencodex runtime state file such as `runtime-port.json` picks it up on
 the next write. Adoption starts with no owned paths. A path that already existed when the home was
-adopted is not registered, overwritten, rotated, or removed; a diagnostic or schema write that
-would need that path is refused. Cleanup removes only paths opencodex registered after adoption,
-plus its own per-home catalog backups; anything else stays in place and is reported as a residual.
+adopted is not registered in the ownership manifest and is not removed by uninstall as an owned
+path. Provider-debug and Kimi schema diagnostics treat failed registration as a write gate, so they
+refuse a pre-existing container instead of scanning, rotating, or writing inside it. Other config
+and runtime writers retain their existing write behavior. Cleanup removes only paths opencodex
+registered after adoption, plus its own per-home catalog backups; anything else stays in place and
+is reported as a residual.
 
 ## Status and health
 

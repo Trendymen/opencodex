@@ -21,6 +21,7 @@ import { getConfigDir } from "../config/paths";
 import {
   CONFIG_OWNER_FILE,
   CONFIG_UNINSTALL_MANIFEST,
+  isOwnedConfigPath,
   recordOwnedConfigPath,
 } from "../lib/config-ownership";
 import type { DebugLogEntry } from "../lib/debug-log-buffer";
@@ -184,6 +185,7 @@ function writeProviderDebugFile(
 
   const files: DebugFile[] = [];
   for (const debugRoot of DEBUG_ROOTS) {
+    if (!isOwnedConfigPath(configDir, join(configDir, debugRoot))) continue;
     if (!collectFiles(rootReal, join(configDir, debugRoot), files)) return false;
   }
   files.sort((left, right) => left.mtimeMs - right.mtimeMs || left.path.localeCompare(right.path));
