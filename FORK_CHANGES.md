@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.49.0`（`2f3f736299dca38861f8fb9c4326a4b4d7c664bc`）。
+- 上游基线：`v2.50.0`（`2d4d7a22381a2e497c2442902104619e25f937c7`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -128,14 +128,15 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 ### Provider diagnostics 与有界持久化
 
 在上游内存诊断基础上增加 `provider-debug.jsonl`、outbound shape 摘要及入站结构摘要，分别观测 `upstream-inbound` 和 `downstream-after-rewrite`。
+官方 hosted web-search bridge 开启时，通过其现有 SSE 解析点观察首段与续接段的原始 payload；不把合成的搜索事件记为原始上游响应，也不重复触发后续入站观察。诊断回调异常不影响 bridge 转发。关闭 bridge 时保留原有 terminal-repair 观察路径。
 普通 Provider debug 只记录结构，不持久化请求正文、key、工具参数或 Response/reasoning 文本。
 文本样本要求 Provider debug 和独立、默认关闭的 `providerText` 同时开启，可经 `OCX_PROVIDER_TEXT_DEBUG=1`、`ocx debug provider-text on`、API 或 GUI 明确授权。
 样本经脱敏并保存为引用型 artifact；每字符串默认 256B、上限 8KB，UTF-8 安全截断，每轮最多 512 条并受总预算约束。
 持久化统一经 `persistProviderDebugFile()`：单文件 4 MiB、总量 16 MiB、最多 256 文件、保留 7 天。ownership、canonical containment 或安全创建不确定即拒写；拒绝 symlink 与非普通文件。诊断失败不影响 relay。
 Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预算。
 
-代码：`src/fork/outbound-debug.ts`、`src/fork/inbound-response-debug.ts`、`src/fork/debug-persistence.ts`、`src/lib/debug-settings.ts` 及 CLI/API/GUI 接线。
-测试：`tests/server/fork-debug-persistence.test.ts`、`tests/server/fork-inbound-response-debug.test.ts`、`tests/server/fork-provider-debug-safety.test.ts`、`tests/server/fork-relay-eager-client-observation.test.ts`。
+代码：`src/fork/outbound-debug.ts`、`src/fork/inbound-response-debug.ts`、`src/fork/debug-persistence.ts`、`src/lib/debug-settings.ts`、`src/web-search/passthrough-bridge.ts` 及 CLI/API/GUI 接线。
+测试：`tests/server/fork-debug-persistence.test.ts`、`tests/server/fork-inbound-response-debug.test.ts`、`tests/server/fork-provider-debug-safety.test.ts`、`tests/server/fork-relay-eager-client-observation.test.ts`、`tests/web-search/web-search-passthrough-bridge.test.ts`。
 
 ### 第三方 reasoning summary 与 GPT continuation 清理
 
@@ -176,6 +177,7 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 ### 原生加密子任务恢复接力
 
 上游提供通用 recovery admission、turn termination 与失败原因；Fork 扩展 strict non-Fernet backend ciphertext 的识别、admission、routed trigger 和 fail-closed forwarding。
+官方 `v2.50.0` 已覆盖直接路由中原生模型切换为第三方后重放加密历史的恢复入口，不再要求该请求是派生子任务；Fork 保留严格 backend envelope、父任务 `MESSAGE`、原生 5xx 重试恢复和超时通知等扩展。
 受 `agentTaskRecovery.enabled` 控制：原生目标的 transient 5xx 重试耗尽后，严格匹配 canonical `NEW_TASK` envelope 才恢复，并对已确定的 Provider、模型、account、tier、options 重放一次。
 Slow 5xx、abort、直接成功、非 transient 和非原生 direct/combo 不触发该重试恢复。
 严格 backend 子任务派发到非官方转发 Provider 前也经同一恢复路径；失败拒转，重放不再进入其他 OAuth/429/account/opaque/combo 重试，canonical OpenAI 转发保持拒转边界。
