@@ -82,6 +82,22 @@ describe("owned config uninstall", () => {
     }
   });
 
+  test("rejects a same-process manifest provenance mismatch before an owned-path fast path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ocx-ownership-cache-mismatch-"));
+    const path = join(dir, "provider-debug");
+    writeFileSync(join(dir, "runtime-port.json"), "{\"port\":10100}\n");
+    try {
+      expect(recordOwnedConfigPath(dir, path)).toBe(true);
+      const manifestPath = join(dir, CONFIG_UNINSTALL_MANIFEST);
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+      delete manifest.adopted;
+      writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+      expect(recordOwnedConfigPath(dir, path)).toBe(false);
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
   test.skipIf(process.platform === "win32")("does not register an existing adopted diagnostic symlink", () => {
     const parent = mkdtempSync(join(tmpdir(), "ocx-ownership-adopt-link-"));
     const dir = join(parent, "config");
