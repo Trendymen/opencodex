@@ -80,6 +80,21 @@ const INITIAL_OWNED_PATHS = [
   "version.json",
   "winsw",
 ] as const;
+
+/**
+ * Names only an OpenCodex runtime writes. `config.json` is deliberately absent:
+ * it is too common a name to prove a directory is ours, and a home that never
+ * ran the server has no debug capture to restore.
+ */
+const OWNERSHIP_ADOPTION_MARKERS = [
+  ".star-prompted",
+  "admin-api-token",
+  "codex-runtime.json",
+  "responses-state.json",
+  "runtime-port.json",
+  "service-state.json",
+] as const;
+
 const ownershipCache = new Map<string, {
   owner: ConfigOwner;
   manifest: ConfigUninstallManifest;
@@ -229,6 +244,55 @@ function createOwnership(configDir: string): { owner: ConfigOwner; manifest: Con
   return { owner, manifest };
 }
 
+/**
+ * Adopt a config directory that predates ownership metadata.
+ *
+ * `createOwnership` only claims an empty directory, so a home created by an older
+ * build stays unowned for the rest of its life and every `recordOwnedConfigPath`
+ * against it fails. Callers that use the boolean as bookkeeping ignore that; one
+ * that treats it as a gate goes silent, which is how the fork's provider-debug
+ * capture stopped writing on 2026-09-04.
+ *
+ * Adoption itself claims nothing: the manifest starts empty, and only names that
+ * a later `recordOwnedConfigPath` call registers — the adopted directory itself
+ * included — become removable at uninstall time. Refused when ownership metadata
+ * is present (never overwritten, even when it looks corrupt) or when no runtime
+ * marker proves the directory is one of ours.
+ */
+function adoptOwnership(configDir: string): { owner: ConfigOwner; manifest: ConfigUninstallManifest } | null {
+  let owner: ConfigOwner;
+  try {
+    const rootStat = lstatSync(configDir);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
+    const names = readdirSync(configDir);
+    if (!OWNERSHIP_ADOPTION_MARKERS.some(marker => names.includes(marker))) return null;
+    owner = { version: 1, ownerId: randomUUID(), root: canonicalRoot(configDir) };
+  } catch {
+    return null;
+  }
+  const manifest: ConfigUninstallManifest = { ...owner, paths: [] };
+  try {
+    writeFileSync(join(configDir, CONFIG_OWNER_FILE), `${JSON.stringify(owner, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch {
+    return null;
+  }
+  try {
+    writeFileSync(join(configDir, CONFIG_UNINSTALL_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch {
+    try { unlinkSync(join(configDir, CONFIG_OWNER_FILE)); } catch { /* incomplete metadata fails closed */ }
+    return null;
+  }
+  return { owner, manifest };
+}
+
 function writeManifest(configDir: string, manifest: ConfigUninstallManifest): void {
   const path = join(configDir, CONFIG_UNINSTALL_MANIFEST);
   const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
@@ -265,12 +329,6 @@ function removeOwnedEntry(root: string, path: string): void {
   rmdirSync(path);
 }
 
-export function isOwnedConfigPath(configDir: string, candidatePath: string): boolean {
-  const rel = manifestRelativePath(configDir, candidatePath);
-  if (!rel) return false;
-  return loadOwnership(configDir)?.manifest.paths.includes(rel) === true;
-}
-
 export function recordOwnedConfigPath(configDir: string, candidatePath: string): boolean {
   const rel = manifestRelativePath(configDir, candidatePath);
   if (!rel) return false;
@@ -281,7 +339,7 @@ export function recordOwnedConfigPath(configDir: string, candidatePath: string):
   }
   let ownership = ownershipCache.get(cacheKey);
   if (ownership === undefined) {
-    ownership = loadOwnership(configDir) ?? createOwnership(configDir);
+    ownership = loadOwnership(configDir) ?? createOwnership(configDir) ?? adoptOwnership(configDir);
     ownershipCache.set(cacheKey, ownership);
   }
   if (!ownership) return false;

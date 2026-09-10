@@ -93,8 +93,11 @@ Yönlendirilmiş bir sağlayıcı üzerinden sıkıştırılmış bir görevi ye
 Servisi ve proxy'yi durdurun, servisi ve Codex dolgusunu kaldırın, yerel Codex'i
 geri yükleyin, ardından yalnızca tüm geri yükleme adımları başarılı olduysa
 opencodex yerel yapılandırmasını kaldırın. `remove`, `uninstall`'ın bir takma
-adıdır. Yapılandırma temizliği yeni bir yükleme tarafından oluşturulan sahiplik
-meta verilerini gerektirir; eski veya paylaşılan dizinler yerinde bırakılır.
+adıdır. Yapılandırma temizliği için sahiplik meta verileri gerekir: yeni bir yükleme
+bunları boş bir dizine yazar, içinde `runtime-port.json` gibi bir opencodex çalışma
+durum dosyası bulunan dizin ise bir sonraki yazmada bunları devralır. Temizlik, opencodex'in
+kaydettiği yolları ve kendi dizin başına katalog yedeklerini siler; geri kalan her şey yerinde
+kalır ve artık olarak bildirilir.
 
 ## Durum ve sağlık
 

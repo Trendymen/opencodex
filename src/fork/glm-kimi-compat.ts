@@ -9,7 +9,7 @@ import { normalizeRoutedAgentMessages } from "../adapters/routed-agent-messages"
 import { agentMessageConversionOptions } from "./agent-message-format";
 import { debugProviderDiagnostic } from "../lib/debug";
 import { getConfigDir } from "../config/paths";
-import { isOwnedConfigPath, recordOwnedConfigPath } from "../lib/config-ownership";
+import { recordOwnedConfigPath } from "../lib/config-ownership";
 
 const ARK_AGENT_PLAN_V3 = "https://ark.cn-beijing.volces.com/api/plan/v3";
 
@@ -103,12 +103,11 @@ export function persistKimiToolSchemaCatalog(args: {
     const dir = getConfigDir();
     const catalogDir = join(dir, KIMI_TOOL_SCHEMA_CATALOG_DIR);
     const existed = existsSync(catalogDir);
-    if (existed) {
-      if (!isOwnedConfigPath(dir, catalogDir)) return;
-    } else {
-      if (!recordOwnedConfigPath(dir, catalogDir)) return;
-      mkdirSync(catalogDir, { mode: 0o700 });
-    }
+    // An existing directory can outlive its ownership metadata: an older build created it,
+    // or the home was copied without the hidden metadata files. Claim it here instead of
+    // refusing to write for the rest of that home's life.
+    if (!recordOwnedConfigPath(dir, catalogDir)) return;
+    if (!existed) mkdirSync(catalogDir, { mode: 0o700 });
     const entry = lstatSync(catalogDir);
     if (!entry.isDirectory() || entry.isSymbolicLink()) return;
     const rootReal = realpathSync.native(dir);
