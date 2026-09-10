@@ -134,7 +134,7 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 文本样本要求 Provider debug 和独立、默认关闭的 `providerText` 同时开启，可经 `OCX_PROVIDER_TEXT_DEBUG=1`、`ocx debug provider-text on`、API 或 GUI 明确授权。
 样本经脱敏并保存为引用型 artifact；每字符串默认 256B、上限 8KB，UTF-8 安全截断，每轮最多 512 条并受总预算约束。
 持久化统一经 `persistProviderDebugFile()`：单文件 4 MiB、总量 16 MiB、最多 256 文件、保留 7 天。ownership、canonical containment 或安全创建不确定即拒写；拒绝 symlink 与非普通文件。诊断失败不影响 relay。
-旧版本创建、尚无 ownership 元数据的非空 OpenCodex home，只有存在 `runtime-port.json`、`service-state.json` 等 OpenCodex 运行时标记时才会被收养。收养状态写入 owner 与 manifest，并在进程重启后继续生效。新 manifest 从空路径集开始；收养前已存在的目录、普通文件、symlink 或越界父路径不会进入 ownership manifest，也不会由 uninstall 作为自有路径删除。只有收养后新建的安全路径可登记。Provider debug 和 Kimi schema 诊断把登记结果作为写入门槛，会拒绝预存容器；debug rotation 只扫描已登记的根。其他 config/runtime 写入器保持既有写入语义。元数据损坏、owner 与 manifest 的收养状态不一致、没有运行时标记或其他 ownership 检查失败时仍拒写。Provider debug 拒写时每个进程最多输出一次不含内容的告警。
+旧版本创建、尚无 ownership 元数据的非空 OpenCodex home，只有存在 `runtime-port.json`、`service-state.json` 等 OpenCodex 运行时标记时才会被收养。收养状态写入 owner 与 manifest，并在进程重启后继续生效。每次登记前重新读取两份磁盘元数据；缺失、损坏或收养状态不一致时不会信任进程内缓存。新 manifest 从空路径集开始；收养前已存在的目录、普通文件、symlink 或越界父路径不会进入 ownership manifest，也不会由 uninstall 作为自有路径删除。只有收养后新建的安全路径可登记。Provider debug 和 Kimi schema 诊断把登记结果作为写入门槛，会拒绝预存容器；debug rotation 只扫描已登记的根。其他 config/runtime 写入器保持既有写入语义。没有运行时标记或其他 ownership 检查失败时仍拒写。Provider debug 拒写时每个进程最多输出一次不含内容的告警。
 Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预算；收养 home 中既有的 catalog 路径不会被接管，只有收养后新建并完成 ownership 登记的目录才能写入。
 
 代码：`src/fork/outbound-debug.ts`、`src/fork/inbound-response-debug.ts`、`src/fork/debug-persistence.ts`、`src/fork/glm-kimi-compat.ts`、`src/lib/config-ownership.ts`、`src/lib/debug-settings.ts`、`src/web-search/passthrough-bridge.ts` 及 CLI/API/GUI 接线。
