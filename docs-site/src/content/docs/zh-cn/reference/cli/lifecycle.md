@@ -59,7 +59,7 @@ ocx eject back
 
 ### `ocx uninstall` · `ocx remove`
 
-停止服务和代理，移除服务和 Codex shim，恢复原生 Codex，然后仅在所有恢复步骤都成功时才删除 opencodex 本地配置。`remove` 是 `uninstall` 的别名。配置清理需要所有权元数据：全新安装会在空目录里写入；已经带有 opencodex 运行时状态文件（例如 `runtime-port.json`）的目录会在下次写入时补上。收养旧目录时初始路径清单为空；收养前已存在的路径不会被登记到所有权清单，也不会由 uninstall 作为自有路径删除。provider-debug 和 Kimi schema 诊断把登记失败当作写入门槛，因此会拒绝预存容器，不会扫描、轮转或在其中写入；其他 config/runtime 写入器仍按既有语义写入。清理只删除收养后登记的路径，以及 opencodex 自己的按目录 catalog 备份（`catalog-backup-*.json`）；其余内容保留原样并作为残留报告。
+停止服务和代理，移除服务和 Codex shim，恢复原生 Codex，然后仅在所有恢复步骤都成功时才删除 opencodex 本地配置。`remove` 是 `uninstall` 的别名。配置清理需要所有权元数据：全新安装会在空目录里写入；已经带有 opencodex 运行时状态文件（例如 `runtime-port.json`）的目录会在下次写入时补上。收养旧目录时初始路径清单为空；收养前已存在的路径不会被登记到所有权清单，也不会由 uninstall 作为自有路径删除。provider-debug 只把登记当记账、不作写入门槛，因此预存容器照样接收本地抓包；两个 debug 根共用一个轮转与容量预算，不因登记失败而拒写；预算与七天保留期同样作用于根内已存在的文件，超出即被清理。Kimi schema 诊断仍把登记失败当作写入门槛，其他 config/runtime 写入器按既有语义写入。清理只删除收养后登记的路径，以及 opencodex 自己的按目录 catalog 备份（`catalog-backup-*.json`）；其余内容保留原样并作为残留报告。
 
 ## 状态与健康
 

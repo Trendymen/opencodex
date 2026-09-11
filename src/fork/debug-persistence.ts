@@ -1,4 +1,15 @@
-/** Bounded, ownership-checked provider debug persistence for the relay fork. */
+/**
+ * Bounded provider debug persistence for the relay fork.
+ *
+ * Ownership registration is bookkeeping, never a gate. The ledger is re-read from
+ * disk on every registration and fails closed (see `config-ownership.ts`), so a home
+ * whose manifest outgrows the metadata read limit used to stop collecting its own
+ * local capture with no way back. The root a write lands in is still refused for an
+ * unsafe path state — symlinks, non-regular files, containment escapes, cleanup
+ * failures, size limits — while the sibling root stays best-effort: what cannot be
+ * pruned there leaves that call's budget, and a root that cannot be enumerated is
+ * left out of it, instead of either one gating the capture.
+ */
 
 import {
   closeSync,
@@ -19,9 +30,6 @@ import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getConfigDir } from "../config/paths";
 import {
-  CONFIG_OWNER_FILE,
-  CONFIG_UNINSTALL_MANIFEST,
-  isOwnedConfigPath,
   recordOwnedConfigPath,
 } from "../lib/config-ownership";
 import type { DebugLogEntry } from "../lib/debug-log-buffer";
@@ -77,7 +85,7 @@ function ensureDirectories(configDir: string, rootReal: string, segments: string
   let current = configDir;
   for (const segment of segments) {
     current = join(current, segment);
-    if (!recordOwnedConfigPath(configDir, current)) return null;
+    registerOwnedConfigPathQuietly(configDir, current);
     if (!existsSync(current)) {
       try {
         mkdirSync(current, { mode: 0o700 });
@@ -94,6 +102,19 @@ function ensureDirectories(configDir: string, rootReal: string, segments: string
     }
   }
   return current;
+}
+
+/**
+ * Register an owned path when the ledger can take it. Failure is swallowed on
+ * purpose: the capture is local diagnostics, and an unreadable or oversized
+ * manifest must not decide whether this home keeps logging.
+ */
+function registerOwnedConfigPathQuietly(configDir: string, path: string): void {
+  try {
+    recordOwnedConfigPath(configDir, path);
+  } catch {
+    /* bookkeeping only */
+  }
 }
 
 function collectFiles(rootReal: string, directory: string, files: DebugFile[]): boolean {
@@ -144,7 +165,8 @@ function rotationPath(relativePath: string, now: number): string {
 
 /**
  * Persist one JSONL payload under the two provider-debug roots. Any uncertain
- * ownership, link, containment, cleanup, or capacity state refuses the write.
+ * link, containment, cleanup, or capacity state refuses the write; ownership
+ * registration runs alongside as bookkeeping only.
  */
 function writeProviderDebugFile(
   relativePath: string,
@@ -164,9 +186,9 @@ function writeProviderDebugFile(
     || maxFiles < 1 || maxAgeMs < 0) return false;
 
   const configDir = resolve(getConfigDir());
-  if (!recordOwnedConfigPath(configDir, join(configDir, inputSegments[0]!))) return false;
   const rootReal = validateRoot(configDir);
   if (!rootReal) return false;
+  registerOwnedConfigPathQuietly(configDir, join(configDir, inputSegments[0]!));
 
   let segments = inputSegments;
   let parent = ensureDirectories(configDir, rootReal, segments.slice(0, -1));
@@ -180,13 +202,18 @@ function writeProviderDebugFile(
     if (!parent) return false;
     target = join(parent, segments.at(-1)!);
   }
-  if (!recordOwnedConfigPath(configDir, target)) return false;
+  registerOwnedConfigPathQuietly(configDir, target);
   if (existsSync(target) && !validatedExistingFile(rootReal, target)) return false;
 
+  const targetRoot = join(configDir, inputSegments[0]!);
   const files: DebugFile[] = [];
   for (const debugRoot of DEBUG_ROOTS) {
-    if (!isOwnedConfigPath(configDir, join(configDir, debugRoot))) continue;
-    if (!collectFiles(rootReal, join(configDir, debugRoot), files)) return false;
+    const rootFiles: DebugFile[] = [];
+    if (!collectFiles(rootReal, join(configDir, debugRoot), rootFiles)) {
+      if (join(configDir, debugRoot) === targetRoot) return false;
+      continue;
+    }
+    files.push(...rootFiles);
   }
   files.sort((left, right) => left.mtimeMs - right.mtimeMs || left.path.localeCompare(right.path));
   const targetExisting = files.find(file => file.path === target);
@@ -206,17 +233,44 @@ function writeProviderDebugFile(
     }
   };
 
+  const droppedFromBudget = new Set<string>();
+  /**
+   * Stop counting an entry this call could not verify or delete, without touching it.
+   * Idempotent per path: the age pass and the capacity pass can both reach the same
+   * undeletable sibling entry, and it must only leave the budget once.
+   */
+  const dropFromBudget = (file: DebugFile): void => {
+    if (droppedFromBudget.has(file.path)) return;
+    droppedFromBudget.add(file.path);
+    totalBytes -= file.bytes;
+    fileCount -= 1;
+  };
+
+  /**
+   * `refused` keeps the fail-closed contract for the root being written; `skipped`
+   * covers the sibling root, where a foreign entry must not become a write gate.
+   */
+  const prune = (file: DebugFile): "removed" | "skipped" | "refused" => {
+    if (remove(file)) return "removed";
+    return inside(targetRoot, file.path) ? "refused" : "skipped";
+  };
+
   for (const file of files) {
     if (file.path === target || now - file.mtimeMs <= maxAgeMs) continue;
-    if (!remove(file)) return false;
+    const outcome = prune(file);
+    if (outcome === "refused") return false;
+    if (outcome === "skipped") dropFromBudget(file);
   }
 
   const activeFiles = files.filter(file => existsSync(file.path));
   let index = 0;
   while (totalBytes + bytes > maxTotalBytes || fileCount + (targetExisting ? 0 : 1) > maxFiles) {
     const candidate = activeFiles.slice(index).find(file => file.path !== target && existsSync(file.path));
-    if (!candidate || !remove(candidate)) return false;
+    if (!candidate) return false;
     index = activeFiles.indexOf(candidate) + 1;
+    const outcome = prune(candidate);
+    if (outcome === "refused") return false;
+    if (outcome === "skipped") dropFromBudget(candidate);
   }
 
   const parentReal = validateRoot(parent);
@@ -254,19 +308,19 @@ function writeProviderDebugFile(
 let refusedWriteWarned = false;
 
 /**
- * Callers swallow the boolean, so a home that cannot register ownership collects
+ * Callers swallow the boolean, so a home whose capture path is unusable collects
  * nothing and reports nothing. One line per process keeps that visible without
- * touching the request path: the message names the two causes an operator can act
- * on, ownership metadata and capture size limits, and the first refusal is the
- * only one they ever see.
+ * touching the request path: the message names the root and the class of obstacle
+ * an operator can act on, and the first refusal is the only one they ever see.
  */
 function warnRefusedWrite(relativePath: string): void {
   if (refusedWriteWarned) return;
   refusedWriteWarned = true;
+  const root = relativePath.split("/")[0] ?? relativePath;
   console.warn(
     `[opencodex] provider debug capture is not being written: ${relativePath} was refused; `
-    + `check ${CONFIG_OWNER_FILE} and ${CONFIG_UNINSTALL_MANIFEST} plus the capture size `
-    + `limits under ${getConfigDir()}.`,
+    + `the ${root} root under ${getConfigDir()} needs real directories, `
+    + `regular files, and room under the capture size limits.`,
   );
 }
 
@@ -284,9 +338,9 @@ export function persistProviderDebugFile(
   try {
     written = writeProviderDebugFile(relativePath, content, options);
   } catch {
-    // Registering ownership can now write metadata, so a full disk or a locked
-    // manifest makes the writer throw where it used to return false. Both must
-    // stay inside the boolean contract: these callers sit on the response path.
+    // A full disk, an unwritable path, or an fs race can throw where the writer
+    // used to return false; that has to stay inside the boolean contract because
+    // these callers sit on the response path.
     written = false;
   }
   if (!written) warnRefusedWrite(relativePath);

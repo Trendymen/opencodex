@@ -49,30 +49,33 @@ describe("fork provider debug persistence", () => {
     expect(entries.at(-1)?.line).toBe("fork-persist-resilient");
   });
 
-  test("refuses an adopted existing debug directory without touching its sentinel", () => {
+  test("captures inside an adopted existing debug directory without touching its sentinel", () => {
     writeFileSync(join(testDir, "runtime-port.json"), "{\"port\":10100}\n");
     const debugDir = join(testDir, "provider-debug");
     mkdirSync(debugDir);
     const sentinel = join(debugDir, "keep.txt");
     writeFileSync(sentinel, "keep\n");
 
-    appendDebugLogLine("must-not-adopt-debug-directory");
+    appendDebugLogLine("adopted-debug-directory-capture");
 
     expect(readFileSync(sentinel, "utf8")).toBe("keep\n");
-    expect(existsSync(providerDebugLogPath())).toBe(false);
+    expect(readFileSync(providerDebugLogPath(), "utf8")).toContain("adopted-debug-directory-capture");
     expect(removeOwnedConfigState(testDir).status).toBe("partial");
     expect(readFileSync(sentinel, "utf8")).toBe("keep\n");
   });
 
-  test("does not rotate an unowned adopted sibling debug root", () => {
+  test("bounds capture across both debug roots even when one root predates ownership", () => {
     writeFileSync(join(testDir, "runtime-port.json"), "{\"port\":10100}\n");
     const artifactDir = join(testDir, "provider-debug-artifacts");
     mkdirSync(artifactDir);
     const sentinel = join(artifactDir, "sentinel.jsonl");
     writeFileSync(sentinel, "keep\n");
 
+    // Both provider-debug roots share one budget no matter who created them, so the
+    // capture can always prune back under the caps instead of refusing to write.
     expect(persistProviderDebugFile("provider-debug/current.jsonl", "new\n", { maxFiles: 1 })).toBe(true);
-    expect(readFileSync(sentinel, "utf8")).toBe("keep\n");
+    expect(existsSync(sentinel)).toBe(false);
+    expect(readFileSync(join(testDir, "provider-debug/current.jsonl"), "utf8")).toBe("new\n");
   });
 
   test("a refused capture warns once per process instead of failing silently", () => {

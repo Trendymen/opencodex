@@ -5,16 +5,20 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as debugPersistence from "../../src/fork/debug-persistence";
 import { createInboundResponsesDebugObserver } from "../../src/fork/inbound-response-debug";
+import { CONFIG_OWNER_FILE, CONFIG_UNINSTALL_MANIFEST } from "../../src/lib/config-ownership";
 import { localInstallRestartEnv } from "../../scripts/install-local";
 import { resetDebugLogBufferForTests } from "../../src/lib/debug-log-buffer";
 import {
@@ -76,10 +80,85 @@ describe("provider debug consent and durable storage safety", () => {
     expect(env.OCX_PROVIDER_TEXT_DEBUG).toBe("1");
   });
 
-  test("refuses durable writes when config ownership cannot be established", () => {
+  test("writes durable debug entries in a home without ownership metadata", () => {
     writeFileSync(join(root, "unowned.txt"), "belongs to the user");
-    debugPersistence.persistDebugEntry({ seq: 1, at: 1, line: "must-not-persist" });
-    expect(existsSync(debugPersistence.providerDebugLogPath())).toBe(false);
+    debugPersistence.persistDebugEntry({ seq: 1, at: 1, line: "local-capture-without-ledger" });
+    const rows = readFileSync(debugPersistence.providerDebugLogPath(), "utf8").trim().split("\n");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("local-capture-without-ledger");
+  });
+
+  test("keeps capturing when the ownership manifest is too large to read", () => {
+    // 2026-09-11 incident: unique debug artifacts pushed the uninstall manifest past the
+    // 64 KiB metadata read limit, loadOwnership() threw, and the write gate closed for good.
+    const owner = { version: 1, ownerId: randomUUID(), root: realpathSync.native(root) };
+    writeFileSync(join(root, CONFIG_OWNER_FILE), `${JSON.stringify(owner, null, 2)}\n`);
+    const paths = Array.from({ length: 800 }, (_, index) =>
+      `provider-debug/2026-09-11/03/timelines/timeline-${index}-${"a".repeat(60)}.jsonl`);
+    writeFileSync(join(root, CONFIG_UNINSTALL_MANIFEST), `${JSON.stringify({ ...owner, paths }, null, 2)}\n`);
+    expect(statSync(join(root, CONFIG_UNINSTALL_MANIFEST)).size).toBeGreaterThan(64 * 1024);
+
+    debugPersistence.persistDebugEntry({ seq: 1, at: 1, line: "capture-survives-oversized-ledger" });
+
+    const rows = readFileSync(debugPersistence.providerDebugLogPath(), "utf8").trim().split("\n");
+    expect(rows.at(-1)).toContain("capture-survives-oversized-ledger");
+  });
+
+  test.skipIf(process.platform === "win32")("keeps writing when the sibling debug root holds an unverifiable entry", () => {
+    const sibling = join(root, "provider-debug-artifacts", "2026-09-11", "09");
+    mkdirSync(sibling, { recursive: true });
+    symlinkSync(join(root, "outside-target.jsonl"), join(sibling, "linked.jsonl"));
+
+    // Only the root being written keeps the fail-closed contract; a foreign entry in the
+    // sibling root must not turn into a write gate for this capture.
+    expect(debugPersistence.persistProviderDebugFile("provider-debug/current.jsonl", "new\n")).toBe(true);
+    expect(readFileSync(join(root, "provider-debug/current.jsonl"), "utf8")).toBe("new\n");
+  });
+
+  test("keeps writing when a sibling-root entry cannot be deleted", () => {
+    const sibling = join(root, "provider-debug-artifacts", "2026-09-01", "00");
+    mkdirSync(sibling, { recursive: true });
+    const stuck = join(sibling, "stuck.jsonl");
+    writeFileSync(stuck, "stuck\n");
+    utimesSync(stuck, new Date(0), new Date(0));
+
+    // The age pass cannot delete it, so it leaves this call's budget instead of
+    // refusing the capture that belongs to the other root.
+    expect(debugPersistence.persistProviderDebugFile("provider-debug/current.jsonl", "new\n", {
+      maxAgeMs: 1_000,
+      removeFile: () => { throw new Error("cleanup denied"); },
+    })).toBe(true);
+    expect(existsSync(stuck)).toBe(true);
+    expect(readFileSync(join(root, "provider-debug/current.jsonl"), "utf8")).toBe("new\n");
+  });
+
+  test("drops an undeletable sibling entry from the budget only once", () => {
+    const sibling = join(root, "provider-debug-artifacts", "2026-09-01", "00");
+    mkdirSync(sibling, { recursive: true });
+    const stuck = join(sibling, "stuck.jsonl");
+    writeFileSync(stuck, "x".repeat(30));
+    utimesSync(stuck, new Date(0), new Date(0));
+    const targetRoot = join(root, "provider-debug");
+    mkdirSync(targetRoot, { recursive: true });
+    const keep = join(targetRoot, "keep.jsonl");
+    writeFileSync(keep, "y".repeat(99));
+
+    const persisted = debugPersistence.persistProviderDebugFile("provider-debug/current.jsonl", "new\n", {
+      maxFileBytes: 1_000,
+      maxTotalBytes: 100,
+      maxFiles: 10,
+      maxAgeMs: 1_000,
+      removeFile: (path: string) => {
+        if (path === stuck) throw new Error("cleanup denied");
+        unlinkSync(path);
+      },
+    });
+
+    expect(persisted).toBe(true);
+    // Counting the stuck entry once keeps the first pass over budget, so the capacity pass
+    // still reaches the deletable file; a second deduction would converge early and keep it.
+    expect(existsSync(keep)).toBe(false);
+    expect(existsSync(stuck)).toBe(true);
   });
 
   test.skipIf(process.platform === "win32")("refuses a symlinked provider-debug parent", () => {
