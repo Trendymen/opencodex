@@ -59,6 +59,14 @@ OpenAI 运营目的地与 GPT/OpenAI 模型硬排除，已有 phase 原样保留
 代码：`src/fork/responses-message-phase.ts`、`src/server/management/provider-routes.ts` 及 relay/core 接线。
 测试：`tests/responses/responses-message-phase-config.test.ts`、`tests/responses/responses-message-phase-passthrough.test.ts`、`tests/responses/responses-message-phase-rewrite.test.ts`、`tests/server/fork-provider-message-phase-config.test.ts`。
 
+### 注解 chip 的指令送达形态
+
+Codex 桌面端只把非 code span 里的 `:codex-annotation{index="N"}` 渲染成注解 chip，而客户端自带的说明模板把示例写成反引号形式，模型照着抄就只得到行内代码。Fork 在 OCX 侧补两处：入站按逐字指纹改写客户端的 `# Response annotations:` 说明块，保留选中项 JSON、`</response-annotations>` 之后的内容和用户 `## My request:` 原文，只把示例改成裸写并补一句"不要包反引号、chip 只在不在 code span 里时渲染"；输出侧去掉同一行内配对、且内容恰为一条规范指令的 code span 反引号。围栏与缩进代码块（含引用块、列表内、四空格缩进、CRLF 行）、夹带其他内容的片段、客户端会拒绝的编号和反引号之外的文本一律逐字保留；说明块措辞认不出来时整段放过并记一次 `unrecognized`。
+已知边界：输出侧不按本轮注解数量启用，模型在无注解轮刻意演示行内代码形式时反引号也会被去掉；反引号按行配对，跨行 code span 不参与判定；native 直通只经过入站改写，输出侧兜底只在路由路径生效；客户端 chip 渲染不在本仓库，未做真机验收。
+
+代码：`src/server/responses/annotation-instructions.ts`、`src/responses/annotation-directive.ts`，接线在 `src/server/responses/core.ts` 的解析前处理与 `src/bridge.ts` 的 delta 链、消息收尾和非流式路径。
+测试：`tests/server/annotation-instructions.test.ts`、`tests/responses/annotation-directive.test.ts`、`tests/adapters/bridge.test.ts`。
+
 ### 第三方工具任务的用户可见进度契约
 
 为第三方工具任务加入普通 assistant 文本进度要求：首次工具调用前、重要里程碑后、长操作前、最多连续四个纯工具响应后，以及收到新用户消息后更新；完成时给出自包含结果，并尊重用户的静默或节奏要求。
