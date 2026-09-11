@@ -16,6 +16,11 @@ import {
   type OcxErrorPayload,
 } from "./lib/errors";
 import { redactSecretString } from "./lib/redact";
+import {
+  createAnnotationDirectiveCodeSpanFilter,
+  stripAnnotationDirectiveCodeSpans,
+  type AnnotationDirectiveCodeSpanFilter,
+} from "./responses/annotation-directive";
 import { mayBecomePatchEnvelope, repairFreeformToolInput } from "./responses/apply-patch-envelope";
 import { encodeCompactionSummary } from "./responses/compaction";
 import { compileCodeModeHelperInput, resolveCodeModeHelperName } from "./responses/code-mode-helper-compat";
@@ -471,6 +476,7 @@ export function bridgeToResponsesSSE(
         text: string;
         textBytes: number;
         citationFilter: CitationMarkerFilter;
+        annotationFilter: AnnotationDirectiveCodeSpanFilter;
         phase?: OcxMessagePhase;
       } | null = null;
       let currentReasoning: { itemId: string; outputIndex: number; text: string; textBytes: number } | null = null;
@@ -602,17 +608,19 @@ export function bridgeToResponsesSSE(
 
       const closeCurrentMessage = (inferredPhase?: OcxMessagePhase) => {
         if (!currentMsg) return;
-        // Release anything the citation filter was holding for this message, then strip the
-        // accumulated text: closeCurrentMessage re-sends it in output_text.done and
-        // output_item.done, so filtering only the deltas would leave the markers in both.
+        // Release what both filters were holding for this message, then strip the accumulated
+        // text: closeCurrentMessage re-sends it in output_text.done and output_item.done, so
+        // filtering only the deltas would leave the citation markers, and the code span around
+        // an annotation directive, in both.
         const trailing = currentMsg.citationFilter.flush();
-        if (trailing) {
+        const released = currentMsg.annotationFilter.push(trailing) + currentMsg.annotationFilter.flush();
+        if (released) {
           emit("response.output_text.delta", {
             item_id: currentMsg.itemId, output_index: currentMsg.outputIndex,
-            content_index: 0, delta: trailing,
+            content_index: 0, delta: released,
           });
         }
-        const messageText = stripCitationMarkers(currentMsg.text);
+        const messageText = stripAnnotationDirectiveCodeSpans(stripCitationMarkers(currentMsg.text));
         // Chat Completions has no message-phase field. Keep its live item provisional, then
         // classify it only when the next adapter event proves whether this text led into more
         // work or completed the turn. Explicit adapter phases always outrank this inference.
@@ -1004,6 +1012,7 @@ export function bridgeToResponsesSSE(
                 currentMsg = {
                   itemId, outputIndex, text: "", textBytes: 0,
                   citationFilter: createCitationMarkerFilter(),
+                  annotationFilter: createAnnotationDirectiveCodeSpanFilter(),
                   ...(event.phase ? { phase: event.phase } : {}),
                 };
               }
@@ -1015,8 +1024,10 @@ export function bridgeToResponsesSSE(
               ));
               // A citation span can straddle a delta boundary, so the filter withholds an
               // unterminated tail and releases it at close (#3150). The accumulator above
-              // keeps the raw text; it is stripped once in closeCurrentMessage.
-              const visible = currentMsg.citationFilter.push(event.text);
+              // keeps the raw text; it is stripped once in closeCurrentMessage. The annotation
+              // filter reads what the citation filter released, so the deltas and the closing
+              // text apply the same two rewrites in the same order.
+              const visible = currentMsg.annotationFilter.push(currentMsg.citationFilter.push(event.text));
               if (visible) {
                 emit("response.output_text.delta", {
                   item_id: currentMsg.itemId, output_index: currentMsg.outputIndex,
@@ -1723,7 +1734,9 @@ function buildResponseJSONWithBudget(
     // ChatGPT-backend citation markers arrive as literal private-use characters that the
     // Codex TUI prints verbatim (#3150). Strip them here rather than at the accumulator so
     // the retained byte accounting above still describes what the upstream actually sent.
-    const text = stripCitationMarkers(currentText);
+    // The code span around an annotation directive comes off the same way: the client renders
+    // the chip only outside a code span, and this path has no per-delta filter to do it earlier.
+    const text = stripAnnotationDirectiveCodeSpans(stripCitationMarkers(currentText));
     const sourceBytes = pendingWebSources.reduce((sum, source) => sum + bytesOf(JSON.stringify(source)), 0);
     const annotations = pendingWebSources.map(s => ({
       type: "url_citation", url: s.url, ...(s.title ? { title: s.title } : {}), start_index: 0, end_index: 0,
