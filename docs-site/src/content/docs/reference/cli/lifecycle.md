@@ -116,9 +116,12 @@ Config cleanup needs ownership metadata: a fresh install writes it into an empty
 home that already holds an opencodex runtime state file such as `runtime-port.json` picks it up on
 the next write. Adoption starts with no owned paths. A path that already existed when the home was
 adopted is not registered in the ownership manifest and is not removed by uninstall as an owned
-path. Provider-debug and Kimi schema diagnostics treat failed registration as a write gate, so they
-refuse a pre-existing container instead of scanning, rotating, or writing inside it. Other config
-and runtime writers retain their existing write behavior. Cleanup removes only paths opencodex
+path. Provider-debug registers what it can and never gates writes on that registration, so a
+pre-existing container still receives the local capture and its two debug roots share one rotation
+and size budget. That budget and the seven-day retention cover files that were already sitting in
+those roots, which are deleted once they exceed the limits. Kimi schema diagnostics keep treating
+failed registration as a write gate. Other
+config and runtime writers retain their existing write behavior. Cleanup removes only paths opencodex
 registered after adoption, plus its own per-home catalog backups; anything else stays in place and
 is reported as a residual.
 
