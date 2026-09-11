@@ -148,7 +148,9 @@ Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预�
 EOF、稀疏 terminal、failed/incomplete 会先收尾；terminal-only reasoning 尾部仍投影。重复/迟到 part 不重开 index，终态后迟到 close 被抑制，空 part 不造 `**Thinking**`，SSE `event:` 与 JSON `type` 一致。
 SSE continuation cache 复用相同的分段摘要规则，并保留官方 inspector 的稀疏 output 重建与已确定的 response ID；完整历史回传不因摘要格式不同而重复追加工具调用，Copilot 固定首个 ID 后仍能用该 ID 续接。首个失败终态后的 completed 不写缓存，重复 completed 不覆盖首份候选。
 
-代码：`src/server/responses-reasoning-summary-rewrite.ts`、`src/adapters/openai-responses.ts`。
+规范 `opencode-go` 预设新增 `preserveResponsesReasoningContent`：在此之前，该 Provider 的 Responses 回放按默认规则把 reasoning 正文清空；Console Go 对一条 `deepseek-flash` 续轮返回 HTTP 400，报错原文为 `The reasoning_text in the thinking mode must be passed back to the API`。清空与该 400 的因果关系没有做过 live 复现，属机制推断。该开关是 registry 缺省，仅在该字段缺失时回填，配置里显式 `false` 仍然优先；作用域为 Provider 级，与 `deepseek`、`zhipu-bigmodel-responses` 两个预设一致，同一 lane 的其他 Responses 模型（`gpt-5.6-luna`、`grok-4.6`、`muse-spark-1.2/1.3-contributor`）是否接受保留回放尚未验证。
+
+代码：`src/server/responses-reasoning-summary-rewrite.ts`、`src/adapters/openai-responses.ts`、`src/providers/registry.ts`。
 测试：`tests/providers/deepseek-reasoning-replay.test.ts`、`tests/providers/opencode-go-luna-wire.test.ts`、`tests/responses/responses-original-field-preservation.test.ts` 及同目录 `responses-reasoning-summary-*.test.ts`。
 
 ### SSE block rewrite flush 与终态兼容
