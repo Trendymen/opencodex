@@ -123,6 +123,7 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 - `codexToolMode` 创建时省略为 inherit；更新时省略保留、枚举设置、`null` 清除。CLI 支持 `--tool-mode code_mode_only|shell|inherit`，列表展示存储值。
 - 管理 API 按字段是否存在严格验证 provider、modelId、displayName、contextWindow、modalities、reasoning/default effort 和 tool mode；非法输入在持久化与 catalog 更新前返回 400。
 - 自定义模型替换相同 Provider/模型的发现行时，管理 API 保留官方发现得到的 `pricingStatus`；免费、付费和未分类三种状态不互相替换。该字段只用于管理 API、CLI 和 GUI 筛选，不写入 Codex catalog。
+- 配置进入 salvage fallback 时复用完整文件诊断；`customModels` 规范化警告与官方 `codexPool` 非法值警告会同时保留，不因挽救其他 section 而丢失。
 
 代码：`src/config/custom-models.ts`、`src/config.ts`、`src/server/management/model-routes.ts`，router、catalog、CLI 的窄接线。
 测试：`tests/config/fork-custom-model-config-schema.test.ts`、`tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts`、`tests/codex-integration/catalog-free-pricing-status.test.ts`。
