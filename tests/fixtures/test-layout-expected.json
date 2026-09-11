@@ -74,6 +74,8 @@
   "alibaba-region-migration.test.ts": "providers",
   "alibaba-region-startup.test.ts": "providers",
   "always-on-429-failover.test.ts": "routing",
+  "annotation-directive.test.ts": "responses",
+  "annotation-instructions.test.ts": "server",
   "anthropic-account-pool.test.ts": "adapters/anthropic",
   "anthropic-agentrouter-language-framing.test.ts": "adapters/anthropic",
   "anthropic-baseurl-override.test.ts": "adapters/anthropic",

@@ -398,6 +398,7 @@ import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/cat
 
 import { buildToolBridgeMaps, collabSurface, injectDeveloperMessage, multiAgentGuidanceText } from "./collaboration";
 import { mapCodexAuthContextErrorToResponse, nativeMainRefreshFailureResponse } from "./codex-auth-error";
+import { rewriteAnnotationInstructionsInPlace } from "./annotation-instructions";
 import {
   hasStrictBackendEncryptedAgentTask,
   hasUnreadableEncryptedAgentTask,
@@ -3457,6 +3458,24 @@ async function handleResponsesInner(
       console.warn(
         `[opencodex] rewrote ${rewritten} plaintext encrypted_content part(s) to input_text (spawn-message compatibility)`,
       );
+  }
+
+  // The desktop client's annotation instructions show the directive in backticks, so models emit a
+  // directive the client renders as literal code instead of an annotation chip. Rewrite that block
+  // on the RAW body BEFORE parsing, next to the encrypted-content repair above and for the same
+  // reason: the parsed messages feed the routed adapters, and the native passthrough serializes
+  // `_rawBody` verbatim. A wording this build does not recognize is reported and left alone.
+  {
+    const instructions = rewriteAnnotationInstructionsInPlace(
+      (body as { input?: unknown } | undefined)?.input,
+    );
+    if (instructions.rewritten > 0) {
+      console.warn(
+        `[opencodex] rewrote ${instructions.rewritten} annotation instruction block(s) to require a bare directive`,
+      );
+    } else if (instructions.unrecognized > 0) {
+      console.warn("[opencodex] annotation instruction block does not match the known client template; left unchanged");
+    }
   }
 
   let parsed: OcxParsedRequest;
