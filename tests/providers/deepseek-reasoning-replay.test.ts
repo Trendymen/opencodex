@@ -68,13 +68,13 @@ describe("sanitizeReasoningInputContent scoping", () => {
 });
 
 describe("DeepSeek Responses replay keeps reasoning on the wire", () => {
-  function buildBody(provider: OcxProviderConfig): Record<string, unknown> {
+  function buildBody(provider: OcxProviderConfig, modelId = "deepseek-v4-flash"): Record<string, unknown> {
     const built = createResponsesPassthroughAdapter(provider).buildRequest({
-      modelId: "deepseek-v4-flash",
+      modelId,
       context: { messages: [] },
       stream: true,
       options: {},
-      _rawBody: { model: "deepseek-v4-flash", input: [reasoningItem()] },
+      _rawBody: { model: modelId, input: [reasoningItem()] },
     } as Parameters<ReturnType<typeof createResponsesPassthroughAdapter>["buildRequest"]>[0], { headers: new Headers() });
     return JSON.parse(String(built.body)) as Record<string, unknown>;
   }
@@ -120,5 +120,17 @@ describe("DeepSeek Responses replay keeps reasoning on the wire", () => {
     const body = buildBody(provider);
     const item = (body.input as Record<string, unknown>[])[0]!;
     expect(item.content).toEqual([]);
+  });
+
+  test("a Console Go (opencode-go) continuation keeps reasoning_text", () => {
+    // Console Go answers HTTP 400 with "The `reasoning_text` in the thinking mode must be
+    // passed back to the API" when a DeepSeek thinking continuation arrives with the replayed
+    // reasoning content blanked. The observed failure was on `deepseek-flash`; the assertion
+    // tracks the provider-level flag, so the model id only pins the reported scenario.
+    const provider = { ...providerConfigSeed(getProviderRegistryEntry("opencode-go")!), apiKey: "sk-test" };
+    enrichProviderFromRegistry("opencode-go", provider);
+    const body = buildBody(provider, "deepseek-flash");
+    const item = (body.input as Record<string, unknown>[])[0]!;
+    expect(item.content).toEqual([{ type: "reasoning_text", text: "think step by step" }]);
   });
 });
