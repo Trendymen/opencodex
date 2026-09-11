@@ -3335,15 +3335,11 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     // that ignores the error and writes it back preserves what the operator configured.
     const salvaged = salvageConfigCandidate(merged, retryResult.error);
     if (salvaged) {
-      const config = normalizeApiKeyIds(salvaged.parsed);
-      const warnings = degradedListenerWarnings(parsed, config);
-      const customModelsWarning = customModelLoadWarning(parsed);
-      if (customModelsWarning) warnings.push(customModelsWarning);
+      const diagnostics = validFileConfigDiagnostics(normalizeApiKeyIds(salvaged.parsed), parsed);
       return {
-        config,
+        ...diagnostics,
         source: "fallback",
         error: schemaDiagnosticsError(result.error),
-        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
 

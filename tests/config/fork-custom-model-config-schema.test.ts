@@ -259,6 +259,7 @@ describe("Fork customModels config integration", () => {
 
   test("composite section salvage reports one custom-model warning in load and diagnostics", () => {
     const config = baseConfig(["bad", model()]);
+    config.codexPool = { excludedPlans: "free" };
     config.routingProfiles = {
       bad: { candidates: [{ provider: "missing", model: "m" }] },
     };
@@ -276,6 +277,7 @@ describe("Fork customModels config integration", () => {
       expect(diagnostics.source).toBe("fallback");
       expect(diagnostics.config.customModels).toEqual([model()]);
       expect(diagnostics.warnings?.filter(value => value.includes("customModels"))).toHaveLength(1);
+      expect(diagnostics.warnings?.filter(value => value.includes("codexPool"))).toHaveLength(1);
     } finally {
       warn.mockRestore();
       error.mockRestore();
