@@ -1708,6 +1708,17 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     // Go rejects reasoning.encrypted_content with previous_response_id (#3838).
     // Use explicit replay history and the existing stateless Responses policy.
     statelessResponses: true,
+    // Console Go answered HTTP 400 to a `deepseek-flash` Responses continuation whose replayed
+    // reasoning item arrived with its content channel blanked: "The `reasoning_text` in the
+    // thinking mode must be passed back to the API". Keep plaintext reasoning on the wire the
+    // way the native DeepSeek preset does.
+    //
+    // The flag is provider-wide, mirroring `deepseek` and `zhipu-bigmodel-responses`; this lane
+    // has no model-scoped form. Whether the other Responses-wire models here (gpt-5.6-luna,
+    // grok-4.6, muse-spark-1.2/1.3-contributor) accept a preserved replay is unverified, and a
+    // continuation whose history was produced on the content channel can now hand them
+    // reasoning content that used to be blanked.
+    preserveResponsesReasoningContent: true,
     /* [Decision Log]
     - 목적과 의도: Route the exact models OpenCode Go documents on the Responses endpoint — GPT 5.6 Luna, Grok 4.6, and Muse Spark Contributor (#2617).
     - 기존 구현 및 제약 조건: The provider is mixed-wire but its provider-wide `openai-chat` adapter sent Luna to `/chat/completions`; explicit user `modelAdapters` entries must remain authoritative.

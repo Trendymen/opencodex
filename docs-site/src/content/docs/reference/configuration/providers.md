@@ -971,6 +971,18 @@ Non-Go destinations are unaffected: opencodex never derives or adds the session 
 header an operator configured on such a provider is still sent, because opencodex leaves that
 configuration alone.
 
+## OpenCode Go reasoning replay
+
+The same preset enables `preserveResponsesReasoningContent`: replayed reasoning items keep their
+plaintext `reasoning_text` instead of the empty `content` channel the ChatGPT backend requires.
+Console Go rejected a `deepseek-flash` continuation with HTTP 400 and
+`The reasoning_text in the thinking mode must be passed back to the API`; the preset now sends that
+plaintext back. The flag is provider-wide, as with the `deepseek` and `zhipu-bigmodel-responses`
+presets, and an explicit `preserveResponsesReasoningContent: false` on the provider still wins.
+Whether the lane's other Responses models (`gpt-5.6-luna`, `grok-4.6`,
+`muse-spark-1.2-contributor`, `muse-spark-1.3-contributor`) accept a preserved replay is not
+verified.
+
 ## OpenCode Go reasoning efforts
 
 Go catalog rows preserve their configured reasoning efforts exactly, including during
