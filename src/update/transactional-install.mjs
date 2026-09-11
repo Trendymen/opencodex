@@ -99,15 +99,20 @@ function pnpmOwnedDependencyDir(packageDir, name) {
 }
 
 /** Verification manifest for a staged (or live) package tree. */
-function verifyTreeWithDependencyLookup(packageDir, expectedVersion, dependencyDir) {
+function verifyTreeWithDependencyLookup(packageDir, expectedVersion, dependencyDir, allowPackageRootSymlink = false) {
   const failures = [];
   let canonicalRoot;
   try {
     const rootStat = lstatSync(packageDir);
-    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    const allowedSymlink = allowPackageRootSymlink && rootStat.isSymbolicLink();
+    if ((!rootStat.isDirectory() && !allowedSymlink) || (rootStat.isSymbolicLink() && !allowedSymlink)) {
       return { ok: false, failures: ["package root must be a regular directory"] };
     }
     canonicalRoot = realpathSync(packageDir);
+    const canonicalRootStat = lstatSync(canonicalRoot);
+    if (!canonicalRootStat.isDirectory() || canonicalRootStat.isSymbolicLink()) {
+      return { ok: false, failures: ["package root must resolve to a regular directory"] };
+    }
   } catch (error) {
     return { ok: false, failures: ["package root unreadable: " + (error?.message ?? String(error))] };
   }
@@ -155,11 +160,8 @@ function verifyTreeWithDependencyLookup(packageDir, expectedVersion, dependencyD
     try {
       canonicalBunRoot = realpathSync(bunPkgDir);
       if (dependencyDir === candidateTreeDependencyDir) {
-        for (const part of ["node_modules", "bun"]) {
-          const parent = join(packageDir, ...(part === "bun" ? ["node_modules", part] : [part]));
-          const stat = lstatSync(parent);
-          if (!stat.isDirectory() || stat.isSymbolicLink()) bunRootUnsafe = true;
-        }
+        const nodeModules = lstatSync(join(packageDir, "node_modules"));
+        if (!nodeModules.isDirectory() || nodeModules.isSymbolicLink()) bunRootUnsafe = true;
       }
     } catch {
       bunRootUnsafe = true;
@@ -177,9 +179,16 @@ function verifyTreeWithDependencyLookup(packageDir, expectedVersion, dependencyD
     : deps.slice(0, 2);
   for (const name of sentinels) {
     if (dependencyDir === candidateTreeDependencyDir) {
-      const failure = regularFile(["node_modules", ...name.split("/"), "package.json"], "sentinel dependency missing: " + name);
-      if (failure) failures.push(failure);
-      continue;
+      try {
+        const nodeModules = lstatSync(join(packageDir, "node_modules"));
+        if (!nodeModules.isDirectory() || nodeModules.isSymbolicLink()) {
+          failures.push("sentinel dependency missing: " + name);
+          continue;
+        }
+      } catch {
+        failures.push("sentinel dependency missing: " + name);
+        continue;
+      }
     }
     const dependencyRoot = dependencyDir(packageDir, name);
     if (!dependencyRoot) {
@@ -216,7 +225,7 @@ export function verifyInstallTree(packageDir, expectedVersion) {
  * still be reachable through a root this package instance owns.
  */
 export function verifyPnpmInstallTree(packageDir, expectedVersion) {
-  return verifyTreeWithDependencyLookup(packageDir, expectedVersion, pnpmOwnedDependencyDir);
+  return verifyTreeWithDependencyLookup(packageDir, expectedVersion, pnpmOwnedDependencyDir, true);
 }
 
 function stampedName(prefix) {
