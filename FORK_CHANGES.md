@@ -141,8 +141,8 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 普通 Provider debug 只记录结构，不持久化请求正文、key、工具参数或 Response/reasoning 文本。
 文本样本要求 Provider debug 和独立、默认关闭的 `providerText` 同时开启，可经 `OCX_PROVIDER_TEXT_DEBUG=1`、`ocx debug provider-text on`、API 或 GUI 明确授权。
 样本经脱敏并保存为引用型 artifact；每字符串默认 256B、上限 8KB，UTF-8 安全截断，每轮最多 512 条并受总预算约束。
-持久化统一经 `persistProviderDebugFile()`：单文件 4 MiB、总量 16 MiB、最多 256 文件、保留 7 天。ownership、canonical containment 或安全创建不确定即拒写；拒绝 symlink 与非普通文件。诊断失败不影响 relay。
-旧版本创建、尚无 ownership 元数据的非空 OpenCodex home，只有存在 `runtime-port.json`、`service-state.json` 等 OpenCodex 运行时标记时才会被收养。收养状态写入 owner 与 manifest，并在进程重启后继续生效。每次登记前重新读取两份磁盘元数据；缺失、损坏或收养状态不一致时不会信任进程内缓存。新 manifest 从空路径集开始；收养前已存在的目录、普通文件、symlink 或越界父路径不会进入 ownership manifest，也不会由 uninstall 作为自有路径删除。只有收养后新建的安全路径可登记。Provider debug 和 Kimi schema 诊断把登记结果作为写入门槛，会拒绝预存容器；debug rotation 只扫描已登记的根。其他 config/runtime 写入器保持既有写入语义。没有运行时标记或其他 ownership 检查失败时仍拒写。Provider debug 拒写时每个进程最多输出一次不含内容的告警。
+持久化统一经 `persistProviderDebugFile()`：单文件 4 MiB、总量 16 MiB、最多 256 文件、保留 7 天。canonical containment、symlink 或非普通文件、安全创建或清理失败即拒写；ownership 登记只作记账、不作门槛。诊断失败不影响 relay。
+旧版本创建、尚无 ownership 元数据的非空 OpenCodex home，只有存在 `runtime-port.json`、`service-state.json` 等 OpenCodex 运行时标记时才会被收养。收养状态写入 owner 与 manifest，并在进程重启后继续生效。每次登记前重新读取两份磁盘元数据；缺失、损坏或收养状态不一致时不会信任进程内缓存。新 manifest 从空路径集开始；收养前已存在的目录、普通文件、symlink 或越界父路径不会进入 ownership manifest，也不会由 uninstall 作为自有路径删除。只有收养后新建的安全路径可登记。Provider debug 的登记只作记账、不是写入门槛：账本缺失、损坏或超过 64 KiB 元数据上限时仍继续写入本地抓包，预存容器同样接收。结构安全（symlink、非普通文件、containment、清理失败）与 4 MiB/16 MiB/256 文件/7 天预算仍然生效，且只对写入目标所在的那个根 fail-closed；另一个 debug 根按尽力处理：无法清理的条目从当次预算剔除，无法枚举的根当次不参与预算，都不拦下写入。预算与保留期同样覆盖根内已存在的文件，超限或超过 7 天即被清理。Kimi schema 诊断仍把登记结果作为写入门槛。其他 config/runtime 写入器保持既有写入语义（登记失败照写）；仍在登记失败时拒写的是 Kimi schema 诊断；Windows 计划任务安装路径只在安装开始时 config root 原本不存在、且随后仍认领失败时中止安装。Provider debug 拒写时每个进程最多输出一次不含内容的告警。
 Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预算；收养 home 中既有的 catalog 路径不会被接管，只有收养后新建并完成 ownership 登记的目录才能写入。
 
 代码：`src/fork/outbound-debug.ts`、`src/fork/inbound-response-debug.ts`、`src/fork/debug-persistence.ts`、`src/fork/glm-kimi-compat.ts`、`src/lib/config-ownership.ts`、`src/lib/debug-settings.ts`、`src/web-search/passthrough-bridge.ts` 及 CLI/API/GUI 接线。
@@ -282,7 +282,7 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 
 - 合成测试和静态断言不替代真实 Provider/Codex App 验收。Standalone web search、真实 minted backend ciphertext + recovery SSE，以及 weekly quota、empty-assistant、custom model 的客户端终态仍需绑定具体实现验证。
 - Reasoning 合成事件没有统一分配新的 `sequence_number`；closed-state 到 terminal teardown 才释放。
-- Provider debug ownership manifest 仍可能随 unique artifact 增长到上限并拒写，不承诺自动压缩。旧 home 只有存在已知 OpenCodex 运行时标记时才会被收养；仅含通用 `config.json` 等文件的目录继续拒绝。收养前已存在的 debug 或 Kimi catalog 目录不会被接管，对应写入会继续拒绝，需由用户迁移或清理该路径。独立 `ocx service repair/install` 可能覆盖本地安装写入的 `OCX_DEBUG=1`。
+- Provider debug 的 ownership manifest 仍可能随 unique artifact 增长到 64 KiB 元数据上限；此后登记静默停止、抓包继续写入，代价是这段时间新建的抓包文件不再单独进入卸载清单（只能靠已登记目录的递归删除覆盖），不承诺自动压缩。旧 home 只有存在已知 OpenCodex 运行时标记时才会被收养；仅含通用 `config.json` 等文件的目录继续拒绝。收养前已存在的 Kimi catalog 目录不会被接管，对应写入会继续拒绝，需由用户迁移或清理该路径。独立 `ocx service repair/install` 可能覆盖本地安装写入的 `OCX_DEBUG=1`。
 - 安装与恢复的 isolated/unit/static 测试不证明 Windows PowerShell/junction、真实全局替换与服务恢复均已验收。PID reuse、断电持久化及路径检查到 rename/remove 的竞态仍是边界；损坏安装下的 launcher 启动仍需动态验证。
 - Node 缺少通用 `openat`，诊断持久化和安装器的路径防护不能完全排除父目录并发替换。
 - Windows 跳过 package-shaped npm launcher 子进程用例；Bun `runUpdate()` 缺真实 package-shaped smoke。GUI update badge 尚不显示同基线更高 `ben.N`，preview parser 仍是既有单数字形态。
