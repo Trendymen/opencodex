@@ -113,6 +113,7 @@ describe("provider registry parity", () => {
       expect(Object.keys(map ?? {})).toContain("deepseek-flash");
     }
     expect(nativeDeepseek?.preserveReasoningContentModels).toContain("deepseek-flash");
+    expect(nativeDeepseek?.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
     expect(nativeDeepseek?.noVisionModels).not.toContain("deepseek-flash");
     // The new id keeps the Flash ladder, not the Pro one, through isDeepseekFlashModel.
     expect(nativeDeepseek?.modelReasoningEfforts?.["deepseek-flash"])
