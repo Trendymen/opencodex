@@ -366,10 +366,9 @@ describe("OpenCode Go stateless reasoning and continuation routes", () => {
         input: [{ type: "function_call_output", call_id: lateCall.call_id, output: "must not inherit late call" }],
       }),
     }), config, { model: "", provider: "" }, { inboundWire: "responses" });
-    expect(second.status).toBe(200);
-    await second.text();
-    const replay = requests[1]!.input as Array<Record<string, unknown>>;
-    expect(replay).not.toContainEqual(expect.objectContaining({ type: "function_call", call_id: lateCall.call_id }));
+    expect(second.status).toBe(400);
+    expect(await second.json()).toMatchObject({ error: { code: "previous_response_not_found" } });
+    expect(requests).toHaveLength(1);
   });
 });
 

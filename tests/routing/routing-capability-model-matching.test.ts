@@ -129,13 +129,13 @@ describe("policy capability evidence uses the effective provider", () => {
   });
 
   test("registry no-vision defaults participate before policy image requirements", () => {
-    // V4 Pro is still a registry text-only id, so a config that advertises it as image-capable
+    // DeepSeek Reasoner is still a registry text-only id, so a config that advertises it as image-capable
     // must not satisfy the requirement: noVisionModels is checked before the modality list.
     const config = policyConfig("deepseek", {
       adapter: "openai-chat", baseUrl: "https://api.deepseek.com",
-      modelInputModalities: { "deepseek-v4-pro": ["text", "image"] },
-    }, "deepseek-v4-pro", { imageInput: true });
-    const routed = routeModel(config, "deepseek/deepseek-v4-pro");
+      modelInputModalities: { "deepseek-reasoner": ["text", "image"] },
+    }, "deepseek-reasoner", { imageInput: true });
+    const routed = routeModel(config, "deepseek/deepseek-reasoner");
     expect(isModelTextOnly(routed.provider, routed.modelId)).toBe(true);
     expect(() => routeModel(config, "policy/guarded")).toThrow(NoEligiblePolicyCandidateError);
   });
