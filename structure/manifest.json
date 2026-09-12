@@ -291,6 +291,15 @@
       ]
     },
     {
+      "path": "fork-extensions.md",
+      "tier": 4,
+      "title": "Trendymen Fork Extensions",
+      "scope": "Fork-only provider compatibility, Responses repair, diagnostics, and release policy modules.",
+      "documents": [
+        "src/fork/"
+      ]
+    },
+    {
       "path": "gui-and-management-api.md",
       "tier": 5,
       "title": "GUI And Management API",
