@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.51.0`（`c155cc7923dbc0102e27d79185505a85d4357b2c`）。
+- 上游基线：`v2.52.0`（`4d37c35155fe283722566d32892b8753c1230be7`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -97,7 +97,7 @@ Kiro 当前通过已识别的 code-mode `exec` 接收该提示，仅有直接 `a
 
 ### Nested code-mode 工具修复
 
-上游已将裸 `exec_command` / `apply_patch` 接入统一 exec。Fork 额外修复 `functions.exec` / `web__run`，要求当前 turn 的 `functions` namespace 内恰有一个 `custom:exec`，且 lowering 来源一致。
+上游已将裸 `exec_command` / `apply_patch` 接入统一 exec，并在 `v2.52.0` 增加 `default.` namespace 的请求有界归一化。Fork 额外修复 `functions.exec` / `web__run`，要求当前 turn 的 `functions` namespace 内恰有一个 `custom:exec`，且 lowering 来源一致。归一化只使用调用方明确声明的 bare tool 集；nested-exec 的延迟、拒绝和 continuation cache 门禁继续生效。
 普通 `function:exec`、顶层 `custom:exec`、其他 namespace 或多重声明不授权该修复。碎片事件与 passthrough SSE 原子缓冲；畸形、歧义、重复、超预算调用交给 undeclared-tool guard。
 Continuation cache 仅在客户端收到有效 terminal 后提交；有界 JSON 在 inspection 仍有效时完成校验和缓存提交。
 code-mode 历史输出另要求字符串 `instructions`、唯一 bare unnamespaced `custom_tool_call(name=exec)` 与对应输出。同一 `call_id` 与 function、local-shell 或 standalone output 碰撞时视为歧义，不改写非 custom exec 输出。
@@ -156,6 +156,7 @@ Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预�
 有状态 rewrite 按第三句或 500 code point 中先到的边界分段，每个 `summary_index` 独立闭合。
 EOF、稀疏 terminal、failed/incomplete 会先收尾；terminal-only reasoning 尾部仍投影。重复/迟到 part 不重开 index，终态后迟到 close 被抑制，空 part 不造 `**Thinking**`，SSE `event:` 与 JSON `type` 一致。
 SSE continuation cache 复用相同的分段摘要规则，并保留官方 inspector 的稀疏 output 重建与已确定的 response ID；完整历史回传不因摘要格式不同而重复追加工具调用，Copilot 固定首个 ID 后仍能用该 ID 续接。首个失败终态后的 completed 不写缓存，重复 completed 不覆盖首份候选。
+官方 `v2.52.0` 对无状态 Responses 的本地续接缺失返回 `previous_response_not_found`，不会把缺失历史前缀的 tool result 发给上游；首个失败终态后的迟到 completed 仍不能绕过这条边界。
 
 规范 `opencode-go` 预设新增 `preserveResponsesReasoningContent`：在此之前，该 Provider 的 Responses 回放按默认规则把 reasoning 正文清空；Console Go 对一条 `deepseek-flash` 续轮返回 HTTP 400，报错原文为 `The reasoning_text in the thinking mode must be passed back to the API`。清空与该 400 的因果关系没有做过 live 复现，属机制推断。该开关是 registry 缺省，仅在该字段缺失时回填，配置里显式 `false` 仍然优先；作用域为 Provider 级，与 `deepseek`、`zhipu-bigmodel-responses` 两个预设一致，同一 lane 的其他 Responses 模型（`gpt-5.6-luna`、`grok-4.6`、`muse-spark-1.2/1.3-contributor`）是否接受保留回放尚未验证。
 
@@ -209,15 +210,15 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 `authMode: "forward"` 不注入，ChatGPT 转发后端不接受该参数。
 代码：`src/adapters/openai-responses.ts` 的 `applyConfiguredResponsesMaxOutputTokens()`。
 测试：`tests/responses/openai-responses-passthrough.test.ts`，覆盖未配置时不注入、模型级覆盖 provider 默认、调用方值优先与 forward 不注入。
-文档：`docs-site` 的 provider 配置参考与 `structure/02_config-and-codex-home.md` 已同步。
+文档：`docs-site` 的 provider 配置参考与 `structure/config.md` 已同步。
 
 ### DeepSeek V4 Flash 直连图片输入
 
-上游按 issue #88 把 DeepSeek 的全部 API 模型列入 `noVisionModels`，由视觉 sidecar 代读图片。
-`deepseek-v4-flash` 现在自己接受图片输入：2026-09-10 直连实测，`POST /chat/completions` 与 Codex 实际使用的 `POST /responses`（`input_image`）携带纯色图都返回 200，该模型在两条线路上都从像素答出颜色；`deepseek-v4-flash-vision-exp` 对照返回相同答案。仓库内 2026-08-01 记录的“`/responses` 会把 `input_image` 换成占位文本”已不成立，官方 API 文档在测量当日仍写着这条占位行为与 Chat 线路的 400，属文档滞后，不要据此回退本项分类。Fork 把该模型移出 `noVisionModels` 并在 registry 声明 `["text", "image"]`，图片按原样发给上游，不再经过 sidecar；`deepseek-chat`、`deepseek-reasoner` 与 `deepseek-v4-pro` 保留 sidecar 覆盖，Pro 的图片路径未验证。
-生效边界：`routedProviderConfig()` 把 registry 与配置中的 `noVisionModels` 取并集，配置里仍写有 `deepseek-v4-flash` 的安装要删除该条目才会生效。
+上游 `v2.52.0` 将第一方当前模型改为 `deepseek-flash`，并把 `deepseek-v4-flash` 保留为路由到同一模型的兼容别名。Fork 继续保留 2026-09-10 的图片能力证据：使用 legacy id 直连 `POST /chat/completions` 与 Codex 实际使用的 `POST /responses`（`input_image`），携带纯色图均返回 200，模型在两条线路上都从像素答出颜色；`deepseek-v4-flash-vision-exp` 对照返回相同答案。
+Fork 为 `deepseek-flash`、`deepseek-v4-flash` 和 vision preview 声明 `["text", "image"]`，图片按原样发给上游，不经过 sidecar；`deepseek-chat` 和 `deepseek-reasoner` 继续使用 sidecar。`deepseek-flash` 在官方改名后尚未用 canonical id 单独复测，本项依据官方 alias 路由合同继承 legacy id 的实测结果。仓库内 2026-08-01 关于占位文本的旧记录不再作为当前能力依据。
+生效边界：`routedProviderConfig()` 把 registry 与配置中的 `noVisionModels` 取并集；用户配置仍显式列出 `deepseek-flash` 或 `deepseek-v4-flash` 时，需要删除对应条目才会启用直连图片。
 代码：`src/providers/registry.ts` 的 deepseek 条目。
-测试：`tests/providers/provider-registry-parity.test.ts` 覆盖 registry 声明与合并后的路由判定；`tests/routing/router.test.ts` 与 `tests/routing/routing-capability-model-matching.test.ts` 原有两条按 issue #88 断言全部 DeepSeek 模型为 text-only 的用例已改按新分类断言，并补一例“registry 图片能力模型可满足图片策略要求”。
+测试：`tests/providers/provider-registry-parity.test.ts` 覆盖 registry 声明与合并后的路由判定；`tests/routing/router.test.ts` 与 `tests/routing/routing-capability-model-matching.test.ts` 按当前模型分类断言 `deepseek-flash` / `deepseek-v4-flash` 可直连图片，`deepseek-reasoner` 仍服从 `noVisionModels`，并覆盖 registry 图片能力模型可满足图片策略要求。
 
 ## 当前维护、安装与测试差异
 
@@ -264,6 +265,7 @@ HTTP/SSE fixture 显式隔离 canonical ChatGPT 上游 WebSocket，避免真实�
 CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；采用上游 Docker job/filter/aggregate。
 官方 Tag 来源、marker 与 ancestry 必须一致；缺失或冲突不能通过放宽测试解决。
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
+上游 `v2.52.0` 的 `structure/manifest.json`、`structure/INDEX.md` 与 `bun run structure:check` 作为结构 SSOT；Fork 的 `src/fork/` 由 `structure/fork-extensions.md` 描述，不恢复已删除的数字前缀 structure 文件或旧式内联 Decision Log。
 
 测试：`tests/ci-workflows/fork-ci-official-baseline.test.ts`、`tests/ci-workflows/fork-maintenance-truth.test.ts`、`tests/service/shutdown-launcher.test.ts`、`tests/update/update-stop-first.test.ts`、`tests/responses/responses-state.test.ts`。
 
