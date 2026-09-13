@@ -5325,7 +5325,7 @@ async function handleResponsesInner(
       && requestedReasoningSummary !== "none"
       && routeUsesContentChannelReasoning(route.provider, route.modelId);
     const reasoningReplayProjection = projectContentChannelReasoning
-      ? createReasoningSummaryReplayProjection()
+      ? createReasoningSummaryReplayProjection({ translatorBudget })
       : undefined;
     const noteInspectedPayload = (payload: unknown) => {
       reasoningReplayProjection?.notePayload(payload);
@@ -6599,7 +6599,7 @@ async function handleResponsesInner(
         ? createResponsesModelPayloadRewrite(parsed._responseModelId)
         : undefined;
       const reasoningSummaryBlockRewrite = projectContentChannelReasoning
-        ? createReasoningSummaryChannelBlockRewrite()
+        ? createReasoningSummaryChannelBlockRewrite({ translatorBudget })
         : undefined;
       // Compose opt-in payload rewrites into one parse/stringify pass (image-gen restore first).
       const payloadRewrites = [

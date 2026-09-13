@@ -1,5 +1,9 @@
 import type { SsePayloadRewrite } from "./sse-payload-rewrite";
 import {
+  TranslatorBudgetExceededError,
+  type TranslatorBudget,
+} from "../lib/translator-budget";
+import {
   replaceSseDataPayload,
   sseDataPayload,
   type SseBlockRewrite,
@@ -175,6 +179,10 @@ function titleReady(raw: string): boolean {
 const SUMMARY_PART_SENTENCE_LIMIT = 3;
 /** Split long unpunctuated reasoning once it exceeds this many code points. */
 const SUMMARY_PART_CODEPOINT_LIMIT = 500;
+/** One retained Set entry is charged as a conservative fixed metadata slot. */
+const MAX_SEEN_SEQUENCE_NUMBERS_PER_ITEM = 256;
+const SEEN_SEQUENCE_NUMBER_RETAINED_BYTES = 32;
+const MAX_SEEN_SEQUENCE_NUMBER_BYTES = 256 * 1024;
 
 type PendingReasoning = {
   /** Completed summary parts, in order (part 0 is the bold first sentence). */
@@ -185,6 +193,7 @@ type PendingReasoning = {
   partZeroTextDone: boolean;
   partZeroDone: boolean;
   seenSequenceNumbers: Set<number>;
+  sequenceIdentityBytes: number;
   lastBlock?: string;
   lastEvent?: Record<string, unknown>;
 };
@@ -270,9 +279,11 @@ function rewriteTerminalItems(payload: Record<string, unknown>, parts: string[])
  */
 export function createReasoningSummaryChannelBlockRewrite(options?: {
   onCompletedResponse?: (response: Record<string, unknown>) => void;
+  translatorBudget?: TranslatorBudget;
 }): SseBlockRewrite {
   const pending = new Map<string, PendingReasoning>();
   const closed = new Map<string, ClosedReasoning>();
+  let sequenceIdentityBytes = 0;
 
   const stateOf = (itemId: string): PendingReasoning => {
     let state = pending.get(itemId);
@@ -284,10 +295,48 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
         partZeroTextDone: false,
         partZeroDone: false,
         seenSequenceNumbers: new Set(),
+        sequenceIdentityBytes: 0,
       };
       pending.set(itemId, state);
     }
     return state;
+  };
+
+  const releaseSequenceIdentities = (state: PendingReasoning): void => {
+    if (state.sequenceIdentityBytes > 0) {
+      options?.translatorBudget?.releaseRetained(state.sequenceIdentityBytes, { kind: "item_ids" });
+      sequenceIdentityBytes = Math.max(0, sequenceIdentityBytes - state.sequenceIdentityBytes);
+      state.sequenceIdentityBytes = 0;
+    }
+    state.seenSequenceNumbers.clear();
+  };
+
+  const releasePendingState = (itemId: string, state: PendingReasoning): void => {
+    pending.delete(itemId);
+    releaseSequenceIdentities(state);
+  };
+
+  const releaseAllPendingStates = (): void => {
+    for (const state of pending.values()) releaseSequenceIdentities(state);
+    pending.clear();
+  };
+
+  const rememberSequenceNumber = (state: PendingReasoning, sequenceNumber: number): boolean => {
+    if (state.seenSequenceNumbers.has(sequenceNumber)) return false;
+    if (state.seenSequenceNumbers.size >= MAX_SEEN_SEQUENCE_NUMBERS_PER_ITEM) {
+      throw new TranslatorBudgetExceededError(
+        "item_ids",
+        MAX_SEEN_SEQUENCE_NUMBERS_PER_ITEM * SEEN_SEQUENCE_NUMBER_RETAINED_BYTES,
+      );
+    }
+    if (sequenceIdentityBytes + SEEN_SEQUENCE_NUMBER_RETAINED_BYTES > MAX_SEEN_SEQUENCE_NUMBER_BYTES) {
+      throw new TranslatorBudgetExceededError("item_ids", MAX_SEEN_SEQUENCE_NUMBER_BYTES);
+    }
+    options?.translatorBudget?.chargeRetained(SEEN_SEQUENCE_NUMBER_RETAINED_BYTES, { kind: "item_ids" });
+    state.seenSequenceNumbers.add(sequenceNumber);
+    state.sequenceIdentityBytes += SEEN_SEQUENCE_NUMBER_RETAINED_BYTES;
+    sequenceIdentityBytes += SEEN_SEQUENCE_NUMBER_RETAINED_BYTES;
+    return true;
   };
 
   const ensurePartZeroAdded = (
@@ -456,8 +505,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
       const state = stateOf(payload.item_id);
       const sequenceNumber = payload.sequence_number;
       if (typeof sequenceNumber === "number" && Number.isInteger(sequenceNumber)) {
-        if (state.seenSequenceNumbers.has(sequenceNumber)) return [];
-        state.seenSequenceNumbers.add(sequenceNumber);
+        if (!rememberSequenceNumber(state, sequenceNumber)) return [];
       }
       state.lastBlock = block;
       state.lastEvent = payload;
@@ -547,7 +595,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
           parts: [...state.parts],
         });
       }
-      pending.clear();
+      releaseAllPendingStates();
       let terminalPayload: Record<string, unknown> = payload;
       const terminalResponse = isPlainObject(payload.response) ? payload.response : null;
       if (terminalResponse && Array.isArray(terminalResponse.output)) {
@@ -592,7 +640,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
           }
           const anchor = state.lastEvent ?? { item_id: item.id, output_index: 0 };
           output.push(...closeForTerminal(block, anchor, state, reasoningTextOf(item) || state.buffer));
-          pending.delete(item.id);
+          releasePendingState(item.id, state);
           closed.set(item.id, {
             parts: [...state.parts],
           });
@@ -606,7 +654,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
             parts: [...state.parts],
           });
         }
-        pending.clear();
+        releaseAllPendingStates();
         if (changed || output.length > 0) {
           const completedPayload = {
             ...payload,
@@ -627,7 +675,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
             parts: [...state.parts],
           });
         }
-        pending.clear();
+        releaseAllPendingStates();
         output.push(block);
         return output;
       }
@@ -645,7 +693,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
           : state.buffer;
         output.push(...closeForTerminal(block, anchor, state, terminalRaw || state.buffer));
         const rewritten = rewriteTerminalItems(payload, state.parts);
-        pending.delete(stateId);
+        releasePendingState(stateId, state);
         closed.set(stateId, {
           parts: [...state.parts],
         });
@@ -667,19 +715,19 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
         output.push(...closeEmptyPartZero(state.lastBlock, state.lastEvent, state));
       }
     }
-    pending.clear();
+    releaseAllPendingStates();
     closed.clear();
     return output;
   };
   rewrite.dispose = () => {
-    pending.clear();
+    releaseAllPendingStates();
     closed.clear();
   };
   return rewrite;
 }
 
 /** 用客户端 reasoning 重写规则投影 inspector 重建出的终态 response。 */
-export function createReasoningSummaryReplayProjection(): {
+export function createReasoningSummaryReplayProjection(options?: { translatorBudget?: TranslatorBudget }): {
   notePayload(payload: unknown): void;
   projectSnapshot(response: Record<string, unknown>): Record<string, unknown> | undefined;
   dispose(): void;
@@ -687,6 +735,7 @@ export function createReasoningSummaryReplayProjection(): {
   let completedResponse: Record<string, unknown> | undefined;
   const rewrite = createReasoningSummaryChannelBlockRewrite({
     onCompletedResponse: response => { completedResponse = response; },
+    translatorBudget: options?.translatorBudget,
   });
   const dispatch = (payload: unknown): Record<string, unknown> | undefined => {
     completedResponse = undefined;
