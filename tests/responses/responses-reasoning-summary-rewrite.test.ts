@@ -6,6 +6,8 @@ import {
   rewriteReasoningSummaryInJson,
   rewriteReasoningSummaryInJsonString,
 } from "../../src/server/responses-reasoning-summary-rewrite";
+import { isTranslatorBudgetExceededError } from "../../src/lib/translator-budget";
+import { createTestTranslatorBudget } from "../helpers/translator-budget";
 
 const rewrite = createReasoningSummaryChannelPayloadRewrite();
 
@@ -299,6 +301,75 @@ describe("responses reasoning summary channel rewrite", () => {
 
     expect(item.content).toEqual([{ type: "reasoning_text", text: "Initial sentence." }]);
     expect(item.summary).toEqual([{ type: "summary_text", text: "**Initial sentence.**\n\nInitial sentence." }]);
+  });
+
+  test("bounds sequence identities for an active item without a translator budget", () => {
+    const stream = createReasoningSummaryChannelBlockRewrite();
+    for (let sequenceNumber = 0; sequenceNumber < 256; sequenceNumber += 1) {
+      expect(stream(sseBlock({
+        type: "response.reasoning_text.delta",
+        item_id: "rs_sequence_cap",
+        output_index: 0,
+        sequence_number: sequenceNumber,
+        delta: "",
+      }))).toEqual([]);
+    }
+
+    let overflow: unknown;
+    try {
+      stream(sseBlock({
+        type: "response.reasoning_text.delta",
+        item_id: "rs_sequence_cap",
+        output_index: 0,
+        sequence_number: 256,
+        delta: "",
+      }));
+    } catch (error) {
+      overflow = error;
+    }
+
+    if (!isTranslatorBudgetExceededError(overflow)) throw overflow;
+    expect(overflow.kind).toBe("item_ids");
+    expect(overflow.code).toBe("translation_buffer_limit");
+  });
+
+  test("charges and releases sequence identities on every reasoning terminal path", () => {
+    const terminals: Array<readonly [string, (stream: ReturnType<typeof createReasoningSummaryChannelBlockRewrite>) => void]> = [
+      ["output_item.done", stream => { stream(sseBlock({
+        type: "response.output_item.done",
+        output_index: 0,
+        item: { type: "reasoning", id: "rs_release", status: "completed", content: [], summary: [] },
+      })); }],
+      ["response.completed", stream => { stream(sseBlock({
+        type: "response.completed",
+        response: { output: [] },
+      })); }],
+      ["response.failed", stream => { stream(sseBlock({
+        type: "response.failed",
+        response: { output: [] },
+      })); }],
+      ["response.incomplete", stream => { stream(sseBlock({
+        type: "response.incomplete",
+        response: { output: [] },
+      })); }],
+      ["flush", stream => { stream.flush!(); }],
+      ["dispose", stream => { stream.dispose!(); }],
+    ];
+
+    for (const [name, terminate] of terminals) {
+      const budget = createTestTranslatorBudget();
+      const stream = createReasoningSummaryChannelBlockRewrite({ translatorBudget: budget });
+      stream(sseBlock({
+        type: "response.reasoning_text.delta",
+        item_id: "rs_release",
+        output_index: 0,
+        sequence_number: 1,
+        delta: "",
+      }));
+      expect(budget.snapshot().currentBytes, name).toBeGreaterThan(0);
+      terminate(stream);
+      expect(budget.snapshot().currentBytes, name).toBe(0);
+    }
   });
 
   // `encrypted_content` is opaque, state-bearing provider data. Preserve it and the original
