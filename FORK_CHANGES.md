@@ -154,7 +154,7 @@ Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预�
 官方 `v2.53.0` 已保留 raw content 和 Provider summary provenance，但不把 content-channel reasoning 投影到 summary。Fork 继续保留 opaque terminal 与 raw content；仅在客户端显式请求 `reasoning.summary` 时，为第三方 reasoning 补完整 summary part 生命周期。Provider 的 `showThinkingSummary` 默认值本身不触发这项投影。
 同一历史转向原生 OpenAI GPT 时，只删除由第三方 `reasoning_text` 支撑的 opaque token，保留真正的 OpenAI blob。summary 只追加 `summary_text`，保留 `reasoning.content`、原始字段与 replay state。
 有状态 rewrite 按第三句或 500 code point 中先到的边界分段，每个 `summary_index` 独立闭合。
-EOF、稀疏 terminal、failed/incomplete 会先收尾；terminal-only reasoning 尾部仍投影。同一 item 内带重复整数 `sequence_number` 的 delta 被去重，`response.output_item.done` 后的迟到 delta 不重开已关闭 item；序号状态每个 item 最多保留 256 项、每轮最多占 256 KiB，并计入请求 `translatorBudget`，超限走 `translation_buffer_limit`，在 terminal、`flush` 或 `dispose` 时释放。重复/迟到 part 不重开 index，终态后迟到 close 被抑制，空 part 不造 `**Thinking**`，SSE `event:` 与 JSON `type` 一致。
+EOF、稀疏 terminal、failed/incomplete 会先收尾；terminal-only reasoning 尾部仍投影。同一 item 内带重复整数 `sequence_number` 的 delta 被去重，`response.output_item.done` 后的迟到 delta 不重开已关闭 item。每个 rewrite 对每个 item 最多保留 256 个唯一整数序号，每项按 32 字节计入请求 `translatorBudget`；同一请求的 client 与 replay projection 共用配额，合计最多 256 KiB。未传 `translatorBudget` 的独立 rewrite 仍使用自己的 256 KiB 上限。超限走 `translation_buffer_limit`，terminal、`flush` 或 `dispose` 会释放对应记账。重复/迟到 part 不重开 index，终态后迟到 close 被抑制，空 part 不造 `**Thinking**`，SSE `event:` 与 JSON `type` 一致。
 SSE 与有界 JSON continuation cache 都记录客户端实际收到的摘要形状，并保留官方 inspector 的稀疏 output 重建与已确定的 response ID；完整历史回传不因摘要格式不同而重复追加工具调用，Copilot 固定首个 ID 后仍能用该 ID 续接。首个失败终态后的 completed 不写缓存，重复 completed 不覆盖首份候选。
 官方 `v2.53.0` 对无状态 Responses 的本地续接缺失返回 `previous_response_not_found`，不会把缺失历史前缀的 tool result 发给上游；首个失败终态后的迟到 completed 仍不能绕过这条边界。
 
