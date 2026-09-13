@@ -4147,7 +4147,9 @@ async function handleResponsesInner(
   // A strict backend task remains opaque even when a trusted direct target can consume it.
   // Keep the outbound bytes unchanged, but bar the request body from the local continuation
   // cache before any direct-success observer can persist the ciphertext.
-  if (strictBackendEncryptedAgentTask) {
+  if (hasStrictBackendEncryptedAgentTask(
+    (parsed._rawBody as { input?: unknown } | undefined)?.input,
+  )) {
     markBodyNonPersistable(parsed._rawBody);
   }
 

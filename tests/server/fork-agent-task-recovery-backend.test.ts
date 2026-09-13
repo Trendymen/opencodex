@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { expandPreviousResponseInput } from "../../src/responses/state";
+import {
+  clearResponseStateForTests,
+  expandPreviousResponseInput,
+  rememberResponseState,
+} from "../../src/responses/state";
 import { resetAgentTaskRecoveryState } from "../../src/server/responses/agent-task-recovery";
 import { handleResponses } from "../../src/server/responses/core";
 import type { OcxConfig } from "../../src/types";
@@ -33,12 +37,14 @@ function post(
 describe("fork agent task recovery (strict backend ciphertext)", () => {
   beforeEach(() => {
     resetAgentTaskRecoveryState();
+    clearResponseStateForTests();
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
     Date.now = originalDateNow;
     resetAgentTaskRecoveryState();
+    clearResponseStateForTests();
   });
   test("retries a strict backend-encrypted native child once after its transient 5xx retries are exhausted", async () => {
     const backendCiphertext = `gAAAA${"A".repeat(128)}`;
@@ -211,6 +217,108 @@ describe("fork agent task recovery (strict backend ciphertext)", () => {
       "relay/gpt-5.5",
       encryptedInput({ ciphertext: backendCiphertext }),
       codexHeaders(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(forwardedBody).toContain(backendCiphertext);
+    const replay = expandPreviousResponseInput({ previous_response_id: responseId }) as {
+      input?: unknown;
+    };
+    expect(replay.input).toBeUndefined();
+    expect(JSON.stringify(replay)).not.toContain(backendCiphertext);
+  });
+
+  test("does not retain strict backend ciphertext on trusted routes when recovery is absent or disabled", async () => {
+    const recoveryModes: Array<{ name: string; value: OcxConfig["agentTaskRecovery"] | null }> = [
+      { name: "absent", value: null },
+      { name: "disabled", value: { enabled: false } },
+    ];
+    const routes = [
+      { name: "trusted direct Responses", model: "relay/gpt-5.5", trusted: true },
+      { name: "canonical ChatGPT", model: "gpt-5.5", trusted: false },
+    ];
+
+    for (const [routeIndex, route] of routes.entries()) {
+      for (const [modeIndex, recovery] of recoveryModes.entries()) {
+        const backendCiphertext = `gAAAA${String.fromCharCode(68 + routeIndex * 2 + modeIndex).repeat(128)}`;
+        const responseId = `resp_${route.name.replaceAll(" ", "_")}_${recovery.name}_strict_ciphertext`;
+        const config = routedConfig(recovery.value);
+        if (route.trusted) {
+          config.providers.relay = {
+            adapter: "openai-responses",
+            baseUrl: "https://relay.example.test/v1",
+            authMode: "key",
+            apiKey: "test-relay-key",
+            allowEncryptedV2AgentTasks: true,
+          };
+        }
+        let forwardedBody = "";
+        globalThis.fetch = (async (_input, init) => {
+          forwardedBody = typeof init?.body === "string" ? init.body : "";
+          return Response.json({
+            id: responseId,
+            object: "response",
+            status: "completed",
+            model: "gpt-5.5",
+            output: [],
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          });
+        }) as typeof fetch;
+
+        const response = await post(
+          config,
+          route.model,
+          encryptedInput({ ciphertext: backendCiphertext }),
+          codexHeaders(),
+        );
+
+        expect(response.status).toBe(200);
+        expect(forwardedBody).toContain(backendCiphertext);
+        const replay = expandPreviousResponseInput({ previous_response_id: responseId }) as {
+          input?: unknown;
+        };
+        expect(replay.input).toBeUndefined();
+        expect(JSON.stringify(replay)).not.toContain(backendCiphertext);
+      }
+    }
+  });
+
+  test("does not retain strict backend ciphertext restored by previous_response_id", async () => {
+    const backendCiphertext = `gAAAA${"H".repeat(128)}`;
+    const priorResponseId = "resp_prior_strict_backend_ciphertext";
+    const responseId = "resp_expanded_strict_backend_ciphertext_no_state";
+    const config = routedConfig(null);
+    config.providers.relay = {
+      adapter: "openai-responses",
+      baseUrl: "https://relay.example.test/v1",
+      authMode: "key",
+      apiKey: "test-relay-key",
+      allowEncryptedV2AgentTasks: true,
+    };
+    rememberResponseState(
+      { model: "relay/gpt-5.5", input: encryptedInput({ ciphertext: backendCiphertext }) },
+      { id: priorResponseId, status: "completed", output: [] },
+    );
+    let forwardedBody = "";
+    globalThis.fetch = (async (_input, init) => {
+      forwardedBody = typeof init?.body === "string" ? init.body : "";
+      return Response.json({
+        id: responseId,
+        object: "response",
+        status: "completed",
+        model: "gpt-5.5",
+        output: [],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      });
+    }) as typeof fetch;
+
+    const response = await post(
+      config,
+      "relay/gpt-5.5",
+      [],
+      codexHeaders(),
+      undefined,
+      { previous_response_id: priorResponseId },
     );
 
     expect(response.status).toBe(200);
