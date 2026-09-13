@@ -5223,6 +5223,7 @@ async function handleResponsesInner(
     // rejection is sticky for the whole turn, set from every parsed payload on the inspection side.
     let inspectionSawUndeclaredTool = false;
     let inspectedTerminal: ResponsesTerminalStatus | null = null;
+    let plaintextClientTerminal: ResponsesTerminalStatus | null = null;
     let inspectedCompletionSeen = false;
     let firstTerminalAllowsRecall = false;
     const inboundDebugObserver = isDebugEnabled()
@@ -5316,8 +5317,14 @@ async function handleResponsesInner(
     };
     const passiveQuotaObserved = hasPassiveAccountQuota(route.providerName)
       && route.provider.authMode === "oauth";
-    const reasoningReplayProjection = parsed.options.hideThinkingSummary !== true
-      && routeUsesContentChannelReasoning(route.provider, route.modelId)
+    const requestedReasoningSummary = (parsed._rawBody as {
+      reasoning?: { summary?: unknown };
+    } | undefined)?.reasoning?.summary;
+    const projectContentChannelReasoning = typeof requestedReasoningSummary === "string"
+      && requestedReasoningSummary.length > 0
+      && requestedReasoningSummary !== "none"
+      && routeUsesContentChannelReasoning(route.provider, route.modelId);
+    const reasoningReplayProjection = projectContentChannelReasoning
       ? createReasoningSummaryReplayProjection()
       : undefined;
     const noteInspectedPayload = (payload: unknown) => {
@@ -5392,7 +5399,7 @@ async function handleResponsesInner(
       response: { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
     ) => {
       if (inspectionSawUndeclaredTool) return;
-      if (isEventStream && inspectedTerminal !== "completed") return;
+      if (isEventStream && inspectedTerminal !== "completed" && plaintextClientTerminal !== "completed") return;
       if (inspectedCompletionSeen) return;
       const nestedDecision = nestedExecInspection?.prepareResponseForCache(response);
       if (nestedDecision?.action === "reject") {
@@ -6591,8 +6598,7 @@ async function handleResponsesInner(
         && parsed._responseModelId !== parsed.modelId
         ? createResponsesModelPayloadRewrite(parsed._responseModelId)
         : undefined;
-      const reasoningSummaryBlockRewrite = parsed.options.hideThinkingSummary !== true
-        && routeUsesContentChannelReasoning(route.provider, route.modelId)
+      const reasoningSummaryBlockRewrite = projectContentChannelReasoning
         ? createReasoningSummaryChannelBlockRewrite()
         : undefined;
       // Compose opt-in payload rewrites into one parse/stringify pass (image-gen restore first).
@@ -6621,7 +6627,10 @@ async function handleResponsesInner(
       // Only validated client blocks may publish plaintext continuation state.
       // Raw inspection precedes rewriting on eager relays, so it cannot own this write.
       const plaintextInspector = plaintextV2AgentMessageToolNames.size > 0
-        ? createSseInspector({ onCompletedResponse: rememberPassthroughResponseChecked })
+        ? createSseInspector({
+          onTerminal: status => { plaintextClientTerminal ??= status; },
+          onCompletedResponse: rememberPassthroughResponseChecked,
+        })
         : undefined;
       const plaintextEncoder = plaintextInspector ? new TextEncoder() : undefined;
       const rememberPlaintextBlock = plaintextInspector
@@ -6977,19 +6986,19 @@ async function handleResponsesInner(
           restored,
           routedToolSearchNames,
         );
-        const normalizedJson = normalizeFunctionCompletionJson(restoredToolSearch);
+        const phaseRepaired = inferResponsesMessagePhases
+          ? rewriteResponsesMessagePhasesInJsonString(restoredToolSearch)
+          : restoredToolSearch;
+        const normalizedJson = normalizeFunctionCompletionJson(phaseRepaired);
         const plaintextRestore = restorePlaintextV2AgentMessageCallsInJsonResult(
           normalizedJson, plaintextV2AgentMessageToolNames, plaintextV2AgentMessageAliasedToolNames,
         );
         plaintextV2RestoreFailed = plaintextRestore.overflowed;
-        const phaseRepaired = inferResponsesMessagePhases
-          ? rewriteResponsesMessagePhasesInJsonString(plaintextRestore.value)
-          : plaintextRestore.value;
         const snapshotRepaired = (route.provider.responsesSnapshotRepair !== false
           && (hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair)
             || usesVolcengineAgentPlanResponses(route.provider)))
-          ? repairResponsesSnapshotJson(phaseRepaired, outboundRequestBody)
-          : phaseRepaired;
+          ? repairResponsesSnapshotJson(plaintextRestore.value, outboundRequestBody)
+          : plaintextRestore.value;
         const repaired = repairFunctionCallsInJson(
           backfillResponsesFieldsJson(snapshotRepaired),
           functionRepairSchemas,
@@ -7000,8 +7009,7 @@ async function handleResponsesInner(
         // The bounded-JSON answer bypasses the SSE payload rewrite, so content-
         // channel reasoning needs the same normalization here for the plain
         // JSON answer and every reframed-SSE variant built from clientJson.
-        const reasoningNormalized = parsed.options.hideThinkingSummary !== true
-          && routeUsesContentChannelReasoning(route.provider, route.modelId)
+        const reasoningNormalized = projectContentChannelReasoning
           ? rewriteReasoningSummaryInJsonString(modelRewritten)
           : modelRewritten;
         return reasoningNormalized;

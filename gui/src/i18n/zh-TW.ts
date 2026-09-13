@@ -2259,6 +2259,7 @@ export const zhTW: Record<TKey, string> = {
   "logs.detail.route.unknown": "此請求沒有記錄路由追蹤（追蹤前的列）。",
   "logs.detail.source.user": "供應商設定的價格覆蓋",
   "logs.detail.attempt.recovery.transient5xx": "暫時性 5xx",
+  "logs.detail.attempt.recovery.reasoningEffortDowngrade": "推理強度降級",
   "logs.detail.attempt.recovery.agentTaskRecovery": "加密子任務復原",
   "logs.detail.attempt.recovery.connectionReset": "連線重設",
   "logs.detail.attempt.recovery.oauth401": "OAuth 重新驗證",

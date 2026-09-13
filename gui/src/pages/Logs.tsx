@@ -107,6 +107,7 @@ interface LogDisplayMetrics {
  */
 type AttemptRecoveryKind =
   | "transient-5xx"
+  | "reasoning-effort-downgrade"
   | "agent-task-recovery"
   | "connection-reset"
   | "oauth-401"
@@ -305,6 +306,7 @@ const ESTIMATE_REASON_KEYS = {
  */
 const RECOVERY_KIND_KEYS = {
   "transient-5xx": "logs.detail.attempt.recovery.transient5xx",
+  "reasoning-effort-downgrade": "logs.detail.attempt.recovery.reasoningEffortDowngrade",
   "agent-task-recovery": "logs.detail.attempt.recovery.agentTaskRecovery",
   "connection-reset": "logs.detail.attempt.recovery.connectionReset",
   "oauth-401": "logs.detail.attempt.recovery.oauth401",
