@@ -52,7 +52,7 @@ phase 推断只处理缺少 phase 的文本 item。后续仍有工作时标为 `
 opaque terminal 和 replay state，分段、terminal、EOF、重复或迟到事件通过同一有状态 rewrite
 处理；切回原生 OpenAI GPT 时只删除由第三方 `reasoning_text` 支撑的 opaque token，不删除真实
 OpenAI blob。
-同一 rewrite 对每个 item 和每个 turn 只保留有界的 sequence identity，并在 terminal、`flush` 或 `dispose` 时释放其预算。
+每个 rewrite 对每个 item 最多保留 256 个唯一整数 sequence identity，每项按 32 字节计入请求 `translatorBudget`。同一请求的 client 与 replay projection 共用 256 KiB 配额；未传 `translatorBudget` 的独立 rewrite 使用自己的 256 KiB 上限。terminal、`flush` 或 `dispose` 会释放对应记账，超限返回 `translation_buffer_limit`。
 
 Routed progress contract 只在非 OpenAI 目的地、请求实际带工具且 `instructions` 为字符串时追加。
 它要求模型在首次工具调用前、重要里程碑后、长操作前、最多四个连续纯工具响应后，以及收到新

@@ -184,6 +184,21 @@ const MAX_SEEN_SEQUENCE_NUMBERS_PER_ITEM = 256;
 const SEEN_SEQUENCE_NUMBER_RETAINED_BYTES = 32;
 const MAX_SEEN_SEQUENCE_NUMBER_BYTES = 256 * 1024;
 
+type SequenceIdentityQuota = {
+  retainedBytes: number;
+};
+
+const sequenceIdentityQuotaByBudget = new WeakMap<TranslatorBudget, SequenceIdentityQuota>();
+
+function sequenceIdentityQuotaFor(translatorBudget?: TranslatorBudget): SequenceIdentityQuota {
+  if (!translatorBudget) return { retainedBytes: 0 };
+  const existing = sequenceIdentityQuotaByBudget.get(translatorBudget);
+  if (existing) return existing;
+  const quota = { retainedBytes: 0 };
+  sequenceIdentityQuotaByBudget.set(translatorBudget, quota);
+  return quota;
+}
+
 type PendingReasoning = {
   /** Completed summary parts, in order (part 0 is the bold first sentence). */
   parts: string[];
@@ -283,7 +298,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
 }): SseBlockRewrite {
   const pending = new Map<string, PendingReasoning>();
   const closed = new Map<string, ClosedReasoning>();
-  let sequenceIdentityBytes = 0;
+  const sequenceIdentityQuota = sequenceIdentityQuotaFor(options?.translatorBudget);
 
   const stateOf = (itemId: string): PendingReasoning => {
     let state = pending.get(itemId);
@@ -305,7 +320,10 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
   const releaseSequenceIdentities = (state: PendingReasoning): void => {
     if (state.sequenceIdentityBytes > 0) {
       options?.translatorBudget?.releaseRetained(state.sequenceIdentityBytes, { kind: "item_ids" });
-      sequenceIdentityBytes = Math.max(0, sequenceIdentityBytes - state.sequenceIdentityBytes);
+      sequenceIdentityQuota.retainedBytes = Math.max(
+        0,
+        sequenceIdentityQuota.retainedBytes - state.sequenceIdentityBytes,
+      );
       state.sequenceIdentityBytes = 0;
     }
     state.seenSequenceNumbers.clear();
@@ -329,13 +347,13 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
         MAX_SEEN_SEQUENCE_NUMBERS_PER_ITEM * SEEN_SEQUENCE_NUMBER_RETAINED_BYTES,
       );
     }
-    if (sequenceIdentityBytes + SEEN_SEQUENCE_NUMBER_RETAINED_BYTES > MAX_SEEN_SEQUENCE_NUMBER_BYTES) {
+    if (sequenceIdentityQuota.retainedBytes + SEEN_SEQUENCE_NUMBER_RETAINED_BYTES > MAX_SEEN_SEQUENCE_NUMBER_BYTES) {
       throw new TranslatorBudgetExceededError("item_ids", MAX_SEEN_SEQUENCE_NUMBER_BYTES);
     }
     options?.translatorBudget?.chargeRetained(SEEN_SEQUENCE_NUMBER_RETAINED_BYTES, { kind: "item_ids" });
     state.seenSequenceNumbers.add(sequenceNumber);
     state.sequenceIdentityBytes += SEEN_SEQUENCE_NUMBER_RETAINED_BYTES;
-    sequenceIdentityBytes += SEEN_SEQUENCE_NUMBER_RETAINED_BYTES;
+    sequenceIdentityQuota.retainedBytes += SEEN_SEQUENCE_NUMBER_RETAINED_BYTES;
     return true;
   };
 
