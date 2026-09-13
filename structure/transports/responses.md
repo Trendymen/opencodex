@@ -325,9 +325,9 @@ custom result has no local call, because its original wire type cannot be establ
 would send an unmatched result upstream. The check resolves the selected wire protocol and the
 request's own tool declarations after final route selection, so stateful destinations keep their
 upstream-owned native function and native-only custom continuations. Explicit input still receives
-orphan repair; this path asks the client to replay rather than reconstructing history. Content-channel reasoning stays content in SSE, JSON and stored replay output; native
-summary items and opaque blobs retain their upstream representation. Full-content replay
-fingerprints compare the same client-visible items without content-to-summary conversion.
+orphan repair; this path asks the client to replay rather than reconstructing history. OpenCode Go content-channel reasoning stays content-only when the client omits or disables `reasoning.summary`.
+When the client explicitly requests it, the response keeps raw content and opaque state while the client-visible summary projection is produced, stored, and used for continuation comparison. Native summary items and opaque blobs retain their upstream representation.
+The projection lifecycle is defined in [Fork extensions](../fork-extensions.md#responses-输出与-continuation).
 It does not change streaming selection or Chat model routes. Go fixtures cover Luna, Grok
 and Muse against both response formats.
 

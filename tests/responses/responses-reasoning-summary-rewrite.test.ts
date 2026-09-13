@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createReasoningSummaryChannelBlockRewrite,
   createReasoningSummaryChannelPayloadRewrite,
   routeUsesContentChannelReasoning,
   rewriteReasoningSummaryInJson,
@@ -10,6 +11,14 @@ const rewrite = createReasoningSummaryChannelPayloadRewrite();
 
 function apply(payload: unknown): unknown {
   return JSON.parse(rewrite(JSON.stringify(payload)));
+}
+
+function sseBlock(payload: unknown): string {
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+function ssePayloads(blocks: string[]): Record<string, unknown>[] {
+  return blocks.map(block => JSON.parse(block.slice("data: ".length).trim()) as Record<string, unknown>);
 }
 
 describe("responses reasoning summary channel rewrite", () => {
@@ -212,6 +221,84 @@ describe("responses reasoning summary channel rewrite", () => {
   test("malformed payloads pass through unchanged", () => {
     expect(rewrite("not json")).toBe("not json");
     expect(rewrite("[1,2]")).toBe("[1,2]");
+  });
+
+  test("deduplicates a repeated sequence-numbered reasoning delta without changing the terminal raw content", () => {
+    const stream = createReasoningSummaryChannelBlockRewrite();
+    const first = {
+      type: "response.reasoning_text.delta",
+      item_id: "rs_1",
+      output_index: 0,
+      sequence_number: 1,
+      delta: "First sentence.",
+    };
+
+    ssePayloads(stream(sseBlock(first)));
+    expect(stream(sseBlock(first))).toEqual([]);
+
+    const terminal = ssePayloads(stream(sseBlock({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "reasoning",
+        id: "rs_1",
+        status: "completed",
+        content: [{ type: "reasoning_text", text: "First sentence." }],
+        summary: [],
+      },
+    })));
+    const item = terminal.at(-1)?.item as Record<string, unknown>;
+
+    expect(terminal.filter(payload => payload.type === "response.reasoning_summary_part.added")).toHaveLength(0);
+    expect(item.content).toEqual([{ type: "reasoning_text", text: "First sentence." }]);
+    expect(item.summary).toEqual([{ type: "summary_text", text: "**First sentence.**\n\nFirst sentence." }]);
+  });
+
+  test("ignores a late delta after output_item.done and preserves the original closed summary at response.completed", () => {
+    const stream = createReasoningSummaryChannelBlockRewrite();
+    ssePayloads(stream(sseBlock({
+      type: "response.reasoning_text.delta",
+      item_id: "rs_1",
+      output_index: 0,
+      sequence_number: 1,
+      delta: "Initial sentence.",
+    })));
+    ssePayloads(stream(sseBlock({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "reasoning",
+        id: "rs_1",
+        status: "completed",
+        content: [{ type: "reasoning_text", text: "Initial sentence." }],
+        summary: [],
+      },
+    })));
+
+    expect(stream(sseBlock({
+      type: "response.reasoning_text.delta",
+      item_id: "rs_1",
+      output_index: 0,
+      sequence_number: 2,
+      delta: "Late sentence.",
+    }))).toEqual([]);
+
+    const completed = ssePayloads(stream(sseBlock({
+      type: "response.completed",
+      response: {
+        output: [{
+          type: "reasoning",
+          id: "rs_1",
+          status: "completed",
+          content: [{ type: "reasoning_text", text: "Initial sentence." }],
+          summary: [],
+        }],
+      },
+    })));
+    const item = (completed.at(-1)?.response as { output: Record<string, unknown>[] }).output[0];
+
+    expect(item.content).toEqual([{ type: "reasoning_text", text: "Initial sentence." }]);
+    expect(item.summary).toEqual([{ type: "summary_text", text: "**Initial sentence.**\n\nInitial sentence." }]);
   });
 
   // `encrypted_content` is opaque, state-bearing provider data. Preserve it and the original
