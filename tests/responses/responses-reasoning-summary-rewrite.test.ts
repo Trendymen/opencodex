@@ -333,6 +333,51 @@ describe("responses reasoning summary channel rewrite", () => {
     expect(overflow.code).toBe("translation_buffer_limit");
   });
 
+  test("enforces the sequence-identity cap across both request rewriters", () => {
+    const budget = createTestTranslatorBudget();
+    const clientRewrite = createReasoningSummaryChannelBlockRewrite({ translatorBudget: budget });
+    const replayRewrite = createReasoningSummaryChannelBlockRewrite({ translatorBudget: budget });
+
+    for (const [prefix, stream] of [
+      ["client", clientRewrite],
+      ["replay", replayRewrite],
+    ] as const) {
+      for (let item = 0; item < 16; item += 1) {
+        for (let sequenceNumber = 0; sequenceNumber < 256; sequenceNumber += 1) {
+          stream(sseBlock({
+            type: "response.reasoning_text.delta",
+            item_id: `${prefix}_${item}`,
+            output_index: item,
+            sequence_number: sequenceNumber,
+            delta: "",
+          }));
+        }
+      }
+    }
+
+    expect(budget.snapshot().currentBytes).toBe(256 * 1024);
+    let overflow: unknown;
+    try {
+      clientRewrite(sseBlock({
+        type: "response.reasoning_text.delta",
+        item_id: "client_overflow",
+        output_index: 16,
+        sequence_number: 0,
+        delta: "",
+      }));
+    } catch (error) {
+      overflow = error;
+    }
+
+    if (!isTranslatorBudgetExceededError(overflow)) throw overflow;
+    expect(overflow.kind).toBe("item_ids");
+    expect(overflow.limitBytes).toBe(256 * 1024);
+
+    clientRewrite.dispose!();
+    replayRewrite.dispose!();
+    expect(budget.snapshot().currentBytes).toBe(0);
+  });
+
   test("charges and releases sequence identities on every reasoning terminal path", () => {
     const terminals: Array<readonly [string, (stream: ReturnType<typeof createReasoningSummaryChannelBlockRewrite>) => void]> = [
       ["output_item.done", stream => { stream(sseBlock({

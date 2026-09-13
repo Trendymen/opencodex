@@ -33,3 +33,9 @@ plus exact separators, without joining a second full JSON array. `src/lib/admiss
 truncates diagnostic text at UTF-8 code-point boundaries without allocating arrays per character;
 byte sizing retains TextEncoder's coercion behavior for legacy non-string runtime callers.
 These optimizations do not add request queues, retry policies, or RSS-based admission gates.
+
+`src/server/responses-reasoning-summary-rewrite.ts` charges each retained integer sequence identity
+as 32 bytes. Each rewriter retains at most 256 identities per item. Client delivery and replay
+projection share one 256 KiB request quota through their common translator budget; standalone
+rewriters without that budget use an independent quota. Terminal events, flush, and disposal release
+the corresponding charge.
