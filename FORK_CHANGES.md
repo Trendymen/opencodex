@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.53.0`（`aa05b3ec53bb9d0e645651b5c3344ae1841f27d6`）。
+- 上游基线：`v2.54.0`（`9f7397ed1582d95c6c1fcf4ae9951213b3fa2d19`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -139,6 +139,7 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 
 在上游内存诊断基础上增加 `provider-debug.jsonl`、outbound shape 摘要及入站结构摘要，分别观测 `upstream-inbound` 和 `downstream-after-rewrite`。
 官方 hosted web-search bridge 开启时，通过其现有 SSE 解析点观察首段与续接段的原始 payload；不把合成的搜索事件记为原始上游响应，也不重复触发后续入站观察。诊断回调异常不影响 bridge 转发。关闭 bridge 时保留原有 terminal-repair 观察路径。
+官方 `v2.54.0` 已负责为非 Ollama passthrough backend 启用 hosted bridge；Fork 只保留上述诊断观察和失败隔离，不复制 backend 选择逻辑。
 普通 Provider debug 只记录结构，不持久化请求正文、key、工具参数或 Response/reasoning 文本。
 文本样本要求 Provider debug 和独立、默认关闭的 `providerText` 同时开启，可经 `OCX_PROVIDER_TEXT_DEBUG=1`、`ocx debug provider-text on`、API 或 GUI 明确授权。
 样本经脱敏并保存为引用型 artifact；每字符串默认 256B、上限 8KB，UTF-8 安全截断，每轮最多 512 条并受总预算约束。
@@ -191,6 +192,7 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 ### 原生加密子任务恢复接力
 
 上游提供通用 recovery admission、turn termination 与失败原因；Fork 扩展 strict non-Fernet backend ciphertext 的识别、admission、routed trigger 和 fail-closed forwarding。
+官方 `v2.54.0` 会在向非 canonical 第三方 Responses 目的地首次发送前，把重放 `agent_message` 中不可读的 ChatGPT 密文替换为 omission marker；Fork 沿用该发送前清理。canonical ChatGPT backend 继续保留原始密文并允许既有 rejection recovery，Fork 的 strict ciphertext 不写本地 continuation cache 边界仍保留。
 官方 `v2.53.0` 将 Fernet recovery 扩为最多 32 个连续完整 part、合计 2 MiB，并按有序密文序列隔离缓存。Fork 的 strict backend ciphertext 与父任务超时通知仍只接受单个密文和精确两段 content；替换前比较完整输入快照，不把 multipart 放宽到 strict 路径。
 官方 `v2.50.0` 已覆盖直接路由中原生模型切换为第三方后重放加密历史的恢复入口，不再要求该请求是派生子任务；Fork 保留严格 backend envelope、父任务 `MESSAGE`、原生 5xx 重试恢复和超时通知等扩展。
 受 `agentTaskRecovery.enabled` 控制：原生目标的 transient 5xx 重试耗尽后，严格匹配 canonical `NEW_TASK` envelope 才恢复，并对已确定的 Provider、模型、account、tier、options 重放一次。
@@ -215,8 +217,8 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 
 ### DeepSeek V4 Flash 直连图片输入
 
-上游 `v2.52.0` 将第一方当前模型改为 `deepseek-flash`，并把 `deepseek-v4-flash` 保留为路由到同一模型的兼容别名。Fork 继续保留 2026-09-10 的图片能力证据：使用 legacy id 直连 `POST /chat/completions` 与 Codex 实际使用的 `POST /responses`（`input_image`），携带纯色图均返回 200，模型在两条线路上都从像素答出颜色；`deepseek-v4-flash-vision-exp` 对照返回相同答案。
-Fork 为 `deepseek-flash`、`deepseek-v4-flash` 和 vision preview 声明 `["text", "image"]`，图片按原样发给上游，不经过 sidecar；`deepseek-chat` 和 `deepseek-reasoner` 继续使用 sidecar。`deepseek-flash` 在官方改名后尚未用 canonical id 单独复测，本项依据官方 alias 路由合同继承 legacy id 的实测结果。仓库内 2026-08-01 关于占位文本的旧记录不再作为当前能力依据。
+官方 `v2.54.0` 已把第一方 canonical `deepseek-flash` 标记为原生多模态，并让未单独验证的兼容别名继续走 sidecar。Fork 继续保留 2026-09-10 的 legacy ID 图片能力证据：`deepseek-v4-flash` 直连 `POST /chat/completions` 与 Codex 实际使用的 `POST /responses`（`input_image`），携带纯色图均返回 200，模型在两条线路上都从像素答出颜色；`deepseek-v4-flash-vision-exp` 对照返回相同答案。
+因此 Fork 相对官方只额外让 `deepseek-v4-flash` 兼容别名声明 `["text", "image"]` 并绕过 sidecar；canonical `deepseek-flash` 与 vision preview 的原生图片能力沿用官方，`deepseek-chat` 和 `deepseek-reasoner` 继续使用 sidecar。仓库内 2026-08-01 关于占位文本的旧记录不再作为当前能力依据。
 生效边界：`routedProviderConfig()` 把 registry 与配置中的 `noVisionModels` 取并集；用户配置仍显式列出 `deepseek-flash` 或 `deepseek-v4-flash` 时，需要删除对应条目才会启用直连图片。
 代码：`src/providers/registry.ts` 的 deepseek 条目。
 测试：`tests/providers/provider-registry-parity.test.ts` 覆盖 registry 声明与合并后的路由判定；`tests/routing/router.test.ts` 与 `tests/routing/routing-capability-model-matching.test.ts` 按当前模型分类断言 `deepseek-flash` / `deepseek-v4-flash` 可直连图片，`deepseek-reasoner` 仍服从 `noVisionModels`，并覆盖 registry 图片能力模型可满足图片策略要求。
@@ -266,7 +268,7 @@ HTTP/SSE fixture 显式隔离 canonical ChatGPT 上游 WebSocket，避免真实�
 CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；采用上游 Docker job/filter/aggregate。
 官方 Tag 来源、marker 与 ancestry 必须一致；缺失或冲突不能通过放宽测试解决。
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
-上游 `v2.53.0` 的 `structure/manifest.json`、`structure/INDEX.md` 与 `bun run structure:check` 作为结构 SSOT；Fork 的 `src/fork/` 由 `structure/fork-extensions.md` 描述，不恢复已删除的数字前缀 structure 文件或旧式内联 Decision Log。
+上游 `v2.54.0` 的 `structure/manifest.json`、`structure/INDEX.md` 与 `bun run structure:check` 作为结构 SSOT；Fork 的 `src/fork/` 由 `structure/fork-extensions.md` 描述，不恢复已删除的数字前缀 structure 文件或旧式内联 Decision Log。
 
 测试：`tests/ci-workflows/fork-ci-official-baseline.test.ts`、`tests/ci-workflows/fork-maintenance-truth.test.ts`、`tests/service/shutdown-launcher.test.ts`、`tests/update/update-stop-first.test.ts`、`tests/responses/responses-state.test.ts`。
 
