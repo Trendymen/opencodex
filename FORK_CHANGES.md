@@ -192,7 +192,7 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 ### 原生加密子任务恢复接力
 
 上游提供通用 recovery admission、turn termination 与失败原因；Fork 扩展 strict non-Fernet backend ciphertext 的识别、admission、routed trigger 和 fail-closed forwarding。
-官方 `v2.54.0` 会在向非 canonical 第三方 Responses 目的地首次发送前，把重放 `agent_message` 中不可读的 ChatGPT 密文替换为 omission marker；Fork 沿用该发送前清理。canonical ChatGPT backend 继续保留原始密文并允许既有 rejection recovery。显式 `allowEncryptedV2AgentTasks=true` 的可信 key-auth Responses 直连也可保留原密文出站，但该授权不允许把 strict ciphertext 写入本地 continuation cache；canonical 与可信直连都禁写。
+官方 `v2.54.0` 会在向非 canonical 第三方 Responses 目的地首次发送前，把重放 `agent_message` 中不可读的 ChatGPT 密文替换为 omission marker；Fork 沿用该发送前清理。canonical ChatGPT backend 继续保留原始密文并允许既有 rejection recovery。显式 `allowEncryptedV2AgentTasks=true` 的可信 key-auth Responses 直连也可保留原密文出站，但该授权不允许把 strict ciphertext 写入本地 continuation cache。禁写不依赖 `agentTaskRecovery` 是否启用，并在 `previous_response_id` 展开后按最终请求复核。
 官方 `v2.53.0` 将 Fernet recovery 扩为最多 32 个连续完整 part、合计 2 MiB，并按有序密文序列隔离缓存。Fork 的 strict backend ciphertext 与父任务超时通知仍只接受单个密文和精确两段 content；替换前比较完整输入快照，不把 multipart 放宽到 strict 路径。
 官方 `v2.50.0` 已覆盖直接路由中原生模型切换为第三方后重放加密历史的恢复入口，不再要求该请求是派生子任务；Fork 保留严格 backend envelope、父任务 `MESSAGE`、原生 5xx 重试恢复和超时通知等扩展。
 受 `agentTaskRecovery.enabled` 控制：原生目标的 transient 5xx 重试耗尽后，严格匹配 canonical `NEW_TASK` envelope 才恢复，并对已确定的 Provider、模型、account、tier、options 重放一次。
