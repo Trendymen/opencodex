@@ -184,6 +184,7 @@ type PendingReasoning = {
   partZeroAdded: boolean;
   partZeroTextDone: boolean;
   partZeroDone: boolean;
+  seenSequenceNumbers: Set<number>;
   lastBlock?: string;
   lastEvent?: Record<string, unknown>;
 };
@@ -282,6 +283,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
         partZeroAdded: false,
         partZeroTextDone: false,
         partZeroDone: false,
+        seenSequenceNumbers: new Set(),
       };
       pending.set(itemId, state);
     }
@@ -450,7 +452,13 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
     if (!isPlainObject(payload)) return [block];
 
     if (payload.type === "response.reasoning_text.delta" && typeof payload.item_id === "string" && typeof payload.delta === "string") {
+      if (closed.has(payload.item_id)) return [];
       const state = stateOf(payload.item_id);
+      const sequenceNumber = payload.sequence_number;
+      if (typeof sequenceNumber === "number" && Number.isInteger(sequenceNumber)) {
+        if (state.seenSequenceNumbers.has(sequenceNumber)) return [];
+        state.seenSequenceNumbers.add(sequenceNumber);
+      }
       state.lastBlock = block;
       state.lastEvent = payload;
       state.buffer += payload.delta;
