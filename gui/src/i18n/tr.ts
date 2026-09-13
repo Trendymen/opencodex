@@ -864,6 +864,7 @@ export const tr: Record<TKey, string> = {
   "logs.detail.attempt.completed": "Tamamlandı",
   "logs.detail.attempt.e2eNote": "Süreç bilgisi",
   "logs.detail.attempt.recovery.transient5xx": "Geçici 5xx",
+  "logs.detail.attempt.recovery.reasoningEffortDowngrade": "Akıl yürütme düzeyi düşürüldü",
   "logs.detail.attempt.recovery.agentTaskRecovery": "Şifreli ajan görevi kurtarma",
   "logs.detail.attempt.recovery.connectionReset": "Bağlantı sıfırlandı",
   "logs.detail.attempt.recovery.oauth401": "OAuth yeniden doğrulaması",

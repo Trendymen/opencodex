@@ -47,9 +47,11 @@ phase 推断只处理缺少 phase 的文本 item。后续仍有工作时标为 `
 标为 `final_answer`；失败或 incomplete 不合成终态。SSE、有界 JSON 和 continuation replay 使用
 同一分类，OpenAI/GPT 目的地硬排除。
 
-第三方 reasoning summary 保留原始 content、opaque terminal 和 replay state。分段、terminal、
-EOF、重复或迟到事件通过同一有状态 rewrite 处理；切回原生 OpenAI GPT 时只删除由第三方
-`reasoning_text` 支撑的 opaque token，不删除真实 OpenAI blob。
+第三方 reasoning summary 只在客户端显式请求 `reasoning.summary` 时投影；Provider 的
+`showThinkingSummary` 默认值不能把 raw reasoning 改名成 summary。投影保留原始 content、
+opaque terminal 和 replay state，分段、terminal、EOF、重复或迟到事件通过同一有状态 rewrite
+处理；切回原生 OpenAI GPT 时只删除由第三方 `reasoning_text` 支撑的 opaque token，不删除真实
+OpenAI blob。
 
 Routed progress contract 只在非 OpenAI 目的地、请求实际带工具且 `instructions` 为字符串时追加。
 它要求模型在首次工具调用前、重要里程碑后、长操作前、最多四个连续纯工具响应后，以及收到新

@@ -790,6 +790,7 @@ export const ja: Record<TKey, string> = {
   "logs.detail.attempt.completed": "完了",
   "logs.detail.attempt.e2eNote": "トップレベルの tok/s はエンドツーエンドです; 各試行は自身の所要時間を使います。",
   "logs.detail.attempt.recovery.transient5xx": "一時的な5xxエラー",
+  "logs.detail.attempt.recovery.reasoningEffortDowngrade": "推論強度の引き下げ",
   "logs.detail.attempt.recovery.agentTaskRecovery": "暗号化されたエージェントタスクの回復",
   "logs.detail.attempt.recovery.connectionReset": "接続がリセットされました",
   "logs.detail.attempt.recovery.oauth401": "OAuth 再認証",

@@ -828,6 +828,7 @@ export const de: Record<TKey, string> = {
   "logs.detail.attempt.completed": "Abgeschlossen",
   "logs.detail.attempt.e2eNote": "Tok/s auf oberster Ebene ist Ende-zu-Ende; jeder Versuch nutzt seine eigene Dauer.",
   "logs.detail.attempt.recovery.transient5xx": "Vorübergehender 5xx-Fehler",
+  "logs.detail.attempt.recovery.reasoningEffortDowngrade": "Reasoning-Aufwand herabgestuft",
   "logs.detail.attempt.recovery.agentTaskRecovery": "Wiederherstellung verschlüsselter Agentenaufgaben",
   "logs.detail.attempt.recovery.connectionReset": "Verbindung zurückgesetzt",
   "logs.detail.attempt.recovery.oauth401": "OAuth-Neuanmeldung",

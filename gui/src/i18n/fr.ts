@@ -858,6 +858,7 @@ export const fr: Record<TKey, string> = {
   "logs.detail.attempt.completed": "Terminée",
   "logs.detail.attempt.e2eNote": "Le débit global en jetons/s est calculé de bout en bout ; chaque tentative utilise sa propre durée.",
   "logs.detail.attempt.recovery.transient5xx": "Erreur 5xx temporaire",
+  "logs.detail.attempt.recovery.reasoningEffortDowngrade": "Effort de raisonnement réduit",
   "logs.detail.attempt.recovery.agentTaskRecovery": "Récupération de tâche d’agent chiffrée",
   "logs.detail.attempt.recovery.connectionReset": "Réinitialisation de la connexion",
   "logs.detail.attempt.recovery.emptyCompletion": "Nouvelle tentative après une réponse vide",

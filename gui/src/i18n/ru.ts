@@ -845,6 +845,7 @@ export const ru: Record<TKey, string> = {
   "logs.detail.attempt.completed": "Завершено",
   "logs.detail.attempt.e2eNote": "Общий tok/s — сквозной показатель; для каждой попытки используется её собственная длительность.",
   "logs.detail.attempt.recovery.transient5xx": "Временная ошибка 5xx",
+  "logs.detail.attempt.recovery.reasoningEffortDowngrade": "Снижение интенсивности рассуждения",
   "logs.detail.attempt.recovery.agentTaskRecovery": "Восстановление зашифрованной задачи агента",
   "logs.detail.attempt.recovery.connectionReset": "Соединение сброшено",
   "logs.detail.attempt.recovery.oauth401": "Повторная авторизация OAuth",

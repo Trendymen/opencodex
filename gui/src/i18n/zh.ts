@@ -840,6 +840,7 @@ export const zh: Record<TKey, string> = {
   "logs.detail.attempt.completed": "已完成",
   "logs.detail.attempt.e2eNote": "顶层 tok/s 为端到端值；每次尝试使用各自耗时。",
   "logs.detail.attempt.recovery.transient5xx": "临时 5xx 错误",
+  "logs.detail.attempt.recovery.reasoningEffortDowngrade": "推理强度降级",
   "logs.detail.attempt.recovery.agentTaskRecovery": "加密子任务恢复",
   "logs.detail.attempt.recovery.connectionReset": "连接已重置",
   "logs.detail.attempt.recovery.oauth401": "OAuth 重新认证",
