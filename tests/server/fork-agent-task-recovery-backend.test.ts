@@ -182,6 +182,46 @@ describe("fork agent task recovery (strict backend ciphertext)", () => {
     expect(JSON.stringify(replay)).not.toContain(backendCiphertext);
   });
 
+  test("does not retain a directly successful strict backend ciphertext from a trusted direct Responses route", async () => {
+    const backendCiphertext = `gAAAA${"C".repeat(128)}`;
+    const responseId = "resp_trusted_direct_backend_ciphertext_no_state";
+    const config = routedConfig({ enabled: true });
+    config.providers.relay = {
+      adapter: "openai-responses",
+      baseUrl: "https://relay.example.test/v1",
+      authMode: "key",
+      apiKey: "test-relay-key",
+      allowEncryptedV2AgentTasks: true,
+    };
+    let forwardedBody = "";
+    globalThis.fetch = (async (_input, init) => {
+      forwardedBody = typeof init?.body === "string" ? init.body : "";
+      return Response.json({
+        id: responseId,
+        object: "response",
+        status: "completed",
+        model: "gpt-5.5",
+        output: [],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      });
+    }) as typeof fetch;
+
+    const response = await post(
+      config,
+      "relay/gpt-5.5",
+      encryptedInput({ ciphertext: backendCiphertext }),
+      codexHeaders(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(forwardedBody).toContain(backendCiphertext);
+    const replay = expandPreviousResponseInput({ previous_response_id: responseId }) as {
+      input?: unknown;
+    };
+    expect(replay.input).toBeUndefined();
+    expect(JSON.stringify(replay)).not.toContain(backendCiphertext);
+  });
+
   test("preserves the terminal native response when backend task recovery fails", async () => {
     const backendCiphertext = `gAAAA${"A".repeat(128)}`;
     let nativeAttempts = 0;
