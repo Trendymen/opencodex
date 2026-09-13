@@ -471,13 +471,14 @@ describe("provider registry parity", () => {
     expect(neuralwatt?.preserveReasoningContentModels).not.toContain("moonshotai/Kimi-K2.5");
   });
 
-  test("first-party DeepSeek Flash advertises native images without widening gateway aliases (#4436)", () => {
+  test("first-party DeepSeek Flash aliases advertise native images without widening gateway aliases (#4436)", () => {
     const provider = providerConfigSeed(PROVIDER_REGISTRY.find(entry => entry.id === "deepseek")!);
     expect(KEY_LOGIN_PROVIDERS.deepseek.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
     expect(provider.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
     expect(isModelVisionSidecarConsumer(provider, "deepseek-flash")).toBe(false);
+    expect(isModelVisionSidecarConsumer(provider, "deepseek-v4-flash")).toBe(false);
     expect(isModelVisionSidecarConsumer(provider, "deepseek-v4-flash-vision-exp")).toBe(false);
-    for (const model of ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash"]) {
+    for (const model of ["deepseek-chat", "deepseek-reasoner"]) {
       expect(isModelVisionSidecarConsumer(provider, model)).toBe(true);
     }
     for (const id of ["opencode-go", "opencode-zen"]) {
