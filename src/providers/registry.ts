@@ -112,6 +112,13 @@ interface ProviderModelDiscoverySharedSpec {
    * Empty/invalid remainders skip that row only.
    */
   stripIdPrefix?: string;
+  /**
+   * Opt in to the vendor's `{ models: [{ slug: ... }] }` Codex catalog rather
+   * than the default OpenAI `{ data: [{ id: ... }] }` response shape.
+   */
+  envelopeKey?: "models";
+  /** Required together with `envelopeKey`; identifies the provider-native model id field. */
+  modelIdKey?: "slug";
 }
 
 type ProviderModelDiscoveryLocation =
@@ -1825,6 +1832,17 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     // Go rejects reasoning.encrypted_content with previous_response_id (#3838).
     // Use explicit replay history and the existing stateless Responses policy.
     statelessResponses: true,
+    // Console Go answered HTTP 400 to a `deepseek-flash` Responses continuation whose replayed
+    // reasoning item arrived with its content channel blanked: "The `reasoning_text` in the
+    // thinking mode must be passed back to the API". Keep plaintext reasoning on the wire the
+    // way the native DeepSeek preset does.
+    //
+    // The flag is provider-wide, mirroring `deepseek` and `zhipu-bigmodel-responses`; this lane
+    // has no model-scoped form. Whether the other Responses-wire models here (gpt-5.6-luna,
+    // grok-4.6, muse-spark-1.2/1.3-contributor) accept a preserved replay is unverified, and a
+    // continuation whose history was produced on the content channel can now hand them
+    // reasoning content that used to be blanked.
+    preserveResponsesReasoningContent: true,
     /* [Decision Log]
     - 목적과 의도: Route the exact models OpenCode Go documents on the Responses endpoint — GPT 5.6 Luna, Grok 4.6, and Muse Spark Contributor (#2617).
     - 기존 구현 및 제약 조건: The provider is mixed-wire but its provider-wide `openai-chat` adapter sent Luna to `/chat/completions`; explicit user `modelAdapters` entries must remain authoritative.
@@ -2173,8 +2191,13 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     // Official DeepSeek Codex setup (codex-deepseek-setup.sh) advertises 1,048,576
     // for both V4 models; the older 1,000,000 figure was a rounded approximation.
     modelContextWindows: { "deepseek-flash": 1_048_576, "deepseek-v4-flash": 1_048_576, [DEEPSEEK_VISION_PREVIEW_MODEL]: 1_048_576 },
+    // The legacy V4 Flash id accepted image input on both wires in the 2026-09-10 solid-colour
+    // probe: POST /chat/completions and POST /responses (`input_image`) each returned 200 and read
+    // the pixels. The official transition routes that id to `deepseek-flash`, so both spellings
+    // expose the same modality; the canonical spelling has not been probed separately after rename.
     modelInputModalities: {
       "deepseek-flash": ["text", "image"],
+      "deepseek-v4-flash": ["text", "image"],
       [DEEPSEEK_VISION_PREVIEW_MODEL]: ["text", "image"],
     },
     // DeepSeek documents both V4 models as native Responses API models adapted for Codex
@@ -2246,10 +2269,15 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     modelReasoningEffortMap: Object.fromEntries(DEEPSEEK_NATIVE_THINKING_MODELS.map(id => [id, deepseekReasoningMapFor(id)])),
     modelSupportsReasoningSummaries: Object.fromEntries(DEEPSEEK_NATIVE_THINKING_MODELS.map(id => [id, true])),
     preserveReasoningContentModels: DEEPSEEK_NATIVE_THINKING_MODELS,
-    // #4436: first-party deepseek-flash accepts native images on Chat and Responses.
-    // Keep unprobed compatibility aliases on the #88 sidecar path. This must be fixed
-    // here: router enrichment unions this list with saved config, so config cannot remove it.
-    noVisionModels: ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash"],
+    // The retired chat/reasoner ids remain sidecar-covered. Both current V4 Flash spellings declare
+    // image input above; a future thinking id stays sidecar-covered until it has its own evidence.
+    noVisionModels: [
+      "deepseek-chat",
+      "deepseek-reasoner",
+      ...DEEPSEEK_NATIVE_THINKING_MODELS.filter(
+        id => id !== "deepseek-flash" && id !== "deepseek-v4-flash",
+      ),
+    ],
   },
   // llama-3.3-70b was deprecated by Cerebras on 2026-02-16. Evidence: devlog/_plan/260710_provider_hardening/003_research_aggregators.md.
   { id: "cerebras", label: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", adapter: "openai-chat", authKind: "key", dashboardUrl: "https://cloud.cerebras.ai/platform/apikeys", defaultModel: "gpt-oss-120b" },

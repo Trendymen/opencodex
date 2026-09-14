@@ -228,8 +228,10 @@ that terminal are dropped rather than replacing the completed turn with a transp
 :::note
 For native passthrough, a Responses terminal event is authoritative. A premature `data: [DONE]` is
 held until that event. On the ordinary native path, a clean HTTP 200 EOF without a parsed terminal
-emits one `response.incomplete` with `incomplete_details.reason: "adapter_eof"`, followed by one
-`data: [DONE]`; syntactically valid delimiter-less terminal JSON is accepted exactly once, while
+preserves a preceding ordinary top-level `error` as one `response.failed`, including its bounded
+type, code, and redacted message. If no usable error arrived, the proxy emits one
+`response.incomplete` with `incomplete_details.reason: "adapter_eof"`. Either outcome is followed by
+one `data: [DONE]`; syntactically valid delimiter-less terminal JSON is accepted exactly once, while
 malformed or truncated JSON remains incomplete. For providers opted into model-scoped terminal
 repair, unframed terminal-like suffixes and a premature `data: [DONE]` at EOF fail closed with
 `missing_terminal_event` when no complete lifecycle candidate can be promoted; a complete candidate
@@ -674,6 +676,62 @@ Errors use the client dialect's envelope where needed, but these status/code mea
 
 Anthropic-origin failures are rendered in Anthropic's error envelope, so the origin rejection is a
 403 `permission_error` on that dialect rather than the OpenAI-style `origin_rejected` body.
+
+## Patch ordering and recovery guidance
+
+On OpenAI-compatible Chat and native Responses routes using the non-OpenAI tool-catalog guidance,
+a visible Codex `apply_patch` tool or verified code-mode `exec` also receives patch-order and
+recovery instructions. The model is asked to order hunks within each file from top to bottom.
+After `Failed to find expected lines`, it should check for reversed hunks, reread the current
+file, and use smaller separate patches if necessary.
+
+Kiro currently receives this guidance through verified code-mode `exec`; its direct `apply_patch`
+path does not receive it. The guidance does not reorder hunks, rewrite `exec` JavaScript or
+nonempty failure output, or retry patches automatically.
+
+## spawn_agent argument compatibility
+
+For native Responses requests sent to third-party destinations, opencodex clarifies the
+`fork_turns` description on a currently available `collaboration.spawn_agent` function with a
+supported string schema. The description preserves the existing text and explains that
+`{"fork_turns":"3"}` passes a string containing the character `3`, without quote characters.
+The original request and the other schema fields are preserved.
+
+On native Responses paths that use ordinary function-argument repair, opencodex can unwrap one
+extra JSON-string layer in a completed call's `fork_turns`. Repair requires the current tool
+declaration to authorize that exact function and the decoded value to be `none`, `all`, or a
+supported positive integer string. Unsupported schemas, invalid values, and extra encoding
+layers are left unchanged. Other fields and unrelated tools are not unquoted. Unquoting replaces
+only that field's string token, preserving the rest of the argument text. Duplicate top-level
+`fork_turns` keys in the original arguments skip unquoting; existing argument conversions still apply.
+
+This unquoting rule supports plain object parameter schemas whose `fork_turns` field contains
+only `type: "string"` and an optional string description. References, composition keywords,
+field enums/patterns, and unknown constraints are excluded. Quoted integers are repaired only
+in canonical decimal form without leading zeroes, from `1` to `9007199254740991`. Values outside
+this repair range continue through the existing argument handling; the proxy does not infer a
+different turn count.
+
+Streamed previews remain unchanged; authoritative completions, JSON responses, and replay use
+the repaired value. Canonical ChatGPT login forwarding is excluded from this completion repair.
+The proxy does not execute or retry the tool as part of this conversion.
+
+## Sub-agent messages
+
+For non-GPT model families at third-party Responses destinations, opencodex converts readable
+Codex `agent_message` items into ordinary user messages before sending the request. This applies
+to both key-auth and third-party `forward` routes, so task assignments, peer messages, and reviewer
+results remain visible to models that do not read the Codex-private item type.
+
+The conversion preserves the text, sender and recipient identities, message order, and image/file
+parts without modifying the original input or replay data. It only converts nonempty messages
+whose parts are all `input_text`, `input_image`, or `input_file`; mixed ciphertext and unknown part
+types retain their existing handling. OpenAI-operated destinations and GPT/OpenAI model families
+are excluded from this broader conversion; existing destination-specific handling remains in place.
+The check uses the resolved model id. It recognizes `gpt`, `chatgpt`, `codex`, `o1`, `o3`, and
+`o4` at a name boundary, plus `openai/gpt-*` and `openai-gpt-*`. A name that only contains one of
+those words, such as `my-gpt-helper` or `openai-compatible-glm`, remains an ordinary alias or model
+id until routing resolves it.
 
 ## Encrypted-content hygiene
 
