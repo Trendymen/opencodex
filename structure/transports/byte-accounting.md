@@ -104,3 +104,12 @@ The same focused tests cover these lifecycle paths and Unicode code-unit limit b
 Native steering retains fixed phase deadlines and reconciled replay output; see the [steering stability contract](../transports/streaming-health.md#steering-deadlines-and-replay-completeness).
 
 Native steering generation overrides, explicit public-API eligibility and the consent-gated wire probe follow the [shared control contract](streaming-health.md#steering-settings-public-api-and-diagnostic-probe); this owner does not change routing or execute diagnostic tools.
+
+### Fork reasoning sequence accounting
+
+### Fork reasoning sequence accounting
+
+`src/server/responses-reasoning-summary-rewrite.ts` 使用 `Set<number>` 去重，每个保留的整数序号
+按 32 字节计入官方 `translatorBudget`，不另设 256 个序号或 256 KiB 配额。
+客户端与 replay projection 共用调用方预算；独立调用在需要时创建默认 32 MiB 预算。
+终态、`flush` 和 `dispose` 释放序号记账，只销毁 rewrite 自建的预算，不销毁调用方预算。
