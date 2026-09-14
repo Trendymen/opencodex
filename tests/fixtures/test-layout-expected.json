@@ -1347,5 +1347,6 @@
   "responses-state-admission.test.ts": "responses",
   "responses-tool-catalog.test.ts": "responses",
   "responses-hosted-tool-conflicts.test.ts": "responses",
-  "account-selection-config.test.ts": "server"
+  "account-selection-config.test.ts": "server",
+  "ci-gui-if-changed.test.ts": "ci-workflows"
 }

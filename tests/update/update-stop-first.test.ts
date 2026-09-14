@@ -11,6 +11,11 @@ import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { repoRoot as resolveRepoRoot } from "../helpers/repo-root";
 
 const repoRoot = resolveRepoRoot();
+const nodeProbe = Bun.spawnSync(["node", "-p", "process.execPath"], {
+  stdout: "pipe",
+  stderr: "ignore",
+});
+const nodeExecutable = nodeProbe.exitCode === 0 ? nodeProbe.stdout.toString().trim() : "node";
 
 function freePort(): Promise<number> {
   const { promise, resolve, reject } = Promise.withResolvers<number>();
@@ -671,7 +676,7 @@ esac
 `);
         chmodSync(fakeNpm, 0o755);
 
-        const result = Bun.spawnSync(["node", launcher, "update"], {
+        const result = Bun.spawnSync([nodeExecutable, launcher, "update"], {
           cwd: root,
           env,
           stdout: "pipe",
@@ -710,7 +715,7 @@ esac
           ? recoveredPid
           : undefined;
         if (existsSync(launcher)) {
-          Bun.spawnSync(["node", launcher, "stop"], {
+          Bun.spawnSync([nodeExecutable, launcher, "stop"], {
             cwd: root,
             env,
             stdout: "ignore",
