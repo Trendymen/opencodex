@@ -168,8 +168,8 @@ Providers can expose a built-in shorthand, such as `agy` for `google-antigravity
 | `modelInputModalities?` | `Record<string, string[]>` | Per-model input hints such as `["text"]` or `["text", "image"]`. |
 | `modelMaxInputTokens?` | `Record<string, number>` | Positive per-model max input limits used for catalog auto-compaction hints. |
 | `modelAutoCompactTokenLimits?` | `Record<string, number>` | Positive safe-integer per-model soft auto-compaction budgets. Values can only lower the effective 90%-of-context/max-input envelope and are omitted when no authoritative context window is known. For canonical `openai`, keys must be exact supported native model IDs without provider or account-selector prefixes. Provider PATCH merges entries; set a key to `null` to delete it or the whole field to `null` to clear the map. These `null` tombstones are PATCH-only. |
-| `defaultMaxOutputTokens?` | `number` | Provider-wide `openai-chat` fallback when the client omits `max_output_tokens`. |
-| `modelMaxOutputTokens?` | `Record<string, number>` | Positive per-model `openai-chat` fallback budgets; exact/pattern matches beat the provider default. |
+| `defaultMaxOutputTokens?` | `number` | Provider-wide fallback when the client omits `max_output_tokens`; applies to `openai-chat` and to key-auth `openai-responses` requests. |
+| `modelMaxOutputTokens?` | `Record<string, number>` | Positive per-model fallback budgets; an exact or pattern match beats the provider default and applies on the same wires. |
 | `modelCosts?` | `Record<string, Cost4>` | Per-model display prices (USD per 1M tokens), keyed by that provider's exact upstream model id — not a provider identifier or a routed `provider/model` label, e.g. `{ "deepseek-v4-flash": { "input": 0.14, "output": 0.28, "cacheRead": 0.0028, "cacheWrite": 0 } }`. Any model id is a valid key — custom providers may target any OpenAI-compatible endpoint through the `openai-chat` adapter, and local or internal provider ids work even when they are absent from the built-in catalogs. User-configured prices win over the built-in catalogs in the Logs `~$` and Usage estimates; historical entries are repriced from the current overlay, so editing a price can move past totals. The fallback order is user `modelCosts` → exact official correction → jawcode catalog → expected-price overlay → model-level vendor fallback, and an explicit all-zero user entry means a known-zero estimate; delete that model entry to restore automatic pricing. All-zero catalog metadata still falls through. Each rate must be a non-negative finite number at most 1,000,000 (USD per 1M tokens); out-of-range rows are rejected by the management boundary and dropped on load. Display-time estimation only: overlays never affect routing, account selection, quotas, or billing. |
 | `headers?` | `Record<string, string>` | Extra upstream headers. Authorization, cookies, API-key headers, embedded newlines, and invalid names are rejected. |
 | `openRouterRouting?` | `OpenRouterProviderRouting` | Default OpenRouter `order`, `only`, and `allowFallbacks` preferences; valid only for canonical OpenRouter with `openai-chat`. |
@@ -198,6 +198,7 @@ Providers can expose a built-in shorthand, such as `agy` for `google-antigravity
 | `noStructuredOutputModels?` | `string[]` | Exact model IDs whose `openai-chat` endpoint rejects `response_format`. Only an exact requested-model match omits the field; structured-output translation stays enabled for every other `openai-chat` model. |
 | `noJsonSchemaModels?` | `string[]` | Exact model IDs whose `openai-chat` endpoint rejects a `json_schema` `response_format` but still accepts `json_object`. Such a request is downgraded to `json_object` instead of being dropped, so a caller asking for JSON still gets JSON. `noStructuredOutputModels` wins when a model is on both lists. The `opencode go`, `opencode zen`, and `opencode free` presets ship this for their DeepSeek routes. |
 | `omitReasoningEffortWithToolsModels?` | `string[]` | Exact `openai-chat` model IDs that accept a reasoning-effort field on an ordinary turn but reject it once function tools are present. The model keeps its advertised effort ladder; OpenCodex omits the wire field for tool-bearing requests only and the upstream default applies. Narrower than `noReasoningModels`, which strips reasoning from every request and costs the model its picker entirely. |
+| `inferResponsesMessagePhaseModels?` | `string[]` | Exact `openai-responses` model IDs whose upstream omits assistant-message `phase`. Disabled by default. The relay labels only missing phases: text before later work becomes `commentary`, and clean terminal text becomes `final_answer`; it never creates, copies, or summarizes text. Explicit upstream phases are preserved unless a later terminal snapshot contradicts already observed later work for the same item; that malformed snapshot is normalized to the already-proven `commentary` phase. Failed or incomplete turns never receive a synthetic `final_answer`, though text already proven to precede later work remains `commentary`. Model IDs containing `gpt` or `openai` are always excluded even when listed. |
 | `parallelToolCalls?` | `boolean` | Toggle parallel tool calls. OpenAI Chat defaults on; non-chat adapters advertise only on explicit `true`. |
 | `terminalContinuationGuard?` | `boolean` | Opt in an `openai-chat` provider to one bounded internal re-ask when an actionable turn announces work, then cleanly stops without a tool call. Defaults to `false`; explicit `false` behaves like omission. Combo attempts and routed compaction turns are excluded, and non-`openai-chat` adapters ignore this option. |
 | `responsesItemIdRepair?` | `{ message?: string[]; reasoning?: string[]; repairMissingTerminalIds?: boolean; repairInvalidIds?: boolean }` | Disabled-by-default downstream SSE repair for exact placeholder ids, missing terminal ids, and (with `repairInvalidIds`) message/reasoning ids missing the canonical `msg_`/`rs_` prefix. Function-call ids are never rewritten. Built-in DeepSeek enables the last two by default. |
@@ -1054,6 +1055,18 @@ Non-Go destinations are unaffected: opencodex never derives or adds the session 
 header an operator configured on such a provider is still sent, because opencodex leaves that
 configuration alone.
 
+## OpenCode Go reasoning replay
+
+The same preset enables `preserveResponsesReasoningContent`: replayed reasoning items keep their
+plaintext `reasoning_text` instead of the empty `content` channel the ChatGPT backend requires.
+Console Go rejected a `deepseek-flash` continuation with HTTP 400 and
+`The reasoning_text in the thinking mode must be passed back to the API`; the preset now sends that
+plaintext back. The flag is provider-wide, as with the `deepseek` and `zhipu-bigmodel-responses`
+presets, and an explicit `preserveResponsesReasoningContent: false` on the provider still wins.
+Whether the lane's other Responses models (`gpt-5.6-luna`, `grok-4.6`,
+`muse-spark-1.2-contributor`, `muse-spark-1.3-contributor`) accept a preserved replay is not
+verified.
+
 ## OpenCode Go reasoning efforts
 
 Go catalog rows preserve their configured reasoning efforts exactly, including during
@@ -1075,13 +1088,20 @@ their previous behavior. See the
 
 ## Routed agent messages
 
-With the [`openai-responses` adapter](/reference/adapters/#openai-responses), Codex
-`agent_message` items containing nonempty arrays of supported plaintext parts become user messages when `authMode` is not `"forward"`
-(for example, `"key"`). Providers using `authMode: "forward"` retain these items unchanged.
-`agent_message` is private to the ChatGPT Codex backend, and the routed destinations
-reported so far answer the whole request with
-`422 unknown item type "agent_message"`; Codex replays sub-agent history on every
-subsequent turn, so the thread keeps failing until the item is converted.
+Provider 可配置 `agentMessageFormat`，在原生消息与普通 user message 之间显式选择：
+
+```json
+{ "agentMessageFormat": "preserve" }
+```
+
+- `preserve`：保留 `agent_message`，后置兼容处理也不转换。
+- `user_message`：将第三方 Responses 的合法明文数组或非空字符串转为 user message，保留 author、recipient 和原始正文；官方 OpenAI/ChatGPT 目的地不转换。
+- 未配置：使用下述默认策略。POST 省略字段保留最新值；POST null 拒绝，PATCH null 清除配置并恢复默认。非法值返回校验错误。
+
+该选项不解密内容，也不关闭密文保护或任务恢复。当前可通过配置文件和管理 API 使用，尚无 GUI 控件。
+
+使用 [`openai-responses` adapter](/reference/adapters/#openai-responses) 时，非 OpenAI 目的地的非 GPT 模型会将合法的结构化明文 `agent_message` 转为普通 user message，包含第三方 `forward` 路由。
+OpenCode Go 的 `https://opencode.ai/zen/go/v1` 非 `forward` 路由保留既有跨模型转换，其 `forward` 路由按上述非 GPT 规则处理。Provider 改名不改变目的地判定。
 Author and recipient remain explicit text metadata, and the content parts are preserved.
 For HTTPS `api.x.ai` and `cli-chat-proxy.grok.com` on the standard port, non-forward
 Responses dispatch also accepts a nonblank string child result and turns it into one

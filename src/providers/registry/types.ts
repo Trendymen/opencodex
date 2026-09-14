@@ -75,6 +75,10 @@ interface ProviderModelDiscoverySharedSpec {
    * Empty/invalid remainders skip that row only.
    */
   stripIdPrefix?: string;
+  /** 使用供应商的 models/slug 目录格式，默认仍为 data/id。 */
+  envelopeKey?: "models";
+  /** 与 envelopeKey 一起声明供应商模型 ID 字段。 */
+  modelIdKey?: "slug";
 }
 
 type ProviderModelDiscoveryLocation =

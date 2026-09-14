@@ -1,10 +1,9 @@
 import { normalizeRoutedAgentMessages } from "../routed-agent-messages";
 import { stripBracketedModelSuffix } from "../openai-chat";
 import { normalizeOpenCodeGoAdditionalTools } from "../opencode-go-additional-tools";
-import { isXaiResponsesDestination } from "../../providers/xai-transport";
 import { Buffer } from "node:buffer";
 import type { IncomingMeta, ProviderAdapter } from "../base";
-import { namespacedToolName, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../../types";
+import { namespacedToolName, toolChoiceToolPredicate, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../../types";
 import { applyCodexRoutingHint, CODEX_RESPONSES_LITE_HEADER, CODEX_ROUTING_HINT_HEADER } from "../../codex/forward-transport-headers";
 import { COMPACT_PROMPT, compactionItemToText, decodeCompactionSummary, isCompactionItemType } from "../../responses/compaction";
 import { decodeServerSentEvents } from "../../lib/sse-decoder";
@@ -20,8 +19,24 @@ import { rewriteRoutedToolSearchForUpstream } from "../../responses/tool-search-
 import { rewriteRoutedNamespaceToolsForUpstream } from "../../responses/namespace-tool-compat";
 import { preparePlaintextV2AgentMessages } from "../../responses/plaintext-v2-agent-messages";
 import { isMetaAiResponsesDestination, rewriteMuseToolNamesForUpstream } from "../../responses/muse-tool-name-alias";
+import { collectFunctionCallRepairSchemas } from "../../responses/function-call-compat";
+import { collectResponsesToolGroups } from "../../responses/tool-groups";
+import { agentMessageConversionOptions } from "../../fork/agent-message-format";
+import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../../fork/glm-kimi-compat";
+import { addSpawnAgentForkTurnsGuidance } from "../../fork/spawn-agent-compat";
+import { applyRoutedProgressContractToResponsesBody } from "../../fork/routed-progress-contract";
+import { debugResponsesOutboundShape } from "../../fork/outbound-debug";
+import { modelRecordValue } from "../../reasoning-effort";
 import { openaiResponsesUrl } from "../openai-responses-url";
 import { normalizeResponsesCodeMode } from "../responses-code-mode";
+import { CODE_MODE_RESULT_ECHO_SENTENCE } from "../exec-tool-result-normalize";
+import {
+  buildNonOpenAIToolCatalogNudgeFromNames,
+  isBareShellBridgeTool,
+  isCodexApplyPatchTool,
+  isCodexCodeModeExecTool,
+  shouldInjectNonOpenAIToolCatalogNudge,
+} from "../tool-catalog-nudge";
 import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "../xai-web-search";
 import {
   isXaiSchemaTarget,
@@ -187,6 +202,76 @@ function appendedUtf8Bytes(previousBytes: number, lastCodeUnit: number, fragment
   return previousBytes + Buffer.byteLength(fragment, "utf8") - (joinsSurrogatePair ? 2 : 0);
 }
 
+/** Add tool guidance from the final wire catalog so routed models see every callable name. */
+function applyRoutedResponsesToolCatalogNudge(body: unknown, parsed: OcxParsedRequest): unknown {
+  if (!isPlainObject(body) || typeof body.instructions !== "string") return body;
+  const declarations = collectResponsesToolGroups(body).flat();
+  if (declarations.length === 0) return body;
+  if (declarations.some(tool => !isPlainObject(tool) || typeof tool.name !== "string")) return body;
+
+  const wireNames = [...new Set(declarations.map(tool => (tool as Record<string, unknown>).name as string))];
+  const wireNameSet = new Set(wireNames);
+  let codeModeExecName: string | undefined;
+  let directApplyPatchName: string | undefined;
+  const tools = parsed.context.tools;
+  if (tools?.length) {
+    const visible = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
+    const codeModeVisible = !visible.some(isBareShellBridgeTool);
+    for (const tool of visible) {
+      const wireName = namespacedToolName(tool.namespace, tool.name);
+      if (!wireNameSet.has(wireName)) continue;
+      if (codeModeVisible && !codeModeExecName && isCodexCodeModeExecTool(tool)) codeModeExecName = wireName;
+      if (isCodexApplyPatchTool(tool)) directApplyPatchName = wireName;
+    }
+  }
+
+  const nudge = buildNonOpenAIToolCatalogNudgeFromNames(
+    wireNames,
+    undefined,
+    codeModeExecName,
+    directApplyPatchName,
+  );
+  if (!nudge) return body;
+  const novelNudge = body.instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)
+    ? nudge.replace(`${CODE_MODE_RESULT_ECHO_SENTENCE} `, "")
+    : nudge;
+  if (body.instructions.includes(novelNudge)) return body;
+  return { ...body, instructions: `${body.instructions}\n\n${novelNudge}` };
+}
+
+export function applyConfiguredResponsesMaxOutputTokens(
+  body: unknown,
+  provider: Pick<OcxProviderConfig, "defaultMaxOutputTokens" | "modelMaxOutputTokens"> & { authMode?: OcxProviderConfig["authMode"] },
+  modelId: string,
+): unknown {
+  if (!isPlainObject(body)) return body;
+  if (provider.authMode === "forward") return body;
+  if (Object.prototype.hasOwnProperty.call(body, "max_output_tokens")) return body;
+  const configured = modelRecordValue(provider.modelMaxOutputTokens, modelId)
+    ?? provider.defaultMaxOutputTokens;
+  if (configured === undefined) return body;
+  return { ...body, max_output_tokens: configured };
+}
+
+function addCanonicalForwardResponsesLiteMetadata(body: unknown, incoming: IncomingMeta): unknown {
+  if (incoming.headers.get("x-openai-internal-codex-responses-lite") !== "true" || !isPlainObject(body)) {
+    return body;
+  }
+  if (Object.hasOwn(body, "client_metadata") && !isPlainObject(body.client_metadata)) return body;
+  const clientMetadata = body.client_metadata;
+  if (isPlainObject(clientMetadata)
+    && Object.hasOwn(clientMetadata, "ws_request_header_x_openai_internal_codex_responses_lite")) {
+    return body;
+  }
+  return {
+    ...body,
+    client_metadata: {
+      ...(isPlainObject(clientMetadata) ? clientMetadata : {}),
+      ws_request_header_x_openai_internal_codex_responses_lite: "true",
+    },
+  };
+}
+
 export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): ProviderAdapter & { passthrough: true } {
   return {
     name: "openai-responses",
@@ -262,9 +347,14 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         parsed._rawBody,
         forward || parsed._previousResponseInputExpanded === true,
       );
-      if (!forward) outBody = normalizeRoutedAgentMessages(outBody, {
-        allowStringContent: isXaiResponsesDestination(provider),
+      const agentMessageOptions = agentMessageConversionOptions({
+        provider,
+        resolvedModelId: parsed.modelId,
+        phase: "early",
       });
+      if (agentMessageOptions) {
+        outBody = normalizeRoutedAgentMessages(outBody, agentMessageOptions);
+      }
       outBody = mapRoutedResponsesReasoningEffort(outBody, provider, parsed.modelId);
       // stripPreviousResponseId() intentionally returns its input on a no-op. Detach before the
       // tier write so a force-fast/default decision can never mutate parsed._rawBody.
@@ -317,6 +407,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         outBody = stripInternalChatMessageMetadataPassthrough(outBody);
         outBody = promoteClientLoadedTools(outBody);
+      }
+      if (!isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = addSpawnAgentForkTurnsGuidance(outBody, collectFunctionCallRepairSchemas(outBody));
       }
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         const rewritten = rewriteRoutedCustomToolsForUpstream(
@@ -383,6 +476,17 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           plaintextV2AgentMessageAliasedToolNames = prepared.aliasedAgentMessageToolNames;
         }
       }
+      if (parsed._compactionRequest !== true && !isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = applyRoutedProgressContractToResponsesBody(outBody);
+      }
+      const glmKimiCompatibility = applyGlmKimiOutboundCompatibility({
+        body: outBody,
+        provider,
+        modelId: parsed.modelId,
+        threadId: incoming.headers.get("thread-id") ?? incoming.headers.get("thread_id"),
+        url,
+      });
+      outBody = glmKimiCompatibility.body;
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       // Providers with the strict plaintext tool-continuation contract cannot consume any
       // encrypted reasoning blob, including one whose provenance is unknown. Combo routing
@@ -402,6 +506,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
                   preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
                   dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
                   stripEncryptedContent: threadServingIdentityChanged || requiresPlaintextReasoningReplay(provider),
+                  stripRawContentBackedEncryptedContent: isOpenAiOperatedResponsesDestination(provider),
                 },
               ),
               provider,
@@ -409,8 +514,10 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           ),
         ),
         isXaiSchemaTarget(provider),
+        !isOpenAiOperatedResponsesDestination(provider)
+          && !((provider.authMode ?? "key") === "key" && provider.allowEncryptedV2AgentTasks === true),
       );
-      const unnormalizedBody = stripDisabledVerbosity(
+      let finalBody = stripDisabledVerbosity(
         stripDisabledReasoningSummaries(
           normalizeConfiguredReasoningSummaryDelivery(sanitizedBody, provider, parsed.modelId),
           provider,
@@ -420,15 +527,24 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         parsed.modelId,
       );
       // Normalize the wire model before deriving model-dependent transport metadata.
-      const finalBody =
+      if (
         provider.modelSuffixBracketStrip
-          && unnormalizedBody !== null
-          && typeof unnormalizedBody === "object"
-          && !Array.isArray(unnormalizedBody)
-          && typeof (unnormalizedBody as { model?: unknown }).model === "string"
-          ? { ...(unnormalizedBody as Record<string, unknown>), model: stripBracketedModelSuffix((unnormalizedBody as { model: string }).model) }
-          : unnormalizedBody;
+        && finalBody !== null
+        && typeof finalBody === "object"
+        && !Array.isArray(finalBody)
+        && typeof (finalBody as { model?: unknown }).model === "string"
+      ) {
+        finalBody = {
+          ...(finalBody as Record<string, unknown>),
+          model: stripBracketedModelSuffix((finalBody as { model: string }).model),
+        };
+      }
+      if (parsed._compactionRequest !== true && shouldInjectNonOpenAIToolCatalogNudge(provider)) {
+        finalBody = applyRoutedResponsesToolCatalogNudge(finalBody, parsed);
+      }
+      finalBody = applyConfiguredResponsesMaxOutputTokens(finalBody, provider, parsed.modelId);
       if (isCanonicalOpenAiForwardProvider(provider)) {
+        finalBody = addCanonicalForwardResponsesLiteMetadata(finalBody, incoming);
         const routingHeaders = new Headers(headers);
         applyCodexRoutingHint(routingHeaders, finalBody);
         // Static headers may use mixed casing. Remove every stale spelling
@@ -455,9 +571,29 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // HTTP and the WebSocket outbound, because the WS path transports this same request
       // instead of rebuilding it.
       const body = JSON.stringify(finalBody);
+      const bodyBytes = Buffer.byteLength(body, "utf8");
+      persistKimiToolSchemaCatalog({
+        body: finalBody,
+        provider,
+        modelId: parsed.modelId,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+        url,
+      });
+      debugResponsesOutboundShape({
+        url,
+        provider,
+        model: parsed.modelId,
+        body: finalBody,
+        bodyBytes,
+        convertedCustomToolNames: convertedRoutedCustomToolNames,
+        convertedToolSearchNames: convertedRoutedToolSearchNames,
+        convertedNamespaceAliases: convertedRoutedNamespaceToolAliases,
+        kimiToolSchemaLowering: glmKimiCompatibility.kimiToolSchemaLowering,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+      });
       const releaseBodyObservation = translatorBudget.observeExternallyCapped(
         "passthrough_serialization",
-        Buffer.byteLength(body, "utf8"),
+        bodyBytes,
       );
       return {
         url,
@@ -465,6 +601,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         headers,
         body,
         releaseBodyObservation,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
         ...(convertedRoutedCustomToolNames ? { convertedRoutedCustomToolNames } : {}),
         ...(routedCustomToolRepairNames ? { routedCustomToolRepairNames } : {}),
         ...(convertedRoutedToolSearchNames ? { convertedRoutedToolSearchNames } : {}),

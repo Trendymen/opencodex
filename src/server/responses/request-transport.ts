@@ -280,7 +280,10 @@ export async function prepareResponsesTransport(
       && credentialGeneration(row.credential) === binding.snapshot.generation;
   };
   const resolveSelectionAdapter = (provider: OcxProviderConfig, retention = config.cacheRetention): ProviderAdapter => {
-    const resolved = resolveAdapter(provider, retention, route.providerName);
+    const adapterProvider = options.comboAttempt && provider.allowEncryptedV2AgentTasks === true
+      ? { ...provider, allowEncryptedV2AgentTasks: false }
+      : provider;
+    const resolved = resolveAdapter(adapterProvider, retention, route.providerName);
     if (route.provider.authMode === "forward") return resolved;
     const binding: DispatchBinding | undefined = route.provider.authMode === "oauth"
       ? oauthSelection && servingOAuthSnapshot

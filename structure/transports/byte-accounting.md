@@ -96,3 +96,9 @@ invent usage for an unreported failed send, retry a failed factory, or turn fail
 Source-iteration exceptions still propagate to the caller. Returning the guard iterator closes
 its active source; cancellation at an assistant boundary does not start the continuation callback.
 The same focused tests cover these lifecycle paths and Unicode code-unit limit boundaries.
+### Fork reasoning sequence accounting
+
+`src/server/responses-reasoning-summary-rewrite.ts` 使用 `Set<number>` 去重，每个保留的整数序号
+按 32 字节计入官方 `translatorBudget`，不另设 256 个序号或 256 KiB 配额。
+客户端与 replay projection 共用调用方预算；独立调用在需要时创建默认 32 MiB 预算。
+终态、`flush` 和 `dispose` 释放序号记账，只销毁 rewrite 自建的预算，不销毁调用方预算。

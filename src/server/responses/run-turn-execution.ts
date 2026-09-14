@@ -38,6 +38,7 @@ import {
 import { rememberResponseState } from "../../responses/state";
 import { trackStreamLifetime } from "../lifecycle";
 import { awaitThoughtSignatureDurability } from "../../responses/thought-signature-replay";
+import { createNestedExecAdapterEventRepair } from "../responses-nested-exec-call-repair";
 
 /** One responsibility of the Responses request pipeline; state owners are explicit. */
 export async function executeResponsesRunTurn(
@@ -109,6 +110,12 @@ export async function executeResponsesRunTurn(
     notifyResponseComplete,
   } = responseEffects;
   const { routedCompaction } = sidecarState;
+  const { repairSource: repairAdapterEventSource, repairBatch: repairAdapterEventBatch } = createNestedExecAdapterEventRepair({
+    rawBody: parsed._rawBody,
+    replayPrefixLength: parsed._replayPrefixLen ?? 0,
+    isPassthrough: false,
+    translatorBudget,
+  });
 
     const runTurnAbort = new AbortController();
     const cleanupRunTurnAbort = linkAbortSignal(runTurnAbort, options.abortSignal);
@@ -361,7 +368,7 @@ export async function executeResponsesRunTurn(
           console.warn(emptyCompletionNotice(route.providerName, route.modelId));
         });
       const sseStream = bridgeToResponsesSSE(
-        guardedSource, parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
+        repairAdapterEventSource(guardedSource), parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
         () => {
           cancelResponseCompletion();
           runTurnAbort.abort();
@@ -429,6 +436,7 @@ export async function executeResponsesRunTurn(
     } else {
       events = runTurnEvents;
     }
+    events = await repairAdapterEventBatch(events);
     if (options.comboAttempt) {
       const firstMeaningful = events.find(event => event.type !== "heartbeat");
       if (!firstMeaningful || firstMeaningful.type === "error") {
