@@ -127,6 +127,21 @@ describe("relaySseWithFailedTail", () => {
     expect(realOut).toBe(withRealDone);
   });
 
+  test.each([
+    ["legacy", (src: ReadableStream<Uint8Array>) => relaySseWithFailedTail(src, new AbortController())],
+    ["eager", (src: ReadableStream<Uint8Array>) => relaySseEagerBounded(src, new AbortController(), parityHooks)],
+  ] as const)("%s relay emits one accepted DONE when a terminal chunk repeats it", async (_kind, relay) => {
+    const terminalThenRepeatedDone =
+      'event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+      + "data: [DONE]\n\n"
+      + "data: [DONE]\n\n";
+
+    const out = await drain(relay(sourceStream([terminalThenRepeatedDone])));
+
+    expect(terminalEvents(out)).toEqual(["response.completed"]);
+    expect(doneEvents(out)).toHaveLength(1);
+  });
+
   test("mid-stream error keeps prior bytes and appends a clean failed terminal", async () => {
     const upstream = new AbortController();
     const src = sourceStream(['data: {"type":"response.output_text.delta","delta":"hel', ""], { failAfter: true });

@@ -71,6 +71,45 @@ describe("adapter reasoning and usage details", () => {
     expect(body.messages[0].content).toContain("Valid tool names for this turn are exactly `exec_command`.");
   });
 
+  test("OpenAI-compatible Chat preserves a nested patch program and non-empty context failure while adding recovery guidance", async () => {
+    const patchProgram = [
+      "await tools.apply_patch(`*** Begin Patch",
+      "*** Update File: fixture.ts",
+      "@@",
+      "-later",
+      "+later changed",
+      "@@",
+      "-earlier",
+      "+earlier changed",
+      "*** End Patch`);",
+    ].join("\n");
+    const contextFailure = "Script failed\nOutput:\nFailed to find expected lines\n";
+    const request = await createOpenAIChatAdapter(provider).buildRequest({
+      modelId: "kimi-k2.7-code",
+      context: {
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "toolCall", id: "call_patch", name: "exec", arguments: { input: patchProgram } }],
+            model: "kimi-k2.7-code",
+            timestamp: 0,
+          },
+          { role: "toolResult", toolCallId: "call_patch", toolName: "exec", content: contextFailure, isError: true, timestamp: 0 },
+        ],
+        tools: [{ name: "exec", freeform: true, description: "Run JavaScript", parameters: { type: "object" } }],
+      },
+      stream: true,
+      options: {},
+    });
+    const body = JSON.parse(request.body) as { messages: Array<Record<string, unknown>> };
+    const call = body.messages.find(message => message.role === "assistant")?.tool_calls as Array<Record<string, unknown>>;
+    const result = body.messages.find(message => message.role === "tool");
+
+    expect(String(body.messages[0]?.content)).toContain("source order (top to bottom)");
+    expect(JSON.parse(String(call[0]?.function && (call[0].function as Record<string, unknown>).arguments)).input).toBe(patchProgram);
+    expect(result?.content).toBe(contextFailure);
+  });
+
   test("OpenAI-compatible OpenAI hosts do not receive the non-OpenAI nudge", async () => {
     const adapter = createOpenAIChatAdapter({ ...provider, baseUrl: "https://api.openai.com/v1" });
     const request = await adapter.buildRequest({

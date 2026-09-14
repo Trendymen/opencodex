@@ -25,6 +25,21 @@ const MODEL_DISCOVERY_MAX_FILTER_VALUES = 256;
 const MODEL_DISCOVERY_MAX_FILTER_STRING_LENGTH = 1_024;
 const TRAILING_SLASHES = /\/+$/;
 const TRAILING_MODELS = /\/models$/;
+const ZHIPU_BIGMODEL_CODEX_PROVIDER = "zhipu-bigmodel-codex";
+const ZHIPU_BIGMODEL_CODEX_BASE_URL = "https://open.bigmodel.cn/api/v1";
+const ZHIPU_BIGMODEL_CODEX_DISCOVERY: ProviderModelDiscoverySpec = {
+  envelopeKey: "models",
+  idField: "slug",
+};
+
+function isZhipuBigmodelCodexDiscoveryProvider(
+  providerName: string,
+  provider: Pick<OcxProviderConfig, "baseUrl" | "adapter">,
+): boolean {
+  return providerName === ZHIPU_BIGMODEL_CODEX_PROVIDER
+    && provider.adapter === "openai-responses"
+    && provider.baseUrl.replace(/\/+$/, "") === ZHIPU_BIGMODEL_CODEX_BASE_URL;
+}
 
 export interface ResolvedProviderModelDiscovery {
   spec?: ProviderModelDiscoverySpec;
@@ -129,14 +144,6 @@ export function providerModelDiscoverySpecError(spec: ProviderModelDiscoverySpec
   if (queryEntries.some(([key, value]) => !key.trim() || key.length > 128 || typeof value !== "string" || value.length > 512)) {
     return "discovery query keys/values exceed their bounds";
   }
-  for (const [field, value] of [
-    ["envelopeKey", spec.envelopeKey],
-    ["idField", spec.idField],
-  ] as const) {
-    if (value !== undefined && (
-      typeof value !== "string" || !value || value !== value.trim() || value.length > 128
-    )) return `${field} must be a nonblank field name up to 128 characters`;
-  }
   for (const [field, value, hardLimit] of [
     ["maxResponseBytes", spec.maxResponseBytes, MODEL_DISCOVERY_MAX_RESPONSE_BYTES],
     ["maxModels", spec.maxModels, MODEL_DISCOVERY_MAX_MODELS],
@@ -169,7 +176,9 @@ export function resolveProviderModelDiscovery(
   const entry = namedEntry
     ? (providerMatchesRegistryTransport(providerName, provider) ? namedEntry : undefined)
     : registryEntryForProviderDestination(provider);
-  const spec = entry?.modelDiscovery;
+  const spec = isZhipuBigmodelCodexDiscoveryProvider(providerName, provider)
+    ? ZHIPU_BIGMODEL_CODEX_DISCOVERY
+    : entry?.modelDiscovery;
   return {
     ...(spec ? { spec } : {}),
     maxResponseBytes: positiveIntegerAtMost(spec?.maxResponseBytes, MODEL_DISCOVERY_MAX_RESPONSE_BYTES),
@@ -430,7 +439,7 @@ export function extractModelEnvelopeRows(
   return { ok: true, rows };
 }
 
-/** Validate, bound, deduplicate, and filter the declared envelope or a top-level array (Together `#617`). */
+/** Validate, bound, deduplicate, and declaratively filter OpenAI `{data:[...]}` or top-level arrays (Together `#617`). */
 /**
  * Metadata a sibling `models[]` array may contribute to an ALREADY-ADMITTED
  * `data[]` row (#1797).
@@ -509,26 +518,30 @@ export function extractProviderModelItems(
   let data: unknown[];
   let siblings: SiblingIndex | null = null;
   if (Array.isArray(value)) {
-    // Together-style top-level /models arrays. The default contract must not treat a stray
-    // `models` key on openai-chat responses as valid; only a provider spec may opt into it.
+    // Together-style top-level /models arrays. Catalog discovery must not treat a stray
+    // `models` key on openai-chat responses as valid — only `data` envelopes or top-level arrays.
     if (value.length > limit) return { ok: false, reason: "too_many_models" };
     data = value;
   } else {
-    const envelopeKey = discovery.spec?.envelopeKey ?? "data";
-    const envelope = extractModelEnvelopeRows(value, discovery.maxModels, [envelopeKey]);
+    const envelope = extractModelEnvelopeRows(
+      value,
+      discovery.maxModels,
+      discovery.spec?.envelopeKey === "models" ? ["models"] : ["data"],
+    );
     if (!envelope.ok) return envelope;
     data = envelope.rows;
-    siblings = envelopeKey === "data" ? buildSiblingIndex(value, limit) : null;
+    siblings = buildSiblingIndex(value, limit);
   }
 
   const items: ProviderModelsApiItem[] = [];
   const seen = new Set<string>();
-  const idField = discovery.spec?.idField ?? "id";
   for (const raw of data) {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return { ok: false, reason: "invalid_shape" };
     }
-    const id = (raw as Record<string, unknown>)[idField];
+    const id = discovery.spec?.modelIdKey === "slug"
+      ? (raw as { slug?: unknown }).slug
+      : (raw as { id?: unknown }).id;
     if (!isValidModelDiscoveryModelId(id)) return { ok: false, reason: "invalid_shape" };
     const prefix = discovery.spec?.stripIdPrefix;
     let finalId = id;
@@ -536,9 +549,9 @@ export function extractProviderModelItems(
       finalId = finalId.slice(prefix.length);
       if (!isValidModelDiscoveryModelId(finalId)) continue;
     }
-    const item = finalId === id && idField === "id"
+    const item = finalId === id && discovery.spec?.modelIdKey !== "slug"
       ? raw as ProviderModelsApiItem
-      : { ...(raw as Record<string, unknown>), id: finalId };
+      : { ...(raw as ProviderModelsApiItem), id: finalId };
     // Admission is decided on the ORIGINAL `data[]` row, before any sibling
     // enrichment. Merging first let a `models[]` entry supply the very field a
     // provider filter requires — reproduced against the real Chutes policy,

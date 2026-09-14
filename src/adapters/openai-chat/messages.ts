@@ -3,7 +3,7 @@ import { reasoningDetailSegmentForWire } from "./response-events";
 import { isVolcengineArkPaygChatTarget } from "./tool-schema";
 import { contentPartsToText } from "../image";
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "../empty-tool-output-annotation";
-import { identifyRoutedModel } from "../identity";
+import { identifyRoutedModel, identifyRoutedToolPrompt } from "../identity";
 import { buildNonOpenAIToolCatalogNudgeForTools, shouldInjectNonOpenAIToolCatalogNudge } from "../tool-catalog-nudge";
 import { registryEntryForProviderDestination } from "../../providers/registry";
 import { peekReasoningForCall } from "../../responses/reasoning-replay-cache";
@@ -142,7 +142,8 @@ export function messagesToChatFormat(parsed: OcxParsedRequest, provider: OcxProv
     const wireModelId = provider.modelSuffixBracketStrip
       ? stripBracketedModelSuffix(parsed.modelId)
       : parsed.modelId;
-    const sys = identifyRoutedModel(systemParts.join("\n\n"), wireModelId);
+    const identifySystem = toolCatalogNudge ? identifyRoutedToolPrompt : identifyRoutedModel;
+    const sys = identifySystem(systemParts.join("\n\n"), wireModelId);
     out.push({ role: "system", content: sys });
   }
 

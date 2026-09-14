@@ -37,7 +37,8 @@ import {
   declaredUnsupportedHostedTools,
   isHostedToolUnsupportedForModel,
 } from "../../responses/hosted-tool-policy";
-import { getConfigDir } from "../paths";
+import { isHostedToolUnsupportedForModel } from "../../responses/hosted-tool-policy";
+import { isCodexReasoningEffort } from "../../reasoning-effort";import { getConfigDir } from "../paths";
 
 /** One definition of "usable secret", shared by the schema and the warnings. */
 export function isUsableApiKeySecret(value: unknown): value is string {
@@ -249,6 +250,10 @@ export const providerConfigSchema = z.object({
   requiresAdjacentResponsesToolResults: z.boolean().optional(),
   requiresPairedResponsesToolResults: z.boolean().optional(),
   annotateEmptyToolOutputs: z.boolean().optional(),
+  inferResponsesMessagePhaseModels: z.array(z.string().min(1))
+    .transform(normalizeNonBlankStringArray)
+    .optional(),
+  agentMessageFormat: z.enum(["preserve", "user_message"]).optional(),
   fastWire: fastWireSchema.nullable().optional(),
   supportsServiceTier: z.boolean().optional(),
   modelSupportsServiceTier: z.record(z.string().min(1), z.boolean()).optional(),
@@ -666,7 +671,9 @@ export const asideProfileSyncSchema = z.object({
 export const agentTaskRecoverySchema = z.object({
   enabled: z.boolean().optional(),
   model: z.string().trim().min(1).optional(),
+  reasoningEffort: z.string().refine(isCodexReasoningEffort).optional(),
   timeoutMs: z.number().int().min(1_000).max(120_000).optional(),
+  maxRetries: z.number().int().min(0).max(2).optional(),
   cacheEntries: z.number().int().min(1).max(512).optional(),
 }).strict();
 

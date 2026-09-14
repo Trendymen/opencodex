@@ -218,7 +218,8 @@ alone minted these bytes and can read them. The wire override matters for the re
 where the provider row names the Chat wire and a registry model default moves the model onto
 Responses. Translated wires are untouched because `inputContentParts` drops an encrypted part
 instead of forwarding it, and `canPassThroughEncryptedV2AgentTask` keeps an explicitly trusted
-route exempt. Combo children run the repair themselves: `concreteComboRequestBody` gives each
+route exempt from the egress repair. That authorization never permits strict backend ciphertext
+in the local continuation cache. Combo children run the repair themselves: `concreteComboRequestBody` gives each
 target its own `structuredClone` and its own concrete route, so a sibling's repair is invisible to
 them and a target resolving to a routed Responses wire would otherwise send what the parent's own
 dispatch no longer does.

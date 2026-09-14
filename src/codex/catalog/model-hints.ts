@@ -55,7 +55,7 @@ import { recordLiveCursorClaudeModels, recordLiveCursorMaxModeModels } from "../
 import { fetchQoderModels } from "../../adapters/qoder/live-models";
 import { resolveQoderProfile } from "../../adapters/qoder/profiles";
 import { fetchDevinUsableModels } from "../../adapters/devin/live-models";
-import { isCanonicalOpenAiForwardProvider, OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
+import { isCanonicalOpenAiForwardProvider, isOpenAiOperatedResponsesDestination, OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
 import {
   COMBO_NAMESPACE,
   comboModelId,
@@ -262,6 +262,15 @@ function configuredVerbositySupport(name: string, prov: OcxProviderConfig | unde
   return prov.supportsVerbosity;
 }
 
+export function withCanonicalOpenAiForwardAuthDefault(
+  name: string,
+  provider: OcxProviderConfig,
+): OcxProviderConfig {
+  if (name !== OPENAI_CODEX_PROVIDER_ID || provider.authMode !== undefined) return provider;
+  const candidate = { ...provider, authMode: "forward" as const };
+  return isCanonicalOpenAiForwardProvider(candidate) ? candidate : provider;
+}
+
 export function applyProviderConfigHints(
   name: string,
   prov: OcxProviderConfig,
@@ -279,6 +288,7 @@ export function applyProviderConfigHints(
   const providerAlias = typeof effectiveAlias === "string" || effectiveAlias === null
     ? effectiveAlias
     : model.providerAlias;
+  const progressProvider = withCanonicalOpenAiForwardAuthDefault(name, prov);
   const configuredCap = configuredContextWindow(prov, model.id);
   const configuredMaxInput = configuredMaxInputTokens(prov, model.id);
   const maxOutputTokens = routedMaxOutputTokens(name, prov, model, model.id, metadataModelIdCaseFold);
@@ -320,6 +330,7 @@ export function applyProviderConfigHints(
     ...modelWithoutServiceTier,
     ...(displayName !== undefined ? { displayName } : {}),
     ...(providerAlias !== undefined ? { providerAlias } : {}),
+    routedProgressContractEligible: !isOpenAiOperatedResponsesDestination(progressProvider),
     ...(hintedWindow !== undefined ? { contextWindow: hintedWindow } : {}),
     ...(inputModalities ? { inputModalities } : {}),
     ...(reasoningEfforts !== undefined ? { reasoningEfforts } : {}),
