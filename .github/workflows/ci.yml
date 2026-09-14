@@ -16,8 +16,10 @@ on:
     # An allowlist cannot express "base is another PR's head" — stacked bases
     # carry contributor prefixes (`fix/`, `feat/`, `agent/`) as readily as
     # `codex/`, and contributor stacks need CI most. The `changes` job below is
-    # the real scope gate, using the same allowlist as the push trigger. Safe to
-    # widen here
+    # authoritative for pull-request cost scoping. Branch pushes have no
+    # workflow-level path allowlist, so every SHA creates an aggregate run;
+    # individual official jobs and steps may still use path conditions. This is safe to widen
+    # here
     # because this workflow is `pull_request` (not `pull_request_target`),
     # declares `contents: read`, and reads no secrets.
     #
@@ -25,28 +27,6 @@ on:
     # and this trigger already covers review.
   push:
     branches: [main, preview, dev]
-    paths:
-      - "Dockerfile"
-      - "compose.yaml"
-      - ".dockerignore"
-      - "docker/**"
-      - "src/**"
-      - "bin/**"
-      - "tests/**"
-      - "scripts/**"
-      - "gui/**"
-      - "assets/**"
-      - ".gitattributes"
-      - ".npmignore"
-      - "package.json"
-      - "bun.lock"
-      - "tsconfig.json"
-      - "README.md"
-      - "LICENSE"
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/release.yml"
-      - ".github/workflows/enforce-pr-target.yml"
-      - ".github/workflows/stale-needs-info.yml"
   workflow_dispatch:
     inputs:
       lane:
@@ -130,13 +110,10 @@ jobs:
             echo 'label=windows-latest' >> "$GITHUB_OUTPUT"
           fi
 
-  # Which areas this push actually touches.
-  #
-  # Deliberately a job-level filter rather than a wider workflow-level `paths:`
-  # one. A workflow skipped by path filtering leaves its checks Pending forever,
-  # so a PR requiring them can never merge; a skipped *job* reports success.
-  # That asymmetry is the whole reason this job exists instead of more entries
-  # in the `on:` block above.
+  # Pull-request cost/surface filter. Every branch push above creates an
+  # exact-SHA aggregate run, so a same-tree message-only candidate amend cannot
+  # inherit CI from an older SHA. Official path-scoped jobs and steps keep their
+  # conditions; pull requests also use these outputs to scope expensive jobs.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -169,20 +146,16 @@ jobs:
         id: filter
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         with:
-          # Without this the action compares against the repository's DEFAULT
-          # branch, which is `main`. A push to `dev` would then be diffed against
-          # `main`, so every area touched since the last promotion keeps reading
-          # as "changed" — the scoped jobs would run on nearly every dev push and
-          # the saving would silently not happen while CI stayed green.
-          #
           # On `pull_request` the action ignores this and uses the PR's own file
-          # list. On a branch push it means "compare against the previous commit
-          # on this branch", which is the intent.
+          # list. On a branch push the workflow still creates an exact-SHA
+          # aggregate run, while official path-scoped jobs and steps may use
+          # these outputs. Compare against the previous commit instead of the
+          # older default-branch release.
           base: ${{ github.ref }}
           filters: |
-            # Mirrors the push trigger's path allowlist. Pull requests always
-            # start the workflow so the aggregate check exists, while these
-            # paths decide whether the expensive test jobs need to run.
+            # Pull requests always start the workflow so the aggregate check
+            # exists; these paths scope their expensive jobs. Push jobs ignore
+            # this cost filter and all run.
             ci:
               - 'Dockerfile'
               - 'compose.yaml'
@@ -281,20 +254,17 @@ jobs:
           # between jobs, so leaving a usable token in .git/config is avoidable
           # residue. Matches the convention already used by the other workflows.
           persist-credentials: false
-          # tests/ci-workflows/release-version-line.test.ts compares package.json against the
-          # newest release tag. actions/checkout fetches no tags by default, so
-          # without this the check reads an empty tag set and passes on anything -
-          # the exact regression it exists to catch would ride through CI green.
-          #
-          # Tags only, not full history: `fetch-depth: 0` would clone every commit to
-          # answer a question about refs. A shallow fetch still brings each tag and its
-          # target commit, which is all the check reads - the tag list, and whether the
-          # newest tag names HEAD. That second read only happens on a release commit,
-          # where the tag points at HEAD and the commit is present by definition.
+          # Fork jobs verify the exact official baseline Tag before testing. Checkout
+          # omits tags by default, which would make that provenance gate fail closed.
+          # Tags alone are sufficient; full history is fetched separately only where
+          # ancestry proof requires it.
           fetch-tags: true
 
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
+
+      - name: Prepare verified Fork official base
+        run: bun scripts/prepare-fork-official-base.ts
 
       # The GUI install is NOT optional here, however unrelated it looks to a
       # test shard. Several files under tests/ import JSX-bearing modules from
@@ -510,6 +480,9 @@ jobs:
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
 
+      - name: Prepare verified Fork official base
+        run: bun scripts/prepare-fork-official-base.ts
+
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile
@@ -645,20 +618,15 @@ jobs:
           # between jobs, so leaving a usable token in .git/config is avoidable
           # residue. Matches the convention already used by the other workflows.
           persist-credentials: false
-          # tests/ci-workflows/release-version-line.test.ts compares package.json against the
-          # newest release tag. actions/checkout fetches no tags by default, so
-          # without this the check reads an empty tag set and passes on anything -
-          # the exact regression it exists to catch would ride through CI green.
-          #
-          # Tags only, not full history: `fetch-depth: 0` would clone every commit to
-          # answer a question about refs. A shallow fetch still brings each tag and its
-          # target commit, which is all the check reads - the tag list, and whether the
-          # newest tag names HEAD. That second read only happens on a release commit,
-          # where the tag points at HEAD and the commit is present by definition.
+          # Fork jobs verify the exact official baseline Tag before testing. Checkout
+          # omits tags by default, so this leg fetches them for the provenance gate.
           fetch-tags: true
 
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
+
+      - name: Prepare verified Fork official base
+        run: bun scripts/prepare-fork-official-base.ts
 
       - name: Install dependencies
         run: |
@@ -799,13 +767,15 @@ jobs:
           # between jobs, so leaving a usable token in .git/config is avoidable
           # residue. Matches the convention already used by the other workflows.
           persist-credentials: false
-          # Same reason as the Linux shards and the macOS control: this leg runs the
-          # whole suite, and tests/ci-workflows/release-version-line.test.ts reads release tags.
-          # Without tags the check sees an empty set and cannot fail.
+          # Same reason as the Linux shards and macOS control: the Fork official-base
+          # provenance gate requires the exact upstream Tag.
           fetch-tags: true
 
       - name: Setup project Bun
         uses: ./.github/actions/setup-project-bun
+
+      - name: Prepare verified Fork official base
+        run: bun scripts/prepare-fork-official-base.ts
 
       - name: Install dependencies
         run: |
