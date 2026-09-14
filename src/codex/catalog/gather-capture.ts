@@ -100,7 +100,8 @@ import type {
   CatalogSourceEvidence,
   CatalogTrustedOpenAiApiPolicySnapshot,
 } from "../convergence-types";
-import { applyRegistryCapabilitySeedFill, modelCapabilities, modelInputModalities } from "./model-hints";
+import { applyRegistryCapabilitySeedFill, modelCapabilities, modelInputModalities, withCanonicalOpenAiForwardAuthDefault } from "./model-hints";
+export { withCanonicalOpenAiForwardAuthDefault } from "./model-hints";
 import { configuredComboTargetModelsByProvider } from "./combo-member";
 
 /** Concurrent gatherRoutedModels callers with the same catalog identity share one live discovery.
@@ -167,14 +168,6 @@ export interface GatherFlightCapture {
   readonly authResolver: ModelsAuthResolver;
   readonly providerAuthOutcomes: readonly CatalogGatherProviderAuthOutcome[];
   readonly openAiApiPolicy: CatalogTrustedOpenAiApiPolicySnapshot;
-}
-export function withCanonicalOpenAiForwardAuthDefault(
-  name: string,
-  provider: OcxProviderConfig,
-): OcxProviderConfig {
-  if (name !== OPENAI_CODEX_PROVIDER_ID || provider.authMode !== undefined) return provider;
-  const candidate = { ...provider, authMode: "forward" as const };
-  return isCanonicalOpenAiForwardProvider(candidate) ? candidate : provider;
 }
 const CATALOG_GATHER_AUTHORITY_KEY = randomBytes(32);
 const REQUEST_CREDENTIAL_SENTINEL = `ocx-catalog-credential-${randomBytes(16).toString("hex")}`;

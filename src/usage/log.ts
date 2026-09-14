@@ -64,6 +64,7 @@ export function isCodexPoolAccountLogLabel(value: unknown): value is "main" | `p
  */
 export type AttemptRecoveryKind =
   | "transient-5xx"
+  | "agent-task-recovery"
   | "connection-reset"
   | "oauth-401"
   | "key-401"
@@ -474,6 +475,7 @@ function normalizeUsageValue(usage: OcxUsage | undefined): OcxUsage | undefined 
 
 const ATTEMPT_RECOVERY_KINDS = new Set<AttemptRecoveryKind>([
   "transient-5xx",
+  "agent-task-recovery",
   "connection-reset",
   "oauth-401",
   "key-401",

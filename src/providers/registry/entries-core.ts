@@ -637,6 +637,9 @@ export const PROVIDER_REGISTRY_CORE: readonly ProviderRegistryEntry[] = [
     // Go rejects reasoning.encrypted_content with previous_response_id (#3838).
     // Use explicit replay history and the existing stateless Responses policy.
     statelessResponses: true,
+    // Console Go 的 deepseek-flash 续轮曾因缺少 reasoning_text 返回 400。
+    // 保留正文是机制推断，未做清空/保留对照；同 Provider 其他 Responses 模型尚未实测。
+    preserveResponsesReasoningContent: true,
     /* [Decision Log]
     - 목적과 의도: Route the exact models OpenCode Go documents on the Responses endpoint — GPT 5.6 Luna, Grok 4.6, and Muse Spark Contributor (#2617).
     - 기존 구현 및 제약 조건: The provider is mixed-wire but its provider-wide `openai-chat` adapter sent Luna to `/chat/completions`; explicit user `modelAdapters` entries must remain authoritative.
@@ -1006,6 +1009,8 @@ export const PROVIDER_REGISTRY_CORE: readonly ProviderRegistryEntry[] = [
     modelContextWindows: { "deepseek-flash": 1_048_576, "deepseek-v4-flash": 1_048_576, [DEEPSEEK_VISION_PREVIEW_MODEL]: 1_048_576 },
     modelInputModalities: {
       "deepseek-flash": ["text", "image"],
+      // 2026-09-10 的 Chat/Responses 纯色图实测确认此 legacy ID 可直接读取像素。
+      "deepseek-v4-flash": ["text", "image"],
       [DEEPSEEK_VISION_PREVIEW_MODEL]: ["text", "image"],
     },
     // DeepSeek documents both V4 models as native Responses API models adapted for Codex
@@ -1077,10 +1082,14 @@ export const PROVIDER_REGISTRY_CORE: readonly ProviderRegistryEntry[] = [
     modelReasoningEffortMap: Object.fromEntries(DEEPSEEK_NATIVE_THINKING_MODELS.map(id => [id, deepseekReasoningMapFor(id)])),
     modelSupportsReasoningSummaries: Object.fromEntries(DEEPSEEK_NATIVE_THINKING_MODELS.map(id => [id, true])),
     preserveReasoningContentModels: DEEPSEEK_NATIVE_THINKING_MODELS,
-    // #4436: first-party deepseek-flash accepts native images on Chat and Responses.
-    // Keep unprobed compatibility aliases on the #88 sidecar path. This must be fixed
-    // here: router enrichment unions this list with saved config, so config cannot remove it.
-    noVisionModels: ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash"],
+    // 两个已声明图片能力的 ID 直连；其他 thinking ID 未验证时仍走 sidecar。
+    noVisionModels: [
+      "deepseek-chat",
+      "deepseek-reasoner",
+      ...DEEPSEEK_NATIVE_THINKING_MODELS.filter(
+        id => id !== "deepseek-flash" && id !== "deepseek-v4-flash",
+      ),
+    ],
   },
   // llama-3.3-70b was deprecated by Cerebras on 2026-02-16. Evidence: devlog/_plan/260710_provider_hardening/003_research_aggregators.md.
   { id: "cerebras", label: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", adapter: "openai-chat", authKind: "key", dashboardUrl: "https://cloud.cerebras.ai/platform/apikeys", defaultModel: "gpt-oss-120b" },

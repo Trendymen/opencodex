@@ -14,6 +14,7 @@ import { rememberResponseState } from "../../responses/state";
 import { trackStreamLifetime } from "../lifecycle";
 import { awaitThoughtSignatureDurability } from "../../responses/thought-signature-replay";
 import { adapterResponseReachedServingTerminal } from "./core-replay";
+import { createNestedExecAdapterEventRepair } from "../responses-nested-exec-call-repair";
 
 /** One responsibility of the Responses request pipeline; state owners are explicit. */
 export async function deliverAdapterResponse(
@@ -61,6 +62,12 @@ export async function deliverAdapterResponse(
     notifyResponseComplete,
   } = responseEffects;
   const { routedCompaction } = sidecarState;
+  const { repairSource: repairAdapterEventSource, repairBatch: repairAdapterEventBatch } = createNestedExecAdapterEventRepair({
+    rawBody: parsed._rawBody,
+    replayPrefixLength: parsed._replayPrefixLen ?? 0,
+    isPassthrough: false,
+    translatorBudget,
+  });
 
 
   if (parsed.stream) {
@@ -90,7 +97,7 @@ export async function deliverAdapterResponse(
       : eventStream;
     const { toolNsMap, declaredToolNames, toolParameterSchemas, freeformToolNames, toolSearchToolNames } = toolBridgeMaps;
     const sseStream = bridgeToResponsesSSE(
-      guardedEventStream, parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
+      repairAdapterEventSource(guardedEventStream), parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
       () => { cancelResponseCompletion(); upstream.abort(); }, 2_000,
       {
         translatorBudget,
@@ -170,6 +177,7 @@ export async function deliverAdapterResponse(
     } finally {
       cleanupUpstreamAbort();
     }
+    events = await repairAdapterEventBatch(events);
     const { toolNsMap, declaredToolNames, toolParameterSchemas, freeformToolNames, toolSearchToolNames } = toolBridgeMaps;
     let providerState: OcxProviderContinuationState | undefined;
     const json = buildResponseJSON(events, parsed._responseModelId ?? parsed.modelId, {

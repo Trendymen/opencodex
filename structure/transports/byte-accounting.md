@@ -39,3 +39,8 @@ These optimizations do not add request queues, retry policies, or RSS-based admi
 
 Translated audio/file admission follows the [final-adapter input contract](../adapters/registry.md#untranslated-input-media); native raw passthrough remains separate.
 Canonical Responses identity sanitation and narrowly scoped pre-output combo recovery follow [request-local target compatibility](../runtime.md#request-local-target-compatibility); other adapter contracts remain unchanged.
+
+`src/server/responses-reasoning-summary-rewrite.ts` 使用 `Set<number>` 去重，每个保留的整数序号
+按 32 字节计入官方 `translatorBudget`，不另设 256 个序号或 256 KiB 配额。
+客户端与 replay projection 共用调用方预算；独立调用在需要时创建默认 32 MiB 预算。
+终态、`flush` 和 `dispose` 释放序号记账，只销毁 rewrite 自建的预算，不销毁调用方预算。
