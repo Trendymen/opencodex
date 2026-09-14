@@ -21,6 +21,7 @@ export type SsePayloadRewrite = (payload: string) => string;
  * once per teardown path.
  */
 export type SseBlockRewrite = ((block: string) => readonly string[]) & {
+  flush?: () => readonly string[];
   dispose?: () => void;
 };
 
@@ -53,6 +54,20 @@ export function composeSseBlockRewrites(...rewrites: SseBlockRewrite[]): SseBloc
   };
   // Child disposal is part of the contract: one idempotent disposer for the
   // whole chain, so relay teardown never leaks a nested collector.
+  composed.flush = () => {
+    if (disposed) return [];
+    const output: string[] = [];
+    for (let index = 0; index < active.length; index++) {
+      let blocks = active[index]!.flush?.() ?? [];
+      for (let nextIndex = index + 1; nextIndex < active.length; nextIndex++) {
+        const next: string[] = [];
+        for (const block of blocks) next.push(...active[nextIndex]!(block));
+        blocks = next;
+      }
+      output.push(...blocks);
+    }
+    return output;
+  };
   composed.dispose = () => {
     if (disposed) return;
     disposed = true;
@@ -197,7 +212,19 @@ export function replaceSseDataPayload(block: string, payload: string): string {
   const lines = block.split(/\r?\n/);
   const rewritten: string[] = [];
   let replaced = false;
+  let eventType: string | undefined;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      && typeof (parsed as { type?: unknown }).type === "string") {
+      eventType = (parsed as { type: string }).type;
+    }
+  } catch { /* preserve the original event field for non-JSON payloads */ }
   for (const line of lines) {
+    if (line.startsWith("event:") && eventType !== undefined) {
+      rewritten.push(`event: ${eventType}`);
+      continue;
+    }
     if (line !== "data" && !line.startsWith("data:")) {
       rewritten.push(line);
       continue;
@@ -248,6 +275,7 @@ export function relaySseWithBlockRewrite(
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   const buffer = createSseBlockBuffer(translatorBudget);
+  let delimiter = "\n\n";
   // Relays have several independent teardown paths; disposal is exactly once.
   let disposed = false;
   let cancelled = false;
@@ -281,6 +309,7 @@ export function relaySseWithBlockRewrite(
     let emitted = 0;
     let next: { block: string; delimiter: string } | null;
     while (!cancelled && (next = buffer.next())) {
+      delimiter = next.delimiter;
       const outBlocks = rewrite(next.block);
       if (cancelled) return emitted;
       for (const outBlock of outBlocks) {
@@ -305,6 +334,12 @@ export function relaySseWithBlockRewrite(
     return emitted;
   };
 
+  const emitRewriteFlush = (controller: ReadableStreamDefaultController<Uint8Array>): number => {
+    const tailBlocks = rewrite.flush?.() ?? [];
+    for (const block of tailBlocks) enqueueText(controller, block + delimiter);
+    return tailBlocks.length;
+  };
+
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
@@ -322,6 +357,7 @@ export function relaySseWithBlockRewrite(
             buffer.append(decoder.decode());
             emitProcessedBlocks(controller, true);
             if (cancelled) return;
+            emitRewriteFlush(controller);
             buffer.clear();
             disposeRewrite();
             controller.close();

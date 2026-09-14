@@ -2,6 +2,7 @@ import { hasShrinkableOpenAIChatImages, normalizeOpenAIChatImages } from "./open
 import type { AdapterRequest, IncomingMeta, ProviderAdapter } from "./base";
 import type { AdapterEvent, OcxAssistantMessage, OcxContentPart, OcxMessage, OcxParsedRequest, OcxProviderConfig, OcxTextContent, OcxThinkingContent, OcxToolCall, OcxUsage } from "../types";
 import { isAllowedToolChoice, modelInList, namespacedToolName, resolveToolChoiceWireName, toolChoiceToolPredicate } from "../types";
+import { isOfficialOpenAiApiHost } from "../providers/openai-tiers-destination";
 import { mapReasoningEffort, modelRecordValue } from "../reasoning-effort";
 import { registryEntryForProviderDestination } from "../providers/registry";
 import { debugProviderDiagnostic } from "../lib/debug";
@@ -11,7 +12,7 @@ import { isCyberPolicyCode } from "../lib/errors";
 import { redactSecretString } from "../lib/redact";
 import { contentPartsToText } from "./image";
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "./empty-tool-output-annotation";
-import { identifyRoutedModel } from "./identity";
+import { identifyRoutedModel, identifyRoutedToolPrompt } from "./identity";
 import { peekReasoningForCall } from "../responses/reasoning-replay-cache";
 import { buildNonOpenAIToolCatalogNudgeForTools, shouldInjectNonOpenAIToolCatalogNudge } from "./tool-catalog-nudge";
 import { openRouterProviderPayload, resolveOpenRouterRouting } from "../providers/openrouter-routing";
@@ -650,11 +651,7 @@ function developerSystemText(message: OcxMessage): string | undefined {
 }
 
 function isNativeOpenAIChatTarget(provider: OcxProviderConfig): boolean {
-  try {
-    return new URL(provider.baseUrl).hostname === "api.openai.com";
-  } catch {
-    return false;
-  }
+  return isOfficialOpenAiApiHost(provider.baseUrl);
 }
 
 /**
@@ -771,7 +768,8 @@ function messagesToChatFormat(parsed: OcxParsedRequest, provider: OcxProviderCon
     const wireModelId = provider.modelSuffixBracketStrip
       ? stripBracketedModelSuffix(parsed.modelId)
       : parsed.modelId;
-    const sys = identifyRoutedModel(systemParts.join("\n\n"), wireModelId);
+    const identifySystem = toolCatalogNudge ? identifyRoutedToolPrompt : identifyRoutedModel;
+    const sys = identifySystem(systemParts.join("\n\n"), wireModelId);
     out.push({ role: "system", content: sys });
   }
 

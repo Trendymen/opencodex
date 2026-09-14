@@ -2014,7 +2014,7 @@ describe("provider discovered model display names", () => {
     modelDisplayNames: { "grok-4.6": "Grok 4.6" },
   };
 
-  test("an exact provider model id receives the configured display name without losing catalog metadata", () => {
+  test("an exact provider model id receives the configured display name without losing catalog metadata or Fork route hint", () => {
     const discovered = {
       provider: "xai",
       id: "grok-4.6",
@@ -2044,6 +2044,7 @@ describe("provider discovered model display names", () => {
       // either xAI transport, so the hint fills the capability and its description.
       supportsServiceTier: true,
       fastTierDescription: "Priority processing; tier pricing applies on key auth only",
+      routedProgressContractEligible: true,
     });
     expect(catalogModelSlug(output)).toBe("xai/grok-4.6");
   });

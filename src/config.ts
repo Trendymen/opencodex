@@ -9,6 +9,10 @@ import { MULTI_AGENT_SURFACE_ADVISORY_VERSION } from "./config/multi-agent-surfa
 import { DEFAULT_SUBAGENT_MODELS, SUBAGENT_MODELS_VERSION } from "./config/subagent-models";
 export { DEFAULT_SUBAGENT_MODELS } from "./config/subagent-models";
 import {
+  customModelsCandidateError,
+  salvageCustomModelsForLoad,
+} from "./config/custom-models";
+import {
   apiKeyTransportConfigError,
   booleanRecordConfigError,
   configReasoningPinsConfigError,
@@ -74,6 +78,8 @@ import { redactSecretString } from "./lib/redact";
 import { openRouterRoutingConfigError } from "./providers/openrouter-routing";
 import { MODEL_ALIAS_PATTERN } from "./providers/default-aliases";
 import { MODEL_DISCOVERY_MAX_MODELS } from "./providers/model-discovery-limits";
+import { encodedModelIdCollides } from "./providers/slug-codec";
+import { knownStaticModelIdsForProvider } from "./providers/known-model-ids";
 import { vercelGatewayRoutingConfigError } from "./providers/vercel-gateway-routing";
 import {
   MODEL_ADAPTER_OVERRIDE_ALLOWED,
@@ -89,7 +95,8 @@ import {
   type ProviderCostOverlay,
 } from "./types";
 import type { OcxRuntimeRole } from "./types/config";
-import { OPENAI_CODEX_PROVIDER_ID } from "./providers/openai-tiers";
+import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "./providers/openai-tiers";
+import { isReservedNativeOpenAiAlias } from "./providers/openai-model-identity";
 import { modelAutoCompactTokenLimitsConfigError } from "./providers/auto-compact-budget";
 import { fastWireDeclarationError, hasFastWireCapabilityConflict } from "./providers/fastwire";
 import {
@@ -654,6 +661,10 @@ const providerConfigSchema = z.object({
   statelessResponses: z.boolean().optional(),
   requiresAdjacentResponsesToolResults: z.boolean().optional(),
   annotateEmptyToolOutputs: z.boolean().optional(),
+  inferResponsesMessagePhaseModels: z.array(z.string().min(1))
+    .transform(normalizeNonBlankStringArray)
+    .optional(),
+  agentMessageFormat: z.enum(["preserve", "user_message"]).optional(),
   fastWire: fastWireSchema.nullable().optional(),
   supportsServiceTier: z.boolean().optional(),
   modelSupportsServiceTier: z.record(z.string().min(1), z.boolean()).optional(),
@@ -1075,7 +1086,9 @@ const asideProfileSyncSchema = z.object({
 const agentTaskRecoverySchema = z.object({
   enabled: z.boolean().optional(),
   model: z.string().trim().min(1).optional(),
+  reasoningEffort: z.string().refine(isCodexReasoningEffort).optional(),
   timeoutMs: z.number().int().min(1_000).max(120_000).optional(),
+  maxRetries: z.number().int().min(0).max(2).optional(),
   cacheEntries: z.number().int().min(1).max(512).optional(),
 }).strict();
 
@@ -1400,6 +1413,7 @@ const configSchema = z.object({
   // path below and wipe providers/pool accounts. Warning emitted in loadConfig.
   streamMode: z.enum(["auto", "legacy-tee", "eager-relay"]).optional().catch(undefined),
   blockedModelRedirects: z.record(z.string(), z.string()).optional().catch(undefined),
+  customModels: z.unknown().optional(),
   // Same degrade-don't-reject rationale as the fields above: a hand-edited
   // non-string must not trip the backup-and-defaults repair path. Unset then
   // takes the canonical sideband path (src/server/live.ts normalizeSidebandRoot).
@@ -1742,14 +1756,21 @@ const configSchema = z.object({
         message: toolReasoningOptOutError,
       });
     }
+    const phaseInferenceError = nonBlankStringArrayConfigError(
+      (provider as { inferResponsesMessagePhaseModels?: unknown }).inferResponsesMessagePhaseModels,
+      "inferResponsesMessagePhaseModels",
+    );
+    if (phaseInferenceError) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["providers", redactSecretString(name), "inferResponsesMessagePhaseModels"],
+        message: phaseInferenceError,
+      });
+    }
     if (Object.hasOwn(provider, "codexAccountMode") && provider.codexAccountMode !== undefined) {
       // Persisted account mode is valid ONLY on the canonical built-in `openai` forward provider.
       // Old openai-multi rows stay parseable (they never carry a mode) so startup can migrate them.
-      const canonicalOpenAiShape = name === "openai"
-        && provider.adapter === "openai-responses"
-        && (provider as { authMode?: unknown }).authMode === "forward"
-        && typeof provider.baseUrl === "string"
-        && provider.baseUrl.replace(/\/+$/, "") === "https://chatgpt.com/backend-api/codex";
+      const canonicalOpenAiShape = name === "openai" && isCanonicalOpenAiForwardProvider(provider);
       if (!canonicalOpenAiShape) {
         ctx.addIssue({
           code: "custom",
@@ -2459,6 +2480,18 @@ function rawConfigRecord(rawParsed: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function configAgentMessageFormatError(value: unknown): string | null {
+  const providers = rawConfigRecord(rawConfigRecord(value)?.providers);
+  if (!providers) return null;
+  for (const [name, provider] of Object.entries(providers)) {
+    const format = rawConfigRecord(provider)?.agentMessageFormat;
+    if (format !== undefined && format !== "preserve" && format !== "user_message") {
+      return `schema_invalid: providers.${redactSecretString(name)}.agentMessageFormat: must be preserve or user_message`;
+    }
+  }
+  return null;
+}
+
 function malformedNativeSubagentFields(rawParsed: unknown): NativeSubagentPersistedField[] {
   const raw = rawConfigRecord(rawParsed);
   if (!raw) return [];
@@ -2569,6 +2602,66 @@ function warnInheritedFastWireConflicts(configPath: string, config: OcxConfig): 
   );
 }
 
+const customModelLoadWarnings = new WeakMap<object, string>();
+
+function sanitizeCustomModelsForLoad(parsed: unknown): void {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+  const root = parsed as Record<string, unknown>;
+  if (!Object.hasOwn(root, "customModels")) return;
+  const result = salvageCustomModelsForLoad(root.customModels);
+  if (result.value === undefined) delete root.customModels;
+  else root.customModels = result.value;
+  if (result.changed) {
+    customModelLoadWarnings.set(root, `customModels normalized: dropped ${result.droppedRows} row(s), changed ${result.changedFields} row(s)`);
+  }
+}
+
+function customModelLoadWarning(parsed: unknown): string | null {
+  return parsed && typeof parsed === "object" ? customModelLoadWarnings.get(parsed) ?? null : null;
+}
+
+function warnDegradedCustomModels(parsed: unknown): void {
+  const warning = customModelLoadWarning(parsed);
+  if (warning) console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
+}
+
+function customModelsConfigError(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const root = value as Record<string, unknown>;
+  return Object.hasOwn(root, "customModels") ? customModelsCandidateError(root.customModels) : null;
+}
+
+function customModelsSemanticError(config: OcxConfig): string | null {
+  for (let index = 0; index < (config.customModels?.length ?? 0); index += 1) {
+    const row = config.customModels![index]!;
+    const providerName = row.provider as string;
+    const modelId = row.modelId as string;
+    if (!isValidProviderName(providerName)) {
+      return `customModels.${index}.provider: invalid provider name`;
+    }
+    if (!hasOwnProvider(config.providers, providerName)) {
+      return `customModels.${index}.provider: provider is not configured`;
+    }
+    const provider = config.providers[providerName]!;
+    if (provider.models !== undefined
+      && (!Array.isArray(provider.models)
+        || provider.models.some(id => typeof id !== "string" || id.length === 0 || id !== id.trim()))) {
+      return `providers.${providerName}.models: must contain only non-empty trimmed strings`;
+    }
+    if (provider.defaultModel !== undefined
+      && (typeof provider.defaultModel !== "string"
+        || provider.defaultModel.length === 0
+        || provider.defaultModel !== provider.defaultModel.trim())) {
+      return `providers.${providerName}.defaultModel: must be a non-empty trimmed string`;
+    }
+    const knownIds = knownStaticModelIdsForProvider(providerName, provider);
+    if (encodedModelIdCollides(modelId, knownIds)) {
+      return `customModels.${index}.modelId: ambiguous encoded model id`;
+    }
+  }
+  return null;
+}
+
 /**
  * Load and validate config.json into an OcxConfig. Missing files reset to
  * defaults and clear stale overlays. Broken existing files also fall back to
@@ -2595,6 +2688,7 @@ export function loadConfig(): OcxConfig {
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
     sanitizeCapabilityDeclarationsForLoad(parsed);
+    sanitizeCustomModelsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       const config = normalizeApiKeyIds(result.data as OcxConfig);
@@ -2603,6 +2697,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
+      warnDegradedCustomModels(parsed);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
@@ -2646,6 +2741,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
+      warnDegradedCustomModels(parsed);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
@@ -2674,6 +2770,7 @@ export function loadConfig(): OcxConfig {
         warnDegradedHostname(parsed, config);
         warnDegradedListeners(parsed, config);
         warnDegradedApiKeys(parsed, config);
+        warnDegradedCustomModels(parsed);
         warnDegradedCodexAccountPriorities(parsed, config);
         warnDegradedCodexQuotaAutoRefresh(parsed, config);
         warnDegradedClaudeSubagentEffort(parsed);
@@ -2728,7 +2825,7 @@ function sanitizeAliasesForLoad(raw: unknown): void {
     for (const [id, value] of Object.entries(aliases)) {
       const lower = typeof value === "string" ? value.toLowerCase() : "";
       if (typeof value !== "string" || !MODEL_ALIAS_PATTERN.test(value) || claimed.has(lower)
-        || nativeIds.has(lower) || comboAliases.has(lower) || /^(?:gpt-|o1-|o3-|o4-|codex-)/i.test(value)) {
+        || nativeIds.has(lower) || comboAliases.has(lower) || isReservedNativeOpenAiAlias(value)) {
         console.warn(`Ignoring invalid or colliding model alias for ${id} in config.json`);
         delete aliases[id];
       } else claimed.add(lower);
@@ -2838,6 +2935,8 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   if (codexPoolWarning) warnings.push(codexPoolWarning);
   const plaintextWarning = malformedPlaintextV2AgentMessagesWarning(rawParsed);
   if (plaintextWarning) warnings.push(plaintextWarning);
+  const customModelsWarning = customModelLoadWarning(rawParsed);
+  if (customModelsWarning) warnings.push(customModelsWarning);
   if (syncDisabledReason) {
     warnings.push(`syncCodexSubagentDefaults ignored: ${syncDisabledReason}`);
   }
@@ -3237,6 +3336,7 @@ function managementIngressConfigError(value: unknown): string | null {
 
 export function validateConfigCandidate(value: unknown): { ok: true; config: OcxConfig } | { ok: false; error: string } {
   const boundaryError = configReasoningPinsConfigError(value)
+    ?? configAgentMessageFormatError(value)
     ?? blankHostnameError(value)
     ?? claudeSubagentEffortError(value)
     ?? appOwnedMemoryBudgetError(value)
@@ -3258,11 +3358,20 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
     ?? clientConnectionConfigError(value)
     ?? clientRolePairError(value)
     ?? loopbackListenerPortError(value)
-    ?? managementIngressConfigError(value);
+    ?? managementIngressConfigError(value)
+    ?? customModelsConfigError(value);
   if (boundaryError) return { ok: false, error: boundaryError };
   const result = configSchema.safeParse(value);
   if (result.success) {
     const config = normalizeApiKeyIds(result.data as OcxConfig);
+    const semanticError = customModelsSemanticError(config);
+    if (semanticError) return { ok: false, error: semanticError };
+    const rawCustomModels = value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>).customModels
+      : undefined;
+    const customModels = salvageCustomModelsForLoad(rawCustomModels).value;
+    if (customModels === undefined) delete config.customModels;
+    else config.customModels = customModels;
     return { ok: true, config };
   }
   return { ok: false, error: schemaDiagnosticsError(result.error) };
@@ -3280,6 +3389,7 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
     sanitizeCapabilityDeclarationsForLoad(parsed);
+    sanitizeCustomModelsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       return validFileConfigDiagnostics(normalizeApiKeyIds(result.data as OcxConfig), parsed);
@@ -3303,13 +3413,11 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     // that ignores the error and writes it back preserves what the operator configured.
     const salvaged = salvageConfigCandidate(merged, retryResult.error);
     if (salvaged) {
-      const config = normalizeApiKeyIds(salvaged.parsed);
-      const warnings = degradedListenerWarnings(parsed, config);
+      const diagnostics = validFileConfigDiagnostics(normalizeApiKeyIds(salvaged.parsed), parsed);
       return {
-        config,
+        ...diagnostics,
         source: "fallback",
         error: schemaDiagnosticsError(result.error),
-        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
 
@@ -3628,6 +3736,8 @@ export const withExpectedConfigGenerationSync: WithExpectedConfigGenerationSync 
 function persistConfigUnlocked(config: OcxConfig): boolean {
   const pinError = configReasoningPinsConfigError(config);
   if (pinError) throw new Error(pinError);
+  const agentMessageFormatError = configAgentMessageFormatError(config);
+  if (agentMessageFormatError) throw new Error(agentMessageFormatError);
   const configPath = getConfigPath();
   const rawBeforeWrite = readRawConfigJson();
   const clientPersistenceError = failClosedClientPersistenceError(rawBeforeWrite, config);
@@ -3998,6 +4108,9 @@ type IndexedCustomModels = {
 };
 
 function indexCustomModels(value: ConfigMergeValue): IndexedCustomModels | null {
+  if (value === MISSING_CONFIG_VALUE || value === undefined) {
+    return { order: [], byId: new Map() };
+  }
   if (!Array.isArray(value)) return null;
   const order: string[] = [];
   const byId = new Map<string, Record<string, unknown>>();

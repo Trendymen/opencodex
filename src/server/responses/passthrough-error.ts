@@ -1,5 +1,6 @@
 import { formatErrorResponse } from "../../bridge";
 import { isCyberPolicyCode, isCyberPolicyMessage } from "../../lib/errors";
+import { arkQuotaClientError } from "../../fork/ark-quota-display";
 import {
   resolveClientRetryAfter,
   validateClientRetryAfterHeader,
@@ -46,6 +47,8 @@ export function formatPassthroughUpstreamError(
     statusText?: string;
     headers?: Headers;
     now?: number;
+    /** Surface a permanent vendor quota message without triggering Codex's global 429 UI. */
+    renderQuotaAsClientError?: boolean;
   },
 ): Response {
   const trimmed = bodyText.trim();
@@ -53,7 +56,10 @@ export function formatPassthroughUpstreamError(
   const upstreamRetryAfter = options?.headers?.get("retry-after")?.trim() || undefined;
   const originalValid = validateClientRetryAfterHeader(upstreamRetryAfter, now);
   const cyberPolicyFailure = isCyberPolicyBody(trimmed);
-  const resolved = cyberPolicyFailure
+  const normalizedQuota = status === 429 && options?.renderQuotaAsClientError
+    ? arkQuotaClientError(bodyText)
+    : undefined;
+  const resolved = cyberPolicyFailure || normalizedQuota
     ? undefined
     : resolveClientRetryAfter({
       status,
@@ -61,30 +67,37 @@ export function formatPassthroughUpstreamError(
       upstreamRetryAfter,
       now,
     });
+  const outgoingBody = normalizedQuota?.body ?? bodyText;
+  const outgoingStatus = normalizedQuota?.status ?? status;
 
   if (trimmed) {
-    const needsSet = resolved !== undefined && upstreamRetryAfter !== resolved;
-    const needsDelete = (cyberPolicyFailure && upstreamRetryAfter !== undefined)
+    const needsSet = !normalizedQuota && resolved !== undefined && upstreamRetryAfter !== resolved;
+    const needsDelete = normalizedQuota !== undefined || (cyberPolicyFailure && upstreamRetryAfter !== undefined)
       || (resolved === undefined
         && upstreamRetryAfter !== undefined
         && originalValid === undefined);
 
     if (!needsSet && !needsDelete) {
-      return new Response(bodyText, {
-        status,
-        ...(options?.statusText ? { statusText: options.statusText } : {}),
-        ...(options?.headers ? { headers: options.headers } : { headers: { "Content-Type": "application/json" } }),
+      const headers = normalizedQuota
+        ? new Headers(options?.headers)
+        : options?.headers;
+      if (normalizedQuota && headers) headers.set("Content-Type", "application/json");
+      return new Response(outgoingBody, {
+        status: outgoingStatus,
+        ...(!normalizedQuota && options?.statusText ? { statusText: options.statusText } : {}),
+        ...(headers ? { headers } : { headers: { "Content-Type": "application/json" } }),
       });
     }
 
     const headers = options?.headers
       ? new Headers(options.headers)
       : new Headers({ "Content-Type": "application/json" });
+    if (normalizedQuota) headers.set("Content-Type", "application/json");
     if (needsSet) headers.set("Retry-After", resolved!);
     else headers.delete("Retry-After");
-    return new Response(bodyText, {
-      status,
-      ...(options?.statusText ? { statusText: options.statusText } : {}),
+    return new Response(outgoingBody, {
+      status: outgoingStatus,
+      ...(!normalizedQuota && options?.statusText ? { statusText: options.statusText } : {}),
       headers,
     });
   }

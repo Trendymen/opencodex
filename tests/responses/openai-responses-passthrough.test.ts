@@ -24,6 +24,7 @@ import type { AdapterEvent, OcxConfig } from "../../src/types";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
 import { restoreRoutedNamespaceCalls } from "../../src/responses/namespace-tool-compat";
 import { restoreRoutedCustomCalls } from "../../src/responses/custom-tool-compat";
+import { ROUTED_PROGRESS_CONTRACT } from "../../src/fork/routed-progress-contract";
 
 const createResponsesPassthroughAdapter = (...args: Parameters<typeof createResponsesPassthroughAdapterProduction>) =>
   withTestTranslatorBudget(createResponsesPassthroughAdapterProduction(...args));
@@ -223,6 +224,157 @@ describe("Responses request and compaction byte accounting", () => {
   );
 });
 
+describe("collaboration.spawn_agent fork_turns outbound compatibility", () => {
+  const originalDescription = "How much recent conversation context the child receives.";
+  const forkTurnsGuidance = "This field's JSON type is string. Its value must be `none`, `all`, or a positive integer string. For three turns, use `{\"fork_turns\":\"3\"}`; the string content is only `3`, without quote characters. Do not JSON.stringify this field value separately.";
+  const spawnAgent = (forkTurns: Record<string, unknown> = {
+    type: "string",
+    description: originalDescription,
+  }) => ({
+    type: "namespace",
+    name: "collaboration",
+    tools: [{
+      type: "function",
+      name: "spawn_agent",
+      parameters: {
+        type: "object",
+        properties: {
+          fork_turns: forkTurns,
+          message: { type: "string", description: "Task for the child." },
+        },
+        required: ["message"],
+        additionalProperties: false,
+      },
+    }],
+  });
+
+  function build(target: Parameters<typeof createResponsesPassthroughAdapter>[0], body: Record<string, unknown>) {
+    return JSON.parse(createResponsesPassthroughAdapter(target).buildRequest({
+      modelId: body.model as string,
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: body,
+    }, { headers: new Headers() }).body) as Record<string, unknown>;
+  }
+
+  test("adds one exact field-level instruction before third-party namespace lowering without changing the caller catalog", () => {
+    const body = {
+      model: "glm-5.3-flash",
+      tool_choice: { type: "function", namespace: "collaboration", name: "spawn_agent" },
+      tools: [
+        spawnAgent(),
+        { type: "namespace", name: "foreign", tools: [{ type: "function", name: "spawn_agent", parameters: { type: "object", properties: { fork_turns: { type: "string", description: "foreign namespace" } } } }] },
+      ],
+      input: [],
+    };
+    const original = structuredClone(body);
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "test" };
+
+    const wire = build(target, body);
+    const tools = wire.tools as Array<Record<string, unknown>>;
+    const native = tools.find(tool => tool.name === "collaboration__spawn_agent");
+    const properties = (native?.parameters as { properties: Record<string, Record<string, unknown>> }).properties;
+
+    expect(properties.fork_turns?.description).toBe(`${originalDescription}\n\n${forkTurnsGuidance}`);
+    expect(properties.message).toEqual({ type: "string", description: "Task for the child." });
+    expect((tools.find(tool => tool.name === "foreign__spawn_agent")?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns?.description)
+      .toBe("foreign namespace");
+    expect(wire.tool_choice).toEqual({ type: "function", name: "collaboration__spawn_agent" });
+    expect(body).toEqual(original);
+    expect(build(target, body)).toEqual(wire);
+  });
+
+  test("leaves OpenAI destinations and ref-constrained fork_turns declarations unchanged", () => {
+    const ref = { $ref: "#/$defs/fork_turns", description: originalDescription };
+    const body = {
+      model: "gpt-5.6-sol",
+      tools: [spawnAgent(ref)],
+      input: [],
+      $defs: { fork_turns: { type: "string" } },
+    };
+
+    const thirdParty = build({ adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key", apiKey: "test" }, body);
+    const official = build({ adapter: "openai-responses", baseUrl: "https://api.openai.com/v1", authMode: "key", apiKey: "test" }, {
+      ...body,
+      tools: [spawnAgent()],
+    });
+
+    expect(((thirdParty.tools as Array<Record<string, unknown>>)[0]?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns)
+      .toEqual(ref);
+    expect((((official.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent")?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns?.description))
+      .toBe(originalDescription);
+  });
+
+  test("adds the same instruction to a current Responses Lite additional_tools declaration", () => {
+    const wire = build({ adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key", apiKey: "test" }, {
+      model: "glm-5.3-flash",
+      input: [{ type: "additional_tools", tools: [spawnAgent()] }],
+    });
+    const additional = (wire.input as Array<Record<string, unknown>>).find(item => item.type === "additional_tools");
+    const tool = (additional?.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+
+    expect(((tool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+      .toBe(`${originalDescription}\n\n${forkTurnsGuidance}`);
+  });
+
+  test("does not describe constrained string variants as the native fork_turns contract", () => {
+    for (const forkTurns of [
+      { type: "string", description: originalDescription, enum: ["none"] },
+      { type: "string", description: originalDescription, pattern: "^x$" },
+      { type: ["string", "null"], description: originalDescription },
+    ]) {
+      const wire = build({ adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key", apiKey: "test" }, {
+        model: "glm-5.3-flash", tools: [spawnAgent(forkTurns)], input: [],
+      });
+      const tool = (wire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+      expect(((tool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+        .toBe(originalDescription);
+    }
+  });
+
+  test("does not add guidance when tool_choice hides spawn_agent", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "test" };
+    const other = { type: "function", name: "get_state", parameters: { type: "object", properties: {} } };
+    for (const tool_choice of [
+      "none",
+      { type: "function", name: "get_state" },
+      { type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "get_state" }] },
+    ]) {
+      const wire = build(target, { model: "glm-5.3-flash", tool_choice, tools: [spawnAgent(), other], input: [] });
+      const tool = (wire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+      expect(((tool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+        .toBe(originalDescription);
+    }
+  });
+
+  test("does not overwrite an unknown description or add a wider claim beside root composition", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "test" };
+    const nonStringDescription = { source: "foreign schema" };
+    const nonStringWire = build(target, { model: "glm-5.3-flash", tools: [spawnAgent({ type: "string", description: nonStringDescription })], input: [] });
+    const nonStringTool = (nonStringWire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+    expect(((nonStringTool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+      .toEqual(nonStringDescription);
+
+    const composedWire = build(target, {
+      model: "glm-5.3-flash",
+      tools: [{
+        type: "namespace",
+        name: "collaboration",
+        tools: [{ type: "function", name: "spawn_agent", parameters: {
+          type: "object",
+          properties: { fork_turns: { type: "string", description: originalDescription } },
+          allOf: [],
+        } }],
+      }],
+      input: [],
+    });
+    const composedTool = (composedWire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+    expect(((composedTool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+      .toBe(originalDescription);
+  });
+});
+
 describe("native routed code-mode result visibility", () => {
   const routed = { adapter: "openai-responses", baseUrl: "https://api.x.ai/v1", authMode: "key" as const };
   const exec = { type: "custom", name: "exec", description: "Run JavaScript in a V8 isolate." };
@@ -241,10 +393,84 @@ describe("native routed code-mode result visibility", () => {
     const before = JSON.stringify(body);
     const request = createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body));
     const wire = JSON.parse(request.body);
-    expect(wire.instructions).toBe(`Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}\n\n${CODE_MODE_HOST_CONTRACT_SENTENCE}`);
+    expect(wire.instructions).toStartWith(
+      `Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}\n\n${CODE_MODE_HOST_CONTRACT_SENTENCE}\n\n${ROUTED_PROGRESS_CONTRACT}\n\n`,
+    );
+    expect(wire.instructions).toContain("Tool contract: use the current tool catalog as ground truth.");
+    expect(wire.instructions.split(CODE_MODE_RESULT_ECHO_SENTENCE)).toHaveLength(2);
     expect(wire.tools.find((tool: { name: string }) => tool.name === "exec").parameters.properties.input.description)
       .toContain(CODE_MODE_RESULT_ECHO_SENTENCE);
     expect(JSON.stringify(body)).toBe(before);
+  });
+
+  test("native Responses preserves a nested patch program and its non-empty context failure while adding recovery guidance", () => {
+    const patchProgram = [
+      "await tools.apply_patch(`*** Begin Patch",
+      "*** Update File: fixture.ts",
+      "@@",
+      "-later",
+      "+later changed",
+      "@@",
+      "-earlier",
+      "+earlier changed",
+      "*** End Patch`);",
+    ].join("\n");
+    const contextFailure = "Script failed\nOutput:\nFailed to find expected lines\n";
+    const body = raw(contextFailure);
+    body.input[0].input = patchProgram;
+    const before = JSON.stringify(body);
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).toContain("source order (top to bottom)");
+    expect(wire.instructions).toContain("Failed to find expected lines");
+    expect(JSON.parse(wire.input[0].arguments).input).toBe(patchProgram);
+    expect(wire.input[1].output).toBe(contextFailure);
+    expect(JSON.stringify(body)).toBe(before);
+  });
+
+  test("native Responses omits patch guidance when tool_choice hides the directly visible patch tool", () => {
+    const body = {
+      model: "grok-4.6",
+      instructions: "Keep this instruction.",
+      tool_choice: "none",
+      tools: [{ type: "custom", name: "apply_patch", description: "Apply a patch" }],
+      input: [{ role: "user", content: "do not edit" }],
+    };
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).not.toContain("source order (top to bottom)");
+  });
+
+  test("native Responses gives direct apply_patch guidance only when it is visible", () => {
+    const body = {
+      model: "grok-4.6",
+      instructions: "Keep this instruction.",
+      tools: [{ type: "custom", name: "apply_patch", description: "Apply a patch" }],
+      input: [{ role: "user", content: "edit" }],
+    };
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).toContain("`apply_patch` is Codex's apply_patch tool");
+    expect(wire.instructions).toContain("source order (top to bottom)");
+  });
+
+  test("native Responses omits patch guidance when a bare shell bridge makes exec non-code-mode", () => {
+    const body = {
+      model: "grok-4.6",
+      instructions: "Keep this instruction.",
+      tools: [
+        { type: "namespace", name: "functions", tools: [exec] },
+        { type: "function", name: "exec_command", parameters: { type: "object" } },
+      ],
+      input: [{ role: "user", content: "run a command" }],
+    };
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).not.toContain("source order (top to bottom)");
   });
 
   test("the advertised first-call example emits a helper result exactly once", async () => {
@@ -2230,7 +2456,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     });
   });
 
-  test("keeps a native blob while blanking its raw reasoning content", () => {
+  test("keeps an OpenAI-issued blob while blanking its raw reasoning content", () => {
     const adapter = createResponsesPassthroughAdapter(provider);
     const request = adapter.buildRequest({
       modelId: "gpt-5.6-sol",
@@ -2243,7 +2469,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
           type: "reasoning",
           status: "completed",
           summary: [],
-          encrypted_content: "native-backend-blob",
+          encrypted_content: "gAAAA-openai-issued-blob",
           content: [{ type: "reasoning_text", text: "raw routed reasoning" }],
         }],
       },
@@ -2253,7 +2479,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(body.input[0]).toEqual({
       type: "reasoning",
       summary: [],
-      encrypted_content: "native-backend-blob",
+      encrypted_content: "gAAAA-openai-issued-blob",
       content: [],
     });
   });
@@ -2886,40 +3112,138 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(rawDeltaBody.input).toHaveLength(1);
   });
 
-  test("api-key mode preserves delegated tool output text when call_id is missing", () => {
+  test.each([
+    {
+      name: "canonical ChatGPT GPT call-id-less cross-task message",
+      configuredProvider: provider,
+      model: "gpt-5.6-sol",
+      item: {
+        type: "function_call_output",
+        namespace: "codex_app",
+        name: "send_message_to_thread",
+        output: "<codex_delegation><source_thread_id>fixture</source_thread_id><input>Inspect the adapter.</input></codex_delegation>",
+      },
+      marker: "[Cross-task message via codex_app.send_message_to_thread]",
+    },
+    {
+      name: "third-party non-GPT custom task delegation",
+      configuredProvider: {
+        adapter: "openai-responses",
+        baseUrl: "https://api.x.ai/v1",
+        authMode: "key" as const,
+        apiKey: "xai-test",
+      },
+      model: "grok-4.6",
+      item: {
+        type: "custom_tool_call_output",
+        namespace: "codex_app",
+        name: "create_thread",
+        output: "created",
+      },
+      marker: "[Task delegation via codex_app.create_thread]",
+    },
+    {
+      name: "third-party stateless cross-task message",
+      configuredProvider: {
+        adapter: "openai-responses",
+        baseUrl: "https://api.x.ai/v1",
+        authMode: "key" as const,
+        apiKey: "xai-test",
+        statelessResponses: true,
+      },
+      model: "grok-4.6",
+      item: {
+        type: "function_call_output",
+        namespace: "codex_app",
+        name: "send_message_to_thread",
+        output: "<codex_delegation><source_thread_id>fixture</source_thread_id><input>Continue the task.</input></codex_delegation>",
+      },
+      marker: "[Cross-task message via codex_app.send_message_to_thread]",
+    },
+  ])("labels $name from structured metadata", ({ configuredProvider, model, item, marker }) => {
+    const adapter = createResponsesPassthroughAdapter(configuredProvider);
+    const raw = { model, input: [item] };
+    const original = structuredClone(raw);
+    const body = JSON.parse(adapter.buildRequest({
+      ...parsedBase,
+      modelId: model,
+      previousResponseId: undefined,
+      _rawBody: raw,
+    }, meta).body) as { input: Array<{ content: Array<{ text?: string }> }> };
+
+    expect(body.input[0]?.content).toEqual([
+      { type: "input_text", text: `${marker}\n${item.output}` },
+    ]);
+    expect(raw).toEqual(original);
+  });
+
+  test("labels generic, namespace-only, and metadata-free outputs without reading their bodies", () => {
     const adapter = createResponsesPassthroughAdapter({
       adapter: "openai-responses",
       baseUrl: "https://api.x.ai/v1",
       authMode: "key" as const,
       apiKey: "xai-test",
     });
-
     const body = JSON.parse(adapter.buildRequest({
       ...parsedBase,
       previousResponseId: undefined,
       _rawBody: {
         model: "grok-4.6",
         input: [
-          {
-            type: "function_call_output",
-            id: "fco_delegation",
-            output: "<codex_delegation>Inspect the adapter.</codex_delegation>",
-          },
+          { type: "function_call_output", namespace: "functions", name: "exec_command", output: "done" },
+          { type: "function_call_output", namespace: "task_inbox", output: "received" },
+          { type: "function_call_output", output: "<codex_delegation><source_thread_id>fixture</source_thread_id><input>Create a task.</input></codex_delegation>" },
         ],
       },
-    }, meta).body) as { input: Record<string, unknown>[] };
+    }, meta).body) as { input: Array<{ content: Array<{ text?: string }> }> };
 
-    expect(body.input).toEqual([{
-      type: "message",
-      role: "user",
-      content: [{
-        type: "input_text",
-        text: "[tool output for unknown call]\n<codex_delegation>Inspect the adapter.</codex_delegation>",
-      }],
-    }]);
+    expect(body.input.map(item => item.content[0]?.text)).toEqual([
+      "[Tool output: functions.exec_command; call_id not provided]\ndone",
+      "[Tool output in namespace task_inbox; call_id not provided]\nreceived",
+      "[Tool output without call identification]\n<codex_delegation><source_thread_id>fixture</source_thread_id><input>Create a task.</input></codex_delegation>",
+    ]);
   });
 
-  test("external task parsing preserves the existing raw passthrough repair", () => {
+  test("treats invalid call-id-less metadata as unknown instead of rendering it into the marker", () => {
+    const adapter = createResponsesPassthroughAdapter({
+      adapter: "openai-responses",
+      baseUrl: "https://api.x.ai/v1",
+      authMode: "key" as const,
+      apiKey: "xai-test",
+    });
+    const trailingNewlineNamespace = `codex_app${String.fromCharCode(10)}`;
+    const raw = {
+      model: "grok-4.6",
+      input: [
+        {
+          type: "function_call_output",
+          namespace: { value: "codex_app" },
+          name: 42,
+          output: "untrusted metadata",
+        },
+        {
+          type: "function_call_output",
+          namespace: trailingNewlineNamespace,
+          name: "create_thread",
+          output: "trailing newline metadata",
+        },
+      ],
+    };
+    const original = structuredClone(raw);
+    const body = JSON.parse(adapter.buildRequest({
+      ...parsedBase,
+      previousResponseId: undefined,
+      _rawBody: raw,
+    }, meta).body) as { input: Array<{ content: Array<{ text?: string }> }> };
+
+    expect(body.input.map(item => item.content[0]?.text)).toEqual([
+      "[Tool output without call identification]\nuntrusted metadata",
+      "[Tool output without call identification]\ntrailing newline metadata",
+    ]);
+    expect(raw).toEqual(original);
+  });
+
+  test("external task parsing preserves the raw passthrough repair with its structured source", () => {
     const adapter = createResponsesPassthroughAdapter({
       adapter: "openai-responses", baseUrl: "https://api.x.ai/v1", authMode: "key" as const, apiKey: "xai-test",
     });
@@ -2933,7 +3257,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(raw).toEqual(original);
     const body = JSON.parse(adapter.buildRequest(parsed, meta).body) as { input: unknown[] };
     expect(body.input).toEqual([{ type: "message", role: "user", content: [
-      { type: "input_text", text: "[tool output for unknown call]\nexternal input" },
+      { type: "input_text", text: "[Tool output: task_inbox.handoff_input; call_id not provided]\nexternal input" },
     ] }]);
   });
 
@@ -2992,7 +3316,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     }, meta).body) as { input: Array<{ content: Record<string, unknown>[] }> };
 
     expect(body.input[0]?.content).toEqual([
-      { type: "input_text", text: "[tool output for unknown call]" },
+      { type: "input_text", text: "[Tool output without call identification]" },
       { type: "input_text", text: "screenshot" },
       image,
       { type: "input_text", text: "[encrypted content omitted]" },
@@ -4462,6 +4786,76 @@ describe("OpenAI Responses forward-mode unsupported param stripping", () => {
   });
 });
 
+describe("configured Responses output budget", () => {
+  const keyProvider = {
+    adapter: "openai-responses",
+    baseUrl: "https://api.deepseek.com",
+    responsesPath: "/responses",
+    authMode: "key" as const,
+    apiKey: "sk-test",
+  };
+  const meta = { headers: new Headers() };
+
+  function build(
+    target: Parameters<typeof createResponsesPassthroughAdapter>[0],
+    body: Record<string, unknown>,
+  ) {
+    return JSON.parse(createResponsesPassthroughAdapter(target).buildRequest({
+      modelId: body.model as string,
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: body,
+    }, meta).body) as Record<string, unknown>;
+  }
+
+  test("fills the provider default when the caller omits the field", () => {
+    // Codex bounds length through reasoning.effort and never sends max_output_tokens, so an
+    // upstream default far below the model ceiling truncates long answers without this fill.
+    const body = build({ ...keyProvider, defaultMaxOutputTokens: 393_216 }, {
+      model: "deepseek-v4-flash",
+      input: "ping",
+    });
+
+    expect(body.max_output_tokens).toBe(393_216);
+  });
+
+  test("a model-specific budget wins over the provider default", () => {
+    const body = build({
+      ...keyProvider,
+      defaultMaxOutputTokens: 100_000,
+      modelMaxOutputTokens: { "deepseek-v4-flash": 393_216 },
+    }, { model: "deepseek-v4-flash", input: "ping" });
+
+    expect(body.max_output_tokens).toBe(393_216);
+  });
+
+  test("an explicit caller value still wins", () => {
+    const body = build({ ...keyProvider, defaultMaxOutputTokens: 393_216 }, {
+      model: "deepseek-v4-flash",
+      input: "ping",
+      max_output_tokens: 5_000,
+    });
+
+    expect(body.max_output_tokens).toBe(5_000);
+  });
+
+  test("a provider without a configured budget keeps the upstream default", () => {
+    const body = build(keyProvider, { model: "deepseek-v4-flash", input: "ping" });
+
+    expect(body).not.toHaveProperty("max_output_tokens");
+  });
+
+  test("forward mode never receives an injected budget", () => {
+    const body = build({ ...provider, defaultMaxOutputTokens: 393_216 }, {
+      model: "gpt-5.6-sol",
+      input: "ping",
+    });
+
+    expect(body).not.toHaveProperty("max_output_tokens");
+  });
+});
+
 describe("replayed compaction blobs", () => {
   type PassthroughProvider = Parameters<typeof createResponsesPassthroughAdapter>[0];
 
@@ -4684,6 +5078,161 @@ describe("reasoning input content channel", () => {
     });
     expect(out.content).toEqual([]);
     expect(out.encrypted_content).toBe("upstream-issued-blob");
+  });
+});
+
+describe("Responses-only encrypted tool schema annotations", () => {
+  function markedSchema(): Record<string, unknown> {
+    return {
+      type: "object",
+      encrypted: true,
+      properties: {
+        encrypted: { type: "boolean", description: "a legitimate argument name" },
+        message: { type: "string", encrypted: true },
+        literalData: {
+          type: "object",
+          const: { encrypted: true },
+          default: { encrypted: false },
+          enum: [{ encrypted: true }],
+          examples: [{ encrypted: false }],
+        },
+      },
+      $defs: { encrypted: { type: "string", encrypted: true } },
+      required: ["encrypted", "message"],
+    };
+  }
+
+  function expectedSchema(): Record<string, unknown> {
+    return {
+      type: "object",
+      properties: {
+        encrypted: { type: "boolean", description: "a legitimate argument name" },
+        message: { type: "string" },
+        literalData: {
+          type: "object",
+          const: { encrypted: true },
+          default: { encrypted: false },
+          enum: [{ encrypted: true }],
+          examples: [{ encrypted: false }],
+        },
+      },
+      $defs: { encrypted: { type: "string" } },
+      required: ["encrypted", "message"],
+    };
+  }
+
+  function bodyWithMarkedTools(): Record<string, unknown> {
+    return {
+      model: "glm-5.3-flash",
+      input: [{
+        type: "additional_tools",
+        tools: [
+          { type: "function", name: "additional", parameters: markedSchema() },
+          {
+            type: "namespace",
+            name: "deferred",
+            tools: [{ type: "function", name: "delegate", parameters: markedSchema() }],
+          },
+        ],
+      }],
+      tools: [
+        { type: "function", name: "top_level", parameters: markedSchema() },
+        {
+          type: "namespace",
+          name: "collaboration",
+          tools: [{ type: "function", name: "spawn", parameters: markedSchema() }],
+        },
+      ],
+    };
+  }
+
+  function listedTools(body: Record<string, unknown>): Array<Record<string, unknown>> {
+    const direct = Array.isArray(body.tools) ? body.tools : [];
+    const deferred = Array.isArray(body.input)
+      ? body.input.flatMap(item => item && typeof item === "object" && !Array.isArray(item)
+        && (item as Record<string, unknown>).type === "additional_tools"
+        && Array.isArray((item as Record<string, unknown>).tools)
+        ? (item as { tools: unknown[] }).tools
+        : [])
+      : [];
+    const flattened: Array<Record<string, unknown>> = [];
+    const visit = (tool: unknown): void => {
+      if (!tool || typeof tool !== "object" || Array.isArray(tool)) return;
+      const record = tool as Record<string, unknown>;
+      if (record.type === "namespace" && Array.isArray(record.tools)) {
+        record.tools.forEach(visit);
+        return;
+      }
+      flattened.push(record);
+    };
+    [...direct, ...deferred].forEach(visit);
+    return flattened;
+  }
+
+  function buildWire(providerConfig: Parameters<typeof createResponsesPassthroughAdapter>[0], body: Record<string, unknown>) {
+    const request = createResponsesPassthroughAdapter(providerConfig).buildRequest({
+      modelId: body.model as string,
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: body,
+    }, { headers: new Headers() });
+    return JSON.parse(request.body) as Record<string, unknown>;
+  }
+
+  test("removes the backend-only marker from every final ordinary third-party Responses tool group without mutating the caller schema", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "third-party-test" };
+    const body = bodyWithMarkedTools();
+    body.model = "gpt-5.6-sol";
+    const original = structuredClone(body);
+    const wire = buildWire(target, body);
+    const tools = listedTools(wire);
+
+    expect(body).toEqual(original);
+    expect(tools.map(tool => tool.name).sort()).toEqual([
+      "additional",
+      "collaboration__spawn",
+      "deferred__delegate",
+      "top_level",
+    ]);
+    for (const tool of tools) expect(tool.parameters).toEqual(expectedSchema());
+  });
+
+  test("removes the marker from Zhipu GLM's final lowered tool groups", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://open.bigmodel.cn/api/v1", authMode: "key" as const, apiKey: "zhipu-test" };
+    const body = bodyWithMarkedTools();
+    const wire = buildWire(target, body);
+
+    for (const tool of listedTools(wire)) {
+      const parameters = tool.parameters as Record<string, unknown>;
+      expect(parameters.encrypted).toBeUndefined();
+      expect((parameters.properties as Record<string, Record<string, unknown>>).encrypted)
+        .toEqual({ type: "boolean", description: "a legitimate argument name" });
+      expect((parameters.properties as Record<string, Record<string, unknown>>).message?.encrypted).toBeUndefined();
+      expect((parameters.properties as Record<string, Record<string, unknown>>).literalData?.const)
+        .toEqual({ encrypted: true });
+    }
+  });
+
+  test("keeps the marker for OpenAI-operated Responses destinations and explicitly trusted direct relays", () => {
+    const targets = [
+      { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" as const },
+      { adapter: "openai-responses", baseUrl: "https://api.openai.com/v1", authMode: "key" as const, apiKey: "openai-test" },
+      {
+        adapter: "openai-responses",
+        baseUrl: "http://127.0.0.1:10100/v1",
+        authMode: "key" as const,
+        apiKey: "trusted-relay-test",
+        allowEncryptedV2AgentTasks: true,
+      },
+    ] as const;
+
+    for (const target of targets) {
+      const wire = buildWire(target, bodyWithMarkedTools());
+      for (const tool of listedTools(wire)) {
+        expect((tool.parameters as Record<string, unknown>).encrypted).toBe(true);
+      }
+    }
   });
 });
 

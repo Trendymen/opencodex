@@ -1,11 +1,11 @@
 import { normalizeRoutedAgentMessages } from "./routed-agent-messages";
 import { stripBracketedModelSuffix } from "./openai-chat";
 import { normalizeOpenCodeGoAdditionalTools } from "./opencode-go-additional-tools";
-import { isXaiResponsesDestination } from "../providers/xai-transport";
+import { agentMessageConversionOptions } from "../fork/agent-message-format";
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import type { IncomingMeta, ProviderAdapter } from "./base";
-import { namespacedToolName, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
+import { namespacedToolName, toolChoiceToolPredicate, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
 import { catalogModelSupportsReasoningSummaries } from "../codex/catalog";
 import { applyCodexRoutingHint, CODEX_RESPONSES_LITE_HEADER, CODEX_ROUTING_HINT_HEADER } from "../codex/forward-transport-headers";
 import { COMPACT_PROMPT, compactionItemToText, decodeCompactionSummary, isCompactionItemType } from "../responses/compaction";
@@ -27,11 +27,25 @@ import { rewriteRoutedToolSearchForUpstream } from "../responses/tool-search-com
 import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-tool-compat";
 import { preparePlaintextV2AgentMessages } from "../responses/plaintext-v2-agent-messages";
 import { isMetaAiResponsesDestination, rewriteMuseToolNamesForUpstream } from "../responses/muse-tool-name-alias";
+import { collectFunctionCallRepairSchemas } from "../responses/function-call-compat";
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeResponsesCodeMode } from "./responses-code-mode";
 import { stripUnicodePropertyPatterns } from "./responses-tool-schema";
+import { CODE_MODE_RESULT_ECHO_SENTENCE } from "./exec-tool-result-normalize";
+import {
+  buildNonOpenAIToolCatalogNudgeFromNames,
+  isBareShellBridgeTool,
+  isCodexApplyPatchTool,
+  isCodexCodeModeExecTool,
+  shouldInjectNonOpenAIToolCatalogNudge,
+} from "./tool-catalog-nudge";
 import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "./xai-web-search";
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "./empty-tool-output-annotation";
+import { stripResponsesOnlyEncryptedMarker } from "./responses-tool-schema";
+import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../fork/glm-kimi-compat";
+import { addSpawnAgentForkTurnsGuidance } from "../fork/spawn-agent-compat";
+import { applyRoutedProgressContractToResponsesBody } from "../fork/routed-progress-contract";
+import { debugResponsesOutboundShape } from "../fork/outbound-debug";
 import {
   isXaiSchemaTarget,
   normalizeXaiToolParameters,
@@ -79,6 +93,7 @@ export function sanitizeReasoningInputContent(
     preserveRawReasoningContent?: boolean;
     dropNullContentChannel?: boolean;
     stripEncryptedContent?: boolean;
+    stripRawContentBackedEncryptedContent?: boolean;
   },
 ): unknown {
   if (!body || typeof body !== "object" || Array.isArray(body)) return body;
@@ -91,13 +106,27 @@ export function sanitizeReasoningInputContent(
     const rec = item as Record<string, unknown>;
     if (rec.type !== "reasoning") return item;
     const hasRawContent = Array.isArray(rec.content) && rec.content.length > 0;
+    const hasRawReasoningText = Array.isArray(rec.content)
+      && rec.content.some(part => part && typeof part === "object" && !Array.isArray(part)
+        && (part as Record<string, unknown>).type === "reasoning_text");
     // ocxr1 envelopes are proxy-minted (Anthropic signatures), not OpenAI encryption — the native
     // backend cannot decrypt them and would reject the request. Strip regardless of content shape.
     const hasOcxEnvelope = typeof rec.encrypted_content === "string" && rec.encrypted_content.startsWith(OCX_REASONING_PREFIX);
     const hasOutputStatus = Object.prototype.hasOwnProperty.call(rec, "status");
     const hasEncryptedContent = Object.prototype.hasOwnProperty.call(rec, "encrypted_content");
     const stripEncryptedContent = hasOcxEnvelope
-      || (opts?.stripEncryptedContent === true && hasEncryptedContent);
+      || (opts?.stripEncryptedContent === true && hasEncryptedContent)
+      // A third-party Responses turn can be interrupted after it has emitted raw reasoning but
+      // before it records a terminal route identity. A later native GPT replay must not carry
+      // that provider's opaque continuation token alongside the raw content it came with. Native
+      // OpenAI reasoning items are summary-only on replay, so this leaves their own opaque blobs
+      // intact while dropping the observed cross-provider shape.
+      || (
+        opts?.stripRawContentBackedEncryptedContent === true
+        && hasRawReasoningText
+        && hasEncryptedContent
+        && !(typeof rec.encrypted_content === "string" && rec.encrypted_content.startsWith("gAAAA"))
+      );
     // Codex serializes an absent reasoning content channel as `"content": null`. The field is
     // optional and null carries nothing, but a strict gateway rejects the item on its declared type
     // — xAI answers `Could not decode the compaction blob`, naming the sibling `encrypted_content`
@@ -459,6 +488,43 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
+/** Add tool guidance from the final wire catalog so routed models see every callable name. */
+function applyRoutedResponsesToolCatalogNudge(body: unknown, parsed: OcxParsedRequest): unknown {
+  if (!isPlainObject(body) || typeof body.instructions !== "string") return body;
+  const declarations = collectResponsesToolGroups(body).flat();
+  if (declarations.length === 0) return body;
+  if (declarations.some(tool => !isPlainObject(tool) || typeof tool.name !== "string")) return body;
+
+  const wireNames = [...new Set(declarations.map(tool => (tool as Record<string, unknown>).name as string))];
+  const wireNameSet = new Set(wireNames);
+  let codeModeExecName: string | undefined;
+  let directApplyPatchName: string | undefined;
+  const tools = parsed.context.tools;
+  if (tools?.length) {
+    const visible = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
+    const codeModeVisible = !visible.some(isBareShellBridgeTool);
+    for (const tool of visible) {
+      const wireName = namespacedToolName(tool.namespace, tool.name);
+      if (!wireNameSet.has(wireName)) continue;
+      if (codeModeVisible && !codeModeExecName && isCodexCodeModeExecTool(tool)) codeModeExecName = wireName;
+      if (isCodexApplyPatchTool(tool)) directApplyPatchName = wireName;
+    }
+  }
+
+  const nudge = buildNonOpenAIToolCatalogNudgeFromNames(
+    wireNames,
+    undefined,
+    codeModeExecName,
+    directApplyPatchName,
+  );
+  if (!nudge) return body;
+  const novelNudge = body.instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)
+    ? nudge.replace(`${CODE_MODE_RESULT_ECHO_SENTENCE} `, "")
+    : nudge;
+  if (body.instructions.includes(novelNudge)) return body;
+  return { ...body, instructions: `${body.instructions}\n\n${novelNudge}` };
+}
+
 /**
  * Apply the routed provider's real effort ladder to an existing Responses reasoning field.
  * Native forward requests keep the server-owned native clamp; unknown third-party ladders stay
@@ -487,7 +553,11 @@ function mapRoutedResponsesReasoningEffort(
   return { ...body, reasoning: { ...body.reasoning, effort: mapped } };
 }
 
-function normalizeFunctionToolSchema(tool: unknown, xaiTarget: boolean): unknown | undefined {
+function normalizeFunctionToolSchema(
+  tool: unknown,
+  xaiTarget: boolean,
+  stripEncryptedMarker: boolean,
+): unknown | undefined {
   if (!isPlainObject(tool) || tool.type !== "function") return tool;
   // Runs for every Responses destination, forward auth included: the ChatGPT backend is where
   // the `\p{…}` rejection was observed, and it reaches this function through the same seam.
@@ -495,12 +565,16 @@ function normalizeFunctionToolSchema(tool: unknown, xaiTarget: boolean): unknown
   const source = isPlainObject(compatible) ? compatible : tool;
   if (xaiTarget) {
     const parameters = normalizeXaiToolParameters(isPlainObject(source.parameters) ? source.parameters : {});
-    return parameters === undefined ? undefined : { ...source, parameters };
+    if (parameters === undefined) return undefined;
+    return { ...source, parameters: stripEncryptedMarker ? stripResponsesOnlyEncryptedMarker(parameters) : parameters };
   }
-  if (isPlainObject(source.parameters) && source.parameters.type === "object") return source;
+  const parameters = isPlainObject(source.parameters) && source.parameters.type === "object"
+    ? source.parameters
+    : { ...(isPlainObject(source.parameters) ? source.parameters : {}), type: "object" };
+  if (!stripEncryptedMarker && parameters === source.parameters) return source;
   return {
     ...source,
-    parameters: { ...(isPlainObject(source.parameters) ? source.parameters : {}), type: "object" },
+    parameters: stripEncryptedMarker ? stripResponsesOnlyEncryptedMarker(parameters) : parameters,
   };
 }
 
@@ -550,7 +624,7 @@ function reconcileToolChoiceForOmittedTools(
   return body;
 }
 
-function normalizeToolSchemas(body: unknown, xaiTarget: boolean): unknown {
+function normalizeToolSchemas(body: unknown, xaiTarget: boolean, stripEncryptedMarker: boolean): unknown {
   if (!isPlainObject(body)) return body;
 
   const omittedFunctionNames = new Set<string>();
@@ -558,7 +632,7 @@ function normalizeToolSchemas(body: unknown, xaiTarget: boolean): unknown {
     let changed = false;
     const normalized: unknown[] = [];
     for (const tool of tools) {
-      const fixed = normalizeFunctionToolSchema(tool, xaiTarget);
+      const fixed = normalizeFunctionToolSchema(tool, xaiTarget, stripEncryptedMarker);
       if (fixed === undefined) {
         changed = true;
         if (isPlainObject(tool) && typeof tool.name === "string") omittedFunctionNames.add(tool.name);
@@ -793,9 +867,41 @@ function isRepairableToolOutput(output: unknown): output is string | Record<stri
   });
 }
 
+function validToolOutputSourcePart(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value)
+    ? value
+    : undefined;
+}
+
+function unidentifiedToolOutputMarker(item: Record<string, unknown>): string {
+  const namespace = validToolOutputSourcePart(item.namespace);
+  const name = validToolOutputSourcePart(item.name);
+  if ((item.namespace !== undefined && !namespace) || (item.name !== undefined && !name)) {
+    return "[Tool output without call identification]";
+  }
+  if (namespace === "codex_app" && name === "send_message_to_thread") {
+    return "[Cross-task message via codex_app.send_message_to_thread]";
+  }
+  if (namespace === "codex_app" && name === "create_thread") {
+    return "[Task delegation via codex_app.create_thread]";
+  }
+  if (namespace && name) return `[Tool output: ${namespace}.${name}; call_id not provided]`;
+  if (namespace) return `[Tool output in namespace ${namespace}; call_id not provided]`;
+  if (name) return `[Tool output: ${name}; call_id not provided]`;
+  return "[Tool output without call identification]";
+}
+
 /** Convert orphaned tool output to user-message content without discarding valid images. */
-function orphanedToolOutputContent(output: unknown, callId = ""): Record<string, unknown>[] {
-  const marker = `[tool output for ${callId || "unknown call"}]`;
+function orphanedToolOutputContent(
+  output: unknown,
+  callId = "",
+  unidentifiedItem?: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const marker = callId
+    ? `[tool output for ${callId}]`
+    : unidentifiedItem
+      ? unidentifiedToolOutputMarker(unidentifiedItem)
+      : "[Tool output without call identification]";
   if (typeof output !== "string" && !Array.isArray(output)) {
     return [{ type: "input_text", text: marker }];
   }
@@ -873,7 +979,7 @@ function repairUnidentifiedToolOutputItems(body: unknown): unknown {
     return {
       type: "message",
       role: "user",
-      content: orphanedToolOutputContent(item.output),
+      content: orphanedToolOutputContent(item.output, "", item),
     };
   });
   return changed ? { ...body, input } : body;
@@ -1009,7 +1115,7 @@ function repairOrphanedInputItems(body: unknown, dropReasoning: boolean, synthes
         repaired.push({
           type: "message",
           role: "user",
-          content: orphanedToolOutputContent(item.output, callId),
+          content: orphanedToolOutputContent(item.output, callId, callId ? undefined : item),
         });
         continue;
       }
@@ -1219,6 +1325,7 @@ function normalizeResponsesToolResultAdjacency(body: unknown): unknown {
  *   strictly better even when the local replay state missed. API-key mode keeps the field on
  *   unexpanded requests: the platform `/v1/responses` supports real server-side storage.
  */
+
 function stripPreviousResponseId(body: unknown, strip: boolean): unknown {
   if (!strip || !isPlainObject(body) || !Object.prototype.hasOwnProperty.call(body, "previous_response_id")) return body;
   const { previous_response_id: _previousResponseId, ...rest } = body;
@@ -1308,6 +1415,50 @@ export function stripCanonicalForwardSamplingParams(body: unknown): unknown {
   const next: Record<string, unknown> = { ...body };
   for (const key of CANONICAL_FORWARD_UNSUPPORTED_SAMPLING) delete next[key];
   return next;
+}
+
+/**
+ * Fill `max_output_tokens` from the provider's configured output budget when the caller omitted
+ * it. Codex bounds answer length through `reasoning.effort` and never sends this field, so an
+ * upstream whose own default sits far below the model ceiling silently truncates long answers as
+ * `incomplete: max_output_tokens` (DeepSeek's Responses route stops at 65,536 while accepting
+ * 393,216). Opt-in by configuration: a provider that sets neither `modelMaxOutputTokens` nor
+ * `defaultMaxOutputTokens` keeps the upstream default. Precedence matches the Chat wire — a
+ * model-specific budget wins over the provider default, and an explicit caller value always wins
+ * because this only runs when the field is absent. The ChatGPT forward backend rejects the
+ * parameter, so forward mode is never given it.
+ */
+export function applyConfiguredResponsesMaxOutputTokens(
+  body: unknown,
+  provider: Pick<OcxProviderConfig, "defaultMaxOutputTokens" | "modelMaxOutputTokens"> & { authMode?: OcxProviderConfig["authMode"] },
+  modelId: string,
+): unknown {
+  if (!isPlainObject(body)) return body;
+  if (provider.authMode === "forward") return body;
+  if (Object.prototype.hasOwnProperty.call(body, "max_output_tokens")) return body;
+  const configured = modelRecordValue(provider.modelMaxOutputTokens, modelId)
+    ?? provider.defaultMaxOutputTokens;
+  if (configured === undefined) return body;
+  return { ...body, max_output_tokens: configured };
+}
+
+function addCanonicalForwardResponsesLiteMetadata(body: unknown, incoming: IncomingMeta): unknown {
+  if (incoming.headers.get("x-openai-internal-codex-responses-lite") !== "true" || !isPlainObject(body)) {
+    return body;
+  }
+  if (Object.hasOwn(body, "client_metadata") && !isPlainObject(body.client_metadata)) return body;
+  const clientMetadata = body.client_metadata;
+  if (isPlainObject(clientMetadata)
+    && Object.hasOwn(clientMetadata, "ws_request_header_x_openai_internal_codex_responses_lite")) {
+    return body;
+  }
+  return {
+    ...body,
+    client_metadata: {
+      ...(isPlainObject(clientMetadata) ? clientMetadata : {}),
+      ws_request_header_x_openai_internal_codex_responses_lite: "true",
+    },
+  };
 }
 
 /** Return the lossless text represented by one system message, or null when it is multimodal. */
@@ -2251,9 +2402,14 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         parsed._rawBody,
         forward || parsed._previousResponseInputExpanded === true,
       );
-      if (!forward) outBody = normalizeRoutedAgentMessages(outBody, {
-        allowStringContent: isXaiResponsesDestination(provider),
+      const agentMessageOptions = agentMessageConversionOptions({
+        provider,
+        resolvedModelId: parsed.modelId,
+        phase: "early",
       });
+      if (agentMessageOptions) {
+        outBody = normalizeRoutedAgentMessages(outBody, agentMessageOptions);
+      }
       outBody = mapRoutedResponsesReasoningEffort(outBody, provider, parsed.modelId);
       // stripPreviousResponseId() intentionally returns its input on a no-op. Detach before the
       // tier write so a force-fast/default decision can never mutate parsed._rawBody.
@@ -2306,6 +2462,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         outBody = stripInternalChatMessageMetadataPassthrough(outBody);
         outBody = promoteClientLoadedTools(outBody);
+      }
+      if (!isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = addSpawnAgentForkTurnsGuidance(outBody, collectFunctionCallRepairSchemas(outBody));
       }
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         const rewritten = rewriteRoutedCustomToolsForUpstream(
@@ -2372,6 +2531,17 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           plaintextV2AgentMessageAliasedToolNames = prepared.aliasedAgentMessageToolNames;
         }
       }
+      if (parsed._compactionRequest !== true && !isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = applyRoutedProgressContractToResponsesBody(outBody);
+      }
+      const glmKimiCompatibility = applyGlmKimiOutboundCompatibility({
+        body: outBody,
+        provider,
+        modelId: parsed.modelId,
+        threadId: incoming.headers.get("thread-id") ?? incoming.headers.get("thread_id"),
+        url,
+      });
+      outBody = glmKimiCompatibility.body;
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       const sanitizedBody = normalizeToolSchemas(
         stripItemIdsWhenUnstored(
@@ -2387,15 +2557,18 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
                   preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
                   dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
                   stripEncryptedContent: threadServingIdentityChanged,
+                  stripRawContentBackedEncryptedContent: isOpenAiOperatedResponsesDestination(provider),
                 },
               ),
               provider,
+                ),
+              ),
             ),
-          ),
-        ),
         isXaiSchemaTarget(provider),
+        !isOpenAiOperatedResponsesDestination(provider)
+          && !((provider.authMode ?? "key") === "key" && provider.allowEncryptedV2AgentTasks === true),
       );
-      const unnormalizedBody = stripDisabledVerbosity(
+      let finalBody = stripDisabledVerbosity(
         stripDisabledReasoningSummaries(
           normalizeConfiguredReasoningSummaryDelivery(sanitizedBody, provider, parsed.modelId),
           provider,
@@ -2405,15 +2578,26 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         parsed.modelId,
       );
       // Normalize the wire model before deriving model-dependent transport metadata.
-      const finalBody =
+      if (
         provider.modelSuffixBracketStrip
-          && unnormalizedBody !== null
-          && typeof unnormalizedBody === "object"
-          && !Array.isArray(unnormalizedBody)
-          && typeof (unnormalizedBody as { model?: unknown }).model === "string"
-          ? { ...(unnormalizedBody as Record<string, unknown>), model: stripBracketedModelSuffix((unnormalizedBody as { model: string }).model) }
-          : unnormalizedBody;
+        && finalBody !== null
+        && typeof finalBody === "object"
+        && !Array.isArray(finalBody)
+        && typeof (finalBody as { model?: unknown }).model === "string"
+      ) {
+        finalBody = {
+          ...(finalBody as Record<string, unknown>),
+          model: stripBracketedModelSuffix((finalBody as { model: string }).model),
+        };
+      }
+      if (parsed._compactionRequest !== true && shouldInjectNonOpenAIToolCatalogNudge(provider)) {
+        finalBody = applyRoutedResponsesToolCatalogNudge(finalBody, parsed);
+      }
+      // Last body write before serialization: an upstream that caps output far below the model
+      // ceiling truncates long answers unless the caller states a budget, and Codex never does.
+      finalBody = applyConfiguredResponsesMaxOutputTokens(finalBody, provider, parsed.modelId);
       if (isCanonicalOpenAiForwardProvider(provider)) {
+        finalBody = addCanonicalForwardResponsesLiteMetadata(finalBody, incoming);
         const routingHeaders = new Headers(headers);
         applyCodexRoutingHint(routingHeaders, finalBody);
         // Static headers may use mixed casing. Remove every stale spelling
@@ -2440,9 +2624,29 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // HTTP and the WebSocket outbound, because the WS path transports this same request
       // instead of rebuilding it.
       const body = JSON.stringify(finalBody);
+      const bodyBytes = Buffer.byteLength(body, "utf8");
+      persistKimiToolSchemaCatalog({
+        body: finalBody,
+        provider,
+        modelId: parsed.modelId,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+        url,
+      });
+      debugResponsesOutboundShape({
+        url,
+        provider,
+        model: parsed.modelId,
+        body: finalBody,
+        bodyBytes,
+        convertedCustomToolNames: convertedRoutedCustomToolNames,
+        convertedToolSearchNames: convertedRoutedToolSearchNames,
+        convertedNamespaceAliases: convertedRoutedNamespaceToolAliases,
+        kimiToolSchemaLowering: glmKimiCompatibility.kimiToolSchemaLowering,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+      });
       const releaseBodyObservation = translatorBudget.observeExternallyCapped(
         "passthrough_serialization",
-        Buffer.byteLength(body, "utf8"),
+        bodyBytes,
       );
       return {
         url,
@@ -2450,6 +2654,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         headers,
         body,
         releaseBodyObservation,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
         ...(convertedRoutedCustomToolNames ? { convertedRoutedCustomToolNames } : {}),
         ...(routedCustomToolRepairNames ? { routedCustomToolRepairNames } : {}),
         ...(convertedRoutedToolSearchNames ? { convertedRoutedToolSearchNames } : {}),
