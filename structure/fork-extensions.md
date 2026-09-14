@@ -10,6 +10,10 @@ Fork 模块不能绕过上游的认证、路由、translator budget、continuati
 客户端终态。第三方兼容只在目标 Provider、adapter、模型和 auth mode 同时满足条件时启用；
 OpenAI 运营目的地和 ChatGPT forward 继续使用上游原生协议。
 
+`src/server/responses/core.ts` 的 Fork one-shot agent-task recovery 使用官方共享发送预算。
+恢复重放最多发送一次，并通过 final-recovery permit 与 `onSendsConsumed` 记录消耗；
+预算不允许发送时保留原 transient 响应。只有取得替代响应后才取消旧响应。
+
 ## 模块职责
 
 | 模块 | 当前职责 |
