@@ -4,6 +4,11 @@ import {
   expandPreviousResponseInput,
   rememberResponseState,
 } from "../../src/responses/state";
+import {
+  CODEX_TEXT_GUARDED_BUDGET_POLICY,
+  createRequestExecutionBudget,
+} from "../../src/lib/request-execution-budget";
+import type { TransientSendBudget } from "../../src/lib/upstream-retry";
 import { resetAgentTaskRecoveryState } from "../../src/server/responses/agent-task-recovery";
 import { handleResponses } from "../../src/server/responses/core";
 import type { OcxConfig } from "../../src/types";
@@ -26,12 +31,13 @@ function post(
   headers: HeadersInit,
   abortSignal?: AbortSignal,
   extraBody: Record<string, unknown> = {},
+  sendBudget?: TransientSendBudget,
 ): Promise<Response> {
   return handleResponses(new Request("http://localhost/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json", ...Object.fromEntries(new Headers(headers)) },
     body: JSON.stringify({ model, input, stream: false, ...extraBody }),
-  }), config, { model: "", provider: "" }, { abortSignal });
+  }), config, { model: "", provider: "" }, { abortSignal, sendBudget });
 }
 
 describe("fork agent task recovery (strict backend ciphertext)", () => {
@@ -52,6 +58,7 @@ describe("fork agent task recovery (strict backend ciphertext)", () => {
     let nativeAttempts = 0;
     let recoveryAttempts = 0;
     const forwardedBodies: string[] = [];
+    const sendBudget = createRequestExecutionBudget(CODEX_TEXT_GUARDED_BUDGET_POLICY);
     globalThis.fetch = (async (_input, init) => {
       const body = typeof init?.body === "string" ? init.body : "";
       if (body.includes("capture_assignment")) {
@@ -72,6 +79,9 @@ describe("fork agent task recovery (strict backend ciphertext)", () => {
       "gpt-5.5",
       encryptedInput({ ciphertext: backendCiphertext }),
       codexHeaders(),
+      undefined,
+      {},
+      sendBudget,
     );
 
     expect(response.status).toBe(200);
@@ -80,6 +90,77 @@ describe("fork agent task recovery (strict backend ciphertext)", () => {
     expect(forwardedBodies.slice(0, 3).every(body => body.includes(backendCiphertext))).toBe(true);
     expect(forwardedBodies[3]).toContain(assignment);
     expect(forwardedBodies[3]).not.toContain(backendCiphertext);
+    expect(sendBudget.used).toBe(4);
+    expect(sendBudget.reserveSpent).toBe(true);
+  });
+
+  test("保留共享预算耗尽时的原始 transient 响应，且 oneShot 不再发送", async () => {
+    const backendCiphertext = `gAAAA${"B".repeat(128)}`;
+    const sendBudget = createRequestExecutionBudget({
+      ...CODEX_TEXT_GUARDED_BUDGET_POLICY,
+      finalRecoveryAllowance: 0,
+    });
+    let nativeAttempts = 0;
+    let recoveryAttempts = 0;
+    globalThis.fetch = (async (_input, init) => {
+      const body = typeof init?.body === "string" ? init.body : "";
+      if (body.includes("capture_assignment")) {
+        recoveryAttempts += 1;
+        return new Response(recoverySse("Return only ok."), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      nativeAttempts += 1;
+      return new Response("original native failure", { status: 502 });
+    }) as typeof fetch;
+
+    const response = await post(
+      routedConfig({ enabled: true }),
+      "gpt-5.5",
+      encryptedInput({ ciphertext: backendCiphertext }),
+      codexHeaders(),
+      undefined,
+      {},
+      sendBudget,
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe("original native failure");
+    expect(nativeAttempts).toBe(3);
+    expect(recoveryAttempts).toBe(1);
+    expect(sendBudget.used).toBe(3);
+    expect(sendBudget.reserveSpent).toBe(false);
+  });
+
+  test.each([
+    ["502", () => new Response("replayed native failure", { status: 502 })],
+    ["connection reset", () => Promise.reject(Object.assign(new TypeError("socket hang up"), { code: "ECONNRESET" }))],
+  ])("oneShot 遇到 %s 时只发送一次", async (_name, fourthNativeResponse) => {
+    const backendCiphertext = `gAAAA${"C".repeat(128)}`;
+    let nativeAttempts = 0;
+    globalThis.fetch = ((_input, init) => {
+      const body = typeof init?.body === "string" ? init.body : "";
+      if (body.includes("capture_assignment")) {
+        return Promise.resolve(new Response(recoverySse("Return only ok."), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }));
+      }
+      nativeAttempts += 1;
+      if (nativeAttempts <= 3) return Promise.resolve(new Response("original native failure", { status: 502 }));
+      return Promise.resolve(fourthNativeResponse());
+    }) as typeof fetch;
+
+    const response = await post(
+      routedConfig({ enabled: true }),
+      "gpt-5.5",
+      encryptedInput({ ciphertext: backendCiphertext }),
+      codexHeaders(),
+    );
+
+    expect(response.status).toBe(502);
+    expect(nativeAttempts).toBe(4);
   });
 
   test("does not call recovery for a backend-encrypted native child when the opt-in is disabled", async () => {
