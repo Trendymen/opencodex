@@ -1585,6 +1585,7 @@
     "account-selection-config.test.ts": "server",
     "ci-gui-if-changed.test.ts": "ci-workflows",
     "responses-hosted-tool-conflicts.test.ts": "responses",
+    "responses-native-compact-endpoint.test.ts": "responses",
     "ws-native-injection.test.ts": "responses",
     "ws-native-result-continuations.test.ts": "responses",
     "ws-native-steering.test.ts": "responses",
