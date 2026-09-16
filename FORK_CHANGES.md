@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.55.0`（`1cc89cf88c39160e4bb1ee21f0fd37404dd6930b`）。
+- 上游基线：`v2.56.0`（`e4a8539b957b7ae7cd278666f0364eb0f82d4ac3`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -16,7 +16,7 @@
 在上游已有的 Codex 请求头转发与 WebSocket metadata 处理上，Fork 补充 HTTP 入站 Lite 标识到出站 body 的映射：使用 Codex 账号转发到官方 ChatGPT 后端时，若 `x-openai-internal-codex-responses-lite` 请求头为 `true`，将缺失的 `client_metadata.ws_request_header_x_openai_internal_codex_responses_lite` 补为字符串 `"true"`，使上游 WebSocket `response.create` 帧保留该标识。
 保留已有 metadata 字段和显式 Lite 值，不修改调用方原始 body；请求头缺失或值不是 `true`、已存在的 `client_metadata` 不是普通对象时不补写。`gpt-5.3-codex-spark` 的专属 Lite 禁用已随官方 `v2.53.0` 退休，手工提供该 ID 时按普通官方转发请求处理，不再删除 Lite header 或 body metadata。公共 OpenAI API-key 提供方与第三方 forward 不参与此映射。
 
-代码：`src/adapters/openai-responses.ts` 的 `addCanonicalForwardResponsesLiteMetadata()`。
+代码：`src/adapters/openai-responses/passthrough.ts` 的 `addCanonicalForwardResponsesLiteMetadata()`。
 测试：`tests/codex-integration/codex-responses-lite-metadata.test.ts`，覆盖请求头转发、映射边界、原始输入保真与上游 WebSocket 帧；使用模拟 WebSocket，不代表真实服务端验收。
 
 ### 模型家族与官方目的地判断
@@ -38,7 +38,7 @@ Fork 补充第三方 Responses 的消息转换，并保留以下 schema 和历�
 OpenAI 运营目标，以及显式设置 `allowEncryptedV2AgentTasks=true` 的 key-auth 直接 relay 保留注解。combo 成员不继承该直接路由例外，发送前刷新 key selection 后仍执行清理，原 route/global 配置保持不变。
 这项清理不改变密文 guard、strict-backend 分类或 recovery/auth，也不保证恢复旧异常密文。真实 GLM 小型请求已验证注解清理和明文工具参数，尚不代表 Codex App 子任务全链路验收。
 
-代码：`src/fork/glm-kimi-compat.ts` 复用官方 `src/adapters/routed-agent-messages.ts` 的明文消息转换，schema 清理位于 `src/adapters/responses-tool-schema.ts`；通过 `src/adapters/openai-responses.ts` 和 `src/server/responses/core.ts` 接线。旧 `opencode-go.ts` 已由官方通用转换模块替代，不恢复重复实现。
+代码：`src/fork/glm-kimi-compat.ts` 复用官方 `src/adapters/routed-agent-messages.ts` 的明文消息转换，schema 清理位于 `src/adapters/responses-tool-schema.ts`；通过 `src/adapters/openai-responses/passthrough.ts`、`src/adapters/openai-responses/tool-schema.ts` 与 `src/server/responses/request-transport.ts` 接线。旧 `opencode-go.ts` 已由官方通用转换模块替代，不恢复重复实现。
 测试：`tests/adapters/routed-agent-messages.test.ts`、`tests/providers/fork-glm-kimi-compat.test.ts`、`tests/providers/fork-kimi-schema-compiler.test.ts`、`tests/providers/fork-zhipu-glm-schema-lowering.test.ts`、`tests/providers/fork-trailing-user-turn-compat.test.ts`、`tests/providers/fork-volcengine-empty-assistant-content.test.ts`、`tests/responses/openai-responses-passthrough.test.ts`、`tests/server/agent-task-recovery-combo.test.ts`。
 
 ### 可配置的 agent_message 明文格式
@@ -64,7 +64,7 @@ OpenAI 运营目的地与 GPT/OpenAI 模型硬排除，已有 phase 原样保留
 Codex 桌面端只把非 code span 里的 `:codex-annotation{index="N"}` 渲染成注解 chip，而客户端自带的说明模板把示例写成反引号形式，模型照着抄就只得到行内代码。Fork 在 OCX 侧补两处：入站按逐字指纹改写客户端的 `# Response annotations:` 说明块，保留选中项 JSON、`</response-annotations>` 之后的内容和用户 `## My request:` 原文，只把示例改成裸写并补一句"不要包反引号、chip 只在不在 code span 里时渲染"；输出侧去掉同一行内配对、且内容恰为一条规范指令的 code span 反引号。围栏与缩进代码块（含引用块、列表内、四空格缩进、CRLF 行）、夹带其他内容的片段、客户端会拒绝的编号和反引号之外的文本一律逐字保留；说明块措辞认不出来时整段放过并记一次 `unrecognized`。
 已知边界：输出侧不按本轮注解数量启用，模型在无注解轮刻意演示行内代码形式时反引号也会被去掉；反引号按行配对，跨行 code span 不参与判定；native 直通只经过入站改写，输出侧兜底只在路由路径生效；客户端 chip 渲染不在本仓库，未做真机验收。
 
-代码：`src/server/responses/annotation-instructions.ts`、`src/responses/annotation-directive.ts`，接线在 `src/server/responses/core.ts` 的解析前处理与 `src/bridge.ts` 的 delta 链、消息收尾和非流式路径。
+代码：`src/server/responses/annotation-instructions.ts`、`src/responses/annotation-directive.ts`，接线在 `src/server/responses/request-prepare.ts` 的解析前处理，以及 `src/bridge/sse.ts` 的 delta 链、消息收尾和 `src/bridge/response-json.ts` 的非流式路径。
 测试：`tests/server/annotation-instructions.test.ts`、`tests/responses/annotation-directive.test.ts`、`tests/adapters/bridge.test.ts`。
 
 ### 第三方工具任务的用户可见进度契约
@@ -82,7 +82,7 @@ Codex 桌面端只把非 code span 里的 `:codex-annotation{index="N"}` 渲染�
 OpenAI 兼容 Chat 和原生 Responses 路由中，当前可见 Codex `apply_patch` 或已识别的 code-mode `exec` 时，非 OpenAI 工具目录提示要求同一文件的补丁块按源码从上到下排列。遇到 `Failed to find expected lines` 时，提示模型检查补丁块倒序、重读当前文件，必要时拆成独立小补丁。
 Kiro 当前通过已识别的 code-mode `exec` 接收该提示，仅有直接 `apply_patch` 的目录不适用。工具不可见或属于其他 namespace 时不据同名推断补丁能力。提示不重排补丁、不解析或改写 `exec` JavaScript、不修改非空失败输出，也不自动重试。
 
-代码：`src/adapters/tool-catalog-nudge.ts`、`src/adapters/kiro/payload.ts`，复用 `src/adapters/openai-responses.ts` 的工具提示入口。
+代码：`src/adapters/tool-catalog-nudge.ts`、`src/adapters/kiro/payload.ts`，复用 `src/adapters/openai-responses/passthrough.ts` 的工具提示入口。
 测试：`tests/adapters/tool-catalog-nudge.test.ts`、`tests/adapters/adapter-usage.test.ts`、`tests/responses/openai-responses-passthrough.test.ts`。
 
 ### spawn_agent fork_turns 字段说明与修复
@@ -92,14 +92,14 @@ Kiro 当前通过已识别的 code-mode `exec` 接收该提示，仅有直接 `a
 去引号规则只支持普通 object 参数 schema 中仅含 `type: "string"` 和可选字符串 description 的字段，跳过引用、组合、enum/pattern 等未知约束。整数候选限于 `1..9007199254740991` 的无前导零十进制字符串，超范围值不推断或改写为其他轮次。
 修复只替换该字段的字符串片段，保留其余参数原文；原始参数中存在重复的顶层 `fork_turns` 键时跳过去引号，其他已有参数转换仍按原规则处理。
 
-代码：`src/fork/spawn-agent-compat.ts`、`src/adapters/openai-responses.ts`、`src/responses/function-call-compat.ts`。
+代码：`src/fork/spawn-agent-compat.ts`、`src/adapters/openai-responses/passthrough.ts`、`src/responses/function-call-compat.ts`。
 测试：`tests/responses/openai-responses-passthrough.test.ts`、`tests/responses/responses-function-tool-repair.test.ts`。
 
 ### Nested code-mode 工具修复
 
 上游已将裸 `exec_command` / `apply_patch` 接入统一 exec，并在 `v2.52.0` 增加 `default.` namespace 的请求有界归一化。Fork 额外修复 `functions.exec` / `web__run`，要求当前 turn 的 `functions` namespace 内恰有一个 `custom:exec`，且 lowering 来源一致。归一化只使用调用方明确声明的 bare tool 集；nested-exec 的延迟、拒绝和 continuation cache 门禁继续生效。
 普通 `function:exec`、顶层 `custom:exec`、其他 namespace 或多重声明不授权该修复。碎片事件与 passthrough SSE 原子缓冲；畸形、歧义、重复、超预算调用交给 undeclared-tool guard。
-Continuation cache 仅在客户端收到有效 terminal 后提交；有界 JSON 在 inspection 仍有效时完成校验和缓存提交。
+Continuation cache 仅在客户端收到有效 terminal 后提交；有界 JSON 在 inspection 仍有效时完成校验和缓存提交。原生路由在 `passthrough-dispatch.ts` 暂存候选，由 `passthrough-delivery.ts` 的最终客户端终态确认；adapter 流式与有界事件分别在 `run-turn-execution.ts`、`adapter-delivery.ts` 接入同一修复。
 code-mode 历史输出另要求字符串 `instructions`、唯一 bare unnamespaced `custom_tool_call(name=exec)` 与对应输出。同一 `call_id` 与 function、local-shell 或 standalone output 碰撞时视为歧义，不改写非 custom exec 输出。
 
 代码：`src/responses/nested-exec-call-repair.ts`、`src/responses/nested-exec-adapter-events.ts`、`src/server/responses-nested-exec-call-repair.ts`、`src/chat/nested-exec-eligibility.ts`、`src/adapters/responses-code-mode.ts`、`src/adapters/exec-tool-result-normalize.ts`。
@@ -125,7 +125,7 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 - 自定义模型替换相同 Provider/模型的发现行时，管理 API 保留官方发现得到的 `pricingStatus`；免费、付费和未分类三种状态不互相替换。该字段只用于管理 API、CLI 和 GUI 筛选，不写入 Codex catalog。
 - 配置进入 salvage fallback 时复用完整文件诊断；`customModels` 规范化警告与官方 `codexPool` 非法值警告会同时保留，不因挽救其他 section 而丢失。
 
-代码：`src/config/custom-models.ts`、`src/config.ts`、`src/server/management/model-routes.ts`，router、catalog、CLI 的窄接线。
+代码：`src/config/custom-models.ts`、`src/config/schema/`、`src/config/diagnostics.ts`、`src/config/persist-unlocked.ts`、`src/config/save.ts`、`src/server/management/model-routes.ts`，router、catalog 的 gather/derive owners 与 CLI 的窄接线。
 测试：`tests/config/fork-custom-model-config-schema.test.ts`、`tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts`、`tests/codex-integration/catalog-free-pricing-status.test.ts`。
 
 ### Routed custom tool output 字符串化
@@ -154,6 +154,7 @@ Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预�
 
 官方 `v2.53.0` 已保留 raw content 和 Provider summary provenance，但不把 content-channel reasoning 投影到 summary。Fork 继续保留 opaque terminal 与 raw content；仅在客户端显式请求 `reasoning.summary` 时，为第三方 reasoning 补完整 summary part 生命周期。Provider 的 `showThinkingSummary` 默认值本身不触发这项投影。
 同一历史转向原生 OpenAI GPT 时，只删除由第三方 `reasoning_text` 支撑的 opaque token，保留真正的 OpenAI blob。summary 只追加 `summary_text`，保留 `reasoning.content`、原始字段与 replay state。
+入站 reasoning 缺少 `summary` 时，沿用官方 `sanitizeReasoningInputContent()` 补 `summary: []`；已有 summary 保持原值。该字段补全与 Fork 的 opaque token 清理同时生效，覆盖见 `tests/providers/deepseek-reasoning-replay.test.ts` 和 `tests/providers/fork-deepseek-opaque-reasoning.test.ts`。
 有状态 rewrite 按第三句或 500 code point 中先到的边界分段，每个 `summary_index` 独立闭合。
 EOF、稀疏 terminal、failed/incomplete 会先收尾；terminal-only reasoning 尾部仍投影。同一 item 内带重复整数 `sequence_number` 的 delta 被去重，`response.output_item.done` 后的迟到 delta 不重开已关闭 item。序号用 `Set<number>` 精确记录，每个唯一序号按 32 字节计入 `translatorBudget`；重复序号不重放，乱序的未见序号仍会保留。调用方传入的预算由同一请求的 client 与 replay projection 共享；独立 rewrite 在首个序号到达时创建默认 32 MiB 预算，并在 terminal、`flush` 或 `dispose` 时释放和销毁。超限走 `translation_buffer_limit`。重复/迟到 part 不重开 index，终态后迟到 close 被抑制，空 part 不造 `**Thinking**`，SSE `event:` 与 JSON `type` 一致。
 SSE 与有界 JSON continuation cache 都记录客户端实际收到的摘要形状，并保留官方 inspector 的稀疏 output 重建与已确定的 response ID；完整历史回传不因摘要格式不同而重复追加工具调用，Copilot 固定首个 ID 后仍能用该 ID 续接。首个失败终态后的 completed 不写缓存，重复 completed 不覆盖首份候选。
@@ -161,7 +162,7 @@ SSE 与有界 JSON continuation cache 都记录客户端实际收到的摘要形
 
 规范 `opencode-go` 预设新增 `preserveResponsesReasoningContent`：在此之前，该 Provider 的 Responses 回放按默认规则把 reasoning 正文清空；Console Go 对一条 `deepseek-flash` 续轮返回 HTTP 400，报错原文为 `The reasoning_text in the thinking mode must be passed back to the API`。清空与该 400 的因果关系没有做过 live 复现，属机制推断。该开关是 registry 缺省，仅在该字段缺失时回填，配置里显式 `false` 仍然优先；作用域为 Provider 级，与 `deepseek`、`zhipu-bigmodel-responses` 两个预设一致，同一 lane 的其他 Responses 模型（`gpt-5.6-luna`、`grok-4.6`、`muse-spark-1.2/1.3-contributor`）是否接受保留回放尚未验证。
 
-代码：`src/server/responses-reasoning-summary-rewrite.ts`、`src/server/responses/core.ts`、`src/adapters/openai-responses.ts`、`src/providers/registry.ts`。
+代码：`src/server/responses-reasoning-summary-rewrite.ts`、`src/server/responses/passthrough-dispatch.ts`、`src/server/responses/passthrough-delivery.ts`、`src/adapters/openai-responses/reasoning.ts`、`src/providers/registry/entries-core.ts`。
 测试：`tests/providers/deepseek-reasoning-replay.test.ts`、`tests/providers/opencode-go-luna-wire.test.ts`、`tests/responses/responses-original-field-preservation.test.ts` 及同目录 `responses-reasoning-summary-*.test.ts`。
 
 ### SSE block rewrite flush 与终态兼容
@@ -171,14 +172,14 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 保留 Volcengine 默认开启、显式 `false` 关闭的 snapshot repair；客户端与 Provider 开关独立，沿用上游 Grok framing。
 裸顶层 upstream error 保留分类和状态码；message-only nested error 沿用原始 frame；legacy/eager 终态后的重复 `[DONE]` 只发送一枚。
 
-代码：`src/server/sse-payload-rewrite.ts`、`src/server/relay.ts`、`src/server/relay-eager.ts`、`src/server/responses/core.ts`。
+代码：`src/server/sse-payload-rewrite.ts`、`src/server/relay.ts`、`src/server/relay-eager.ts`、`src/server/responses/passthrough-delivery.ts`。
 测试：`tests/responses/fork-sse-block-rewrite-flush.test.ts`、`tests/server/fork-relay-eager-flush.test.ts`、`tests/server/fork-overload-error-eof-fidelity.test.ts`、`tests/responses/responses-snapshot-repair-server.test.ts`、`tests/responses/sse-failed-tail.test.ts`。
 
 ### Standalone web search 能力注入
 
 在生成的 Codex Provider table 写入 `supports_standalone_web_search = true`；客户端启用 `[features].standalone_web_search` 后可用自身的 `exec` / `web__run` 路径。
 
-代码：`src/codex/inject.ts`。相邻测试：`tests/codex-integration/codex-inject-integration.test.ts`；该 capability 尚缺专门断言和绑定当前实现的真实 App 验收。
+代码：`src/codex/inject.ts` 入口与 `src/codex/inject/config-toml.ts` 的 Provider table 生成。相邻测试：`tests/codex-integration/codex-inject-integration.test.ts`；该 capability 尚缺专门断言和绑定当前实现的真实 App 验收。
 
 ### 智谱 BigModel Codex 模型发现
 
@@ -186,7 +187,7 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 其他 Provider 保持默认 `data[].id`；沿用全局 2,000 条上限，无额外 64 条限制。
 上游 `zhipu-bigmodel-responses` 静态预设未替代该动态目录；两种 ID 不同，不自动迁移用户配置。
 
-代码：`src/providers/model-discovery.ts`、`src/providers/registry.ts`。
+代码：`src/providers/model-discovery.ts`、`src/providers/registry/entries-core.ts`。
 测试：`tests/providers/zhipu-bigmodel-codex-provider.test.ts`。
 
 ### 原生加密子任务恢复接力
@@ -204,7 +205,7 @@ Slow 5xx、abort、直接成功、非 transient 和非原生 direct/combo 不触
 已准入的子到父 `MESSAGE` 在超时重试耗尽后转为不含密文的未恢复提示：要求父任务向子任务请求重发，最多两次，仍失败则读取子任务最终回复。按调用者、父任务和密文隔离的短期状态支持后续历史重放；提示不代表正文已读或审查通过。`NEW_TASK`、父到子指令、拒绝、无效输出及取消仍保留原有失败边界。
 严格 envelope 只接受精确 header/author/recipient/task、两段 content 与单个完整 ciphertext；成功和恢复后的 body 都不得写入 continuation state。
 
-代码：`src/server/responses/encrypted-payload.ts`、`src/server/responses/agent-task-recovery.ts`、`src/server/responses/core.ts`、`src/lib/upstream-retry.ts`、`src/usage/log.ts`。
+代码：`src/server/responses/encrypted-payload.ts`、`src/server/responses/agent-task-recovery.ts`、`src/server/responses/request-prepare.ts`、`src/server/responses/passthrough-dispatch.ts`、`src/lib/upstream-retry.ts`、`src/usage/log.ts`。
 测试：`tests/server/fork-agent-message-strict-envelope.test.ts`、`tests/server/fork-agent-task-recovery-backend.test.ts`、`tests/server/fork-agent-task-recovery-body-ceiling.test.ts`、`tests/server/agent-task-recovery-routed-backend.test.ts`。
 
 ### key-auth Responses 的输出预算补全
@@ -212,7 +213,7 @@ Slow 5xx、abort、直接成功、非 transient 和非原生 direct/combo 不触
 上游只在 `openai-chat` 上使用 `defaultMaxOutputTokens` 与 `modelMaxOutputTokens`。Codex 不发送 `max_output_tokens`，上游自身默认值又可能远低于模型上限（DeepSeek 的 Responses 路由为 65,536），长回答因此以 `incomplete: max_output_tokens` 提前结束。
 Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提供时按模型级、provider 级顺序取配置值，调用方显式值优先；两级都没有配置就保持上游默认。
 `authMode: "forward"` 不注入，ChatGPT 转发后端不接受该参数。
-代码：`src/adapters/openai-responses.ts` 的 `applyConfiguredResponsesMaxOutputTokens()`。
+代码：`src/adapters/openai-responses/passthrough.ts` 的 `applyConfiguredResponsesMaxOutputTokens()`。
 测试：`tests/responses/openai-responses-passthrough.test.ts`，覆盖未配置时不注入、模型级覆盖 provider 默认、调用方值优先与 forward 不注入。
 文档：`docs-site` 的 provider 配置参考与 `structure/config.md` 已同步。
 
@@ -221,7 +222,7 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 官方 `v2.54.0` 已把第一方 canonical `deepseek-flash` 标记为原生多模态，并让未单独验证的兼容别名继续走 sidecar。Fork 继续保留 2026-09-10 的 legacy ID 图片能力证据：`deepseek-v4-flash` 直连 `POST /chat/completions` 与 Codex 实际使用的 `POST /responses`（`input_image`），携带纯色图均返回 200，模型在两条线路上都从像素答出颜色；`deepseek-v4-flash-vision-exp` 对照返回相同答案。
 因此 Fork 相对官方只额外让 `deepseek-v4-flash` 兼容别名声明 `["text", "image"]` 并绕过 sidecar；canonical `deepseek-flash` 与 vision preview 的原生图片能力沿用官方，`deepseek-chat` 和 `deepseek-reasoner` 继续使用 sidecar。仓库内 2026-08-01 关于占位文本的旧记录不再作为当前能力依据。
 生效边界：`routedProviderConfig()` 把 registry 与配置中的 `noVisionModels` 取并集；用户配置仍显式列出 `deepseek-flash` 或 `deepseek-v4-flash` 时，需要删除对应条目才会启用直连图片。
-代码：`src/providers/registry.ts` 的 deepseek 条目。
+代码：`src/providers/registry/entries-core.ts` 的 deepseek 条目。
 测试：`tests/providers/provider-registry-parity.test.ts` 覆盖 registry 声明与合并后的路由判定；`tests/routing/router.test.ts` 与 `tests/routing/routing-capability-model-matching.test.ts` 按当前模型分类断言 `deepseek-flash` / `deepseek-v4-flash` 可直连图片，`deepseek-reasoner` 仍服从 `noVisionModels`，并覆盖 registry 图片能力模型可满足图片策略要求。
 
 ## 当前维护、安装与测试差异
@@ -264,12 +265,12 @@ Fork Tag 不可变，同基线 revision 单调，官方 Tag 必须保持原 type
 
 Fork 暂时固定 Bun 与 `@types/bun` 为 `1.4.0`，lockfile、Docker 镜像和显式 workflow 版本同步。官方 `v2.49.0` 固定的 `1.4.2` 在本机默认并发门禁中重复发生 `SIGSEGV`，干净官方基线也复现；用户已授权这一运行时差异。该现象不证明其他平台同样失败，升级前需重新验证。
 
-沿用上游 domain 布局、runner、并发、shard 和 timeout。Fork 保留 launcher/update 的真实 Node executable 与 PATH 可用性检查，以及 Responses state 的定向回归，不维护旧 runner 拓扑。
+沿用上游 domain 布局、runner、并发、shard、timeout 与文件大小门禁。超限测试按独立组拆到同 domain，并双登记官方布局；历史长计划按 Task 边界拆页，保留全部原文。Fork 保留 launcher/update 的真实 Node executable 与 PATH 可用性检查，以及 Responses state 的定向回归，不维护旧 runner 拓扑。
 HTTP/SSE fixture 显式隔离 canonical ChatGPT 上游 WebSocket，避免真实外网握手影响本地测试；需要本地 WebSocket 的鉴权与 profile admission 测试保留真实客户端。共享隔离入口为 `tests/helpers/http-only-codex-websocket.ts`，不改变产品的 WS 选择或回退行为。
 CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；采用上游 Docker job/filter/aggregate。
 官方 Tag 来源、marker 与 ancestry 必须一致；缺失或冲突不能通过放宽测试解决。
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
-沿用上游 `v2.55.0` 的 `structure/manifest.json`、`structure/INDEX.md` 与 `bun run structure:check` 作为结构 SSOT；Fork 的 `src/fork/` 由 `structure/fork-extensions.md` 描述，不恢复已删除的数字前缀 structure 文件或旧式内联 Decision Log。
+沿用上游的 `structure/manifest.json`、`structure/INDEX.md` 与 `bun run structure:check` 作为结构 SSOT；Fork 的 `src/fork/` 由 `structure/fork-extensions.md` 描述，不恢复已删除的数字前缀 structure 文件或旧式内联 Decision Log。
 
 测试：`tests/ci-workflows/fork-ci-official-baseline.test.ts`、`tests/ci-workflows/fork-maintenance-truth.test.ts`、`tests/service/shutdown-launcher.test.ts`、`tests/update/update-stop-first.test.ts`、`tests/responses/responses-state.test.ts`。
 
