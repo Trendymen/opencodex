@@ -159,8 +159,12 @@ describe("fork agent task recovery (strict backend ciphertext)", () => {
       codexHeaders(),
     );
 
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(_name === "502" ? 502 : 429);
     expect(nativeAttempts).toBe(4);
+    if (_name === "connection reset") {
+      const body = await response.json() as { error?: { code?: string } };
+      expect(body.error?.code).toBe("upstream_reset_replay_refused");
+    }
   });
 
   test("does not call recovery for a backend-encrypted native child when the opt-in is disabled", async () => {
