@@ -26,7 +26,7 @@ OpenAI 运营目的地和 ChatGPT forward 继续使用上游原生协议。
 | `src/fork/spawn-agent-compat.ts` | 补充 `fork_turns` 工具字段说明，并只修复当前已授权 `spawn_agent` 的一层多余 JSON 字符串编码。 |
 | `src/fork/ark-quota-display.ts` | 将严格匹配的永久 Ark usage quota 429 投影为 Codex 可显示、不可重试的客户端错误。 |
 | `src/fork/outbound-debug.ts`、`src/fork/inbound-response-debug.ts` | 记录请求和响应结构摘要；文本样本要求单独授权。 |
-| `src/fork/debug-persistence.ts` | 对诊断 artifact 执行 containment、文件类型、单文件、总量、数量和保留期限制。 |
+| `src/fork/debug-persistence.ts` | 校验诊断文件路径和类型，按主日志分段及其引用工件执行 7 天、20 GiB 保留策略。 |
 | `src/fork/version-policy.mjs` | 解析和比较 `X.Y.Z-ben.N`，拒绝非规范 revision、降级和不合法 preview。 |
 
 ## 第三方消息与工具兼容
@@ -86,8 +86,14 @@ Response 文本或 reasoning 文本。文本样本同时要求 Provider debug �
 UTF-8 安全截断、每轮条数和总预算限制后写入引用型 artifact。
 
 `persistProviderDebugFile()` 对每个诊断根独立检查 canonical containment、symlink、普通文件和清理
-结果。单文件上限 4 MiB，总量 16 MiB，最多 256 个文件，保留 7 天。一个根无法枚举或清理时只
-影响该根的当次预算，不能阻塞另一个安全根；目标路径自身不安全时拒写。ownership 登记用于卸载
+结果。主日志及其引用工件按 4 MiB 分组，两根合计最多保留 20 GiB、7 天，不设文件数上限。
+新组按完整 4 MiB 预留容量，组内追加不得超过该额度；旧版数据按实际大小计入。达到任一限额时
+淘汰最旧的主日志分段及其引用工件，当前日期的旧分段也可淘汰；旧版日志按日期整组处理。
+新分段使用 UTC `YYYY-MM-DD/HH/groups/<group-id>/` 布局，两根中的同名组共享生命周期；
+主日志和 timeline 位于 `provider-debug`，文本工件位于 `provider-debug-artifacts`。
+清理先删除主日志，删除失败时保留其工件；仅剩工件的组仍计入容量并可重试清理。
+无关旁路条目不可安全盘点时保留并告警，不算入可管理数据容量，也不阻断安全主日志写入。
+目标路径自身不安全时拒写。ownership 登记用于卸载
 记账，不是 Provider debug 写入门槛；Kimi schema catalog 仍要求成功登记后才能写入。
 
 ## 版本与发布

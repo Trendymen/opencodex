@@ -15,7 +15,13 @@ import { join } from "node:path";
 import { debugProviderDiagnostic } from "../lib/debug";
 import { isDebugEnabled, isProviderTextDebugEnabled } from "../lib/debug-settings";
 import { redactSecretString } from "../lib/redact";
-import { persistProviderDebugFile } from "./debug-persistence";
+import {
+  abandonProviderDebugCaptureGroup,
+  beginProviderDebugCaptureGroup,
+  completeProviderDebugCaptureGroup,
+  persistProviderDebugCaptureArtifact,
+  persistProviderDebugFile,
+} from "./debug-persistence";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -511,34 +517,45 @@ export function persistInboundResponsesDebugSummary(args: {
   const textCaptureTruncated = observerSummary.textCaptureTruncated === true;
   const { textSamples: _s, textCaptureTruncated: _t, ...summary } =
     observerSummary as unknown as Record<string, unknown>;
-  const now = new Date();
-  const debugDay = now.toISOString().slice(0, 10);
-  const debugHour = String(now.getUTCHours()).padStart(2, "0");
-  const artifactDayDir = join("provider-debug-artifacts", debugDay, debugHour);
-  const timelineDayDir = join("provider-debug", debugDay, debugHour, "timelines");
+  const textPayload = args.writeArtifact !== false && textSamples.length > 0
+    ? textSamples.map((sample: { channel: string; kind: string; text: string }) => `${JSON.stringify(sample)}\n`).join("")
+    : undefined;
   let textRef: string | undefined;
-  if (args.writeArtifact !== false && textSamples.length > 0) {
-    textRef = join(artifactDayDir, `${Date.now()}-${randomUUID()}.jsonl`);
-    const payloadLines = textSamples
-      .map((sample: { channel: string; kind: string; text: string }) => `${JSON.stringify(sample)}\n`)
-      .join("");
-    if (!persistProviderDebugFile(textRef, payloadLines)) textRef = undefined;
-  }
   const sourceTimeline = summary.timeline as Array<Record<string, unknown>>;
   const timelineRows = sourceTimeline.filter(
     row => typeof (row as { type?: unknown }).type === "string"
       && String((row as { type?: unknown }).type).endsWith(".delta"),
   );
+  const timelinePayload = timelineRows.length > 0
+    ? timelineRows.map(row => `${JSON.stringify(row)}\n`).join("")
+    : undefined;
   let timelineRef: string | undefined;
-  if (timelineRows.length > 0) {
-    timelineRef = join(timelineDayDir, `timeline-${Date.now()}-${randomUUID()}.jsonl`);
-    const payloadLines = timelineRows.map(row => `${JSON.stringify(row)}\n`).join("");
-    if (persistProviderDebugFile(timelineRef, payloadLines)) {
+  const now = new Date();
+  const debugDay = now.toISOString().slice(0, 10);
+  const debugHour = String(now.getUTCHours()).padStart(2, "0");
+  const reserveBytes = Buffer.byteLength(textPayload ?? "", "utf8") + Buffer.byteLength(timelinePayload ?? "", "utf8");
+  const group = args.persist ? undefined : (textPayload || timelinePayload) ? beginProviderDebugCaptureGroup(reserveBytes) : undefined;
+  if (textPayload) {
+    textRef = group
+      ? persistProviderDebugCaptureArtifact(group, "artifact", textPayload)
+      : args.persist
+        ? join("provider-debug-artifacts", debugDay, debugHour, `${Date.now()}-${randomUUID()}.jsonl`)
+        : undefined;
+    if (textRef && !group && !persistProviderDebugFile(textRef, textPayload)) textRef = undefined;
+  }
+  if (timelinePayload) {
+    timelineRef = group
+      ? persistProviderDebugCaptureArtifact(group, "timeline", timelinePayload)
+      : args.persist
+        ? join("provider-debug", debugDay, debugHour, "timelines", `timeline-${Date.now()}-${randomUUID()}.jsonl`)
+        : undefined;
+    if (timelineRef && !group && !persistProviderDebugFile(timelineRef, timelinePayload)) timelineRef = undefined;
+    if (timelineRef) {
       summary.timeline = sourceTimeline.filter(
         row => !(typeof (row as { type?: unknown }).type === "string"
           && String((row as { type?: unknown }).type).endsWith(".delta")),
       );
-    } else timelineRef = undefined;
+    }
   }
   const entry: Record<string, unknown> = {
     ...summary,
@@ -546,6 +563,7 @@ export function persistInboundResponsesDebugSummary(args: {
     // pre-rewrite upstream feed from what Codex actually receives after OCX rewrites.
     ...(args.stage === "downstream-after-rewrite" ? { kind: "inbound-downstream-summary" } : {}),
     ...(args.stage ? { stage: args.stage } : {}),
+    ...(group ? { debugGroup: group.id } : {}),
     ...(textRef ? { textRef } : {}),
     timelineRef,
     ...(textCaptureTruncated ? { textCaptureTruncated: true } : {}),
@@ -562,10 +580,14 @@ export function persistInboundResponsesDebugSummary(args: {
   }
   // The in-memory DebugLogEntry remains a compact UI preview, while provider-debug.jsonl retains
   // the complete, already allowlisted structural evidence for an opt-in operator diagnostic.
-  debugProviderDiagnostic(
-    "openai-responses",
-    typeof entry.kind === "string" ? entry.kind : "inbound-sse-summary",
-    entry,
-    { durableFullLine: true },
-  );
+  try {
+    debugProviderDiagnostic(
+      "openai-responses",
+      typeof entry.kind === "string" ? entry.kind : "inbound-sse-summary",
+      entry,
+      { durableFullLine: true },
+    );
+  } finally {
+    if (group && !completeProviderDebugCaptureGroup(group)) abandonProviderDebugCaptureGroup(group);
+  }
 }
