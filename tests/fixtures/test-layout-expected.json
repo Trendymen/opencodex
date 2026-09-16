@@ -1371,5 +1371,6 @@
   "responses-tool-catalog.test.ts": "responses",
   "responses-hosted-tool-conflicts.test.ts": "responses",
   "account-selection-config.test.ts": "server",
-  "ci-gui-if-changed.test.ts": "ci-workflows"
+  "ci-gui-if-changed.test.ts": "ci-workflows",
+  "responses-native-compact-endpoint.test.ts": "responses"
 }
