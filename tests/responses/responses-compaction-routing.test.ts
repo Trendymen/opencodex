@@ -7,7 +7,7 @@ import { sessionLaneIdFromRequest } from "../../src/server/request-log-conversat
  * contract; every other gateway has to be driven as a plain summarizer, or Codex
  * fatals on a compaction turn that came back as an ordinary message.
  */
-import { afterEach, describe, expect, jest, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,11 +42,18 @@ import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 import { clearComboRecallForTests, recallComboForLane, rememberComboForLane } from "../../src/server/responses/combo-session-recall";
 import { captureConfigGeneration } from "../../src/lib/state-store-sweeper";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 
 const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
+
+beforeEach(() => {
+  installHttpOnlyCodexWebSocket();
+});
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  globalThis.WebSocket = originalWebSocket;
 });
 
 function keyProviderConfig(overrides: Partial<OcxProviderConfig> = {}): OcxConfig {

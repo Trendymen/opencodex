@@ -39,7 +39,7 @@ test("native GPT replay drops a raw third-party opaque reasoning blob but retain
   }, { stripRawContentBackedEncryptedContent: true }));
 
   expect(out).toEqual([
-    { type: "reasoning", id: "rs_deepseek", content: [] },
+    { type: "reasoning", id: "rs_deepseek", content: [], summary: [] },
     { type: "reasoning", id: "rs_openai", summary: [], encrypted_content: "gAAAA-openai-issued-state" },
   ]);
 
@@ -63,7 +63,7 @@ test("native GPT replay drops a raw third-party opaque reasoning blob but retain
       const body = JSON.parse(String(built.body)) as { input: Record<string, unknown>[] };
 
       expect(body.input).toEqual([
-        { type: "reasoning", id: "rs_interrupted_deepseek", content: [] },
+        { type: "reasoning", id: "rs_interrupted_deepseek", content: [], summary: [] },
         { type: "reasoning", id: "rs_prior_gpt", summary: [], encrypted_content: "gAAAA-openai-issued-state" },
         { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
       ]);
