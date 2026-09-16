@@ -670,6 +670,30 @@ describe("inbound upstream Responses debug observer", () => {
     expect(JSON.stringify(journal)).not.toContain("delta text must never enter the main summary");
   });
 
+  test("stores one captured summary and all of its references in the same durable group", () => {
+    setDebugSettings({ debug: true, providerText: true });
+    const observer = createInboundResponsesDebugObserver();
+    observer.notePayload({ type: "response.output_text.delta", delta: "grouped artifact text" });
+    observer.notePayload({ type: "response.reasoning_summary_text.delta", item_id: "rs_group", delta: "grouped timeline row" });
+
+    persistInboundResponsesDebugSummary({
+      observer,
+      host: "api.deepseek.com",
+      pathname: "/responses",
+      model: "deepseek-v4-flash",
+    });
+
+    const payload = inboundDebugPayload("inbound-sse-summary");
+    const group = payload.debugGroup;
+    expect(typeof group).toBe("string");
+    expect(payload.textRef).toContain(`/groups/${group}/`);
+    expect(payload.timelineRef).toContain(`/groups/${group}/`);
+    const journal = providerDebugLogPath().replace(/provider-debug\.jsonl$/, "");
+    expect(journal).toContain(`/groups/${group}/`);
+    expect(existsSync(join(testDir, payload.textRef as string))).toBe(true);
+    expect(existsSync(join(testDir, payload.timelineRef as string))).toBe(true);
+  });
+
   test("core captures the original upstream SSE lifecycle and persists only its structural summary", async () => {
     setDebugSettings({ debug: true, providerText: true });
     appendDebugLogLine("provider-debug ownership seed");

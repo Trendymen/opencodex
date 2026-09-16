@@ -113,9 +113,41 @@ describe("fork provider debug persistence", () => {
     appendDebugLogLine("fork-persist-after-threshold");
     expect(readFileSync(target, "utf8")).toBe(seeded);
     expect(statSync(target).size).toBeGreaterThan(4 * 1024 * 1024);
-    const siblings = readdirSync(dirname(target)).filter(name => name.endsWith(".jsonl"));
-    expect(siblings.length).toBeGreaterThan(1);
-    expect(siblings.some(name => readFileSync(join(dirname(target), name), "utf8")
-      .includes("fork-persist-after-threshold"))).toBe(true);
+    const rollover = providerDebugLogPath();
+    expect(rollover).not.toBe(target);
+    expect(readFileSync(rollover, "utf8")).toContain("fork-persist-after-threshold");
+  });
+
+  test("continues appending to the same rollover segment after the daily journal is full", () => {
+    appendDebugLogLine("ownership-seed");
+    const target = providerDebugLogPath();
+    const seedLine = JSON.stringify({ seq: 0, at: 0, line: "x".repeat(4096) });
+    const seeded = Array.from({ length: 1100 }, () => seedLine).join("\n") + "\n";
+    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+    writeFileSync(target, seeded, { mode: 0o600 });
+
+    appendDebugLogLine("rollover-first-marker");
+    appendDebugLogLine("rollover-second-marker");
+
+    const rollover = providerDebugLogPath();
+    expect(rollover).not.toBe(target);
+    const content = readFileSync(rollover, "utf8");
+    expect(content).toContain("rollover-first-marker");
+    expect(content).toContain("rollover-second-marker");
+  });
+
+  test("starts a fresh rollover segment when the previous one lacks room for the next line", () => {
+    const path = "provider-debug/2026-09-16/provider-debug.jsonl";
+    const limits = { append: true, maxFileBytes: 16, maxTotalBytes: 128, maxFiles: 16 };
+    expect(persistProviderDebugFile(path, "a".repeat(16), limits)).toBe(true);
+    expect(persistProviderDebugFile(path, "b".repeat(15), limits)).toBe(true);
+    expect(persistProviderDebugFile(path, "cc", limits)).toBe(true);
+
+    const directory = join(testDir, "provider-debug", "2026-09-16");
+    const rotations = readdirSync(directory)
+      .filter(name => name.startsWith("provider-debug-") && name.endsWith(".jsonl"))
+      .map(name => readFileSync(join(directory, name), "utf8"));
+    expect(rotations).toContain("b".repeat(15));
+    expect(rotations).toContain("cc");
   });
 });
