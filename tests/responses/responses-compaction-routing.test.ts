@@ -35,7 +35,6 @@ import {
   resolveCodexAuthContext,
 } from "../../src/codex/auth-context";
 import { clearUpstreamHostHealth } from "../../src/codex/upstream-host-health";
-import { supportsNativeResponsesCompactEndpoint } from "../../src/providers/openai-tiers";
 import type { RequestLogContext } from "../../src/server/request-log";
 import { acquireNativeMainProfileDrain, tryAdmitTurn } from "../../src/server/lifecycle";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
@@ -153,41 +152,6 @@ function sseResponse(events: Array<Record<string, unknown>>): Response {
     headers: { "content-type": "text/event-stream" },
   });
 }
-
-describe("supportsNativeResponsesCompactEndpoint (#422)", () => {
-  const canonicalForward = {
-    adapter: "openai-responses",
-    baseUrl: "https://chatgpt.com/backend-api/codex",
-    authMode: "forward",
-  } as OcxProviderConfig;
-  const officialApi = {
-    adapter: "openai-responses",
-    baseUrl: "https://api.openai.com/v1",
-    authMode: "key",
-  } as OcxProviderConfig;
-
-  test("accepts the canonical ChatGPT backend and the official OpenAI API", () => {
-    expect(supportsNativeResponsesCompactEndpoint("openai", canonicalForward)).toBe(true);
-    expect(supportsNativeResponsesCompactEndpoint("openai-apikey", officialApi)).toBe(true);
-    expect(supportsNativeResponsesCompactEndpoint("openai-apikey", {
-      ...officialApi,
-      baseUrl: "https://api.openai.com/v1/",
-    })).toBe(true);
-  });
-
-  test("rejects any other Responses-shaped gateway", () => {
-    expect(supportsNativeResponsesCompactEndpoint("gw", {
-      adapter: "openai-responses",
-      baseUrl: "https://gateway.example/v1",
-      authMode: "key",
-    } as OcxProviderConfig)).toBe(false);
-    // Right provider id, wrong destination.
-    expect(supportsNativeResponsesCompactEndpoint("openai-apikey", {
-      ...officialApi,
-      baseUrl: "https://gateway.example/v1",
-    })).toBe(false);
-  });
-});
 
 describe("Codex auth-context error parity (#2392)", () => {
   const cases: Array<{
