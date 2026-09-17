@@ -3969,6 +3969,56 @@ describe("configured Responses output budget", () => {
     expect(body).not.toHaveProperty("max_output_tokens");
   });
 
+  test("an injected model-specific budget is tightened to the remaining context window", () => {
+    // DeepSeek shares one 1M window between input and output. A fixed 370k reserve made a
+    // 680k conversation request 1.05M total and fail before generation started. The fill
+    // must keep its long-reasoning ceiling only while the current input leaves room for it.
+    const provider = {
+      ...keyProvider,
+      contextWindow: 100_000,
+      modelMaxOutputTokens: { "deepseek-v4-flash": 80_000 },
+    };
+    const body = JSON.parse(createResponsesPassthroughAdapter(provider).buildRequest({
+      modelId: "deepseek-v4-flash",
+      context: { messages: [{ role: "user", content: "x".repeat(4 * 40_000), timestamp: 0 }] },
+      stream: true,
+      options: {},
+      _rawBody: { model: "deepseek-v4-flash", input: "x".repeat(4 * 40_000) },
+    }, meta).body) as Record<string, unknown>;
+
+    expect(body.max_output_tokens).toBeLessThan(80_000);
+    expect(body.max_output_tokens).toBeGreaterThanOrEqual(512);
+  });
+
+  test("an injected budget falls back to the configured ceiling when input already overflows the window", () => {
+    const provider = {
+      ...keyProvider,
+      contextWindow: 100_000,
+      modelMaxOutputTokens: { "deepseek-v4-flash": 80_000 },
+    };
+    const body = JSON.parse(createResponsesPassthroughAdapter(provider).buildRequest({
+      modelId: "deepseek-v4-flash",
+      context: { messages: [{ role: "user", content: "x".repeat(4 * 99_000), timestamp: 0 }] },
+      stream: true,
+      options: {},
+      _rawBody: { model: "deepseek-v4-flash", input: "x".repeat(4 * 99_000) },
+    }, meta).body) as Record<string, unknown>;
+
+    // The remaining window is below the injected floor. The configured budget stays on the
+    // wire so the provider rejects an impossible turn instead of OCx inventing a budget the
+    // conversation has not earned.
+    expect(body.max_output_tokens).toBe(80_000);
+  });
+
+  test("an injected budget stays at the configured ceiling without a context window", () => {
+    const body = build({
+      ...keyProvider,
+      modelMaxOutputTokens: { "deepseek-v4-flash": 80_000 },
+    }, { model: "deepseek-v4-flash", input: "x".repeat(400_000) });
+
+    expect(body.max_output_tokens).toBe(80_000);
+  });
+
   test("forward mode never receives an injected budget", () => {
     const body = build({ ...provider, defaultMaxOutputTokens: 393_216 }, {
       model: "gpt-5.6-sol",
