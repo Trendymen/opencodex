@@ -68,6 +68,16 @@ test("local installer preserves an installed service and refuses a loaded manage
   expect(installer).toContain("Background service is still loaded after ocx stop");
 });
 
+test("local installer no longer changes debug settings and keeps the runtime call signatures aligned", async () => {
+  const installer = await readText("scripts/install-local.ts");
+  const main = installer.slice(installer.indexOf("export async function runLocalInstaller"));
+  expect(main).not.toContain("localInstallAfterReplace(");
+  expect(main).toContain("restartLocalInstall(serviceWasInstalled, {}, current.runtime)");
+  expect(installer).not.toContain("OCX_PROVIDER_TEXT_DEBUG");
+  expect(installer).not.toContain("ensureProviderDebugLaunchdDefault");
+  expect(installer).not.toContain("refreshProviderDebugLaunchd");
+});
+
 test("local installer chooses foreground start only when no service was installed", async () => {
   const module = await import("../../scripts/install-local");
   const choose = (module as unknown as {
