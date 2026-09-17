@@ -147,7 +147,7 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 官方 hosted web-search bridge 开启时，通过其现有 SSE 解析点观察首段与续接段的原始 payload；不把合成的搜索事件记为原始上游响应，也不重复触发后续入站观察。诊断回调异常不影响 bridge 转发。关闭 bridge 时保留原有 terminal-repair 观察路径。
 官方 `v2.54.0` 已负责为非 Ollama passthrough backend 启用 hosted bridge；Fork 只保留上述诊断观察和失败隔离，不复制 backend 选择逻辑。
 普通 Provider debug 只记录结构，不持久化请求正文、key、工具参数或 Response/reasoning 文本。
-文本样本要求 Provider debug 和独立、默认关闭的 `providerText` 同时开启，可经 `OCX_PROVIDER_TEXT_DEBUG=1`、`ocx debug provider-text on`、API 或 GUI 明确授权。
+文本样本要求 Provider debug 和独立、默认关闭的 `providerText` 同时开启，可经 `OCX_PROVIDER_TEXT_DEBUG=1`、`ocx debug provider-text on`、API、GUI 或 macOS `install:local` 明确授权。
 样本经脱敏并保存为引用型 artifact；每字符串默认 256B、上限 8KB，UTF-8 安全截断，每轮最多 512 条并受总预算约束。
 持久化入口统一使用分组保留策略：主日志及其引用工件按 4 MiB 分组，两个 debug 根合计最多保留 20 GiB（21,474,836,480 字节）、7 天，不限制文件数量。新组按完整额度预留容量，旧版数据按实际大小计入。达到容量或保留期上限时，淘汰最旧的主日志分段及其引用工件，当天旧分段也可淘汰，以继续捕获。清理先删除主日志，主日志删除失败则保留工件；旧版日期布局按日期整组清理并排除新分组，孤立工件仍可回收。轮转后的记录继续写当前分段，不再逐条创建 UUID 小文件。canonical containment、symlink、非普通文件与私有权限检查继续生效。无关旁路条目无法安全盘点时保留并告警，不纳入可管理数据容量，不阻断安全主日志写入。诊断失败不影响 relay。
 旧版本创建、尚无 ownership 元数据的非空 OpenCodex home，只有存在 `runtime-port.json`、`service-state.json` 等 OpenCodex 运行时标记时才会被收养。收养状态写入 owner 与 manifest，并在进程重启后继续生效。每次登记前重新读取两份磁盘元数据；缺失、损坏或收养状态不一致时不会信任进程内缓存。新 manifest 从空路径集开始；收养前已存在的目录、普通文件、symlink 或越界父路径不会进入 ownership manifest，也不会由 uninstall 作为自有路径删除。只有收养后新建的安全路径可登记。Provider debug 的登记只作记账、不是写入门槛：账本缺失、损坏或超过 64 KiB 元数据上限时仍继续写入本地抓包，预存容器同样接收。容量与保留期清理覆盖根内旧日志，并遵守主日志和引用工件的分组关系。Kimi schema 诊断仍把登记结果作为写入门槛。其他 config/runtime 写入器保持既有写入语义（登记失败照写）；仍在登记失败时拒写的是 Kimi schema 诊断；Windows 计划任务安装路径只在安装开始时 config root 原本不存在、且随后仍认领失败时中止安装。Provider debug 拒写时每个进程最多输出一次不含内容的告警。
@@ -223,7 +223,7 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 代码：`src/adapters/openai-responses/passthrough.ts` 的 `applyConfiguredResponsesMaxOutputTokens()`。
 测试：`tests/responses/openai-responses-passthrough.test.ts`，覆盖未配置时不注入、模型级覆盖 provider 默认、调用方值优先、按剩余上下文收紧预算、超窗时保留原值与 forward 不注入。
 文档：`docs-site` 的 provider 配置参考与 `structure/transports/responses.md` 已同步。
-该预算计算使用本地输入估算，不代替上游自己的上下文计费或截断决策；无有效窗口元数据时仍按原配置值发送。安装器不会代为开启 Provider debug。
+该预算计算使用本地输入估算，不代替上游自己的上下文计费或截断决策；无有效窗口元数据时仍按原配置值发送。
 
 ### DeepSeek V4 Flash 直连图片输入
 
@@ -247,7 +247,7 @@ stage/backup 对象身份、普通目录与 containment 必须可验证；恢复
 Windows wrapper 遇到 recovery marker 拒绝自动 restore；Node launcher 的失败提示仍沿用上游 warning-and-continue。
 安装目标识别包含活动服务与 Volta 实际包路径；服务从新包的绝对入口 repair/restart，并验证 readiness。
 Volta 登记同步与包替换共用事务，校验失败触发回滚，避免包已更新但 shim 或服务仍选择旧版本。
-本地安装不修改 debug 环境或 launchd plist。Provider debug 与 `providerText` 继续默认关闭，只能通过既有 CLI/API/GUI 显式开启。
+macOS 本地安装默认补 `OCX_DEBUG=1` 和 `OCX_PROVIDER_TEXT_DEBUG=1` 后 reload；`--no-restart` 只更新磁盘 plist，非 Darwin 保持环境。该默认值同时授权结构诊断与有界文本样本持久化。
 
 代码：`scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts`、`src/update/transactional-install.mjs`、`src/service/windows-taskxml.ts`。
 测试：`tests/ci-workflows/fork-install-local-*.test.ts`、`tests/ci-workflows/install-local.test.ts`、`tests/ci-workflows/install-local-vendor.test.ts`、`tests/windows/fork-windows-service-pending-transaction.test.ts`。
@@ -300,7 +300,7 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 
 - 合成测试和静态断言不替代真实 Provider/Codex App 验收。Standalone web search、真实 minted backend ciphertext + recovery SSE，以及 weekly quota、empty-assistant、custom model 的客户端终态仍需绑定具体实现验证。
 - Reasoning 合成事件没有统一分配新的 `sequence_number`；closed-state 到 terminal teardown 才释放。
-- Provider debug 的 ownership manifest 仍可能随 unique artifact 增长到 64 KiB 元数据上限；此后登记静默停止、抓包继续写入，代价是这段时间新建的抓包文件不再单独进入卸载清单（只能靠已登记目录的递归删除覆盖），不承诺自动压缩。旧 home 只有存在已知 OpenCodex 运行时标记时才会被收养；仅含通用 `config.json` 等文件的目录继续拒绝。收养前已存在的 Kimi catalog 目录不会被接管，对应写入会继续拒绝，需由用户迁移或清理该路径。独立 `ocx service repair/install` 与本地安装不再改写 Provider debug 环境值。
+- Provider debug 的 ownership manifest 仍可能随 unique artifact 增长到 64 KiB 元数据上限；此后登记静默停止、抓包继续写入，代价是这段时间新建的抓包文件不再单独进入卸载清单（只能靠已登记目录的递归删除覆盖），不承诺自动压缩。旧 home 只有存在已知 OpenCodex 运行时标记时才会被收养；仅含通用 `config.json` 等文件的目录继续拒绝。收养前已存在的 Kimi catalog 目录不会被接管，对应写入会继续拒绝，需由用户迁移或清理该路径。独立 `ocx service repair/install` 可能覆盖本地安装写入的 `OCX_DEBUG=1`。
 - 安装与恢复的 isolated/unit/static 测试不证明 Windows PowerShell/junction、真实全局替换与服务恢复均已验收。PID reuse、断电持久化及路径检查到 rename/remove 的竞态仍是边界；损坏安装下的 launcher 启动仍需动态验证。
 - Node 缺少通用 `openat`，诊断持久化和安装器的路径防护不能完全排除父目录并发替换。
 - Windows 跳过 package-shaped npm launcher 子进程用例；Bun `runUpdate()` 缺真实 package-shaped smoke。GUI update badge 尚不显示同基线更高 `ben.N`，preview parser 仍是既有单数字形态。
