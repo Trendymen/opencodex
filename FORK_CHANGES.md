@@ -217,7 +217,7 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 代码：`src/adapters/openai-responses/passthrough.ts` 的 `applyConfiguredResponsesMaxOutputTokens()`。
 测试：`tests/responses/openai-responses-passthrough.test.ts`，覆盖未配置时不注入、模型级覆盖 provider 默认、调用方值优先、按剩余上下文收紧预算、超窗时保留原值与 forward 不注入。
 文档：`docs-site` 的 provider 配置参考与 `structure/transports/responses.md` 已同步。
-该预算计算使用本地输入估算，不代替上游自己的上下文计费或截断决策；无有效窗口元数据时仍按原配置值发送。
+该预算计算使用本地输入估算，不代替上游自己的上下文计费或截断决策；无有效窗口元数据时仍按原配置值发送。安装器不会代为开启 Provider debug。
 
 ### DeepSeek V4 Flash 直连图片输入
 
