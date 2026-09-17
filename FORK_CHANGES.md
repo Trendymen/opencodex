@@ -212,10 +212,11 @@ Slow 5xx、abort、直接成功、非 transient 和非原生 direct/combo 不触
 
 上游只在 `openai-chat` 上使用 `defaultMaxOutputTokens` 与 `modelMaxOutputTokens`。Codex 不发送 `max_output_tokens`，上游自身默认值又可能远低于模型上限（DeepSeek 的 Responses 路由为 65,536），长回答因此以 `incomplete: max_output_tokens` 提前结束。
 Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提供时按模型级、provider 级顺序取配置值，调用方显式值优先；两级都没有配置就保持上游默认。
+配置值只作为上限。模型或 provider 提供有效 `contextWindow` 时，先用官方输入估算扣除当前输入，再保留 256–4,096 token 的误差余量；剩余空间不足 512 token 时保留原配置值，让上游明确拒绝已超窗请求，而不是隐藏截断。
 `authMode: "forward"` 不注入，ChatGPT 转发后端不接受该参数。
 代码：`src/adapters/openai-responses/passthrough.ts` 的 `applyConfiguredResponsesMaxOutputTokens()`。
-测试：`tests/responses/openai-responses-passthrough.test.ts`，覆盖未配置时不注入、模型级覆盖 provider 默认、调用方值优先与 forward 不注入。
-文档：`docs-site` 的 provider 配置参考与 `structure/config.md` 已同步。
+测试：`tests/responses/openai-responses-passthrough.test.ts`，覆盖未配置时不注入、模型级覆盖 provider 默认、调用方值优先、按剩余上下文收紧预算、超窗时保留原值与 forward 不注入。
+文档：`docs-site` 的 provider 配置参考与 `structure/transports/responses.md` 已同步。
 
 ### DeepSeek V4 Flash 直连图片输入
 

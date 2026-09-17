@@ -1168,3 +1168,24 @@ Native steering retains fixed phase deadlines and reconciled replay output; see 
 Native steering generation overrides, explicit public-API eligibility and the consent-gated wire probe follow the [shared control contract](streaming-health.md#steering-settings-public-api-and-diagnostic-probe); this owner does not change routing or execute diagnostic tools.
 
 Dashboard Fast-row persistence and client refresh follow the [Fast selector rows setting contract](../gui-and-management-api.md#fast-selector-rows-setting).
+
+## Injected output budgets share the window
+
+Codex omits `max_output_tokens`, so key-auth `openai-responses` providers fill the configured
+`modelMaxOutputTokens` / `defaultMaxOutputTokens` before dispatch. A fixed fill collides with
+gateways that charge input and output against one window: a 680k-token conversation plus a 370k
+reserve exceeds a 1M model before generation starts, and the upstream rejects the turn with a
+context-length error that names the reserve as requested completion tokens.
+
+`applyConfiguredResponsesMaxOutputTokens` in `src/adapters/openai-responses/passthrough.ts`
+therefore treats the configured budget as a ceiling, not a constant. When a positive
+`modelContextWindows` / `contextWindow` value resolves for the routed model, the fill is
+`min(configured ceiling, resolved window - estimated input - headroom)`, with the headroom
+between 256 and 4,096 tokens (10% of the remaining window, clamped) absorbing estimator error.
+The injected budget never drops below 512 tokens. When the remaining window is already at or
+below that floor, the configured ceiling goes out unchanged: that turn is over window no matter
+what OCx injects, and shrinking the reserve to force it through would silently trade a clear
+upstream rejection for a truncated answer. Forward-auth requests keep skipping the fill.
+
+Regression coverage: the `configured Responses output budget` group in
+`tests/responses/openai-responses-passthrough.test.ts`.
