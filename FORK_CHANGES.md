@@ -241,7 +241,7 @@ stage/backup 对象身份、普通目录与 containment 必须可验证；恢复
 Windows wrapper 遇到 recovery marker 拒绝自动 restore；Node launcher 的失败提示仍沿用上游 warning-and-continue。
 安装目标识别包含活动服务与 Volta 实际包路径；服务从新包的绝对入口 repair/restart，并验证 readiness。
 Volta 登记同步与包替换共用事务，校验失败触发回滚，避免包已更新但 shim 或服务仍选择旧版本。
-macOS 本地安装默认补 `OCX_DEBUG=1` 和 `OCX_PROVIDER_TEXT_DEBUG=1` 后 reload；`--no-restart` 只更新磁盘 plist，非 Darwin 保持环境。该默认值同时授权结构诊断与有界文本样本持久化。
+本地安装不修改 debug 环境或 launchd plist。Provider debug 与 `providerText` 继续默认关闭，只能通过既有 CLI/API/GUI 显式开启。
 
 代码：`scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts`、`src/update/transactional-install.mjs`、`src/service/windows-taskxml.ts`。
 测试：`tests/ci-workflows/fork-install-local-*.test.ts`、`tests/ci-workflows/install-local.test.ts`、`tests/ci-workflows/install-local-vendor.test.ts`、`tests/windows/fork-windows-service-pending-transaction.test.ts`。
@@ -294,7 +294,7 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 
 - 合成测试和静态断言不替代真实 Provider/Codex App 验收。Standalone web search、真实 minted backend ciphertext + recovery SSE，以及 weekly quota、empty-assistant、custom model 的客户端终态仍需绑定具体实现验证。
 - Reasoning 合成事件没有统一分配新的 `sequence_number`；closed-state 到 terminal teardown 才释放。
-- Provider debug 的 ownership manifest 仍可能随 unique artifact 增长到 64 KiB 元数据上限；此后登记静默停止、抓包继续写入，代价是这段时间新建的抓包文件不再单独进入卸载清单（只能靠已登记目录的递归删除覆盖），不承诺自动压缩。旧 home 只有存在已知 OpenCodex 运行时标记时才会被收养；仅含通用 `config.json` 等文件的目录继续拒绝。收养前已存在的 Kimi catalog 目录不会被接管，对应写入会继续拒绝，需由用户迁移或清理该路径。独立 `ocx service repair/install` 可能覆盖本地安装写入的 `OCX_DEBUG=1`。
+- Provider debug 的 ownership manifest 仍可能随 unique artifact 增长到 64 KiB 元数据上限；此后登记静默停止、抓包继续写入，代价是这段时间新建的抓包文件不再单独进入卸载清单（只能靠已登记目录的递归删除覆盖），不承诺自动压缩。旧 home 只有存在已知 OpenCodex 运行时标记时才会被收养；仅含通用 `config.json` 等文件的目录继续拒绝。收养前已存在的 Kimi catalog 目录不会被接管，对应写入会继续拒绝，需由用户迁移或清理该路径。独立 `ocx service repair/install` 与本地安装不再改写 Provider debug 环境值。
 - 安装与恢复的 isolated/unit/static 测试不证明 Windows PowerShell/junction、真实全局替换与服务恢复均已验收。PID reuse、断电持久化及路径检查到 rename/remove 的竞态仍是边界；损坏安装下的 launcher 启动仍需动态验证。
 - Node 缺少通用 `openat`，诊断持久化和安装器的路径防护不能完全排除父目录并发替换。
 - Windows 跳过 package-shaped npm launcher 子进程用例；Bun `runUpdate()` 缺真实 package-shaped smoke。GUI update badge 尚不显示同基线更高 `ben.N`，preview parser 仍是既有单数字形态。

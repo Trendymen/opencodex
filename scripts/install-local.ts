@@ -1,6 +1,4 @@
-import { chmodSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { commandInvocation, resolveWindowsCommand } from "../src/lib/win-exec";
@@ -9,8 +7,6 @@ import {
   probeServiceInstallation,
   probeWindowsSchedulerTask,
   proxyStillLiveAfterStop,
-  launchctlLoadFailed,
-  runLaunchctl,
   stableLauncherEntry,
   type ServiceDiagnostic,
   type ServiceInstallationProbe,
@@ -89,18 +85,8 @@ export function localInstallRestartArgs(serviceWasInstalled: boolean): string[] 
   return serviceWasInstalled ? ["ocx", "service", "repair"] : ["ocx", "start"];
 }
 
-export function launchdProxyPlistPath(home = homedir()): string {
-  return join(home, "Library", "LaunchAgents", "com.opencodex.proxy.plist");
-}
-
-/** Narrow seams for command execution and launchd plist updates. */
 type InstallLocalRunOptions = { allowFailure?: boolean; env?: NodeJS.ProcessEnv };
 type InstallLocalRun = (command: string[], options?: InstallLocalRunOptions) => void;
-type LaunchdPlistWriteDeps = {
-  patch?: (path: string) => void;
-  validate?: (path: string) => void;
-};
-
 type CapturedCommandResult = { status: number; stdout: string; stderr: string; errorCode?: string };
 
 function decodeCommandOutput(value: Uint8Array | string | undefined): string {
@@ -138,104 +124,10 @@ function runCaptured(command: string[], env = process.env): CapturedCommandResul
   }
 }
 
-const LAUNCHD_DEBUG_ENV_KEYS = ["OCX_DEBUG", "OCX_PROVIDER_TEXT_DEBUG"] as const;
-
-function plistHasProviderDebug(plistPath: string): boolean {
-  return LAUNCHD_DEBUG_ENV_KEYS.every(key => plistHasStringEnvValue(plistPath, key, "1"));
-}
-
-function plistHasStringEnvValue(plistPath: string, key: string, value: string): boolean {
-  const keyPath = `EnvironmentVariables.${key}`;
-  const type = runCaptured(["plutil", "-type", keyPath, plistPath]);
-  if (type.status !== 0 || type.stdout.trim().toLowerCase() !== "string") return false;
-  const result = runCaptured([
-    "plutil",
-    "-extract",
-    keyPath,
-    "raw",
-    "-o",
-    "-",
-    plistPath,
-  ]);
-  return result.status === 0 && (result.stdout === "1" || result.stdout === "1\n");
-}
-
-function patchProviderDebugWithPlutil(plistPath: string): void {
-  for (const key of LAUNCHD_DEBUG_ENV_KEYS) {
-    const keyPath = `EnvironmentVariables.${key}`;
-    const replace = runCaptured(["plutil", "-replace", keyPath, "-string", "1", plistPath]);
-    if (replace.status === 0) continue;
-    const insert = runCaptured(["plutil", "-insert", keyPath, "-string", "1", plistPath]);
-    if (insert.status !== 0) {
-      const detail = insert.stderr.trim() || replace.stderr.trim() || `exit ${insert.status}`;
-      throw new Error(`could not set ${key} in launchd plist: ${detail}`);
-    }
-  }
-}
-
-function validateProviderDebugPlist(plistPath: string): void {
-  const result = runCaptured(["plutil", "-lint", plistPath]);
-  if (result.status !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.status}`;
-    throw new Error(`launchd plist validation failed: ${detail}`);
-  }
-}
-
-/** Atomically make the current macOS launchd plist default to provider debug on. */
-export function ensureProviderDebugLaunchdDefault(
-  plistPath = launchdProxyPlistPath(),
-  deps: LaunchdPlistWriteDeps = {},
-): boolean {
-  if (process.platform !== "darwin") return false;
-  if (!existsSync(plistPath)) throw new Error(`launchd plist not found: ${plistPath}`);
-  const stat = lstatSync(plistPath);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("launchd plist must be a regular file");
-  if (plistHasProviderDebug(plistPath)) {
-    chmodSync(plistPath, 0o600);
-    return false;
-  }
-
-  const current = readFileSync(plistPath);
-  const temporary = `${plistPath}.ocx.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporary, current, { mode: 0o600, flag: "wx" });
-    chmodSync(temporary, 0o600);
-    (deps.patch ?? patchProviderDebugWithPlutil)(temporary);
-    (deps.validate ?? validateProviderDebugPlist)(temporary);
-    chmodSync(temporary, 0o600);
-    renameSync(temporary, plistPath);
-  } catch (error) {
-    try { rmSync(temporary, { force: true }); } catch { /* best-effort cleanup */ }
-    throw error;
-  }
-  return true;
-}
-
-/** Reload launchd only when install-local changed the service definition. */
-export function refreshProviderDebugLaunchd(
-  plistPath = launchdProxyPlistPath(),
-  deps: LaunchdPlistWriteDeps & { launchctl?: typeof runLaunchctl } = {},
-): void {
-  if (process.platform !== "darwin") return;
-  if (!ensureProviderDebugLaunchdDefault(plistPath, deps)) return;
-  const launchctl = deps.launchctl ?? runLaunchctl;
-  const unloaded = launchctl(["unload", plistPath]);
-  if (!unloaded.ok) {
-    throw new Error(`launchctl could not unload ${plistPath}: ${unloaded.stderr || "command failed"}`);
-  }
-  const loaded = launchctl(["load", "-w", plistPath]);
-  if (!loaded.ok || launchctlLoadFailed(loaded.stderr)) {
-    throw new Error(`launchctl could not load ${plistPath}: ${loaded.stderr || "command failed"}`);
-  }
-}
-
 export function localInstallRestartEnv(
   env: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
-  return platform === "darwin"
-    ? { ...env, OCX_DEBUG: "1", OCX_PROVIDER_TEXT_DEBUG: "1" }
-    : { ...env };
+  return { ...env };
 }
 
 export type LocalInstallRuntime = {
@@ -246,39 +138,25 @@ export type LocalInstallRuntime = {
 function localInstallRuntimeEnv(
   runtime: LocalInstallRuntime,
   env: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
   if (!isAbsolute(runtime.command[0]) || !isAbsolute(runtime.command[1]) || !isAbsolute(runtime.launcherPath)) {
     throw new Error("local install runtime must use absolute paths");
   }
   const launcherDir = dirname(runtime.launcherPath);
   const path = env.PATH ? `${launcherDir}${delimiter}${env.PATH}` : launcherDir;
-  return localInstallRestartEnv({ ...env, PATH: path }, platform);
-}
-
-export function localInstallAfterReplace(
-  serviceWasInstalled: boolean,
-  restart: boolean,
-  ensure: () => void = () => { ensureProviderDebugLaunchdDefault(); },
-  platform: NodeJS.Platform = process.platform,
-): void {
-  if (!restart && serviceWasInstalled && platform === "darwin") ensure();
+  return { ...env, PATH: path };
 }
 
 export function restartLocalInstall(
   serviceWasInstalled: boolean,
   deps: { run?: InstallLocalRun; refresh?: () => void } = {},
-  platform: NodeJS.Platform = process.platform,
   runtime?: LocalInstallRuntime,
 ): void {
   const runCommand = deps.run ?? run;
   const args = localInstallRestartArgs(serviceWasInstalled);
   runCommand(runtime ? [...runtime.command, ...args.slice(1)] : args, {
-    env: runtime
-      ? localInstallRuntimeEnv(runtime, process.env, platform)
-      : localInstallRestartEnv(process.env, platform),
+    env: runtime ? localInstallRuntimeEnv(runtime, process.env) : { ...process.env },
   });
-  if (serviceWasInstalled && platform === "darwin") (deps.refresh ?? refreshProviderDebugLaunchd)();
 }
 
 type LocalInstallReadinessDeps = {
