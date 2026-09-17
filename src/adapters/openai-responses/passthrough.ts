@@ -1,6 +1,7 @@
 import { normalizeRoutedAgentMessages } from "../routed-agent-messages";
 import { stripBracketedModelSuffix } from "../openai-chat";
 import { normalizeOpenCodeGoAdditionalTools } from "../opencode-go-additional-tools";
+import { isConsoleGoDestination } from "../../providers/opencode-zen-rate-limit";
 import { Buffer } from "node:buffer";
 import type { IncomingMeta, ProviderAdapter } from "../base";
 import { namespacedToolName, toolChoiceToolPredicate, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../../types";
@@ -52,7 +53,7 @@ import { scrubOcxCompactionItems, stripCanonicalOnlyToolFields, stripCanonicalOn
 import { stripCanonicalForwardPromptCacheOptions, stripDeprecatedPromptCacheRetention } from "./prompt-cache";
 import { isPlainObject } from "./internal";
 import { normalizeToolSchemas, promoteClientLoadedTools, stripUnsupportedHostedTools } from "./tool-schema";
-import { annotateEmptyResponsesToolOutputs, backfillWebSearchQueries, normalizeResponsesToolResultAdjacency, repairOrphanedInputItems, repairOversizedReplayCallIds, repairUnidentifiedToolOutputItems } from "./tool-output-recovery";
+import { annotateEmptyResponsesToolOutputs, backfillWebSearchQueries, normalizeDuplicateResponsesToolOutputs, normalizeResponsesToolResultAdjacency, repairOrphanedInputItems, repairOversizedReplayCallIds, repairUnidentifiedToolOutputItems } from "./tool-output-recovery";
 import { applyTierDecisionToResponsesBody, normalizeCanonicalForwardContinuationEnvelope, normalizeCanonicalForwardPromptEnvelope, stripCanonicalForwardSamplingParams, stripPreviousResponseId, stripStatefulResponsesParams, stripUnsupportedForwardParams } from "./canonical-forward";
 import { normalizeImageGenClientTools, preferConfiguredHostedTools } from "./image-gen";
 import { stripMuseSparkUnsupportedWebSearchFields, stripOpenAiOnlyWebSearchFields } from "./web-search";
@@ -401,6 +402,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       const synthesizeMissingCallOutputs = !forward && (stateless || pairedToolResults);
       if (forward || stateless || pairedToolResults) {
         outBody = repairOrphanedInputItems(outBody, unexpandedMiss, synthesizeMissingCallOutputs);
+      }
+      if (isConsoleGoDestination(url)) {
+        outBody = normalizeDuplicateResponsesToolOutputs(outBody);
       }
       if (adjacentToolResults) {
         outBody = normalizeResponsesToolResultAdjacency(outBody);

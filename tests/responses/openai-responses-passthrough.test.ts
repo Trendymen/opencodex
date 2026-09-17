@@ -1123,6 +1123,60 @@ describe("DeepSeek Responses endpoint contract", () => {
   });
 });
 
+describe("strict Responses duplicate tool-output recovery", () => {
+  const duplicateInput = [
+    { type: "custom_tool_call", call_id: "call_exec_duplicate", name: "exec", input: "noop" },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_exec_duplicate",
+      output: "Script completed\nWall time 0.2 seconds\nOutput:\n",
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_exec_duplicate",
+      name: "exec",
+      output: "real stdout",
+    },
+  ];
+
+  function build(provider: OcxProviderConfig, input: unknown[]): Record<string, unknown> {
+    const request = createResponsesPassthroughAdapter(provider).buildRequest({
+      modelId: "deepseek-flash",
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: { model: "deepseek-flash", input },
+    });
+    return JSON.parse(request.body) as Record<string, unknown>;
+  }
+
+  test("OpenCode Go's strict Responses route emits one output for a repeated call_id", () => {
+    const body = build({
+      ...providerConfigSeed(getProviderRegistryEntry("opencode-go")!),
+      adapter: "openai-responses",
+      authMode: "key",
+      apiKey: "test-key",
+    }, duplicateInput);
+
+    expect(body.input).toEqual([
+      duplicateInput[0],
+      { ...duplicateInput[2], output: "real stdout" },
+    ]);
+  });
+
+  test("a Responses provider without the strict capability keeps repeated outputs intact", () => {
+    const input = structuredClone(duplicateInput);
+    const body = build({
+      adapter: "openai-responses",
+      baseUrl: "https://provider.example/v1",
+      authMode: "key",
+      apiKey: "test-key",
+    }, input);
+
+    expect(body.input).toEqual(input);
+  });
+});
+
 describe("Responses custom-tool destination capability", () => {
   test("xAI explicitly denies native custom tools and registry enrichment preserves an override", () => {
     const entry = getProviderRegistryEntry("xai")!;
