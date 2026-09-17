@@ -615,4 +615,192 @@ describe("native Responses message-phase repair", () => {
     });
   });
 
+  test("demotes an announced final_answer so the item never folds back later", () => {
+    const rewrite = createResponsesMessagePhaseBlockRewrite();
+    const announced = {
+      type: "message",
+      id: "msg_announced",
+      role: "assistant",
+      status: "in_progress",
+      phase: "final_answer",
+      content: [],
+    };
+    const settled = {
+      ...announced,
+      status: "completed",
+      phase: "commentary",
+      content: [{ type: "output_text", text: "我先检查一下。" }],
+    };
+
+    expect(payloads(rewrite(sse({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: announced,
+    })))).toEqual([{
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { ...announced, phase: "commentary" },
+    }]);
+
+    expect(payloads(rewrite(sse({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: settled,
+    })))).toEqual([{
+      type: "response.output_item.done",
+      output_index: 0,
+      item: settled,
+    }]);
+
+    expect(payloads(rewrite(sse({
+      type: "response.completed",
+      response: { id: "resp_announced", status: "completed", output: [settled] },
+    })))).toEqual([{
+      type: "response.completed",
+      response: { id: "resp_announced", status: "completed", output: [settled] },
+    }]);
+  });
+
+  test("promotes a demoted announcement when the upstream finishes it as final_answer", () => {
+    const rewrite = createResponsesMessagePhaseBlockRewrite();
+    const announced = {
+      type: "message",
+      id: "msg_answer",
+      role: "assistant",
+      status: "in_progress",
+      phase: "final_answer",
+      content: [],
+    };
+    const settled = {
+      ...announced,
+      status: "completed",
+      content: [{ type: "output_text", text: "结果如下。" }],
+    };
+
+    expect(payloads(rewrite(sse({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: announced,
+    })))[0]?.item).toEqual({ ...announced, phase: "commentary" });
+
+    expect(payloads(rewrite(sse({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: settled,
+    })))[0]?.item).toEqual(settled);
+
+    expect(payloads(rewrite(sse({
+      type: "response.completed",
+      response: { id: "resp_answer", status: "completed", output: [settled] },
+    })))).toEqual([{
+      type: "response.completed",
+      response: { id: "resp_answer", status: "completed", output: [settled] },
+    }]);
+  });
+
+  test("leaves explicit commentary, unphased, and non-message announcements untouched", () => {
+    const rewrite = createResponsesMessagePhaseBlockRewrite();
+    const commentary = {
+      type: "message",
+      id: "msg_commentary",
+      role: "assistant",
+      status: "in_progress",
+      phase: "commentary",
+      content: [],
+    };
+    const unphased = {
+      type: "message",
+      id: "msg_unphased",
+      role: "assistant",
+      status: "in_progress",
+      content: [],
+    };
+    const reasoning = { type: "reasoning", id: "rs_1", summary: [] };
+
+    expect(payloads(rewrite(sse({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: commentary,
+    })))).toEqual([{ type: "response.output_item.added", output_index: 0, item: commentary }]);
+
+    expect(payloads(rewrite(sse({
+      type: "response.output_item.added",
+      output_index: 1,
+      item: unphased,
+    })))).toEqual([{ type: "response.output_item.added", output_index: 1, item: unphased }]);
+
+    expect(payloads(rewrite(sse({
+      type: "response.output_item.added",
+      output_index: 2,
+      item: reasoning,
+    })))).toEqual([{ type: "response.output_item.added", output_index: 2, item: reasoning }]);
+
+    expect(payloads(rewrite(sse({ type: "response.output_item.added", output_index: 3 }))))
+      .toEqual([{ type: "response.output_item.added", output_index: 3 }]);
+  });
+
+  test("demotes a new announcement while releasing a held message", () => {
+    const rewrite = createResponsesMessagePhaseBlockRewrite();
+    const held = {
+      type: "message",
+      id: "msg_held",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: "先看日志。" }],
+    };
+    const announced = {
+      type: "message",
+      id: "msg_next",
+      role: "assistant",
+      status: "in_progress",
+      phase: "final_answer",
+      content: [],
+    };
+
+    expect(rewrite(sse({ type: "response.output_item.done", output_index: 0, item: held }))).toEqual([]);
+    expect(payloads(rewrite(sse({
+      type: "response.output_item.added",
+      output_index: 1,
+      item: announced,
+    })))).toEqual([
+      { type: "response.output_item.done", output_index: 0, item: { ...held, phase: "commentary" } },
+      { type: "response.output_item.added", output_index: 1, item: { ...announced, phase: "commentary" } },
+    ]);
+  });
+
+  test("keeps the demotion when a held message cannot be re-tracked as commentary", () => {
+    const rewrite = createResponsesMessagePhaseBlockRewrite();
+    const recorded = {
+      type: "message",
+      id: "msg_recorded",
+      role: "assistant",
+      status: "completed",
+      phase: "final_answer",
+      content: [{ type: "output_text", text: "结果如下。" }],
+    };
+    const announced = {
+      type: "message",
+      id: "msg_after",
+      role: "assistant",
+      status: "in_progress",
+      phase: "final_answer",
+      content: [],
+    };
+
+    // The same id is already tracked as final_answer, so the pending release cannot re-track it as
+    // commentary and takes the early return instead of the stamped one.
+    expect(payloads(rewrite(sse({ type: "response.output_item.done", output_index: 0, item: recorded }))))
+      .toEqual([{ type: "response.output_item.done", output_index: 0, item: recorded }]);
+    expect(rewrite(sse({ type: "response.output_item.done", output_index: 1, item: { ...recorded, phase: undefined } })))
+      .toEqual([]);
+    expect(payloads(rewrite(sse({
+      type: "response.output_item.added",
+      output_index: 2,
+      item: announced,
+    })))).toEqual([
+      { type: "response.output_item.done", output_index: 1, item: { ...recorded, phase: undefined } },
+      { type: "response.output_item.added", output_index: 2, item: { ...announced, phase: "commentary" } },
+    ]);
+  });
+
 });
