@@ -27,6 +27,7 @@ import { addSpawnAgentForkTurnsGuidance } from "../../fork/spawn-agent-compat";
 import { applyRoutedProgressContractToResponsesBody } from "../../fork/routed-progress-contract";
 import { debugResponsesOutboundShape } from "../../fork/outbound-debug";
 import { modelRecordValue } from "../../reasoning-effort";
+import { estimateInputTokens } from "../../server/responses/input-admission";
 import { openaiResponsesUrl } from "../openai-responses-url";
 import { normalizeResponsesCodeMode } from "../responses-code-mode";
 import { CODE_MODE_RESULT_ECHO_SENTENCE } from "../exec-tool-result-normalize";
@@ -93,6 +94,12 @@ export const FORWARD_HEADERS = [
 ];
 
 /** Preserve the caller fingerprint unless the provider explicitly owns that header. */
+const MIN_INJECTED_OUTPUT_TOKENS = 512;
+
+function positiveBudgetWindow(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
 function applyCallerUserAgentFallback(
   headers: Record<string, string>,
   incoming: IncomingMeta,
@@ -241,8 +248,9 @@ function applyRoutedResponsesToolCatalogNudge(body: unknown, parsed: OcxParsedRe
 
 export function applyConfiguredResponsesMaxOutputTokens(
   body: unknown,
-  provider: Pick<OcxProviderConfig, "defaultMaxOutputTokens" | "modelMaxOutputTokens"> & { authMode?: OcxProviderConfig["authMode"] },
+  provider: Pick<OcxProviderConfig, "contextWindow" | "defaultMaxOutputTokens" | "modelContextWindows" | "modelMaxOutputTokens"> & { authMode?: OcxProviderConfig["authMode"] },
   modelId: string,
+  parsed?: OcxParsedRequest,
 ): unknown {
   if (!isPlainObject(body)) return body;
   if (provider.authMode === "forward") return body;
@@ -250,7 +258,17 @@ export function applyConfiguredResponsesMaxOutputTokens(
   const configured = modelRecordValue(provider.modelMaxOutputTokens, modelId)
     ?? provider.defaultMaxOutputTokens;
   if (configured === undefined) return body;
-  return { ...body, max_output_tokens: configured };
+  const contextWindow = positiveBudgetWindow(modelRecordValue(provider.modelContextWindows, modelId))
+    ?? positiveBudgetWindow(provider.contextWindow);
+  if (contextWindow === null || parsed === undefined) return { ...body, max_output_tokens: configured };
+  const remaining = contextWindow - estimateInputTokens(parsed, modelId);
+  if (remaining <= MIN_INJECTED_OUTPUT_TOKENS) return { ...body, max_output_tokens: configured };
+  const headroom = Math.min(4_096, Math.max(256, Math.floor(remaining / 10)));
+  const budget = Math.max(
+    MIN_INJECTED_OUTPUT_TOKENS,
+    Math.min(configured, remaining - headroom),
+  );
+  return { ...body, max_output_tokens: budget };
 }
 
 function addCanonicalForwardResponsesLiteMetadata(body: unknown, incoming: IncomingMeta): unknown {
@@ -542,7 +560,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (parsed._compactionRequest !== true && shouldInjectNonOpenAIToolCatalogNudge(provider)) {
         finalBody = applyRoutedResponsesToolCatalogNudge(finalBody, parsed);
       }
-      finalBody = applyConfiguredResponsesMaxOutputTokens(finalBody, provider, parsed.modelId);
+      finalBody = applyConfiguredResponsesMaxOutputTokens(finalBody, provider, parsed.modelId, parsed);
       if (isCanonicalOpenAiForwardProvider(provider)) {
         finalBody = addCanonicalForwardResponsesLiteMetadata(finalBody, incoming);
         const routingHeaders = new Headers(headers);

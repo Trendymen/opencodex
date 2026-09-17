@@ -1064,3 +1064,24 @@ route where this was first observed; explicit provider and operator caps may onl
 
 Regression coverage: `tests/server/input-admission.test.ts` and
 `tests/helpers/combo-context-headroom-cases.ts`.
+
+## Injected output budgets share the window
+
+Codex omits `max_output_tokens`, so key-auth `openai-responses` providers fill the configured
+`modelMaxOutputTokens` / `defaultMaxOutputTokens` before dispatch. A fixed fill collides with
+gateways that charge input and output against one window: a 680k-token conversation plus a 370k
+reserve exceeds a 1M model before generation starts, and the upstream rejects the turn with a
+context-length error that names the reserve as requested completion tokens.
+
+`applyConfiguredResponsesMaxOutputTokens` in `src/adapters/openai-responses/passthrough.ts`
+therefore treats the configured budget as a ceiling, not a constant. When a positive
+`modelContextWindows` / `contextWindow` value resolves for the routed model, the fill is
+`min(configured ceiling, resolved window - estimated input - headroom)`, with the headroom
+between 256 and 4,096 tokens (10% of the remaining window, clamped) absorbing estimator error.
+The injected budget never drops below 512 tokens. When the remaining window is already at or
+below that floor, the configured ceiling goes out unchanged: that turn is over window no matter
+what OCx injects, and shrinking the reserve to force it through would silently trade a clear
+upstream rejection for a truncated answer. Forward-auth requests keep skipping the fill.
+
+Regression coverage: the `configured Responses output budget` group in
+`tests/responses/openai-responses-passthrough.test.ts`.
