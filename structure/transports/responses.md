@@ -495,7 +495,14 @@ custom result has no local call, because its original wire type cannot be establ
 would send an unmatched result upstream. The check resolves the selected wire protocol and the
 request's own tool declarations after final route selection, so stateful destinations keep their
 upstream-owned native function and native-only custom continuations. Explicit input still receives
-orphan repair; this path asks the client to replay rather than reconstructing history. OpenCode Go content-channel reasoning stays content-only when the client omits or disables `reasoning.summary`.
+orphan repair; this path asks the client to replay rather than reconstructing history. The canonical
+Console Go Responses route collapses repeated `function_call_output` or `custom_tool_call_output`
+items only when they have exactly one matching call in the same input, then emits one output before
+the validator. Output-only items and call IDs shared by multiple calls remain unchanged. For a bare,
+unnamespaced `custom_tool_call` named `exec`, a successful empty wrapper is dropped when a later
+result carries content; multiple content fragments remain in order. OpenCode Go content-channel
+reasoning stays content-only
+when the client omits or disables `reasoning.summary`.
 When the client explicitly requests it, the response keeps raw content and opaque state while the client-visible summary projection is produced, stored, and used for continuation comparison. Native summary items and opaque blobs retain their upstream representation.
 The projection lifecycle is defined in [Fork extensions](../fork-extensions.md#responses-输出与-continuation).
 It does not change streaming selection or Chat model routes. Go fixtures cover Luna, Grok

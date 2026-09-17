@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "../empty-tool-output-annotation";
+import { isSuccessfulEmptyExecWrapper } from "../exec-tool-result-normalize";
 import { isPlainObject } from "./internal";
 import { peekBridgeSearchReplay } from "../../responses/bridge-search-replay-cache";
 
@@ -184,6 +185,109 @@ export function annotateEmptyResponsesToolOutputs(body: unknown, enabled: boolea
     return { ...item, output: EMPTY_TOOL_OUTPUT_ANNOTATION };
   });
   return changed ? { ...body, input } : body;
+}
+
+function responsesToolOutputKey(item: Record<string, unknown>): string | null {
+  if (typeof item.call_id !== "string" || item.call_id.length === 0) return null;
+  if (item.type === "function_call_output" || item.type === "custom_tool_call_output") {
+    return `${item.type}:${item.call_id}`;
+  }
+  return null;
+}
+
+function responsesToolCallKey(item: Record<string, unknown>): string | null {
+  if (typeof item.call_id !== "string" || item.call_id.length === 0) return null;
+  if (item.type === "function_call" || item.type === "local_shell_call") {
+    return `function_call_output:${item.call_id}`;
+  }
+  if (item.type === "custom_tool_call") return `custom_tool_call_output:${item.call_id}`;
+  return null;
+}
+
+function isBareExecCall(item: Record<string, unknown>): boolean {
+  return item.type === "custom_tool_call" && item.name === "exec" && item.namespace === undefined;
+}
+
+function serializedValue(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function mergeResponsesToolOutputValues(values: unknown[], dropEmptyExecWrapper: boolean): unknown | undefined {
+  if (values.some(value => typeof value !== "string" && !Array.isArray(value))) return undefined;
+
+  const meaningful = dropEmptyExecWrapper && values.length > 1
+    ? values.filter(value => !(typeof value === "string" && isSuccessfulEmptyExecWrapper(value)))
+    : values;
+  const candidates = meaningful.length > 0 ? meaningful : values.slice(0, 1);
+  const unique: unknown[] = [];
+  const serialized = new Set<string>();
+  for (const value of candidates) {
+    const key = serializedValue(value);
+    if (key === undefined || serialized.has(key)) continue;
+    serialized.add(key);
+    unique.push(value);
+  }
+  if (unique.length === 0) return undefined;
+  if (unique.length === 1) return unique[0];
+  if (unique.every(value => typeof value === "string")) return unique.join("\n");
+  if (unique.every(Array.isArray)) return unique.flat();
+  return unique.flatMap(value => typeof value === "string"
+    ? [{ type: "input_text", text: value }]
+    : value);
+}
+
+/** Merge repeated Responses tool outputs into one item for strict upstream parsers. */
+export function normalizeDuplicateResponsesToolOutputs(body: unknown): unknown {
+  if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
+
+  const calls = new Map<string, { count: number; dropEmptyExecWrapper: boolean }>();
+  const groups = new Map<string, Array<{ index: number; item: Record<string, unknown> }>>();
+  for (let index = 0; index < body.input.length; index += 1) {
+    const item = body.input[index];
+    if (!isPlainObject(item)) continue;
+    const callKey = responsesToolCallKey(item);
+    if (callKey !== null) {
+      const prior = calls.get(callKey);
+      calls.set(callKey, {
+        count: (prior?.count ?? 0) + 1,
+        dropEmptyExecWrapper: (prior?.dropEmptyExecWrapper ?? false)
+          || isBareExecCall(item),
+      });
+    }
+    const key = responsesToolOutputKey(item);
+    if (key === null) continue;
+    const group = groups.get(key);
+    if (group) group.push({ index, item });
+    else groups.set(key, [{ index, item }]);
+  }
+
+  const replacements = new Map<number, Record<string, unknown>>();
+  const removed = new Set<number>();
+  for (const entries of groups.values()) {
+    if (entries.length < 2) continue;
+    const outputKey = responsesToolOutputKey(entries[0]!.item);
+    if (outputKey === null) continue;
+    const call = calls.get(outputKey);
+    if (!call || call.count !== 1) continue;
+    const output = mergeResponsesToolOutputValues(entries.map(entry => entry.item.output), call.dropEmptyExecWrapper);
+    if (output === undefined) continue;
+    const merged = entries.reduce<Record<string, unknown>>((result, entry) => ({ ...result, ...entry.item }), {});
+    merged.output = output;
+    replacements.set(entries[0]!.index, merged);
+    for (const entry of entries.slice(1)) removed.add(entry.index);
+  }
+  if (replacements.size === 0) return body;
+
+  const input: unknown[] = [];
+  for (let index = 0; index < body.input.length; index += 1) {
+    if (removed.has(index)) continue;
+    input.push(replacements.get(index) ?? body.input[index]);
+  }
+  return { ...body, input };
 }
 
 /**
