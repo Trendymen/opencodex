@@ -20,7 +20,7 @@ OpenAI 运营目的地和 ChatGPT forward 继续使用上游原生协议。
 | --- | --- |
 | `src/fork/agent-message-format.ts` | 解析 `preserve` / `user_message`，决定第三方 Responses 的明文 `agent_message` 是否转换。 |
 | `src/fork/glm-kimi-compat.ts` | 为 Ark Agent Plan GLM/Kimi 与 BigModel GLM 降低工具 schema、补尾部 user turn，并保留应用传入对象。 |
-| `src/fork/responses-message-phase.ts` | 对显式列入配置的第三方模型补缺失的 assistant `phase`；不生成、复制或摘要文字。 |
+| `src/fork/responses-message-phase.ts` | 对显式列入配置的第三方模型补缺失的 assistant `phase`；宣布阶段（`output_item.added`）自称 `final_answer` 时先降为 `commentary`，最终相位仍由 `done` 与终态快照给出；不生成、复制或摘要文字。 |
 | `src/fork/routed-progress-contract.ts` | 给带工具的第三方请求追加普通 assistant 文本进度约定；不合成进度消息。 |
 | `src/fork/custom-tool-output.ts` | 将 routed `custom_tool_call_output` 降为字符串形式的 `function_call_output`。 |
 | `src/fork/spawn-agent-compat.ts` | 补充 `fork_turns` 工具字段说明，并只修复当前已授权 `spawn_agent` 的一层多余 JSON 字符串编码。 |
@@ -59,8 +59,10 @@ SSE 按 citation、annotation 的顺序处理增量和收尾正文，JSON 使用
 `src/adapters/openai-chat/wire.ts` 的官方 API host 判定。
 
 phase 推断只处理缺少 phase 的文本 item。后续仍有工作时标为 `commentary`，正常完成的终态文本
-标为 `final_answer`；失败或 incomplete 不合成终态。SSE、有界 JSON 和 continuation replay 使用
-同一分类，OpenAI/GPT 目的地硬排除。
+标为 `final_answer`；失败或 incomplete 不合成终态。上游在 `output_item.added` 上自称
+`final_answer` 的宣布不作为证据：它先降为 `commentary`，该 item 的最终相位仍由 `done` 与
+终态快照决定，客户端因此不会先把正文渲染出来、再把它折回工作行。SSE、有界 JSON 和
+continuation replay 使用同一分类，OpenAI/GPT 目的地硬排除。
 
 第三方 reasoning summary 只在客户端显式请求 `reasoning.summary` 时投影；Provider 的
 `showThinkingSummary` 默认值不能把 raw reasoning 改名成 summary。投影保留原始 content、
