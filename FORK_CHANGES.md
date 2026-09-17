@@ -53,7 +53,13 @@ Provider 可设置 `agentMessageFormat: "preserve" | "user_message"`。`preserve
 ### 原生 Responses message phase 推断
 
 上游 bridge 已有 phase 推断；Fork 为原生 passthrough 增加 `inferResponsesMessagePhaseModels` 显式配置。
-OpenAI 运营目的地与 GPT/OpenAI 模型硬排除，已有 phase 原样保留。模型判断使用解析后的 ID：`gpt`、`chatgpt`、`codex`、`o1`、`o3`、`o4`、`openai/gpt-*` 和 `openai-gpt-*` 不会启用；只含 `gpt` 或 `openai` 的普通名称仍可在显式列表中启用。SSE 与有界 JSON 使用相同语义，区分 `commentary` 和 `final_answer`，只补 phase，不丢原字段。
+OpenAI 运营目的地与 GPT/OpenAI 模型硬排除。`done` 与终态 snapshot 上的已有 phase 原样保留（若
+终态 snapshot 与已经观察到的后续工作相矛盾，则归一为已被证明的 `commentary`）；
+`output_item.added` 上自称 `final_answer` 的 assistant message 不作为证据，交付前先降为
+`commentary`，该 item 的最终相位仍由它自己的 `done` 与终态 snapshot 给出。模型判断使用解析后的
+ID：`gpt`、`chatgpt`、`codex`、`o1`、`o3`、`o4`、`openai/gpt-*` 和 `openai-gpt-*` 不会启用；
+只含 `gpt` 或 `openai` 的普通名称仍可在显式列表中启用。SSE 与有界 JSON 使用相同语义，区分
+`commentary` 和 `final_answer`，只补缺失的 phase 并归一宣布阶段的 `final_answer`，不丢原字段。
 管理 API 普通 POST 省略该字段时保留最新配置；显式清除使用 `PATCH null`，异步校验后在 mutation lock 内重读，避免旧快照恢复已删除的值。
 
 代码：`src/fork/responses-message-phase.ts`、`src/server/management/provider-routes.ts` 及 relay/core 接线。

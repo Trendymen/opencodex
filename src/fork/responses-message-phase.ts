@@ -84,6 +84,19 @@ function assistantMessageWithExplicitPhase(payload: Rec): { id: string; phase: M
     : null;
 }
 
+/**
+ * An upstream can announce an assistant message as `final_answer` and then finalize the same item
+ * as `commentary`. The client renders the announcement as soon as it arrives, so that later
+ * correction reads as an answer folding back into the activity row. The announcement is not
+ * evidence, so it is demoted before delivery: the explicit `done` event and the terminal snapshot
+ * still promote the item when it really is the turn's final answer.
+ */
+function announcesAssistantFinalAnswer(payload: Rec): boolean {
+  if (payload.type !== "response.output_item.added" || !isRec(payload.item)) return false;
+  const item = payload.item;
+  return item.type === "message" && item.role === "assistant" && item.phase === "final_answer";
+}
+
 function stampItemPhase(payload: Rec, phase: MessagePhase): Rec {
   const item = payload.item;
   if (!isRec(item)) return payload;
@@ -251,6 +264,11 @@ export function createResponsesMessagePhaseBlockRewrite(budget?: TranslatorBudge
     }
     const payload = parsePayload(block);
     if (!payload) return [block];
+    // Only `output_item.added` carries a demotable announcement, and only the two delivery paths
+    // below use it: the pending-release branch (both exits) and the trailing fallthrough.
+    const deliveredBlock = announcesAssistantFinalAnswer(payload)
+      ? replaceSseDataPayload(block, JSON.stringify(stampItemPhase(payload, "commentary")))
+      : block;
 
     const explicit = assistantMessageWithExplicitPhase(payload);
     if (explicit) {
@@ -272,13 +290,13 @@ export function createResponsesMessagePhaseBlockRewrite(budget?: TranslatorBudge
 
     if (pending && startsNewOutputItem(payload)) {
       const held = pending;
-      if (!rememberPhase(held.itemId, "commentary", "inferred_work")) return [...releasePending(), block];
+      if (!rememberPhase(held.itemId, "commentary", "inferred_work")) return [...releasePending(), deliveredBlock];
       const commentaryPayload = parsePayload(held.block);
       const pendingBlock = commentaryPayload
         ? replaceSseDataPayload(held.block, JSON.stringify(stampItemPhase(commentaryPayload, "commentary")))
         : held.block;
       releasePending();
-      return [pendingBlock, block];
+      return [pendingBlock, deliveredBlock];
     }
 
     if (pending && isUnsuccessfulTerminal(payload)) {
@@ -330,7 +348,7 @@ export function createResponsesMessagePhaseBlockRewrite(budget?: TranslatorBudge
       return completed === payload ? [block] : [replaceSseDataPayload(block, JSON.stringify(completed))];
     }
 
-    return [block];
+    return [deliveredBlock];
   };
   rewrite.flush = () => {
     const pendingBlocks = releasePending();
