@@ -1029,14 +1029,13 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
       },
       afterReplace: () => {
         registration?.sync();
-        localInstallAfterReplace(serviceWasInstalled, restart);
       },
       restart: () => {
         console.log(serviceWasInstalled
           ? "==> Refreshing background service with packaged proxy..."
           : "==> Starting packaged proxy...");
         const current = currentInstalledRuntime();
-        restartLocalInstall(serviceWasInstalled, {}, process.platform, current.runtime);
+        restartLocalInstall(serviceWasInstalled, {}, current.runtime);
       },
       ready: async () => {
         const current = currentInstalledRuntime();

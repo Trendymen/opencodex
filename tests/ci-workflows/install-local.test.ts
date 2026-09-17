@@ -19,8 +19,8 @@ afterEach(() => {
 describe("local installer debug opt-in handling", () => {
   test("restart environments preserve explicit debug settings on every platform", () => {
     const env = { PATH: "/usr/bin", OCX_DEBUG: "0", OCX_PROVIDER_TEXT_DEBUG: "0" };
-    expect(localInstallRestartEnv(env, "darwin")).toEqual(env);
-    expect(localInstallRestartEnv({ PATH: "/usr/bin" }, "linux")).toEqual({ PATH: "/usr/bin" });
+    expect(localInstallRestartEnv(env)).toEqual(env);
+    expect(localInstallRestartEnv({ PATH: "/usr/bin" })).toEqual({ PATH: "/usr/bin" });
   });
 });
 
