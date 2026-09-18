@@ -129,10 +129,11 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 - `codexToolMode` 创建时省略为 inherit；更新时省略保留、枚举设置、`null` 清除。CLI 支持 `--tool-mode code_mode_only|shell|inherit`，列表展示存储值。
 - 管理 API 按字段是否存在严格验证 provider、modelId、displayName、contextWindow、modalities、reasoning/default effort 和 tool mode；非法输入在持久化与 catalog 更新前返回 400。
 - 自定义模型替换相同 Provider/模型的发现行时，管理 API 保留官方发现得到的 `pricingStatus`；免费、付费和未分类三种状态不互相替换。该字段只用于管理 API、CLI 和 GUI 筛选，不写入 Codex catalog。
+- 新 Provider 注册先在独立 draft 中执行 discovery、disabled selector 和默认 Provider 变更；保存失败时恢复 live config，包含 pins-less 注册路径。
 - 配置进入 salvage fallback 时复用完整文件诊断；`customModels` 规范化警告与官方 `codexPool` 非法值警告会同时保留，不因挽救其他 section 而丢失。
 
 代码：`src/config/custom-models.ts`、`src/config/schema/`、`src/config/diagnostics.ts`、`src/config/persist-unlocked.ts`、`src/config/save.ts`、`src/server/management/model-routes.ts`，router、catalog 的 gather/derive owners 与 CLI 的窄接线。
-测试：`tests/config/fork-custom-model-config-schema.test.ts`、`tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts`、`tests/codex-integration/catalog-free-pricing-status.test.ts`。
+测试：`tests/config/fork-custom-model-config-schema.test.ts`、`tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts`、`tests/codex-integration/catalog-free-pricing-status.test.ts`、`tests/server/management-provider-pinsless-validation.test.ts`。
 
 ### Routed custom tool output 字符串化
 
@@ -253,6 +254,7 @@ Windows wrapper 遇到 recovery marker 拒绝自动 restore；Node launcher 的�
 安装目标识别包含活动服务与 Volta 实际包路径；服务从新包的绝对入口 repair/restart，并验证 readiness。
 Volta 登记同步与包替换共用事务，校验失败触发回滚，避免包已更新但 shim 或服务仍选择旧版本。
 macOS 本地安装默认补 `OCX_DEBUG=1` 和 `OCX_PROVIDER_TEXT_DEBUG=1` 后 reload；`--no-restart` 只更新磁盘 plist，非 Darwin 保持环境。运行该命令即表示本机操作者授权结构诊断与有界文本样本持久化；样本仍受脱敏、单条/每轮限额和总保留预算约束。
+包替换、Volta 登记或 readiness 在提交前失败时，同时恢复安装前 plist 的字节、权限和 launchd loaded 状态；`--no-restart` 的恢复只写回 plist，不主动 reload 服务。
 
 代码：`scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts`、`src/update/transactional-install.mjs`、`src/service/windows-taskxml.ts`。
 测试：`tests/ci-workflows/fork-install-local-*.test.ts`、`tests/ci-workflows/install-local.test.ts`、`tests/ci-workflows/install-local-vendor.test.ts`、`tests/server/fork-provider-debug-safety.test.ts`、`tests/windows/fork-windows-service-pending-transaction.test.ts`。
@@ -280,7 +282,7 @@ Fork 暂时固定 Bun 与 `@types/bun` 为 `1.4.0`，lockfile、Docker 镜像和
 
 沿用上游 domain 布局、runner、并发、shard、timeout 与文件大小门禁。超限测试按独立组拆到同 domain，并双登记官方布局；历史长计划按 Task 边界拆页，保留全部原文。Fork 保留 launcher/update 的真实 Node executable 与 PATH 可用性检查，以及 Responses state 的定向回归，不维护旧 runner 拓扑。
 HTTP/SSE fixture 显式隔离 canonical ChatGPT 上游 WebSocket，避免真实外网握手影响本地测试；需要本地 WebSocket 的鉴权与 profile admission 测试保留真实客户端。共享隔离入口为 `tests/helpers/http-only-codex-websocket.ts`，不改变产品的 WS 选择或回退行为。
-CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；采用上游 Docker job/filter/aggregate。
+CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；采用上游 Docker job/filter/aggregate。changes job 对 `ci`、`gui`、`packaging`、`docs`、`structure` 五个 scope 统一做 `true|false` 校验，并只把校验后的值提供给下游 job，缺失或非法输出直接失败。
 官方 Tag 来源、marker 与 ancestry 必须一致；缺失或冲突不能通过放宽测试解决。
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
 沿用上游的 `structure/manifest.json`、`structure/INDEX.md` 与 `bun run structure:check` 作为结构 SSOT；Fork 的 `src/fork/` 由 `structure/fork-extensions.md` 描述，不恢复已删除的数字前缀 structure 文件或旧式内联 Decision Log。
