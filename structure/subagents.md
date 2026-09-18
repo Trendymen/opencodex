@@ -164,6 +164,9 @@ that run. The existing credential admission precedes cache access; the cache key
 unambiguous ordered sequence. One fixed-endpoint request forwards separate parts, and assignment
 replacement compares the complete original item snapshot before splicing the run. Recovery output
 is model-transcribed plaintext, not cryptographic fidelity proof, and no internal outage retry is added.
+A stream the recovery endpoint terminates with `invalid_encrypted_content` is reported as
+`recovery_unreadable` rather than `recovery_invalid_output`: the endpoint that owns the key
+refused those bytes, so the failure is terminal for that ciphertext, not a transcription defect.
 
 `src/server/responses/encrypted-payload.ts` uses bounded concatenation only to recognize otherwise
 unreadable split-token shapes. The sanitizer preserves just those fragment objects and continues
@@ -204,10 +207,12 @@ canonical length of at least 100 divisible by four. Adjacent text fragments are 
 test, so a token split across slots is still caught. `looksLikeBackendCiphertext` is deliberately
 NOT used on text: it is length >= 64 over a character class that a SHA-256 digest matches exactly
 at 64 characters, and replacing a digest a child deliberately printed would delete readable content
-to protect bytes that were never secret. Other item types are untouched: reasoning and
-function-output blobs keep the reactive opaque-blob recovery, which still rescues a destination
-that merely failed to decrypt something it was entitled to read, and which stays reachable for the
-canonical backend and for explicitly trusted routes.
+to protect bytes that were never secret. Within `stripAgentMessageCiphertextInPlace`, other item
+types are untouched: reasoning and function-output blobs keep the reactive opaque-blob recovery,
+which still rescues a destination that merely failed to decrypt something it was entitled to read,
+and which stays reachable for the canonical backend and for explicitly trusted routes. Historical
+`function_call` arguments are handled by `stripToolCallCiphertextArgumentsInPlace` under the same
+pre-dispatch repair.
 
 The repair resolves the same wire override the adapter is built from rather than restating routing
 policy, and runs for `openai-responses` whenever the destination is not the canonical Codex

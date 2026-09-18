@@ -10,7 +10,8 @@ export type AgentTaskRecoveryResolutionFailureReason =
   | "recovery_timeout"
   | "recovery_aborted"
   | "recovery_transport_error"
-  | "recovery_invalid_output";
+  | "recovery_invalid_output"
+  | "recovery_unreadable";
 
 /** Shared flights carry bounded failures; only successful plaintext enters the cache. */
 export type AgentTaskRecoveryResolution =
