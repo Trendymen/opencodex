@@ -139,6 +139,11 @@ export function providerModelDiscoverySpecError(spec: ProviderModelDiscoverySpec
       return "discovery path must not contain parent-directory segments";
     }
   }
+  const queryEntries = Object.entries(spec.query ?? {});
+  if (queryEntries.length > 32) return "discovery query may contain at most 32 entries";
+  if (queryEntries.some(([key, value]) => !key.trim() || key.length > 128 || typeof value !== "string" || value.length > 512)) {
+    return "discovery query keys/values exceed their bounds";
+  }
   for (const [field, value] of [
     ["envelopeKey", spec.envelopeKey],
     ["idField", spec.idField],
@@ -146,11 +151,6 @@ export function providerModelDiscoverySpecError(spec: ProviderModelDiscoverySpec
     if (value !== undefined && (
       typeof value !== "string" || !value || value !== value.trim() || value.length > 128
     )) return `${field} must be a nonblank field name up to 128 characters`;
-  }
-  const queryEntries = Object.entries(spec.query ?? {});
-  if (queryEntries.length > 32) return "discovery query may contain at most 32 entries";
-  if (queryEntries.some(([key, value]) => !key.trim() || key.length > 128 || typeof value !== "string" || value.length > 512)) {
-    return "discovery query keys/values exceed their bounds";
   }
   for (const [field, value, hardLimit] of [
     ["maxResponseBytes", spec.maxResponseBytes, MODEL_DISCOVERY_MAX_RESPONSE_BYTES],
