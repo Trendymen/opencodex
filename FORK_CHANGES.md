@@ -198,6 +198,8 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 
 ### 原生加密子任务恢复接力
 
+> ben.1 说明：恢复终局拒解识别与毒化派发历史清洗已纳入本轮候选。上游 v2.58.0 基线不变。
+
 > ben.1 说明：恢复终局拒解识别与毒化派发历史清洗已纳入本轮候选。上游 v2.57.0 基线不变。
 
 上游提供通用 recovery admission、turn termination 与失败原因；Fork 扩展 strict non-Fernet backend ciphertext 的识别、admission、routed trigger 和 fail-closed forwarding。
