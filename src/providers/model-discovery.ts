@@ -523,14 +523,11 @@ export function extractProviderModelItems(
     if (value.length > limit) return { ok: false, reason: "too_many_models" };
     data = value;
   } else {
-    const envelope = extractModelEnvelopeRows(
-      value,
-      discovery.maxModels,
-      discovery.spec?.envelopeKey === "models" ? ["models"] : ["data"],
-    );
+    const envelopeKey = discovery.spec?.envelopeKey ?? "data";
+    const envelope = extractModelEnvelopeRows(value, discovery.maxModels, [envelopeKey]);
     if (!envelope.ok) return envelope;
     data = envelope.rows;
-    siblings = buildSiblingIndex(value, limit);
+    siblings = envelopeKey === "data" ? buildSiblingIndex(value, limit) : null;
   }
 
   const items: ProviderModelsApiItem[] = [];
@@ -539,9 +536,8 @@ export function extractProviderModelItems(
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return { ok: false, reason: "invalid_shape" };
     }
-    const id = discovery.spec?.modelIdKey === "slug"
-      ? (raw as { slug?: unknown }).slug
-      : (raw as { id?: unknown }).id;
+    const idField = discovery.spec?.idField ?? "id";
+    const id = (raw as Record<string, unknown>)[idField];
     if (!isValidModelDiscoveryModelId(id)) return { ok: false, reason: "invalid_shape" };
     const prefix = discovery.spec?.stripIdPrefix;
     let finalId = id;
@@ -549,9 +545,9 @@ export function extractProviderModelItems(
       finalId = finalId.slice(prefix.length);
       if (!isValidModelDiscoveryModelId(finalId)) continue;
     }
-    const item = finalId === id && discovery.spec?.modelIdKey !== "slug"
+    const item = finalId === id && idField === "id"
       ? raw as ProviderModelsApiItem
-      : { ...(raw as ProviderModelsApiItem), id: finalId };
+      : { ...(raw as Record<string, unknown>), id: finalId };
     // Admission is decided on the ORIGINAL `data[]` row, before any sibling
     // enrichment. Merging first let a `models[]` entry supply the very field a
     // provider filter requires — reproduced against the real Chutes policy,
