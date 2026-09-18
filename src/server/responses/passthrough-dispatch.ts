@@ -1010,7 +1010,7 @@ export async function preparePassthroughExchange(
       );
       try {
         if (oneShot && allowance.attempts === 0 && discardBeforeSend) return discardBeforeSend;
-        const attempts = oneShot ? Math.min(1, allowance.attempts) : allowance.attempts;
+        if (oneShot) allowance.attempts = Math.min(1, allowance.attempts);
         const replacement = await fetchWithTransientRetry(
           innerRecovery => {
             // Gated on the return, not fire-and-forget: a consumed permit means this leg
@@ -1038,7 +1038,7 @@ export async function preparePassthroughExchange(
               route.provider.authMode === "forward")
               .then(adoptObservedResponse);
           },
-          { abortSignal: upstream.signal, label: safeHostLabel(request.url), attempts, onSendsConsumed: noteTransientSends },
+          { abortSignal: upstream.signal, label: safeHostLabel(request.url), attempts: allowance.attempts, onSendsConsumed: noteTransientSends },
         );
         if (oneShot) {
           try { void discardBeforeSend?.body?.cancel().catch(() => {}); } catch { /* already consumed */ }
