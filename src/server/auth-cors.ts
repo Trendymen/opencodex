@@ -859,6 +859,7 @@ export function providerManagementConfigError(
       return `provider ${name} unsupportedHostedTools must name only hosted tool types: `
         + `${[...DECLARABLE_HOSTED_TOOL_TYPES].join(", ")}`;
     }
+  }
   const messagePhaseInferenceError = nonBlankStringArrayConfigError(
     raw.inferResponsesMessagePhaseModels,
     "inferResponsesMessagePhaseModels",
@@ -867,7 +868,8 @@ export function providerManagementConfigError(
   if (raw.agentMessageFormat !== undefined
     && raw.agentMessageFormat !== "preserve"
     && raw.agentMessageFormat !== "user_message") {
-    return `provider ${name} agentMessageFormat must be preserve or user_message`;  }
+    return `provider ${name} agentMessageFormat must be preserve or user_message`;
+  }
   const openRouterError = openRouterRoutingConfigError(typed);
   if (openRouterError) return `provider ${name} ${openRouterError}`;
   const vercelError = vercelGatewayRoutingConfigError(typed);

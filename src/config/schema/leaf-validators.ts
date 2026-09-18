@@ -37,8 +37,8 @@ import {
   declaredUnsupportedHostedTools,
   isHostedToolUnsupportedForModel,
 } from "../../responses/hosted-tool-policy";
-import { isHostedToolUnsupportedForModel } from "../../responses/hosted-tool-policy";
-import { isCodexReasoningEffort } from "../../reasoning-effort";import { getConfigDir } from "../paths";
+import { isCodexReasoningEffort } from "../../reasoning-effort";
+import { getConfigDir } from "../paths";
 
 /** One definition of "usable secret", shared by the schema and the warnings. */
 export function isUsableApiKeySecret(value: unknown): value is string {

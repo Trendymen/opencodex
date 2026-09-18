@@ -104,7 +104,7 @@ import {
   type ProviderEditorConfigDTO,
   type ProviderEditorProviderDTO,
 } from "../auth-cors";
-import { providerCatalogCapabilityConfigError } from "./provider-capability-config";
+import { providerCatalogCapabilityConfigError, providerServiceTierConfigError } from "./provider-capability-config";
 import { providerEmptyToolOutputConfigError } from "../../config/provider-validation";
 import { applySystemEnvToggle } from "../system-env";
 import {

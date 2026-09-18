@@ -22,11 +22,12 @@ import {
   repairFreeformToolInput,
   unwrapFreeformToolInput,
 } from "../responses/apply-patch-envelope";
+import {
   createAnnotationDirectiveCodeSpanFilter,
   stripAnnotationDirectiveCodeSpans,
   type AnnotationDirectiveCodeSpanFilter,
 } from "../responses/annotation-directive";
-import { mayBecomePatchEnvelope, repairFreeformToolInput } from "../responses/apply-patch-envelope";import { encodeCompactionSummary } from "../responses/compaction";
+import { encodeCompactionSummary } from "../responses/compaction";
 import { compileCodeModeHelperInput, resolveCodeModeHelperName } from "../responses/code-mode-helper-compat";
 import { isTruncatedStopReason, truncationReasonFor } from "../responses/truncated-stop-reason";
 import { encodeReasoningEnvelope, type ReasoningEnvelope } from "../responses/reasoning-envelope";
