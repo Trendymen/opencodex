@@ -32,6 +32,7 @@ import {
   hasUnreadableEncryptedAgentTask,
   sanitizeEncryptedContentInPlace,
   stripAgentMessageCiphertextInPlace,
+  stripToolCallCiphertextArgumentsInPlace,
 } from "./encrypted-payload";
 import { rewriteAnnotationInstructionsInPlace } from "./annotation-instructions";
 import {
@@ -902,10 +903,12 @@ export async function prepareResponsesRequest(
       inboundWire,
     );
     if (wireProvider.adapter === "openai-responses" && !isCanonicalOpenAiForwardProvider(wireProvider)) {
-      const repaired = stripAgentMessageCiphertextInPlace((body as { input?: unknown } | undefined)?.input);
+      const input = (body as { input?: unknown } | undefined)?.input;
+      const repaired = stripAgentMessageCiphertextInPlace(input)
+        + stripToolCallCiphertextArgumentsInPlace(input);
       if (repaired > 0) {
         console.warn(
-          `[opencodex] replaced ciphertext in ${repaired} replayed agent message(s) with an omission marker; the selected provider cannot read native ChatGPT ciphertext`,
+          `[opencodex] replaced ciphertext in ${repaired} replayed agent item(s) with an omission marker; the selected provider cannot read native ChatGPT ciphertext`,
         );
       }
     }

@@ -183,6 +183,8 @@
     "fork-agent-task-recovery-backend.test.ts": "server",
     "fork-agent-task-recovery-body-ceiling.test.ts": "server",
     "fork-agent-task-recovery-kiro-turn-termination.test.ts": "server",
+    "fork-tool-call-ciphertext-arguments.test.ts": "server",
+    "fork-tool-call-ciphertext-egress.test.ts": "server",
     "fork-ark-quota-error.test.ts": "server",
     "fork-ark-weekly-quota.test.ts": "providers",
     "fork-ci-official-baseline.test.ts": "ci-workflows",

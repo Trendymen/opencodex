@@ -456,6 +456,27 @@ function assignmentFromRecoverySse(raw: string, envelope: AgentEnvelope): string
     : null;
 }
 
+/**
+ * The recovery endpoint is the one place that can read backend task ciphertext. When it answers
+ * with an encrypted-content rejection, the ciphertext is terminally undecryptable for this
+ * caller and retrying the same bytes -- through recovery or a new spawn -- cannot change that.
+ * Malformed stream shapes stay "recovery_invalid_output" because there the model output, not
+ * the ciphertext, is what failed.
+ */
+function upstreamRejectedCiphertextSse(raw: string): boolean {
+  for (const data of sseDataPayloads(raw)) {
+    if (!data || data === "[DONE]") continue;
+    let event: any;
+    try { event = JSON.parse(data); } catch { continue; }
+    if (event?.type !== "error" && event?.type !== "response.failed") continue;
+    const error = event.type === "error"
+      ? event.error
+      : event.response?.error;
+    if (error?.code === "invalid_encrypted_content") return true;
+  }
+  return false;
+}
+
 async function requestRecoveryAttempt(
   admission: RecoveryAdmission,
   envelope: AgentEnvelope,
@@ -500,6 +521,9 @@ async function requestRecoveryAttempt(
     if (controller.signal.aborted || body.timedOut) return { recovered: false, reason: "recovery_timeout" };
     if (body.truncated || body.oversized || !body.displaySafe) return { recovered: false, reason: "recovery_invalid_output" };
     const assignment = assignmentFromRecoverySse(body.text, envelope);
+    if (assignment === null && upstreamRejectedCiphertextSse(body.text)) {
+      return { recovered: false, reason: "recovery_unreadable" };
+    }
     if (assignment === null) return { recovered: false, reason: "recovery_invalid_output" };
     succeeded = true;
     return { recovered: true, assignment };

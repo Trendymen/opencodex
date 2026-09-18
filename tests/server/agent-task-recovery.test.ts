@@ -154,6 +154,10 @@ describe("agent task recovery (opt-in, default off)", () => {
     ["failed terminal", () => new Response(recoverySse("payload-sentinel") + 'data: {"type":"response.failed","response":{"error":{"message":"raw-error-sentinel"}}}\n\n'), "recovery_invalid_output"],
     ["incomplete terminal", () => new Response(recoverySse("payload-sentinel") + 'data: {"type":"response.incomplete"}\n\n'), "recovery_invalid_output"],
     ["bare error", () => new Response(recoverySse("payload-sentinel") + 'data: {"type":"error","error":{"message":"raw-error-sentinel"}}\n\n'), "recovery_invalid_output"],
+    ["upstream ciphertext rejection", () => new Response(
+      'data: {"type":"error","error":{"code":"invalid_encrypted_content","type":"invalid_request_error","message":"Encrypted function output content could not be decrypted or decoded."}}\n\n'
+      + 'data: {"type":"response.failed","response":{"error":{"code":"invalid_encrypted_content","message":"Encrypted function output content could not be decrypted or decoded."}}}\n\n',
+    ), "recovery_unreadable"],
     // Exact-case events are also used by the pinned official Codex source. Recovery's
     // additional completed-status requirement remains deliberately stricter.
     ["mixed-case completion", () => new Response(recoverySse("payload-sentinel").replace("response.completed", "Response.Completed")), "recovery_invalid_output"],
@@ -359,6 +363,26 @@ describe("agent task recovery (opt-in, default off)", () => {
     expect(json.error?.recovery_reason).toBe("recovery_invalid_output");
     expect(fetchedUrls.length).toBeGreaterThan(0);
     expect(fetchedUrls[0]).toContain("chatgpt.com/backend-api/codex");
+  });
+
+  test("routed task reports terminal upstream ciphertext rejection instead of invalid output", async () => {
+    globalThis.fetch = (async () => new Response(
+      'event: error\ndata: {"type":"error","error":{"code":"invalid_encrypted_content"}}\n\n'
+      + 'event: response.failed\ndata: {"type":"response.failed","response":{"status":"failed"}}\n\n',
+      { status: 200 },
+    )) as typeof fetch;
+
+    const response = await post(
+      routedConfig(),
+      "xai/grok-4.5",
+      encryptedInput(),
+      codexHeaders(),
+    );
+    const json = await response.json() as { error?: { code?: string; recovery_reason?: string } };
+
+    expect(response.status).toBe(400);
+    expect(json.error?.code).toBe("unreadable_encrypted_agent_task");
+    expect(json.error?.recovery_reason).toBe("recovery_unreadable");
   });
 
   test("trusted direct Responses routes bypass recovery and preserve encrypted tasks", async () => {
