@@ -58,8 +58,9 @@ capabilities. In particular, `src/providers/registry/entries-core.ts` assigns Op
 routed-model fallback.
 The same registry declares the first-party `deepseek-flash` model with `text` and `image` input,
 so it bypasses the vision sidecar by default; explicit `noVisionModels` or text-only declarations
-remain authoritative. First-party `deepseek-chat`, `deepseek-reasoner`, and `deepseek-v4-flash`
-remain sidecar-backed by default. Zen routes are unchanged and unprobed in this update.
+remain authoritative. Fork additionally keeps the measured legacy `deepseek-v4-flash` id on the
+direct image-capable path; `deepseek-chat` and `deepseek-reasoner` remain sidecar-backed by default.
+Zen routes are unchanged and unprobed in this update.
 
 The BigModel Coding Plan Responses preset uses the separately documented
 `https://open.bigmodel.cn/api/v1` transport and a static catalog. Its provider row
