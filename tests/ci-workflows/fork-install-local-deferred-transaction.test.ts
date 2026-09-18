@@ -653,6 +653,35 @@ describe("install:local deferred package transaction", () => {
     ]);
   });
 
+  test("restores the launchd snapshot even when the old runtime cannot restart", async () => {
+    const events: string[] = [];
+    const replacementFailure = new Error("new runtime readiness failed");
+    const oldRuntimeFailure = new Error("old runtime restart failed");
+    let restartCalls = 0;
+    await expect(runLocalInstallLifecycle(true, {
+      stop: () => { events.push("stop"); },
+      verifyStopped: () => { events.push("verify"); },
+      replace: () => ({
+        commit: () => ({ ok: true, phase: "committed" }),
+        rollback: () => { events.push("rollback-package"); return { ok: true, phase: "rolled-back" }; },
+      }),
+      restart: () => {
+        restartCalls += 1;
+        events.push(`restart-${restartCalls}`);
+        if (restartCalls === 2) throw oldRuntimeFailure;
+      },
+      ready: () => {
+        events.push("ready");
+        if (restartCalls === 1) throw replacementFailure;
+      },
+      afterRollback: () => { events.push("restore-launchd-snapshot"); },
+    })).rejects.toBeInstanceOf(AggregateError);
+    expect(events).toEqual([
+      "stop", "verify", "restart-1", "ready", "stop", "verify", "rollback-package",
+      "restart-2", "restore-launchd-snapshot",
+    ]);
+  });
+
   test("marks a failed stop of the new runtime as recovery-unsafe", async () => {
     const events: string[] = [];
     const readinessFailure = new Error("new runtime readiness failed");

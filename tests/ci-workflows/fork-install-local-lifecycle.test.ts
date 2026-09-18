@@ -68,6 +68,15 @@ test("local installer preserves an installed service and refuses a loaded manage
   expect(installer).toContain("Background service is still loaded after ocx stop");
 });
 
+test("local installer snapshots launchd through the tri-state probe and refuses unknown state", async () => {
+  const installer = await readText("scripts/install-local.ts");
+  expect(installer).toContain("const launchdLoad = serviceWasInstalled && process.platform === \"darwin\"");
+  expect(installer).toContain("probeLaunchdLoadState()");
+  expect(installer).toContain('if (launchdLoad?.state === "unknown")');
+  expect(installer).toContain('launchdLoad.state === "loaded-current" || launchdLoad.state === "loaded-stale"');
+  expect(installer).not.toContain("captureProviderDebugLaunchdSnapshot(launchdProxyPlistPath(), diagnoseService().running)");
+});
+
 test("local installer restores the macOS debug defaults and keeps the runtime call signatures aligned", async () => {
   const installer = await readText("scripts/install-local.ts");
   const main = installer.slice(installer.indexOf("export async function runLocalInstaller"));

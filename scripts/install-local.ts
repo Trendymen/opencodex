@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { commandInvocation, resolveWindowsCommand } from "../src/lib/win-exec";
 import {
   diagnoseService,
+  probeLaunchdLoadState,
   probeServiceInstallation,
   probeWindowsSchedulerTask,
   proxyStillLiveAfterStop,
@@ -540,12 +541,12 @@ export async function runLocalInstallLifecycle(
           rollbackError = error;
         }
       }
-      if (rollbackError === undefined) {
-        try {
-          await deps.afterRollback?.();
-        } catch (error) {
-          rollbackError = error;
-        }
+      try {
+        await deps.afterRollback?.();
+      } catch (error) {
+        rollbackError = rollbackError === undefined
+          ? error
+          : new AggregateError([rollbackError, error], "local install rollback compensation failed");
       }
       if (rollbackError !== undefined) {
         throw Object.assign(
@@ -1129,8 +1130,17 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
     registration?.verify();
     const serviceProbe = probeLocalServiceInstallation();
     const serviceWasInstalled = requireKnownServiceInstallation(serviceProbe);
-    const launchdSnapshot = serviceWasInstalled && process.platform === "darwin"
-      ? captureProviderDebugLaunchdSnapshot(launchdProxyPlistPath(), diagnoseService().running)
+    const launchdLoad = serviceWasInstalled && process.platform === "darwin"
+      ? probeLaunchdLoadState()
+      : undefined;
+    if (launchdLoad?.state === "unknown") {
+      throw new Error(`launchd service state is unknown; refusing local install: ${launchdLoad.detail ?? "probe failed"}`);
+    }
+    const launchdSnapshot = launchdLoad
+      ? captureProviderDebugLaunchdSnapshot(
+        launchdProxyPlistPath(),
+        launchdLoad.state === "loaded-current" || launchdLoad.state === "loaded-stale",
+      )
       : undefined;
     await runLocalInstallLifecycleWithManifestGuard(restart, {
       stop: () => {
