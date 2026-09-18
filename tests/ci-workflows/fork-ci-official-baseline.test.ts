@@ -86,6 +86,7 @@ function createFixture(): Fixture {
   requireGit(official, ["init", "--initial-branch=main"]);
   requireGit(official, ["config", "user.name", "Fixture"]);
   requireGit(official, ["config", "user.email", "fixture" + "@" + "example.invalid"]);
+  commit(official, "root");
   writeFileSync(join(official, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
   const officialTagCommit = commit(official, "baseline");
   requireGit(official, ["tag", "v2.35.0", officialTagCommit]);
@@ -137,6 +138,7 @@ function prepare(
   fixture: Fixture,
   officialUrl = pathToFileURL(fixture.official).href,
   runGit?: (cwd: string, args: readonly string[]) => ReturnType<typeof git>,
+  options: { allowPendingOfficialMarker?: boolean } = {},
 ) {
   const rawFetchHead = requireGit(fixture.checkout, ["rev-parse", "--git-path", "FETCH_HEAD"]);
   const fetchHeadPath = isAbsolute(rawFetchHead) ? rawFetchHead : resolve(fixture.checkout, rawFetchHead);
@@ -149,7 +151,12 @@ function prepare(
     beforeFetchHead,
     beforeVerifierRoots,
     sentinel,
-    run: () => prepareForkOfficialBase({ repoRoot: fixture.checkout, officialRepositoryUrl: officialUrl, runGit }),
+    run: () => prepareForkOfficialBase({
+      repoRoot: fixture.checkout,
+      officialRepositoryUrl: officialUrl,
+      runGit,
+      ...options,
+    } as Parameters<typeof prepareForkOfficialBase>[0]),
   };
 }
 
@@ -255,6 +262,25 @@ describe("Fork CI official baseline preparation", () => {
     ]);
     const prepared = prepare(fixture);
     expect(prepared.run).toThrow("official release tag does not match origin upstream-release");
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("candidate CI accepts a pending ancestor marker only when explicitly enabled", () => {
+    const fixture = createFixture();
+    const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
+    requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
+    const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
+    const result = prepared.run();
+    expect(result).toMatchObject({ kind: "prepared", tag: "v2.35.0", peeledCommit: fixture.officialTagCommit });
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("candidate CI rejects a pending marker outside the official ancestry", () => {
+    const fixture = createFixture();
+    const different = requireGit(fixture.official, ["rev-parse", "refs/heads/main"]);
+    requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", different]);
+    const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
+    expect(prepared.run).toThrow("verify official ancestry");
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
 

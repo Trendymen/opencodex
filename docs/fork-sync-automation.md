@@ -480,6 +480,7 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 8. 文档更新后按“验证选择与结果复用”完成最终验证；新基线的最终实现必须有当前官方 prepush 的通过证据。验证促成实现修改时把当前 `AK` 标记为 abandoned，以最大 `K + 1` 回到第 7 步；验证失败的 `AK` 不得占用 `RN`，也不得写入 `PRIOR_FINDINGS`。
 9. 验证通过后只暂存 `FORK_CHANGES.md`，核对 staged list 与 diff check，创建 docs-only commit，并机械验证其父提交等于当前 `CANDIDATE_IMPLEMENTATION_HEAD_AK`。此时才将完整 SHA 对晋升为下一个审查轮次：尚无轮次时创建 `R1`；已有 reviewed round 时使用当前最大 `N + 1`。令 `IMPLEMENTATION_HEAD_RN=CANDIDATE_IMPLEMENTATION_HEAD_AK`、`RELEASE_COMMIT_RN=<docs-only commit>`，两者同时存在后才算分配成功。
 10. 生成最新完整 `RN` 的 review package，执行机械集合/冲突 replay 对账、命名风险检查与双审门禁（见上）。首次真实派发使用 `REVIEW_PHASE: INITIAL`。任一 Critical/Important finding 都从新 `AK` 回到第 7 步；新候选经第 7–9 步晋升为下一完整 `RN` 后，按 `REVIEW_PHASE: RE_REVIEW` 复用原 reviewer 并保留完整 `PRIOR_FINDINGS`。未取得两个 `PASS`，以及仅在明确未收敛跨边界风险时所需的窄审 `PASS` 前，禁止后续 push、Tag、Release。
+    candidate CI 在这一步之后、原子 promotion 之前运行。此时 origin 的 `upstream-release` 仍可能是 `OLD_OFFICIAL`；候选 verifier 只有在显式 candidate CI 环境中，且证明该 marker 是新官方 Tag peeled commit 的祖先时，才允许继续。发布后的 verifier 仍要求 marker 与新官方 Tag 精确相等；候选例外不能用于本地或非 candidate CI 运行。
 11. 双审通过后创建中文注释 annotated Tag vX.Y.Z-ben.N；raw 类型必须是 tag，peeled 等于 `RELEASE_COMMIT`。远端已存在时核对 OID，否则 fail closed。禁止 force Tag。
 12. 紧邻 push 重新读取 `main`、`dev`、`refs/heads/sync/vX.Y.Z` 与 marker 的 expected OID；sync 首次不存在则重证 absent。按“提交术语与唯一原子集合”执行一次 `git push --atomic`，同时更新 `main`、`dev`、`RELEASE_SYNC_REF`、`upstream-release`、Fork Tag 和官方 Tag：前三个 branch 与 Fork Tag 指向 `RELEASE_COMMIT`，`upstream-release` 与官方 Tag 指向 `OFFICIAL_COMMIT`。四个 branch 均使用各自 ref-scoped force-with-lease；sync 使用 `+RELEASE_COMMIT:refs/heads/sync/vX.Y.Z`，允许 non-fast-forward。任一 lease 漂移、出现 revision-specific sync ref、Tag 冲突或 push 失败都 fail closed；禁止无 lease force、blanket force 和拆分推送。
 13. push 成功后、Release API 前，严格按 `local-ref-cas-transaction` 使用一个带
@@ -497,5 +498,5 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 
 - 普通 Fork 功能提交新增/删除/替换/实质改变 FORK_CHANGES.md 能力时，同步中文更新文档。
 - origin 为 Trendymen/opencodex，upstream 为 lidge-jun/opencodex。不创建 GitHub App、Secrets、PR 或 Issue；保留完整上游历史与原始 SHA。
-- 官方基线证据用本地 upstream remote Tag 与 origin/upstream-release marker 证明。
+- 发布后的官方基线证据用本地 upstream remote Tag 与 origin/upstream-release marker 的精确相等证明。candidate CI 在原子 promotion 前保留旧 marker 时，额外证明旧 marker 是新官方 Tag 的祖先；该例外只存在于显式的 GitHub dev push candidate 环境。
 - CI 因 origin clone 缺官方基线 Tag 失败时，登记为需用户决策事项并停止，不自行镜像、不改测试断言、不放宽门禁。

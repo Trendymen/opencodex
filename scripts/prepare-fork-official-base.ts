@@ -49,6 +49,12 @@ export type GitOperation =
   | "cleanup official verifier"
   | "prepare official base";
 
+function runningCandidateCi(): boolean {
+  return process.env.GITHUB_ACTIONS === "true"
+    && process.env.GITHUB_EVENT_NAME === "push"
+    && process.env.GITHUB_REF === "refs/heads/dev";
+}
+
 function hasLeadingZeroNumericPreviewPart(value: string): boolean {
   const preview = value.split("-preview.")[1];
   return preview?.split(".").some(part => /^0\d+$/.test(part)) ?? false;
@@ -215,6 +221,7 @@ export function prepareForkOfficialBase(options: {
   officialRepositoryUrl: string;
   runGit?: GitRunner;
   filesystem?: Pick<typeof import("node:fs"), "chmodSync" | "writeFileSync">;
+  allowPendingOfficialMarker?: boolean;
 }): PrepareForkOfficialBaseResult {
   let classification: VersionClassification;
   try {
@@ -295,7 +302,14 @@ export function prepareForkOfficialBase(options: {
       throw new Error("imported official tag does not match verified official tag");
     }
     const marker = runOrThrow(runGit, "verify official tag", options.repoRoot, ["rev-parse", `${MARKER_REF}^{commit}`], ownedPaths).stdout.trim();
-    if (marker !== peeledCommit) throw new Error("official release tag does not match origin upstream-release");
+    if (marker !== peeledCommit) {
+      if (!options.allowPendingOfficialMarker) {
+        throw new Error("official release tag does not match origin upstream-release");
+      }
+      runOrThrow(runGit, "verify official ancestry", options.repoRoot, [
+        `--git-dir=${bareDir}`, "merge-base", "--is-ancestor", marker, peeledCommit,
+      ], ownedPaths);
+    }
     const localTagRef = `refs/tags/${classification.tag}`;
     const existing = readExistingTag(runGit, options.repoRoot, localTagRef, ownedPaths);
     if (existing) {
@@ -330,7 +344,11 @@ export function prepareForkOfficialBase(options: {
 }
 
 export function prepareForkOfficialBaseCli(): PrepareForkOfficialBaseResult {
-  return prepareForkOfficialBase({ repoRoot: CLI_REPO_ROOT, officialRepositoryUrl: OFFICIAL_URL });
+  return prepareForkOfficialBase({
+    repoRoot: CLI_REPO_ROOT,
+    officialRepositoryUrl: OFFICIAL_URL,
+    allowPendingOfficialMarker: runningCandidateCi(),
+  });
 }
 
 if (import.meta.main) {
