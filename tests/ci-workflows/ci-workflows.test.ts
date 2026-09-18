@@ -285,13 +285,26 @@ runs:
         expect(`${name}:${String(job.permissions)}`).toBe(`${name}:undefined`);
       }
     }
-    // Official v2.58 uses workflow_dispatch lane input and the run-scoped github.token
-    // for the aggregate gate job; both are event-object reads, not secrets interpolation.
+    // Official v2.58 reads the workflow_dispatch lane input and the run-scoped
+    // github.token. Exempt only the exact safe forms: strip every sanctioned token
+    // from an expression and re-run the scanner on what remains, so an exempt token
+    // cannot smuggle secrets interpolation or a github context object through.
+    const sanctionedTokens = /github\.event\.inputs\.[A-Za-z_]+|github\.token/g;
     const unsafe = unsafeWorkflowContextExpressions(workflow).filter(expression =>
-      !/github\.event\.inputs\.[A-Za-z_]+/.test(expression)
-      && !/github\.token/.test(expression));
+      unsafeWorkflowContextExpressions(expression.replace(sanctionedTokens, "")).length > 0);
     expect(unsafe).toEqual([]);
     expect(workflow).not.toMatch(/\bGITHUB_TOKEN\b/);
+
+    // Regression probe: a sanctioned token must not launder secrets or the github
+    // context object past the exemption. Stripping leaves the unsafe remainder, so
+    // these stay flagged.
+    const laundered = [
+      "${{ github.event.inputs.lane == 'all' && secrets.X }}",
+      "${{ format('{0}', github.token, secrets.NAME) }}",
+    ];
+    expect(laundered.filter(expression =>
+      unsafeWorkflowContextExpressions(expression.replace(sanctionedTokens, "")).length > 0))
+      .toEqual(laundered);
 
     const localUses = localWorkflowActionUses(ci);
     expect([...new Set(localUses)]).toEqual(["./.github/actions/setup-project-bun"]);

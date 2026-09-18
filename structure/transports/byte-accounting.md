@@ -107,8 +107,6 @@ Native steering generation overrides, explicit public-API eligibility and the co
 
 ### Fork reasoning sequence accounting
 
-### Fork reasoning sequence accounting
-
 `src/server/responses-reasoning-summary-rewrite.ts` 使用 `Set<number>` 去重，每个保留的整数序号
 按 32 字节计入官方 `translatorBudget`，不另设 256 个序号或 256 KiB 配额。
 客户端与 replay projection 共用调用方预算；独立调用在需要时创建默认 32 MiB 预算。
