@@ -340,6 +340,7 @@
     "bridge-raw-reasoning-hidden.test.ts": "adapters",
     "bridge-reasoning-replay-batch.test.ts": "adapters",
     "bridge-terminal-singleness.test.ts": "adapters",
+    "bridge-annotation-directive.test.ts": "adapters",
     "bridge.test.ts": "adapters",
     "buffered-response-shape-guards.test.ts": "adapters",
     "build-release-changelog.test.ts": "ci-workflows",

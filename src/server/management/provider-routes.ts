@@ -1210,6 +1210,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     if (resolvedError) return jsonResponse({ error: resolvedError }, 400);
     let replayError: string | undefined;
     let replayCode: string | undefined;
+    let replayStatus = 400;
     let savedProvider: OcxProviderConfig | undefined;
     // Destination validation awaits. Rebuild the candidate from the original request under
     // the mutation lock so every field omitted by the dashboard is inherited from the newest
@@ -1219,6 +1220,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       const replayAliasOwnershipError = providerAliasOverlayOwnershipError(submittedProvider, existing);
       if (replayAliasOwnershipError) {
         replayError = replayAliasOwnershipError;
+        replayStatus = 409;
         return;
       }
       const replayTransportCandidate = providerTransportValidationCandidate(submittedProvider);
@@ -1264,6 +1266,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       const replayNamespaceCollision = codexAccountNamespaceProviderCollisionError(config.codexAccountNamespaces, name);
       if (replayNamespaceCollision) {
         replayError = replayNamespaceCollision;
+        replayStatus = 409;
         return;
       }
       if (body.setDefault !== undefined && typeof body.setDefault !== "boolean") {
@@ -1378,17 +1381,15 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       } : undefined;
       initializeProviderModelSelection(name, replayProv, existing, registrationDraft ?? config);
       const candidate = stripRegistryOnlyStaticHeaders(name, replayProv);
-      if (pinsOwned) {
-        const draft = {
-          ...(registrationDraft ?? config),
-          providers: { ...config.providers, [name]: candidate },
-          ...(body.setDefault === true ? { defaultProvider: name } : {}),
-        };
-        const validation = validateConfigCandidate(draft);
-        if (!validation.ok) {
-          replayError = validation.error;
-          return;
-        }
+      const draft = {
+        ...(registrationDraft ?? config),
+        providers: { ...config.providers, [name]: candidate },
+        ...(body.setDefault === true ? { defaultProvider: name } : {}),
+      };
+      const validation = validateConfigCandidate(draft);
+      if (!validation.ok) {
+        replayError = validation.error;
+        return;
       }
       const previous = Object.getOwnPropertyDescriptor(config.providers, name);
       const rollback = pinsOwned
@@ -1416,7 +1417,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       }
     });
     if (replayError !== undefined) {
-      return jsonResponse({ error: replayError, ...(replayCode ? { code: replayCode } : {}) }, 409);
+      return jsonResponse({ error: replayError, ...(replayCode ? { code: replayCode } : {}) }, replayStatus);
     }
     const savedProv = savedProvider!;
     reconcileLiveStateStores();
