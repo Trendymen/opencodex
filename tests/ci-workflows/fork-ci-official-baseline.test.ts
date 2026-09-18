@@ -155,6 +155,27 @@ function runAsCandidate<T>(run: () => T): T {
   }
 }
 
+function runOutsideCandidate<T>(run: () => T): T {
+  const previous = {
+    actions: process.env.GITHUB_ACTIONS,
+    event: process.env.GITHUB_EVENT_NAME,
+    ref: process.env.GITHUB_REF,
+  };
+  process.env.GITHUB_ACTIONS = "false";
+  process.env.GITHUB_EVENT_NAME = "push";
+  process.env.GITHUB_REF = "refs/heads/main";
+  try {
+    return run();
+  } finally {
+    if (previous.actions === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = previous.actions;
+    if (previous.event === undefined) delete process.env.GITHUB_EVENT_NAME;
+    else process.env.GITHUB_EVENT_NAME = previous.event;
+    if (previous.ref === undefined) delete process.env.GITHUB_REF;
+    else process.env.GITHUB_REF = previous.ref;
+  }
+}
+
 function prepare(
   fixture: Fixture,
   officialUrl = pathToFileURL(fixture.official).href,
@@ -310,7 +331,7 @@ describe("Fork CI official baseline preparation", () => {
     const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
     requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
     const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
-    expect(prepared.run).toThrow("official release tag does not match origin upstream-release");
+    expect(() => runOutsideCandidate(prepared.run)).toThrow("official release tag does not match origin upstream-release");
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
 
