@@ -69,7 +69,7 @@ import {
   writeResponseSpillDurably,
 } from "../../src/responses/spill-store";
 import { adapterNeedsForcedContinuation, injectDeveloperMessage } from "../../src/server/responses";
-import { watchdogMs } from "../helpers/ci-watchdog";
+import { isolationBudgetMs, watchdogMs } from "../helpers/ci-watchdog";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 /**
@@ -235,7 +235,7 @@ async function runShutdownBudgetChild(
 async function runNeverSettlingAclChild(
   mode: "principal" | "icacls",
 ): Promise<NeverSettlingAclChildResult> {
-  const timeoutMs = watchdogMs(1_500);
+  const timeoutMs = isolationBudgetMs(1_500);
   const child = Bun.spawn([
     process.execPath,
     helperPath("responses-state-never-settling-acl-child.ts"),
@@ -1246,7 +1246,7 @@ describe("Responses previous_response_id state", () => {
         metrics: { tombstoneCount: 2 },
       });
     }
-  }, { timeout: (2 * watchdogMs(1_500)) + 2_000 });
+  }, { timeout: (2 * isolationBudgetMs(1_500)) + 2_000 });
 
   test("Windows pending spill publication cannot overwrite a newer same-id generation", async () => {
     forceWindowsAclLane();
