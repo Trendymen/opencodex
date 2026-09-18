@@ -1369,13 +1369,13 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         replayProv.zaiResponsesDefaultVersion = existing.zaiResponsesDefaultVersion;
       }
       // The locked `existing` row is the newest state after the async destination probe.
-      // Stage registration side effects with the pin draft, validate the whole config, and
-      // only then adopt it so a persistence failure can restore the live object exactly.
+      // Stage every new-registration side effect, validate the whole config, and only then
+      // adopt it so a persistence failure can restore the live object exactly.
       const pinsOwned = Object.hasOwn(submittedProvider, "pinnedReasoningEffort")
         || Object.hasOwn(submittedProvider, "modelPinnedReasoningEfforts")
         || existing?.pinnedReasoningEffort !== undefined
         || existing?.modelPinnedReasoningEfforts !== undefined;
-      const registrationDraft = pinsOwned && !existing ? {
+      const registrationDraft = !existing ? {
         ...config,
         ...(config.modelDiscovery === undefined ? {} : { modelDiscovery: structuredClone(config.modelDiscovery) }),
       } : undefined;
@@ -1392,7 +1392,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         return;
       }
       const previous = Object.getOwnPropertyDescriptor(config.providers, name);
-      const rollback = pinsOwned
+      const rollback = !existing || pinsOwned
         ? captureConfigTopLevelRollback(config, ["defaultProvider", "modelDiscovery", "disabledModels"])
         : undefined;
       try {

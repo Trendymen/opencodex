@@ -101,6 +101,11 @@ type LaunchdPlistWriteDeps = {
   validate?: (path: string) => void;
 };
 
+type LaunchdPlistRollbackDeps = LaunchdPlistWriteDeps & {
+  launchctl?: typeof runLaunchctl;
+  platform?: NodeJS.Platform;
+};
+
 type CapturedCommandResult = { status: number; stdout: string; stderr: string; errorCode?: string };
 
 function decodeCommandOutput(value: Uint8Array | string | undefined): string {
@@ -181,6 +186,25 @@ function validateProviderDebugPlist(plistPath: string): void {
   }
 }
 
+function replaceLaunchdPlistAtomically(
+  plistPath: string,
+  contents: Uint8Array,
+  mode: number,
+  mutate?: (temporary: string) => void,
+): void {
+  const temporary = `${plistPath}.ocx.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, contents, { mode, flag: "wx" });
+    chmodSync(temporary, mode);
+    mutate?.(temporary);
+    chmodSync(temporary, mode);
+    renameSync(temporary, plistPath);
+  } catch (error) {
+    try { rmSync(temporary, { force: true }); } catch { /* best-effort cleanup */ }
+    throw error;
+  }
+}
+
 /** Atomically make the current macOS launchd plist default to provider debug on. */
 export function ensureProviderDebugLaunchdDefault(
   plistPath = launchdProxyPlistPath(),
@@ -196,19 +220,46 @@ export function ensureProviderDebugLaunchdDefault(
   }
 
   const current = readFileSync(plistPath);
-  const temporary = `${plistPath}.ocx.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporary, current, { mode: 0o600, flag: "wx" });
-    chmodSync(temporary, 0o600);
+  replaceLaunchdPlistAtomically(plistPath, current, 0o600, temporary => {
     (deps.patch ?? patchProviderDebugWithPlutil)(temporary);
     (deps.validate ?? validateProviderDebugPlist)(temporary);
-    chmodSync(temporary, 0o600);
-    renameSync(temporary, plistPath);
-  } catch (error) {
-    try { rmSync(temporary, { force: true }); } catch { /* best-effort cleanup */ }
-    throw error;
-  }
+  });
   return true;
+}
+
+export type ProviderDebugLaunchdSnapshot = {
+  restore(reload: boolean): void;
+};
+
+/** Save the pre-install launchd definition so a pending package transaction can restore it. */
+export function captureProviderDebugLaunchdSnapshot(
+  plistPath = launchdProxyPlistPath(),
+  wasLoaded: boolean,
+  deps: LaunchdPlistRollbackDeps = {},
+): ProviderDebugLaunchdSnapshot | undefined {
+  if ((deps.platform ?? process.platform) !== "darwin") return undefined;
+  if (!existsSync(plistPath)) throw new Error(`launchd plist not found: ${plistPath}`);
+  const stat = lstatSync(plistPath);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("launchd plist must be a regular file");
+  const contents = readFileSync(plistPath);
+  const mode = stat.mode & 0o777;
+
+  return {
+    restore(reload: boolean): void {
+      replaceLaunchdPlistAtomically(plistPath, contents, mode);
+      if (!reload) return;
+      const launchctl = deps.launchctl ?? runLaunchctl;
+      const unloaded = launchctl(["unload", plistPath]);
+      if (!unloaded.ok) {
+        throw new Error(`launchctl could not unload restored ${plistPath}: ${unloaded.stderr || "command failed"}`);
+      }
+      if (!wasLoaded) return;
+      const loaded = launchctl(["load", "-w", plistPath]);
+      if (!loaded.ok || launchctlLoadFailed(loaded.stderr)) {
+        throw new Error(`launchctl could not load restored ${plistPath}: ${loaded.stderr || "command failed"}`);
+      }
+    },
+  };
 }
 
 /** Reload launchd only when install-local changed the service definition. */
@@ -380,6 +431,7 @@ export interface LocalInstallLifecycleDeps {
   replace: () => void | LocalInstallPendingTransaction | Promise<void | LocalInstallPendingTransaction>;
   afterReplace?: () => void | Promise<void>;
   beforeCommit?: () => void | Promise<void>;
+  afterRollback?: () => void | Promise<void>;
   restart: () => void | Promise<void>;
   ready: () => void | Promise<void>;
 }
@@ -488,6 +540,13 @@ export async function runLocalInstallLifecycle(
           rollbackError = error;
         }
       }
+      if (rollbackError === undefined) {
+        try {
+          await deps.afterRollback?.();
+        } catch (error) {
+          rollbackError = error;
+        }
+      }
       if (rollbackError !== undefined) {
         throw Object.assign(
           new AggregateError(
@@ -536,6 +595,7 @@ export async function runLocalInstallLifecycleWithManifestGuard(
       return await deps.replace();
     },
     afterReplace: deps.afterReplace,
+    afterRollback: deps.afterRollback,
     // Once replacement starts, service recovery wins over source-tree diagnostics.
     // A later completion/cleanup check still reports drift without stranding the proxy.
     restart: deps.restart,
@@ -1069,6 +1129,9 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
     registration?.verify();
     const serviceProbe = probeLocalServiceInstallation();
     const serviceWasInstalled = requireKnownServiceInstallation(serviceProbe);
+    const launchdSnapshot = serviceWasInstalled && process.platform === "darwin"
+      ? captureProviderDebugLaunchdSnapshot(launchdProxyPlistPath(), diagnoseService().running)
+      : undefined;
     await runLocalInstallLifecycleWithManifestGuard(restart, {
       stop: () => {
         console.log("==> Stopping current proxy...");
@@ -1153,6 +1216,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         registration?.sync();
         localInstallAfterReplace(serviceWasInstalled, restart);
       },
+      afterRollback: () => { launchdSnapshot?.restore(restart); },
       restart: () => {
         console.log(serviceWasInstalled
           ? "==> Refreshing background service with packaged proxy..."

@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import {
+  captureProviderDebugLaunchdSnapshot,
   ensureProviderDebugLaunchdDefault,
   launchdProxyPlistPath,
   localInstallAfterReplace,
@@ -153,6 +154,35 @@ describe("local installer provider debug handling", () => {
       })).toThrow("launchctl could not load");
     },
   );
+
+  test("restores saved plist bytes and modes without reloading for no-restart, then restores its loaded state", () => {
+    const plist = tempPlist();
+    chmodSync(plist, 0o644);
+    const original = readFileSync(plist, "utf8");
+    const events: string[] = [];
+    const snapshot = captureProviderDebugLaunchdSnapshot(plist, true, {
+      platform: "darwin",
+      launchctl: args => {
+        events.push(args.join(" "));
+        return { ok: true, stdout: "", stderr: "", status: 0 };
+      },
+    });
+    expect(snapshot).toBeDefined();
+    writeFileSync(plist, "replacement plist", { encoding: "utf8", mode: 0o600 });
+    chmodSync(plist, 0o600);
+
+    snapshot!.restore(false);
+    expect(readFileSync(plist, "utf8")).toBe(original);
+    expect(statSync(plist).mode & 0o777).toBe(0o644);
+    expect(events).toEqual([]);
+
+    writeFileSync(plist, "replacement plist again", { encoding: "utf8", mode: 0o600 });
+    chmodSync(plist, 0o600);
+    snapshot!.restore(true);
+    expect(readFileSync(plist, "utf8")).toBe(original);
+    expect(statSync(plist).mode & 0o777).toBe(0o644);
+    expect(events).toEqual([`unload ${plist}`, `load -w ${plist}`]);
+  });
 
   test("does not invoke the post-replace plist hook for a restart or absent service", () => {
     const events: string[] = [];

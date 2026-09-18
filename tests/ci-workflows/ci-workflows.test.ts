@@ -675,15 +675,14 @@ runs:
     const scopeStep = changesJob?.steps?.find(
       step => step.name === "Assert the scope output is usable",
     );
-    expect(changesJob?.outputs?.ci).toBe("${{ steps.scope.outputs.ci }}");
+    const scopeNames = ["ci", "gui", "packaging", "docs", "structure"] as const;
+    expect(changesJob?.outputs).toEqual(Object.fromEntries(scopeNames.map(scope => [scope, `\${{ steps.scope.outputs.${scope} }}`])));
     expect(scopeStep?.id).toBe("scope");
     expect(scopeStep?.shell).toBe("bash");
-    expect(scopeStep?.env?.CI_SCOPE).toBe("${{ steps.filter.outputs.ci }}");
-    expect(scopeStep?.run).not.toContain("${{");
-    expect(scopeStep?.run).toContain('case "$CI_SCOPE" in');
-    expect(scopeStep?.run).toContain("true|false)");
-    expect(scopeStep?.run).toContain(`printf 'ci=%s\\n' "$CI_SCOPE" >> "$GITHUB_OUTPUT"`);
-    expect(scopeStep?.run).toContain("exit 1");
+    expect(scopeStep?.env).toEqual(Object.fromEntries(scopeNames.map(scope => [`${scope.toUpperCase()}_SCOPE`, `\${{ steps.filter.outputs.${scope} }}`])));
+    const scopeRun = scopeStep?.run ?? "";
+    expect(scopeRun).not.toContain("${{");
+    for (const fragment of ["for scope in ci gui packaging docs structure; do", 'value_var="${scope^^}_SCOPE"', 'value="${!value_var}"', "true|false)", `printf '%s=%s\\n' "$scope" "$value" >> "$GITHUB_OUTPUT"`, "changes.outputs.%s was", "exit 1"]) expect(scopeRun).toContain(fragment);
     const filterIndex = changesJob?.steps?.findIndex(step => step.id === "filter") ?? -1;
     const scopeIndex = changesJob?.steps?.findIndex(step => step.id === "scope") ?? -1;
     expect(filterIndex).toBeGreaterThanOrEqual(0);

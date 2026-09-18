@@ -605,6 +605,54 @@ describe("install:local deferred package transaction", () => {
     expect(events).toEqual(["stop", "verify", "completion-guard", "rollback"]);
   });
 
+  test("restores the no-restart launchd snapshot after the completion guard rejects the replacement", async () => {
+    const events: string[] = [];
+    const failure = new Error("completion manifest drift");
+    await expect(runLocalInstallLifecycle(false, {
+      stop: () => { events.push("stop"); },
+      verifyStopped: () => { events.push("verify"); },
+      replace: () => ({
+        commit: () => { events.push("commit"); return { ok: true, phase: "committed" }; },
+        rollback: () => { events.push("rollback-package"); return { ok: true, phase: "rolled-back" }; },
+      }),
+      afterReplace: () => { events.push("write-provider-debug-plist"); },
+      beforeCommit: () => { events.push("completion-guard"); throw failure; },
+      afterRollback: () => { events.push("restore-launchd-snapshot"); },
+      restart: () => { events.push("restart"); },
+      ready: () => { events.push("ready"); },
+    })).rejects.toBe(failure);
+    expect(events).toEqual([
+      "stop", "verify", "write-provider-debug-plist", "completion-guard",
+      "rollback-package", "restore-launchd-snapshot",
+    ]);
+  });
+
+  test("restores the launchd snapshot after a reload failure before package commit", async () => {
+    const events: string[] = [];
+    const failure = new Error("launchctl could not load replacement plist");
+    let restartCalls = 0;
+    await expect(runLocalInstallLifecycle(true, {
+      stop: () => { events.push("stop"); },
+      verifyStopped: () => { events.push("verify"); },
+      replace: () => ({
+        commit: () => { events.push("commit"); return { ok: true, phase: "committed" }; },
+        rollback: () => { events.push("rollback-package"); return { ok: true, phase: "rolled-back" }; },
+      }),
+      afterReplace: () => { events.push("write-provider-debug-plist"); },
+      restart: () => {
+        restartCalls += 1;
+        events.push(`reload-launchd-${restartCalls}`);
+        if (restartCalls === 1) throw failure;
+      },
+      ready: () => { events.push("ready"); },
+      afterRollback: () => { events.push("restore-launchd-snapshot"); },
+    })).rejects.toBe(failure);
+    expect(events).toEqual([
+      "stop", "verify", "write-provider-debug-plist", "reload-launchd-1",
+      "stop", "verify", "rollback-package", "reload-launchd-2", "ready", "restore-launchd-snapshot",
+    ]);
+  });
+
   test("marks a failed stop of the new runtime as recovery-unsafe", async () => {
     const events: string[] = [];
     const readinessFailure = new Error("new runtime readiness failed");
