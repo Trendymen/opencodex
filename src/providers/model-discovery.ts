@@ -447,7 +447,7 @@ export function extractModelEnvelopeRows(
   return { ok: true, rows };
 }
 
-/** Validate, bound, deduplicate, and declaratively filter OpenAI `{data:[...]}` or top-level arrays (Together `#617`). */
+/** Validate, bound, deduplicate, and filter the declared envelope or a top-level array (Together `#617`). */
 /**
  * Metadata a sibling `models[]` array may contribute to an ALREADY-ADMITTED
  * `data[]` row (#1797).
@@ -526,8 +526,8 @@ export function extractProviderModelItems(
   let data: unknown[];
   let siblings: SiblingIndex | null = null;
   if (Array.isArray(value)) {
-    // Together-style top-level /models arrays. Catalog discovery must not treat a stray
-    // `models` key on openai-chat responses as valid — only `data` envelopes or top-level arrays.
+    // Together-style top-level /models arrays. The default contract must not treat a stray
+    // `models` key on openai-chat responses as valid; only a provider spec may opt into it.
     if (value.length > limit) return { ok: false, reason: "too_many_models" };
     data = value;
   } else {
@@ -540,11 +540,11 @@ export function extractProviderModelItems(
 
   const items: ProviderModelsApiItem[] = [];
   const seen = new Set<string>();
+  const idField = discovery.spec?.idField ?? "id";
   for (const raw of data) {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return { ok: false, reason: "invalid_shape" };
     }
-    const idField = discovery.spec?.idField ?? "id";
     const id = (raw as Record<string, unknown>)[idField];
     if (!isValidModelDiscoveryModelId(id)) return { ok: false, reason: "invalid_shape" };
     const prefix = discovery.spec?.stripIdPrefix;
