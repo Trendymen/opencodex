@@ -467,6 +467,55 @@ export function stripAgentMessageCiphertextInPlace(input: unknown): number {
   return repaired;
 }
 
+/**
+ * Replay poison guard for tool-call history. A model switch can leave an encrypted
+ * collaboration call (typically a historical spawn_agent) in the conversation; a routed model
+ * that copies that shape forwards ciphertext the backend has already refused to decrypt for
+ * this caller. Rewrite only argument text that validates as backend task ciphertext: the same
+ * strictness the agent_message text path uses, so a digest or ordinary base64 argument is never
+ * touched. Non-collaboration calls cannot carry these tokens in a meaningful slot, but the
+ * rewrite is keyed to content, not tool name, because the poisoned call has been observed with
+ * both the native and lowered names. Custom tool calls are not rewritten: their payload field
+ * is `input`, and no poisoned delegation has been observed on that wire.
+ */
+export function stripToolCallCiphertextArgumentsInPlace(input: unknown): number {
+  if (!Array.isArray(input)) return 0;
+  let repaired = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    const item = input[index];
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    if (record.type !== "function_call") continue;
+    let args: unknown = record.arguments;
+    if (typeof args === "string") {
+      const replaced = textWithoutCiphertext(args);
+      if (replaced === args) continue;
+      input[index] = { ...record, arguments: replaced };
+      repaired += 1;
+      continue;
+    }
+    if (!args || typeof args !== "object" || Array.isArray(args)) continue;
+    const argsRecord = args as Record<string, unknown>;
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(argsRecord)) {
+      if (typeof value === "string") {
+        const replaced = textWithoutCiphertext(value);
+        if (replaced !== value) {
+          next[key] = replaced;
+          changed = true;
+          continue;
+        }
+      }
+      next[key] = value;
+    }
+    if (!changed) continue;
+    input[index] = { ...record, arguments: next };
+    repaired += 1;
+  }
+  return repaired;
+}
+
 /** Free text: drop embedded token runs, and replace a slot that is nothing but a token. */
 function textWithoutCiphertext(text: string): string {
   const runs = fernetTokenRuns(text);
