@@ -258,7 +258,7 @@ export function prepareForkOfficialBase(options: {
     runOrThrow(runGit, "init official verifier", options.repoRoot, ["init", "--bare", bareDir], ownedPaths);
     refreshOwnedPaths(bareDir);
     runOrThrow(runGit, "fetch official refs", options.repoRoot, [
-      `--git-dir=${bareDir}`, "fetch", "--no-tags", "--filter=blob:none", options.officialRepositoryUrl,
+      `--git-dir=${bareDir}`, "fetch", "--no-tags", "--no-filter", options.officialRepositoryUrl,
       "+refs/heads/main:refs/heads/official-main",
       `+refs/tags/${classification.tag}:refs/tags/${classification.tag}`,
     ], ownedPaths);

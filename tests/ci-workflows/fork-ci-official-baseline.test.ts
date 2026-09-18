@@ -217,7 +217,7 @@ describe("Fork CI official baseline preparation", () => {
     expect(officialFetch).toBeDefined();
     const bareDir = calls.find(args => args[0] === "init" && args[1] === "--bare")?.[2];
     expect(officialFetch).toEqual([
-      `--git-dir=${bareDir}`, "fetch", "--no-tags", "--filter=blob:none", pathToFileURL(fixture.official).href,
+      `--git-dir=${bareDir}`, "fetch", "--no-tags", "--no-filter", pathToFileURL(fixture.official).href,
       "+refs/heads/main:refs/heads/official-main", "+refs/tags/v2.35.0:refs/tags/v2.35.0",
     ]);
     expect(officialFetch?.some(arg => arg === "--depth" || arg.startsWith("--depth=")
