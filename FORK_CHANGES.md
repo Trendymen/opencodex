@@ -261,7 +261,7 @@ macOS 本地安装默认补 `OCX_DEBUG=1` 和 `OCX_PROVIDER_TEXT_DEBUG=1` 后 re
 
 ### GUI Logs/Debug 增量
 
-采用上游 Logs/Debug 页面和 sidecar 布局。Fork 增加 `agent-task-recovery`、`oauth-account-429`、`opaque-blob-rejection`、`key-401`、`reasoning-effort-downgrade` 恢复标签及 9 个 locale 翻译；Debug 增加独立 `providerText` 授权开关和对应设置字段。
+采用上游 Logs/Debug 页面和 sidecar 布局。Fork 增加 `agent-task-recovery`、`oauth-account-429`、`opaque-blob-rejection`、`key-401`、`reasoning-effort-downgrade` 恢复标签及 9 个 locale 翻译，越南语目录补齐这些标签和 `providerText` 键；Debug 增加独立 `providerText` 授权开关和对应设置字段。
 
 代码：`gui/src/pages/Logs.tsx`、`gui/src/pages/Debug.tsx`、`gui/src/pages/debug-settings-panel.tsx`、`gui/src/pages/debug-shared.ts`、`gui/src/i18n/`。
 测试：`gui/tests/debug-cache-revisit.test.tsx`、`gui/tests/debug-mutation-busy.test.tsx`、`gui/tests/debug-put-install-order.test.tsx`、`tests/usage/fork-usage-recovery-kinds.test.ts`；sidecar 沿用 `gui/tests/sidecar-layout.test.ts`。
