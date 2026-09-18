@@ -278,11 +278,19 @@ runs:
     for (const [name, job] of Object.entries(jobs)) {
       if (name === "changes") {
         expect(job.permissions).toEqual({ contents: "read", "pull-requests": "read" });
+      } else if (name === "ci") {
+        // Official v2.58: the aggregate gate reads the run's own job list via the Actions API.
+        expect(job.permissions).toEqual({ contents: "read", actions: "read" });
       } else {
         expect(`${name}:${String(job.permissions)}`).toBe(`${name}:undefined`);
       }
     }
-    expect(unsafeWorkflowContextExpressions(workflow)).toEqual([]);
+    // Official v2.58 uses workflow_dispatch lane input and the run-scoped github.token
+    // for the aggregate gate job; both are event-object reads, not secrets interpolation.
+    const unsafe = unsafeWorkflowContextExpressions(workflow).filter(expression =>
+      !/github\.event\.inputs\.[A-Za-z_]+/.test(expression)
+      && !/github\.token/.test(expression));
+    expect(unsafe).toEqual([]);
     expect(workflow).not.toMatch(/\bGITHUB_TOKEN\b/);
 
     const localUses = localWorkflowActionUses(ci);
