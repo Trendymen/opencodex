@@ -147,7 +147,7 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 官方 hosted web-search bridge 开启时，通过其现有 SSE 解析点观察首段与续接段的原始 payload；不把合成的搜索事件记为原始上游响应，也不重复触发后续入站观察。诊断回调异常不影响 bridge 转发。关闭 bridge 时保留原有 terminal-repair 观察路径。
 官方 `v2.54.0` 已负责为非 Ollama passthrough backend 启用 hosted bridge；Fork 只保留上述诊断观察和失败隔离，不复制 backend 选择逻辑。
 普通 Provider debug 只记录结构，不持久化请求正文、key、工具参数或 Response/reasoning 文本。
-文本样本要求 Provider debug 和独立、默认关闭的 `providerText` 同时开启，可经 `OCX_PROVIDER_TEXT_DEBUG=1`、`ocx debug provider-text on`、API、GUI 或 macOS `install:local` 明确授权。
+文本样本要求 Provider debug 和独立 `providerText` 同时开启。通用安装默认仍关闭；macOS `install:local` 是本机操作者主动执行的维护入口，该命令即视为对结构诊断和有界文本样本的明确授权，并写入当前用户 launchd 环境。安装后可用 `ocx debug provider-text off`、API、GUI 或清除对应环境配置关闭。
 样本经脱敏并保存为引用型 artifact；每字符串默认 256B、上限 8KB，UTF-8 安全截断，每轮最多 512 条并受总预算约束。
 持久化入口统一使用分组保留策略：主日志及其引用工件按 4 MiB 分组，两个 debug 根合计最多保留 20 GiB（21,474,836,480 字节）、7 天，不限制文件数量。新组按完整额度预留容量，旧版数据按实际大小计入。达到容量或保留期上限时，淘汰最旧的主日志分段及其引用工件，当天旧分段也可淘汰，以继续捕获。清理先删除主日志，主日志删除失败则保留工件；旧版日期布局按日期整组清理并排除新分组，孤立工件仍可回收。轮转后的记录继续写当前分段，不再逐条创建 UUID 小文件。canonical containment、symlink、非普通文件与私有权限检查继续生效。无关旁路条目无法安全盘点时保留并告警，不纳入可管理数据容量，不阻断安全主日志写入。诊断失败不影响 relay。
 旧版本创建、尚无 ownership 元数据的非空 OpenCodex home，只有存在 `runtime-port.json`、`service-state.json` 等 OpenCodex 运行时标记时才会被收养。收养状态写入 owner 与 manifest，并在进程重启后继续生效。每次登记前重新读取两份磁盘元数据；缺失、损坏或收养状态不一致时不会信任进程内缓存。新 manifest 从空路径集开始；收养前已存在的目录、普通文件、symlink 或越界父路径不会进入 ownership manifest，也不会由 uninstall 作为自有路径删除。只有收养后新建的安全路径可登记。Provider debug 的登记只作记账、不是写入门槛：账本缺失、损坏或超过 64 KiB 元数据上限时仍继续写入本地抓包，预存容器同样接收。容量与保留期清理覆盖根内旧日志，并遵守主日志和引用工件的分组关系。Kimi schema 诊断仍把登记结果作为写入门槛。其他 config/runtime 写入器保持既有写入语义（登记失败照写）；仍在登记失败时拒写的是 Kimi schema 诊断；Windows 计划任务安装路径只在安装开始时 config root 原本不存在、且随后仍认领失败时中止安装。Provider debug 拒写时每个进程最多输出一次不含内容的告警。
@@ -247,10 +247,10 @@ stage/backup 对象身份、普通目录与 containment 必须可验证；恢复
 Windows wrapper 遇到 recovery marker 拒绝自动 restore；Node launcher 的失败提示仍沿用上游 warning-and-continue。
 安装目标识别包含活动服务与 Volta 实际包路径；服务从新包的绝对入口 repair/restart，并验证 readiness。
 Volta 登记同步与包替换共用事务，校验失败触发回滚，避免包已更新但 shim 或服务仍选择旧版本。
-macOS 本地安装默认补 `OCX_DEBUG=1` 和 `OCX_PROVIDER_TEXT_DEBUG=1` 后 reload；`--no-restart` 只更新磁盘 plist，非 Darwin 保持环境。该默认值同时授权结构诊断与有界文本样本持久化。
+macOS 本地安装默认补 `OCX_DEBUG=1` 和 `OCX_PROVIDER_TEXT_DEBUG=1` 后 reload；`--no-restart` 只更新磁盘 plist，非 Darwin 保持环境。运行该命令即表示本机操作者授权结构诊断与有界文本样本持久化；样本仍受脱敏、单条/每轮限额和总保留预算约束。
 
 代码：`scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts`、`src/update/transactional-install.mjs`、`src/service/windows-taskxml.ts`。
-测试：`tests/ci-workflows/fork-install-local-*.test.ts`、`tests/ci-workflows/install-local.test.ts`、`tests/ci-workflows/install-local-vendor.test.ts`、`tests/windows/fork-windows-service-pending-transaction.test.ts`。
+测试：`tests/ci-workflows/fork-install-local-*.test.ts`、`tests/ci-workflows/install-local.test.ts`、`tests/ci-workflows/install-local-vendor.test.ts`、`tests/server/fork-provider-debug-safety.test.ts`、`tests/windows/fork-windows-service-pending-transaction.test.ts`。
 
 ### GUI Logs/Debug 增量
 
