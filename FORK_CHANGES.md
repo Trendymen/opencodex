@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.58.0`（`6fe4cd0de85d63b8cdd0c3552e5e8883c0a029ee`）。
+- 上游基线：`v2.59.0`（`134c92a01b120162f00c7275189cc47858720379`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -189,7 +189,7 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 
 ### 智谱 BigModel Codex 模型发现
 
-仅对 `zhipu-bigmodel-codex`、`openai-responses`、`https://open.bigmodel.cn/api/v1`（允许尾部 `/`）组合，将 `{ models: [{ slug }] }` 映射为内部 ID；v2.58.0 起复用官方通用 `envelopeKey` + `idField` 字段，不再维护 Fork 专有 `modelIdKey`。
+仅对 `zhipu-bigmodel-codex`、`openai-responses`、`https://open.bigmodel.cn/api/v1`（允许尾部 `/`）组合，将 `{ models: [{ slug }] }` 映射为内部 ID；复用官方通用 `envelopeKey` + `idField` 字段，不再维护 Fork 专有 `modelIdKey`。
 其他 Provider 保持默认 `data[].id`；沿用全局 2,000 条上限，无额外 64 条限制。
 上游 `zhipu-bigmodel-responses` 静态预设未替代该动态目录；两种 ID 不同，不自动迁移用户配置。
 
@@ -198,7 +198,7 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 
 ### 原生加密子任务恢复接力
 
-> ben.1 说明：恢复终局拒解识别与毒化派发历史清洗已纳入本轮候选；模型发现已复用官方 v2.58 通用 envelopeKey/idField 机制。上游 v2.58.0 基线不变。
+> 当前差异：恢复终局拒解识别与毒化派发历史清洗仍由 Fork 保留；模型发现沿用官方通用 `envelopeKey`/`idField` 机制。
 
 
 上游提供通用 recovery admission、turn termination 与失败原因；Fork 扩展 strict non-Fernet backend ciphertext 的识别、admission、routed trigger 和 fail-closed forwarding。
