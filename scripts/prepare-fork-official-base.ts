@@ -247,6 +247,7 @@ export function prepareForkOfficialBase(options: {
   let runGit: GitRunner | undefined = options.runGit;
   let primary: Error | undefined;
   let result: PrepareForkOfficialBaseResult | undefined;
+  const allowPendingOfficialMarker = options.allowPendingOfficialMarker === true && runningCandidateCi();
 
   try {
     runGit ??= productionGitRunner(join(verifierRoot, "gitconfig"));
@@ -303,7 +304,7 @@ export function prepareForkOfficialBase(options: {
     }
     const marker = runOrThrow(runGit, "verify official tag", options.repoRoot, ["rev-parse", `${MARKER_REF}^{commit}`], ownedPaths).stdout.trim();
     if (marker !== peeledCommit) {
-      if (!options.allowPendingOfficialMarker) {
+      if (!allowPendingOfficialMarker) {
         throw new Error("official release tag does not match origin upstream-release");
       }
       runOrThrow(runGit, "verify official ancestry", options.repoRoot, [

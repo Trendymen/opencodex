@@ -134,6 +134,27 @@ function verifierRoots(): string[] {
   return readdirSync(tmpdir()).filter(name => name.startsWith("ocx-fork-official-")).sort();
 }
 
+function runAsCandidate<T>(run: () => T): T {
+  const previous = {
+    actions: process.env.GITHUB_ACTIONS,
+    event: process.env.GITHUB_EVENT_NAME,
+    ref: process.env.GITHUB_REF,
+  };
+  process.env.GITHUB_ACTIONS = "true";
+  process.env.GITHUB_EVENT_NAME = "push";
+  process.env.GITHUB_REF = "refs/heads/dev";
+  try {
+    return run();
+  } finally {
+    if (previous.actions === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = previous.actions;
+    if (previous.event === undefined) delete process.env.GITHUB_EVENT_NAME;
+    else process.env.GITHUB_EVENT_NAME = previous.event;
+    if (previous.ref === undefined) delete process.env.GITHUB_REF;
+    else process.env.GITHUB_REF = previous.ref;
+  }
+}
+
 function prepare(
   fixture: Fixture,
   officialUrl = pathToFileURL(fixture.official).href,
@@ -270,7 +291,7 @@ describe("Fork CI official baseline preparation", () => {
     const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
     requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
     const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
-    const result = prepared.run();
+    const result = runAsCandidate(prepared.run);
     expect(result).toMatchObject({ kind: "prepared", tag: "v2.35.0", peeledCommit: fixture.officialTagCommit });
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
@@ -280,7 +301,16 @@ describe("Fork CI official baseline preparation", () => {
     const different = requireGit(fixture.official, ["rev-parse", "refs/heads/main"]);
     requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", different]);
     const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
-    expect(prepared.run).toThrow("verify official ancestry");
+    expect(() => runAsCandidate(prepared.run)).toThrow("verify official ancestry");
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("a direct pending-marker option cannot bypass the candidate environment", () => {
+    const fixture = createFixture();
+    const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
+    requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
+    const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
+    expect(prepared.run).toThrow("official release tag does not match origin upstream-release");
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
 
