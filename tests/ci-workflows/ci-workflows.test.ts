@@ -75,7 +75,7 @@ function unsafeWorkflowContextExpressions(source: string): string[] {
       if (/\bsecrets\b/i.test(expression)) return true;
       for (const match of expression.matchAll(/\bgithub\b/gi)) {
         const reference = expression.slice(match.index);
-        if (!/^github\s*\.\s*(?:ref|event_name|sha)\b(?!\s*(?:\.|\[))/i.test(reference)) {
+        if (!/^github\s*\.\s*(?:ref|event_name|sha|run_id)\b(?!\s*(?:\.|\[))/i.test(reference)) {
           return true;
         }
       }
@@ -155,7 +155,7 @@ describe("GitHub Actions hardening", () => {
     ];
     expect(unsafeWorkflowContextExpressions(unsafeExpressions.join("\n")))
       .toEqual(unsafeExpressions);
-    expect(unsafeWorkflowContextExpressions("${{ github.ref }}\n${{ github.event_name }}\n${{ github.sha }}"))
+    expect(unsafeWorkflowContextExpressions("${{ github.ref }}\n${{ github.event_name }}\n${{ github.sha }}\n${{ github.run_id }}"))
       .toEqual([]);
 
     const annotatedLocalAction = Bun.YAML.parse(`
