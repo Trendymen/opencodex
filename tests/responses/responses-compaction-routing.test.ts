@@ -7,7 +7,7 @@ import { sessionLaneIdFromRequest } from "../../src/server/request-log-conversat
  * contract; every other gateway has to be driven as a plain summarizer, or Codex
  * fatals on a compaction turn that came back as an ordinary message.
  */
-import { afterEach, describe, expect, jest, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,18 +35,24 @@ import {
   resolveCodexAuthContext,
 } from "../../src/codex/auth-context";
 import { clearUpstreamHostHealth } from "../../src/codex/upstream-host-health";
-import { supportsNativeResponsesCompactEndpoint } from "../../src/providers/openai-tiers";
 import type { RequestLogContext } from "../../src/server/request-log";
 import { acquireNativeMainProfileDrain, tryAdmitTurn } from "../../src/server/lifecycle";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 import { clearComboRecallForTests, recallComboForLane, rememberComboForLane } from "../../src/server/responses/combo-session-recall";
 import { captureConfigGeneration } from "../../src/lib/state-store-sweeper";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 
 const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
+
+beforeEach(() => {
+  installHttpOnlyCodexWebSocket();
+});
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  globalThis.WebSocket = originalWebSocket;
 });
 
 function keyProviderConfig(overrides: Partial<OcxProviderConfig> = {}): OcxConfig {
@@ -146,41 +152,6 @@ function sseResponse(events: Array<Record<string, unknown>>): Response {
     headers: { "content-type": "text/event-stream" },
   });
 }
-
-describe("supportsNativeResponsesCompactEndpoint (#422)", () => {
-  const canonicalForward = {
-    adapter: "openai-responses",
-    baseUrl: "https://chatgpt.com/backend-api/codex",
-    authMode: "forward",
-  } as OcxProviderConfig;
-  const officialApi = {
-    adapter: "openai-responses",
-    baseUrl: "https://api.openai.com/v1",
-    authMode: "key",
-  } as OcxProviderConfig;
-
-  test("accepts the canonical ChatGPT backend and the official OpenAI API", () => {
-    expect(supportsNativeResponsesCompactEndpoint("openai", canonicalForward)).toBe(true);
-    expect(supportsNativeResponsesCompactEndpoint("openai-apikey", officialApi)).toBe(true);
-    expect(supportsNativeResponsesCompactEndpoint("openai-apikey", {
-      ...officialApi,
-      baseUrl: "https://api.openai.com/v1/",
-    })).toBe(true);
-  });
-
-  test("rejects any other Responses-shaped gateway", () => {
-    expect(supportsNativeResponsesCompactEndpoint("gw", {
-      adapter: "openai-responses",
-      baseUrl: "https://gateway.example/v1",
-      authMode: "key",
-    } as OcxProviderConfig)).toBe(false);
-    // Right provider id, wrong destination.
-    expect(supportsNativeResponsesCompactEndpoint("openai-apikey", {
-      ...officialApi,
-      baseUrl: "https://gateway.example/v1",
-    })).toBe(false);
-  });
-});
 
 describe("Codex auth-context error parity (#2392)", () => {
   const cases: Array<{
@@ -2267,7 +2238,7 @@ test("a no-eligible policy compact request persists the evaluation trace", async
  *
  * The guard cannot live in the schema. parseRequest runs before the passthrough branch, and
  * passthrough / routed compaction build from _rawBody, never reading context.messages — they
- * already degrade an unpaired output to "[tool output for unknown call]" on their own.
+ * already degrade an unpaired output to "[Tool output without call identification]" on their own.
  */
 describe("computer screenshot output translation boundary", () => {
   const screenshot = {
@@ -2394,7 +2365,7 @@ describe("external task-input envelopes (#3735)", () => {
     await res.text();
     expect(captured).toHaveLength(1);
     expect(captured[0]!.messages).toEqual([{ role: "user", content: "  preserve this input\n" }]);
-    expect(JSON.stringify(captured)).not.toContain("[tool output for unknown call]");
+    expect(JSON.stringify(captured)).not.toMatch(/\[(?:Tool output|Cross-task message|Task delegation)/);
   });
 
   test("preserves ordered text and image content through translation", async () => {
@@ -2536,7 +2507,7 @@ describe("established-history external task input (#3807)", () => {
     // Exactly one original pair: delivery must not acquire a synthesized tool identity.
     expect(messages.flatMap(message => message.tool_calls ?? [])).toEqual(wireHistory[1]!.tool_calls);
     expect(messages.filter(message => message.role === "tool")).toEqual([wireHistory[2]]);
-    expect(JSON.stringify(sent)).not.toContain("[tool output for unknown call]");
+    expect(JSON.stringify(sent)).not.toMatch(/\[(?:Tool output|Cross-task message|Task delegation)/);
   }
 
   test("ordinary response preserves inter-task delivery after an established tool pair", async () => {
@@ -2724,7 +2695,7 @@ describe("unpaired tool result boundary (#3259)", () => {
 
     expect(res.status).toBe(200);
     expect(bodies.length).toBe(1);
-    expect(bodies[0]).toContain("[tool output for unknown call]");
+    expect(bodies[0]).toContain("[Tool output without call identification]");
     expect(bodies[0]).not.toContain("undefined");
   });
 });

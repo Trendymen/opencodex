@@ -24,6 +24,7 @@ import type { AdapterEvent, OcxConfig } from "../../src/types";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
 import { restoreRoutedNamespaceCalls } from "../../src/responses/namespace-tool-compat";
 import { restoreRoutedCustomCalls } from "../../src/responses/custom-tool-compat";
+import { ROUTED_PROGRESS_CONTRACT } from "../../src/fork/routed-progress-contract";
 
 const createResponsesPassthroughAdapter = (...args: Parameters<typeof createResponsesPassthroughAdapterProduction>) =>
   withTestTranslatorBudget(createResponsesPassthroughAdapterProduction(...args));
@@ -223,6 +224,157 @@ describe("Responses request and compaction byte accounting", () => {
   );
 });
 
+describe("collaboration.spawn_agent fork_turns outbound compatibility", () => {
+  const originalDescription = "How much recent conversation context the child receives.";
+  const forkTurnsGuidance = "This field's JSON type is string. Its value must be `none`, `all`, or a positive integer string. For three turns, use `{\"fork_turns\":\"3\"}`; the string content is only `3`, without quote characters. Do not JSON.stringify this field value separately.";
+  const spawnAgent = (forkTurns: Record<string, unknown> = {
+    type: "string",
+    description: originalDescription,
+  }) => ({
+    type: "namespace",
+    name: "collaboration",
+    tools: [{
+      type: "function",
+      name: "spawn_agent",
+      parameters: {
+        type: "object",
+        properties: {
+          fork_turns: forkTurns,
+          message: { type: "string", description: "Task for the child." },
+        },
+        required: ["message"],
+        additionalProperties: false,
+      },
+    }],
+  });
+
+  function build(target: Parameters<typeof createResponsesPassthroughAdapter>[0], body: Record<string, unknown>) {
+    return JSON.parse(createResponsesPassthroughAdapter(target).buildRequest({
+      modelId: body.model as string,
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: body,
+    }, { headers: new Headers() }).body) as Record<string, unknown>;
+  }
+
+  test("adds one exact field-level instruction before third-party namespace lowering without changing the caller catalog", () => {
+    const body = {
+      model: "glm-5.3-flash",
+      tool_choice: { type: "function", namespace: "collaboration", name: "spawn_agent" },
+      tools: [
+        spawnAgent(),
+        { type: "namespace", name: "foreign", tools: [{ type: "function", name: "spawn_agent", parameters: { type: "object", properties: { fork_turns: { type: "string", description: "foreign namespace" } } } }] },
+      ],
+      input: [],
+    };
+    const original = structuredClone(body);
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "test" };
+
+    const wire = build(target, body);
+    const tools = wire.tools as Array<Record<string, unknown>>;
+    const native = tools.find(tool => tool.name === "collaboration__spawn_agent");
+    const properties = (native?.parameters as { properties: Record<string, Record<string, unknown>> }).properties;
+
+    expect(properties.fork_turns?.description).toBe(`${originalDescription}\n\n${forkTurnsGuidance}`);
+    expect(properties.message).toEqual({ type: "string", description: "Task for the child." });
+    expect((tools.find(tool => tool.name === "foreign__spawn_agent")?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns?.description)
+      .toBe("foreign namespace");
+    expect(wire.tool_choice).toEqual({ type: "function", name: "collaboration__spawn_agent" });
+    expect(body).toEqual(original);
+    expect(build(target, body)).toEqual(wire);
+  });
+
+  test("leaves OpenAI destinations and ref-constrained fork_turns declarations unchanged", () => {
+    const ref = { $ref: "#/$defs/fork_turns", description: originalDescription };
+    const body = {
+      model: "gpt-5.6-sol",
+      tools: [spawnAgent(ref)],
+      input: [],
+      $defs: { fork_turns: { type: "string" } },
+    };
+
+    const thirdParty = build({ adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key", apiKey: "test" }, body);
+    const official = build({ adapter: "openai-responses", baseUrl: "https://api.openai.com/v1", authMode: "key", apiKey: "test" }, {
+      ...body,
+      tools: [spawnAgent()],
+    });
+
+    expect(((thirdParty.tools as Array<Record<string, unknown>>)[0]?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns)
+      .toEqual(ref);
+    expect((((official.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent")?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns?.description))
+      .toBe(originalDescription);
+  });
+
+  test("adds the same instruction to a current Responses Lite additional_tools declaration", () => {
+    const wire = build({ adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key", apiKey: "test" }, {
+      model: "glm-5.3-flash",
+      input: [{ type: "additional_tools", tools: [spawnAgent()] }],
+    });
+    const additional = (wire.input as Array<Record<string, unknown>>).find(item => item.type === "additional_tools");
+    const tool = (additional?.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+
+    expect(((tool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+      .toBe(`${originalDescription}\n\n${forkTurnsGuidance}`);
+  });
+
+  test("does not describe constrained string variants as the native fork_turns contract", () => {
+    for (const forkTurns of [
+      { type: "string", description: originalDescription, enum: ["none"] },
+      { type: "string", description: originalDescription, pattern: "^x$" },
+      { type: ["string", "null"], description: originalDescription },
+    ]) {
+      const wire = build({ adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key", apiKey: "test" }, {
+        model: "glm-5.3-flash", tools: [spawnAgent(forkTurns)], input: [],
+      });
+      const tool = (wire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+      expect(((tool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+        .toBe(originalDescription);
+    }
+  });
+
+  test("does not add guidance when tool_choice hides spawn_agent", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "test" };
+    const other = { type: "function", name: "get_state", parameters: { type: "object", properties: {} } };
+    for (const tool_choice of [
+      "none",
+      { type: "function", name: "get_state" },
+      { type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "get_state" }] },
+    ]) {
+      const wire = build(target, { model: "glm-5.3-flash", tool_choice, tools: [spawnAgent(), other], input: [] });
+      const tool = (wire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+      expect(((tool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+        .toBe(originalDescription);
+    }
+  });
+
+  test("does not overwrite an unknown description or add a wider claim beside root composition", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "test" };
+    const nonStringDescription = { source: "foreign schema" };
+    const nonStringWire = build(target, { model: "glm-5.3-flash", tools: [spawnAgent({ type: "string", description: nonStringDescription })], input: [] });
+    const nonStringTool = (nonStringWire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+    expect(((nonStringTool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+      .toEqual(nonStringDescription);
+
+    const composedWire = build(target, {
+      model: "glm-5.3-flash",
+      tools: [{
+        type: "namespace",
+        name: "collaboration",
+        tools: [{ type: "function", name: "spawn_agent", parameters: {
+          type: "object",
+          properties: { fork_turns: { type: "string", description: originalDescription } },
+          allOf: [],
+        } }],
+      }],
+      input: [],
+    });
+    const composedTool = (composedWire.tools as Array<Record<string, unknown>>).find(tool => tool.name === "collaboration__spawn_agent");
+    expect(((composedTool?.parameters as { properties: Record<string, Record<string, unknown>> }).properties.fork_turns).description)
+      .toBe(originalDescription);
+  });
+});
+
 describe("native routed code-mode result visibility", () => {
   const routed = { adapter: "openai-responses", baseUrl: "https://api.x.ai/v1", authMode: "key" as const };
   const exec = { type: "custom", name: "exec", description: "Run JavaScript in a V8 isolate." };
@@ -241,10 +393,84 @@ describe("native routed code-mode result visibility", () => {
     const before = JSON.stringify(body);
     const request = createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body));
     const wire = JSON.parse(request.body);
-    expect(wire.instructions).toBe(`Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}\n\n${CODE_MODE_HOST_CONTRACT_SENTENCE}`);
+    expect(wire.instructions).toStartWith(
+      `Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}\n\n${CODE_MODE_HOST_CONTRACT_SENTENCE}\n\n${ROUTED_PROGRESS_CONTRACT}\n\n`,
+    );
+    expect(wire.instructions).toContain("Tool contract: use the current tool catalog as ground truth.");
+    expect(wire.instructions.split(CODE_MODE_RESULT_ECHO_SENTENCE)).toHaveLength(2);
     expect(wire.tools.find((tool: { name: string }) => tool.name === "exec").parameters.properties.input.description)
       .toContain(CODE_MODE_RESULT_ECHO_SENTENCE);
     expect(JSON.stringify(body)).toBe(before);
+  });
+
+  test("native Responses preserves a nested patch program and its non-empty context failure while adding recovery guidance", () => {
+    const patchProgram = [
+      "await tools.apply_patch(`*** Begin Patch",
+      "*** Update File: fixture.ts",
+      "@@",
+      "-later",
+      "+later changed",
+      "@@",
+      "-earlier",
+      "+earlier changed",
+      "*** End Patch`);",
+    ].join("\n");
+    const contextFailure = "Script failed\nOutput:\nFailed to find expected lines\n";
+    const body = raw(contextFailure);
+    body.input[0].input = patchProgram;
+    const before = JSON.stringify(body);
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).toContain("source order (top to bottom)");
+    expect(wire.instructions).toContain("Failed to find expected lines");
+    expect(JSON.parse(wire.input[0].arguments).input).toBe(patchProgram);
+    expect(wire.input[1].output).toBe(contextFailure);
+    expect(JSON.stringify(body)).toBe(before);
+  });
+
+  test("native Responses omits patch guidance when tool_choice hides the directly visible patch tool", () => {
+    const body = {
+      model: "grok-4.6",
+      instructions: "Keep this instruction.",
+      tool_choice: "none",
+      tools: [{ type: "custom", name: "apply_patch", description: "Apply a patch" }],
+      input: [{ role: "user", content: "do not edit" }],
+    };
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).not.toContain("source order (top to bottom)");
+  });
+
+  test("native Responses gives direct apply_patch guidance only when it is visible", () => {
+    const body = {
+      model: "grok-4.6",
+      instructions: "Keep this instruction.",
+      tools: [{ type: "custom", name: "apply_patch", description: "Apply a patch" }],
+      input: [{ role: "user", content: "edit" }],
+    };
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).toContain("`apply_patch` is Codex's apply_patch tool");
+    expect(wire.instructions).toContain("source order (top to bottom)");
+  });
+
+  test("native Responses omits patch guidance when a bare shell bridge makes exec non-code-mode", () => {
+    const body = {
+      model: "grok-4.6",
+      instructions: "Keep this instruction.",
+      tools: [
+        { type: "namespace", name: "functions", tools: [exec] },
+        { type: "function", name: "exec_command", parameters: { type: "object" } },
+      ],
+      input: [{ role: "user", content: "run a command" }],
+    };
+
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+
+    expect(wire.instructions).not.toContain("source order (top to bottom)");
   });
 
   test("the advertised first-call example emits a helper result exactly once", async () => {
@@ -894,6 +1120,60 @@ describe("DeepSeek Responses endpoint contract", () => {
     const custom = { adapter: "openai-chat", baseUrl: "https://api.deepseek.com", apiKey: "sk-test", responsesPath: "/custom/responses" } as Parameters<typeof enrichProviderFromRegistry>[1];
     enrichProviderFromRegistry("deepseek", custom);
     expect(custom.responsesPath).toBe("/custom/responses");
+  });
+});
+
+describe("strict Responses duplicate tool-output recovery", () => {
+  const duplicateInput = [
+    { type: "custom_tool_call", call_id: "call_exec_duplicate", name: "exec", input: "noop" },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_exec_duplicate",
+      output: "Script completed\nWall time 0.2 seconds\nOutput:\n",
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_exec_duplicate",
+      name: "exec",
+      output: "real stdout",
+    },
+  ];
+
+  function build(provider: OcxProviderConfig, input: unknown[]): Record<string, unknown> {
+    const request = createResponsesPassthroughAdapter(provider).buildRequest({
+      modelId: "deepseek-flash",
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: { model: "deepseek-flash", input },
+    });
+    return JSON.parse(request.body) as Record<string, unknown>;
+  }
+
+  test("OpenCode Go's strict Responses route emits one output for a repeated call_id", () => {
+    const body = build({
+      ...providerConfigSeed(getProviderRegistryEntry("opencode-go")!),
+      adapter: "openai-responses",
+      authMode: "key",
+      apiKey: "test-key",
+    }, duplicateInput);
+
+    expect(body.input).toEqual([
+      duplicateInput[0],
+      { ...duplicateInput[2], output: "real stdout" },
+    ]);
+  });
+
+  test("a Responses provider without the strict capability keeps repeated outputs intact", () => {
+    const input = structuredClone(duplicateInput);
+    const body = build({
+      adapter: "openai-responses",
+      baseUrl: "https://provider.example/v1",
+      authMode: "key",
+      apiKey: "test-key",
+    }, input);
+
+    expect(body.input).toEqual(input);
   });
 });
 
@@ -2230,7 +2510,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     });
   });
 
-  test("keeps a native blob while blanking its raw reasoning content", () => {
+  test("keeps an OpenAI-issued blob while blanking its raw reasoning content", () => {
     const adapter = createResponsesPassthroughAdapter(provider);
     const request = adapter.buildRequest({
       modelId: "gpt-5.6-sol",
@@ -2243,7 +2523,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
           type: "reasoning",
           status: "completed",
           summary: [],
-          encrypted_content: "native-backend-blob",
+          encrypted_content: "gAAAA-openai-issued-blob",
           content: [{ type: "reasoning_text", text: "raw routed reasoning" }],
         }],
       },
@@ -2253,7 +2533,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(body.input[0]).toEqual({
       type: "reasoning",
       summary: [],
-      encrypted_content: "native-backend-blob",
+      encrypted_content: "gAAAA-openai-issued-blob",
       content: [],
     });
   });
@@ -2886,40 +3166,138 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(rawDeltaBody.input).toHaveLength(1);
   });
 
-  test("api-key mode preserves delegated tool output text when call_id is missing", () => {
+  test.each([
+    {
+      name: "canonical ChatGPT GPT call-id-less cross-task message",
+      configuredProvider: provider,
+      model: "gpt-5.6-sol",
+      item: {
+        type: "function_call_output",
+        namespace: "codex_app",
+        name: "send_message_to_thread",
+        output: "<codex_delegation><source_thread_id>fixture</source_thread_id><input>Inspect the adapter.</input></codex_delegation>",
+      },
+      marker: "[Cross-task message via codex_app.send_message_to_thread]",
+    },
+    {
+      name: "third-party non-GPT custom task delegation",
+      configuredProvider: {
+        adapter: "openai-responses",
+        baseUrl: "https://api.x.ai/v1",
+        authMode: "key" as const,
+        apiKey: "xai-test",
+      },
+      model: "grok-4.6",
+      item: {
+        type: "custom_tool_call_output",
+        namespace: "codex_app",
+        name: "create_thread",
+        output: "created",
+      },
+      marker: "[Task delegation via codex_app.create_thread]",
+    },
+    {
+      name: "third-party stateless cross-task message",
+      configuredProvider: {
+        adapter: "openai-responses",
+        baseUrl: "https://api.x.ai/v1",
+        authMode: "key" as const,
+        apiKey: "xai-test",
+        statelessResponses: true,
+      },
+      model: "grok-4.6",
+      item: {
+        type: "function_call_output",
+        namespace: "codex_app",
+        name: "send_message_to_thread",
+        output: "<codex_delegation><source_thread_id>fixture</source_thread_id><input>Continue the task.</input></codex_delegation>",
+      },
+      marker: "[Cross-task message via codex_app.send_message_to_thread]",
+    },
+  ])("labels $name from structured metadata", ({ configuredProvider, model, item, marker }) => {
+    const adapter = createResponsesPassthroughAdapter(configuredProvider);
+    const raw = { model, input: [item] };
+    const original = structuredClone(raw);
+    const body = JSON.parse(adapter.buildRequest({
+      ...parsedBase,
+      modelId: model,
+      previousResponseId: undefined,
+      _rawBody: raw,
+    }, meta).body) as { input: Array<{ content: Array<{ text?: string }> }> };
+
+    expect(body.input[0]?.content).toEqual([
+      { type: "input_text", text: `${marker}\n${item.output}` },
+    ]);
+    expect(raw).toEqual(original);
+  });
+
+  test("labels generic, namespace-only, and metadata-free outputs without reading their bodies", () => {
     const adapter = createResponsesPassthroughAdapter({
       adapter: "openai-responses",
       baseUrl: "https://api.x.ai/v1",
       authMode: "key" as const,
       apiKey: "xai-test",
     });
-
     const body = JSON.parse(adapter.buildRequest({
       ...parsedBase,
       previousResponseId: undefined,
       _rawBody: {
         model: "grok-4.6",
         input: [
-          {
-            type: "function_call_output",
-            id: "fco_delegation",
-            output: "<codex_delegation>Inspect the adapter.</codex_delegation>",
-          },
+          { type: "function_call_output", namespace: "functions", name: "exec_command", output: "done" },
+          { type: "function_call_output", namespace: "task_inbox", output: "received" },
+          { type: "function_call_output", output: "<codex_delegation><source_thread_id>fixture</source_thread_id><input>Create a task.</input></codex_delegation>" },
         ],
       },
-    }, meta).body) as { input: Record<string, unknown>[] };
+    }, meta).body) as { input: Array<{ content: Array<{ text?: string }> }> };
 
-    expect(body.input).toEqual([{
-      type: "message",
-      role: "user",
-      content: [{
-        type: "input_text",
-        text: "[tool output for unknown call]\n<codex_delegation>Inspect the adapter.</codex_delegation>",
-      }],
-    }]);
+    expect(body.input.map(item => item.content[0]?.text)).toEqual([
+      "[Tool output: functions.exec_command; call_id not provided]\ndone",
+      "[Tool output in namespace task_inbox; call_id not provided]\nreceived",
+      "[Tool output without call identification]\n<codex_delegation><source_thread_id>fixture</source_thread_id><input>Create a task.</input></codex_delegation>",
+    ]);
   });
 
-  test("external task parsing preserves the existing raw passthrough repair", () => {
+  test("treats invalid call-id-less metadata as unknown instead of rendering it into the marker", () => {
+    const adapter = createResponsesPassthroughAdapter({
+      adapter: "openai-responses",
+      baseUrl: "https://api.x.ai/v1",
+      authMode: "key" as const,
+      apiKey: "xai-test",
+    });
+    const trailingNewlineNamespace = `codex_app${String.fromCharCode(10)}`;
+    const raw = {
+      model: "grok-4.6",
+      input: [
+        {
+          type: "function_call_output",
+          namespace: { value: "codex_app" },
+          name: 42,
+          output: "untrusted metadata",
+        },
+        {
+          type: "function_call_output",
+          namespace: trailingNewlineNamespace,
+          name: "create_thread",
+          output: "trailing newline metadata",
+        },
+      ],
+    };
+    const original = structuredClone(raw);
+    const body = JSON.parse(adapter.buildRequest({
+      ...parsedBase,
+      previousResponseId: undefined,
+      _rawBody: raw,
+    }, meta).body) as { input: Array<{ content: Array<{ text?: string }> }> };
+
+    expect(body.input.map(item => item.content[0]?.text)).toEqual([
+      "[Tool output without call identification]\nuntrusted metadata",
+      "[Tool output without call identification]\ntrailing newline metadata",
+    ]);
+    expect(raw).toEqual(original);
+  });
+
+  test("external task parsing preserves the raw passthrough repair with its structured source", () => {
     const adapter = createResponsesPassthroughAdapter({
       adapter: "openai-responses", baseUrl: "https://api.x.ai/v1", authMode: "key" as const, apiKey: "xai-test",
     });
@@ -2933,7 +3311,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(raw).toEqual(original);
     const body = JSON.parse(adapter.buildRequest(parsed, meta).body) as { input: unknown[] };
     expect(body.input).toEqual([{ type: "message", role: "user", content: [
-      { type: "input_text", text: "[tool output for unknown call]\nexternal input" },
+      { type: "input_text", text: "[Tool output: task_inbox.handoff_input; call_id not provided]\nexternal input" },
     ] }]);
   });
 
@@ -2992,7 +3370,7 @@ describe("OpenAI Responses passthrough sanitization", () => {
     }, meta).body) as { input: Array<{ content: Record<string, unknown>[] }> };
 
     expect(body.input[0]?.content).toEqual([
-      { type: "input_text", text: "[tool output for unknown call]" },
+      { type: "input_text", text: "[Tool output without call identification]" },
       { type: "input_text", text: "screenshot" },
       image,
       { type: "input_text", text: "[encrypted content omitted]" },
@@ -3221,883 +3599,6 @@ describe("OpenAI Responses passthrough sanitization", () => {
 
     expect(body.input).toHaveLength(3);
     expect(body.input[0]).toMatchObject({ type: "reasoning", id: "rs_1" });
-  });
-});
-
-describe("OpenAI Responses hosted-tool name conflicts", () => {
-  const keyedProvider = {
-    adapter: "openai-responses",
-    baseUrl: "https://api.openai.example/v1",
-    authMode: "key" as const,
-    apiKey: "sk-test",
-  };
-  const meta = { headers: new Headers({ authorization: "Bearer token" }) };
-
-  test("keyed platform replaces a dotted image_gen function with a safe alias", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        input: [],
-        tools: [
-          { type: "function", name: "image_gen.imagegen", parameters: {} },
-          { type: "image_generation" },
-          { type: "web_search" },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as { tools: { type: string; name?: string }[] };
-
-    // Hosted image_generation dropped; the declared client tool wins and unrelated hosted tools stay.
-    expect(body.tools).toHaveLength(2);
-    expect(body.tools.some(t => t.type === "image_generation")).toBe(false);
-    expect(body.tools.some(t => t.type === "function" && t.name === "image_gen__imagegen")).toBe(true);
-    expect(body.tools.some(t => t.type === "web_search")).toBe(true);
-  });
-
-  test("keyed platform flattens an image_gen namespace and removes the hosted duplicate", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        input: [],
-        tools: [
-          {
-            type: "namespace",
-            name: "image_gen",
-            description: "Client image tools",
-            tools: [{
-              type: "function",
-              name: "imagegen",
-              description: "Generate or edit an image",
-              parameters: { type: "object", properties: { prompt: { type: "string" } } },
-              strict: true,
-            }],
-          },
-          { type: "image_generation" },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as { tools: Array<Record<string, unknown>> };
-
-    expect(body.tools).toHaveLength(1);
-    expect(body.tools[0]).toEqual({
-      type: "function",
-      name: "image_gen__imagegen",
-      description: "Generate or edit an image",
-      parameters: { type: "object", properties: { prompt: { type: "string" } } },
-      strict: true,
-    });
-  });
-
-  test("keyed platform rewrites a forced image-gen tool choice with its declared alias", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        input: [],
-        tools: [{
-          type: "namespace",
-          name: "image_gen",
-          tools: [{ type: "function", name: "imagegen", parameters: {} }],
-        }],
-        tool_choice: { type: "function", name: "image_gen.imagegen" },
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tool_choice: { type: string; name: string };
-    };
-
-    expect(body.tool_choice).toEqual({ type: "function", name: "image_gen__imagegen" });
-  });
-
-  test("keyed platform rewrites image-gen entries in an allowed-tools choice", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        input: [{
-          type: "additional_tools",
-          tools: [{ type: "function", name: "image_gen.imagegen", parameters: {} }],
-        }],
-        tool_choice: {
-          type: "allowed_tools",
-          mode: "required",
-          tools: [
-            { type: "function", name: "image_gen.imagegen" },
-            { type: "function", name: "exec_command" },
-          ],
-        },
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tool_choice: { type: string; mode: string; tools: Array<{ type: string; name: string }> };
-    };
-
-    expect(body.tool_choice).toEqual({
-      type: "allowed_tools",
-      mode: "required",
-      tools: [
-        { type: "function", name: "image_gen__imagegen" },
-        { type: "function", name: "exec_command" },
-      ],
-    });
-  });
-
-  test("keyed responses-lite flattens a nested namespace without requiring a hosted tool", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        input: [
-          {
-            type: "additional_tools",
-            role: "developer",
-            tools: [
-              {
-                type: "namespace",
-                name: "image_gen",
-                tools: [{ type: "function", name: "imagegen", parameters: { type: "object" } }],
-              },
-              { type: "web_search" },
-            ],
-          },
-          { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      input: Array<{ type: string; role?: string; tools?: Array<{ type: string; name?: string }> }>;
-    };
-    const additionalTools = body.input.find(item => item.type === "additional_tools");
-
-    // Preserve the input entry and unrelated tools while lowering the private namespace.
-    expect(additionalTools).toBeDefined();
-    expect(additionalTools?.role).toBe("developer");
-    expect(additionalTools?.tools?.some(t => t.type === "namespace")).toBe(false);
-    expect(additionalTools?.tools?.some(t =>
-      t.type === "function" && t.name === "image_gen__imagegen"
-    )).toBe(true);
-    expect(additionalTools?.tools?.some(t => t.type === "web_search")).toBe(true);
-    expect(body.input.some(item => item.type === "message")).toBe(true);
-  });
-
-  test("keyed responses-lite detects image_gen conflicts across top-level and nested tool groups", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        tools: [
-          { type: "image_generation" },
-          { type: "web_search" },
-        ],
-        input: [
-          {
-            type: "additional_tools",
-            role: "developer",
-            tools: [{ type: "function", name: "image_gen.imagegen", parameters: {} }],
-          },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tools: Array<{ type: string }>;
-      input: Array<{ type: string; tools?: Array<{ type: string; name?: string }> }>;
-      tool_choice?: { type: string; name?: string };
-    };
-    const additionalTools = body.input.find(item => item.type === "additional_tools");
-
-    // The platform validates one merged namespace even when declarations use different groups.
-    expect(body.tools.some(t => t.type === "image_generation")).toBe(false);
-    expect(body.tools.some(t => t.type === "web_search")).toBe(true);
-    expect(additionalTools?.tools?.some(t => t.name === "image_gen__imagegen")).toBe(true);
-  });
-
-  test("keyed platform encodes native and legacy image-gen calls for upstream replay", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        tools: [{
-          type: "namespace",
-          name: "image_gen",
-          tools: [{ type: "function", name: "imagegen", parameters: {} }],
-        }],
-        input: [
-          {
-            type: "function_call",
-            namespace: "image_gen",
-            name: "imagegen",
-            call_id: "call_native",
-            arguments: "{}",
-          },
-          {
-            type: "function_call",
-            name: "image_gen.imagegen",
-            call_id: "call_legacy",
-            arguments: "{}",
-          },
-          { type: "function_call", name: "exec_command", call_id: "call_other", arguments: "{}" },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      input: Array<{ name?: string; namespace?: string }>;
-    };
-
-    expect(body.input[0]).toMatchObject({ name: "image_gen__imagegen", call_id: "call_native" });
-    expect(body.input[0]).not.toHaveProperty("namespace");
-    expect(body.input[1]).toMatchObject({ name: "image_gen__imagegen", call_id: "call_legacy" });
-    expect(body.input[2]).toMatchObject({ name: "exec_command", call_id: "call_other" });
-  });
-
-  test("keyed responses normalization is idempotent and deduplicates image-gen aliases", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const firstRequest = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        tools: [{
-          type: "namespace",
-          name: "image_gen",
-          tools: [{ type: "function", name: "imagegen", parameters: { type: "object" } }],
-        }],
-        input: [{
-          type: "additional_tools",
-          role: "developer",
-          tools: [
-            { type: "function", name: "image_gen.imagegen", parameters: { type: "object" } },
-            { type: "web_search" },
-          ],
-        }],
-      },
-    }, meta);
-    const firstBody = JSON.parse(firstRequest.body) as {
-      tools: Array<{ type: string; name?: string }>;
-      input: Array<{ type: string; tools?: Array<{ type: string; name?: string }> }>;
-    };
-
-    expect(firstBody.tools).toEqual([
-      { type: "function", name: "image_gen__imagegen", parameters: { type: "object" } },
-    ]);
-    expect(firstBody.input[0]?.tools).toEqual([{ type: "web_search" }]);
-
-    const secondRequest = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: firstBody,
-    }, meta);
-    expect(JSON.parse(secondRequest.body)).toEqual(firstBody);
-  });
-
-  test("keyed platform flattens complete namespaces and drops ones it cannot express", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        input: [],
-        tools: [
-          { type: "namespace", name: "image_gen", tools: [] },
-          {
-            type: "namespace",
-            name: "web",
-            tools: [{ type: "function", name: "run", parameters: {} }],
-          },
-          { type: "image_generation" },
-        ],
-        tool_choice: { type: "function", name: "image_gen.imagegen" },
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tools: Array<Record<string, unknown>>;
-      tool_choice: { type: string; name: string };
-    };
-
-    // The empty `image_gen` group declares nothing, and relaying `type: "namespace"` is the shape a
-    // strict gateway rejects for the whole request.
-    expect(body.tools).toEqual([
-      {
-        type: "function",
-        name: "web__run",
-        parameters: { type: "object" },
-      },
-      { type: "image_generation" },
-    ]);
-    expect(body.tool_choice).toEqual({ type: "function", name: "image_gen.imagegen" });
-  });
-
-  test("configured model removes an empty image_gen namespace and preserves hosted image generation", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "provider-image-model",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "provider-image-model",
-        tools: [{ type: "image_generation" }],
-        input: [{
-          type: "additional_tools",
-          role: "developer",
-          tools: [
-            { type: "namespace", name: "image_gen", tools: [] },
-            { type: "web_search" },
-          ],
-        }],
-        tool_choice: { type: "function", name: "image_gen.imagegen" },
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tools: Array<{ type: string }>;
-      input: Array<{ type: string; tools?: Array<{ type: string; name?: string }> }>;
-    };
-    const additionalTools = body.input.find(item => item.type === "additional_tools");
-
-    expect(body.tools).toEqual([{ type: "image_generation" }]);
-    expect(additionalTools?.tools).toEqual([{ type: "web_search" }]);
-    expect(body.tool_choice).toEqual({ type: "image_generation" });
-  });
-
-  test("an inherited Object.prototype key is not read as a preference", () => {
-    // `provider.modelPreferHostedTools?.[modelId]` walked the prototype chain, so a
-    // routed model literally named `constructor` or `toString` yielded a function
-    // and threw on `.includes` before the request was ever dispatched.
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    for (const inheritedKey of ["constructor", "toString", "hasOwnProperty"]) {
-      const request = adapter.buildRequest({
-        modelId: inheritedKey,
-        context: { messages: [] },
-        stream: true,
-        options: {},
-        _rawBody: {
-          model: inheritedKey,
-          tools: [{ type: "image_generation" }],
-          tool_choice: { type: "function", name: "image_gen.imagegen" },
-        },
-      }, meta);
-      const body = JSON.parse(request.body) as { tool_choice: unknown };
-      // Unconfigured model: ordinary normalization applies, the hosted preference does not.
-      expect(body.tool_choice).toEqual({ type: "function", name: "image_gen.imagegen" });
-    }
-  });
-
-  test("multi-container stripping restores hosted image generation exactly once", () => {
-    // Stripping runs over every container. Restoration must not: tool declarations are
-    // request-scoped, and `hasHostedImageGenDeclaration` treats a declaration in any
-    // container as covering the request. #924 briefly restored into each stripped
-    // container and put `image_generation` on the wire twice; this asserts against both
-    // that and the original defect of losing the capability entirely.
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "provider-image-model",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "provider-image-model",
-        input: [
-          {
-            type: "additional_tools",
-            role: "developer",
-            tools: [{ type: "namespace", name: "image_gen", tools: [] }, { type: "web_search" }],
-          },
-          {
-            type: "additional_tools",
-            role: "developer",
-            tools: [{ type: "namespace", name: "image_gen", tools: [] }],
-          },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      input: Array<{ type: string; tools?: Array<{ type: string }> }>;
-    };
-    const containers = body.input.filter(item => item.type === "additional_tools");
-
-    expect(containers).toHaveLength(2);
-    const hostedDeclarations = containers.flatMap(container =>
-      (container.tools ?? []).filter(tool => tool.type === "image_generation"));
-    // Exactly one hosted declaration on the wire, riding the first stripped container
-    // so the capability is neither lost nor duplicated.
-    expect(hostedDeclarations).toEqual([{ type: "image_generation" }]);
-    expect(containers[0].tools).toContainEqual({ type: "image_generation" });
-  });
-
-  test("configured model rewrites a custom image-gen selector", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "provider-image-model",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "provider-image-model",
-        input: [],
-        tools: [
-          { type: "custom", name: "image_gen.render" },
-          { type: "image_generation" },
-        ],
-        tool_choice: { type: "custom", name: "image_gen.render" },
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tools: Array<{ type: string }>;
-      tool_choice: { type: string };
-    };
-
-    expect(body.tools).toEqual([{ type: "image_generation" }]);
-    expect(body.tool_choice).toEqual({ type: "image_generation" });
-  });
-
-  test("configured model retains a hosted declaration for a wrapper-only selector", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "provider-image-model",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "provider-image-model",
-        input: [],
-        tools: [{ type: "namespace", name: "image_gen", tools: [] }],
-        tool_choice: { type: "function", name: "image_gen.imagegen" },
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tools: Array<{ type: string }>;
-      tool_choice: { type: string };
-    };
-
-    expect(body.tools).toEqual([{ type: "image_generation" }]);
-    expect(body.tool_choice).toEqual({ type: "image_generation" });
-  });
-
-  test("configured model retains hosted image generation without a forced selector", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-
-    for (const toolChoice of ["auto", "none", undefined] as const) {
-      const request = adapter.buildRequest({
-        modelId: "provider-image-model",
-        context: { messages: [] },
-        stream: true,
-        options: {},
-        _rawBody: {
-          model: "provider-image-model",
-          input: [],
-          tools: [{ type: "namespace", name: "image_gen", tools: [] }],
-          ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
-        },
-      }, meta);
-      const body = JSON.parse(request.body) as {
-        tools: Array<{ type: string }>;
-        tool_choice?: string;
-      };
-
-      expect(body.tools).toEqual([{ type: "image_generation" }]);
-      expect(body.tool_choice).toBe(toolChoice);
-    }
-  });
-
-  test("configured model retains a hosted declaration in wrapper-only additional tools", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "provider-image-model",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "provider-image-model",
-        tools: [],
-        input: [{
-          type: "additional_tools",
-          role: "developer",
-          tools: [{ type: "namespace", name: "image_gen", tools: [] }],
-        }],
-        tool_choice: { type: "function", name: "image_gen.imagegen" },
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      input: Array<{ type: string; tools?: Array<{ type: string }> }>;
-      tool_choice: { type: string };
-    };
-    const additionalTools = body.input.find(item => item.type === "additional_tools");
-
-    expect(additionalTools?.tools).toEqual([{ type: "image_generation" }]);
-    expect(body.tool_choice).toEqual({ type: "image_generation" });
-  });
-
-  test("configured model restores hosted image generation in unforced additional tools", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "provider-image-model",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "provider-image-model",
-        tools: [],
-        input: [{
-          type: "additional_tools",
-          role: "developer",
-          tools: [{ type: "namespace", name: "image_gen", tools: [] }],
-        }],
-        tool_choice: "auto",
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      input: Array<{ type: string; tools?: Array<{ type: string }> }>;
-      tool_choice: string;
-    };
-    const additionalTools = body.input.find(item => item.type === "additional_tools");
-
-    expect(additionalTools?.tools).toEqual([{ type: "image_generation" }]);
-    expect(body.tool_choice).toBe("auto");
-  });
-
-  test("configured model retains unrelated allowed-tools selector entries", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "provider-image-model",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "provider-image-model",
-        input: [],
-        tools: [
-          { type: "namespace", name: "image_gen", tools: [] },
-          { type: "image_generation" },
-          { type: "function", name: "exec_command", parameters: {} },
-        ],
-        tool_choice: {
-          type: "allowed_tools",
-          mode: "required",
-          tools: [
-            { type: "function", name: "image_gen.imagegen" },
-            { type: "function", name: "exec_command" },
-          ],
-        },
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tools: Array<{ type: string; name?: string }>;
-      tool_choice?: { type: string; mode: string; tools: Array<{ type: string; name?: string }> };
-    };
-
-    expect(body.tools).toEqual([
-      { type: "image_generation" },
-      { type: "function", name: "exec_command", parameters: { type: "object" } },
-    ]);
-    expect(body.tool_choice).toEqual({
-      type: "allowed_tools",
-      mode: "required",
-      tools: [
-        { type: "image_generation" },
-        { type: "function", name: "exec_command" },
-      ],
-    });
-  });
-
-  test("configured model rewrites custom image-gen entries in an allowed-tools selector", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "provider-image-model",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "provider-image-model",
-        input: [],
-        tools: [
-          { type: "custom", name: "image_gen.render" },
-          { type: "image_generation" },
-          { type: "custom", name: "exec_command" },
-        ],
-        tool_choice: {
-          type: "allowed_tools",
-          mode: "required",
-          tools: [
-            { type: "custom", name: "image_gen.render" },
-            { type: "custom", name: "exec_command" },
-          ],
-        },
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tools: Array<{ type: string; name?: string }>;
-      tool_choice: { type: string; mode: string; tools: Array<{ type: string; name?: string }> };
-    };
-
-    expect(body.tools).toEqual([
-      { type: "image_generation" },
-      { type: "function", name: "exec_command", parameters: { type: "object" } },
-    ]);
-    expect(body.tool_choice).toEqual({
-      type: "allowed_tools",
-      mode: "required",
-      tools: [
-        { type: "image_generation" },
-        { type: "function", name: "exec_command" },
-      ],
-    });
-  });
-
-  test("hosted-tool preference stays scoped to its configured model", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "other-model",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "other-model",
-        input: [],
-        tools: [
-          { type: "namespace", name: "image_gen", tools: [] },
-          { type: "image_generation" },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as { tools: Array<Record<string, unknown>> };
-
-    // The empty namespace group is lowered away; only the hosted tool reaches the wire.
-    expect(body.tools).toEqual([{ type: "image_generation" }]);
-  });
-
-  test("hosted-tool preference uses the exact model id", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "provider-image-model:variant",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "provider-image-model:variant",
-        input: [],
-        tools: [
-          { type: "namespace", name: "image_gen", tools: [] },
-          { type: "image_generation" },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as { tools: Array<Record<string, unknown>> };
-
-    // The empty namespace group is lowered away; only the hosted tool reaches the wire.
-    expect(body.tools).toEqual([{ type: "image_generation" }]);
-  });
-
-  test("hosted-tool preference honors an OpenAI virtual model's selected id", () => {
-    const adapter = createResponsesPassthroughAdapter({
-      ...keyedProvider,
-      modelPreferHostedTools: { "gpt-5.6-sol-pro": ["image_generation"] },
-    });
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      _openAiVirtualSelectedModelId: "gpt-5.6-sol-pro",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        input: [],
-        tools: [
-          { type: "namespace", name: "image_gen", tools: [] },
-          { type: "image_generation" },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as { tools: Array<Record<string, unknown>> };
-
-    expect(body.tools).toEqual([{ type: "image_generation" }]);
-  });
-
-  test("keyed platform preserves hosted image_generation for replay-only image-gen calls", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        tools: [{ type: "image_generation" }],
-        input: [{
-          type: "function_call",
-          namespace: "image_gen",
-          name: "imagegen",
-          call_id: "call_replay",
-          arguments: "{}",
-        }],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tools: Array<{ type: string }>;
-      input: Array<{ name?: string; namespace?: string }>;
-    };
-
-    expect(body.tools).toEqual([{ type: "image_generation" }]);
-    expect(body.input[0]).toMatchObject({
-      type: "function_call",
-      name: "image_gen__imagegen",
-      call_id: "call_replay",
-    });
-    expect(body.input[0]).not.toHaveProperty("namespace");
-  });
-
-  test("keyed platform preserves hosted image_generation for a bare image_gen function", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        input: [],
-        tools: [
-          { type: "function", name: "image_gen", parameters: {} },
-          { type: "image_generation" },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as { tools: Array<Record<string, unknown>> };
-
-    expect(body.tools).toEqual([
-      { type: "function", name: "image_gen", parameters: { type: "object" } },
-      { type: "image_generation" },
-    ]);
-  });
-
-  test("keyed platform keeps hosted image_generation when no conflicting tool is declared", () => {
-    const adapter = createResponsesPassthroughAdapter(keyedProvider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.6-sol",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.6-sol",
-        input: [],
-        tools: [
-          { type: "function", name: "shell", parameters: {} },
-          { type: "image_generation" },
-        ],
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as { tools: { type: string }[] };
-
-    expect(body.tools).toHaveLength(2);
-    expect(body.tools.some(t => t.type === "image_generation")).toBe(true);
-  });
-
-  test("forward backend preserves the private image_gen namespace and hosted tool", () => {
-    // The ChatGPT backend understands the private namespace; lowering it would change native behavior.
-    const adapter = createResponsesPassthroughAdapter(provider);
-    const request = adapter.buildRequest({
-      modelId: "gpt-5.5",
-      context: { messages: [] },
-      stream: true,
-      options: {},
-      _rawBody: {
-        model: "gpt-5.5",
-        input: [],
-        tools: [
-          {
-            type: "namespace",
-            name: "image_gen",
-            tools: [{ type: "function", name: "imagegen", parameters: {} }],
-          },
-          { type: "image_generation" },
-        ],
-        tool_choice: { type: "function", name: "image_gen.imagegen" },
-      },
-    }, meta);
-    const body = JSON.parse(request.body) as {
-      tools: Array<{ type: string; name?: string; tools?: Array<{ name?: string }> }>;
-      tool_choice: { type: string; name: string };
-    };
-
-    expect(body.tools).toHaveLength(2);
-    expect(body.tools.some(t => t.type === "image_generation")).toBe(true);
-    expect(body.tools.some(t =>
-      t.type === "namespace"
-      && t.name === "image_gen"
-      && t.tools?.some(inner => inner.name === "imagegen")
-    )).toBe(true);
-    expect(body.tool_choice).toEqual({ type: "function", name: "image_gen.imagegen" });
   });
 });
 
@@ -4462,6 +3963,126 @@ describe("OpenAI Responses forward-mode unsupported param stripping", () => {
   });
 });
 
+describe("configured Responses output budget", () => {
+  const keyProvider = {
+    adapter: "openai-responses",
+    baseUrl: "https://api.deepseek.com",
+    responsesPath: "/responses",
+    authMode: "key" as const,
+    apiKey: "sk-test",
+  };
+  const meta = { headers: new Headers() };
+
+  function build(
+    target: Parameters<typeof createResponsesPassthroughAdapter>[0],
+    body: Record<string, unknown>,
+  ) {
+    return JSON.parse(createResponsesPassthroughAdapter(target).buildRequest({
+      modelId: body.model as string,
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: body,
+    }, meta).body) as Record<string, unknown>;
+  }
+
+  test("fills the provider default when the caller omits the field", () => {
+    // Codex bounds length through reasoning.effort and never sends max_output_tokens, so an
+    // upstream default far below the model ceiling truncates long answers without this fill.
+    const body = build({ ...keyProvider, defaultMaxOutputTokens: 393_216 }, {
+      model: "deepseek-v4-flash",
+      input: "ping",
+    });
+
+    expect(body.max_output_tokens).toBe(393_216);
+  });
+
+  test("a model-specific budget wins over the provider default", () => {
+    const body = build({
+      ...keyProvider,
+      defaultMaxOutputTokens: 100_000,
+      modelMaxOutputTokens: { "deepseek-v4-flash": 393_216 },
+    }, { model: "deepseek-v4-flash", input: "ping" });
+
+    expect(body.max_output_tokens).toBe(393_216);
+  });
+
+  test("an explicit caller value still wins", () => {
+    const body = build({ ...keyProvider, defaultMaxOutputTokens: 393_216 }, {
+      model: "deepseek-v4-flash",
+      input: "ping",
+      max_output_tokens: 5_000,
+    });
+
+    expect(body.max_output_tokens).toBe(5_000);
+  });
+
+  test("a provider without a configured budget keeps the upstream default", () => {
+    const body = build(keyProvider, { model: "deepseek-v4-flash", input: "ping" });
+
+    expect(body).not.toHaveProperty("max_output_tokens");
+  });
+
+  test("an injected model-specific budget is tightened to the remaining context window", () => {
+    // DeepSeek shares one 1M window between input and output. A fixed 370k reserve made a
+    // 680k conversation request 1.05M total and fail before generation started. The fill
+    // must keep its long-reasoning ceiling only while the current input leaves room for it.
+    const provider = {
+      ...keyProvider,
+      contextWindow: 100_000,
+      modelMaxOutputTokens: { "deepseek-v4-flash": 80_000 },
+    };
+    const body = JSON.parse(createResponsesPassthroughAdapter(provider).buildRequest({
+      modelId: "deepseek-v4-flash",
+      context: { messages: [{ role: "user", content: "x".repeat(4 * 40_000), timestamp: 0 }] },
+      stream: true,
+      options: {},
+      _rawBody: { model: "deepseek-v4-flash", input: "x".repeat(4 * 40_000) },
+    }, meta).body) as Record<string, unknown>;
+
+    expect(body.max_output_tokens).toBeLessThan(80_000);
+    expect(body.max_output_tokens).toBeGreaterThanOrEqual(512);
+  });
+
+  test("an injected budget falls back to the configured ceiling when input already overflows the window", () => {
+    const provider = {
+      ...keyProvider,
+      contextWindow: 100_000,
+      modelMaxOutputTokens: { "deepseek-v4-flash": 80_000 },
+    };
+    const body = JSON.parse(createResponsesPassthroughAdapter(provider).buildRequest({
+      modelId: "deepseek-v4-flash",
+      context: { messages: [{ role: "user", content: "x".repeat(4 * 99_000), timestamp: 0 }] },
+      stream: true,
+      options: {},
+      _rawBody: { model: "deepseek-v4-flash", input: "x".repeat(4 * 99_000) },
+    }, meta).body) as Record<string, unknown>;
+
+    // The remaining window is below the injected floor. The configured budget stays on the
+    // wire so the provider rejects an impossible turn instead of OCx inventing a budget the
+    // conversation has not earned.
+    expect(body.max_output_tokens).toBe(80_000);
+  });
+
+  test("an injected budget stays at the configured ceiling without a context window", () => {
+    const body = build({
+      ...keyProvider,
+      modelMaxOutputTokens: { "deepseek-v4-flash": 80_000 },
+    }, { model: "deepseek-v4-flash", input: "x".repeat(400_000) });
+
+    expect(body.max_output_tokens).toBe(80_000);
+  });
+
+  test("forward mode never receives an injected budget", () => {
+    const body = build({ ...provider, defaultMaxOutputTokens: 393_216 }, {
+      model: "gpt-5.6-sol",
+      input: "ping",
+    });
+
+    expect(body).not.toHaveProperty("max_output_tokens");
+  });
+});
+
 describe("replayed compaction blobs", () => {
   type PassthroughProvider = Parameters<typeof createResponsesPassthroughAdapter>[0];
 
@@ -4684,6 +4305,161 @@ describe("reasoning input content channel", () => {
     });
     expect(out.content).toEqual([]);
     expect(out.encrypted_content).toBe("upstream-issued-blob");
+  });
+});
+
+describe("Responses-only encrypted tool schema annotations", () => {
+  function markedSchema(): Record<string, unknown> {
+    return {
+      type: "object",
+      encrypted: true,
+      properties: {
+        encrypted: { type: "boolean", description: "a legitimate argument name" },
+        message: { type: "string", encrypted: true },
+        literalData: {
+          type: "object",
+          const: { encrypted: true },
+          default: { encrypted: false },
+          enum: [{ encrypted: true }],
+          examples: [{ encrypted: false }],
+        },
+      },
+      $defs: { encrypted: { type: "string", encrypted: true } },
+      required: ["encrypted", "message"],
+    };
+  }
+
+  function expectedSchema(): Record<string, unknown> {
+    return {
+      type: "object",
+      properties: {
+        encrypted: { type: "boolean", description: "a legitimate argument name" },
+        message: { type: "string" },
+        literalData: {
+          type: "object",
+          const: { encrypted: true },
+          default: { encrypted: false },
+          enum: [{ encrypted: true }],
+          examples: [{ encrypted: false }],
+        },
+      },
+      $defs: { encrypted: { type: "string" } },
+      required: ["encrypted", "message"],
+    };
+  }
+
+  function bodyWithMarkedTools(): Record<string, unknown> {
+    return {
+      model: "glm-5.3-flash",
+      input: [{
+        type: "additional_tools",
+        tools: [
+          { type: "function", name: "additional", parameters: markedSchema() },
+          {
+            type: "namespace",
+            name: "deferred",
+            tools: [{ type: "function", name: "delegate", parameters: markedSchema() }],
+          },
+        ],
+      }],
+      tools: [
+        { type: "function", name: "top_level", parameters: markedSchema() },
+        {
+          type: "namespace",
+          name: "collaboration",
+          tools: [{ type: "function", name: "spawn", parameters: markedSchema() }],
+        },
+      ],
+    };
+  }
+
+  function listedTools(body: Record<string, unknown>): Array<Record<string, unknown>> {
+    const direct = Array.isArray(body.tools) ? body.tools : [];
+    const deferred = Array.isArray(body.input)
+      ? body.input.flatMap(item => item && typeof item === "object" && !Array.isArray(item)
+        && (item as Record<string, unknown>).type === "additional_tools"
+        && Array.isArray((item as Record<string, unknown>).tools)
+        ? (item as { tools: unknown[] }).tools
+        : [])
+      : [];
+    const flattened: Array<Record<string, unknown>> = [];
+    const visit = (tool: unknown): void => {
+      if (!tool || typeof tool !== "object" || Array.isArray(tool)) return;
+      const record = tool as Record<string, unknown>;
+      if (record.type === "namespace" && Array.isArray(record.tools)) {
+        record.tools.forEach(visit);
+        return;
+      }
+      flattened.push(record);
+    };
+    [...direct, ...deferred].forEach(visit);
+    return flattened;
+  }
+
+  function buildWire(providerConfig: Parameters<typeof createResponsesPassthroughAdapter>[0], body: Record<string, unknown>) {
+    const request = createResponsesPassthroughAdapter(providerConfig).buildRequest({
+      modelId: body.model as string,
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: body,
+    }, { headers: new Headers() });
+    return JSON.parse(request.body) as Record<string, unknown>;
+  }
+
+  test("removes the backend-only marker from every final ordinary third-party Responses tool group without mutating the caller schema", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://third-party.example/v1", authMode: "key" as const, apiKey: "third-party-test" };
+    const body = bodyWithMarkedTools();
+    body.model = "gpt-5.6-sol";
+    const original = structuredClone(body);
+    const wire = buildWire(target, body);
+    const tools = listedTools(wire);
+
+    expect(body).toEqual(original);
+    expect(tools.map(tool => tool.name).sort()).toEqual([
+      "additional",
+      "collaboration__spawn",
+      "deferred__delegate",
+      "top_level",
+    ]);
+    for (const tool of tools) expect(tool.parameters).toEqual(expectedSchema());
+  });
+
+  test("removes the marker from Zhipu GLM's final lowered tool groups", () => {
+    const target = { adapter: "openai-responses", baseUrl: "https://open.bigmodel.cn/api/v1", authMode: "key" as const, apiKey: "zhipu-test" };
+    const body = bodyWithMarkedTools();
+    const wire = buildWire(target, body);
+
+    for (const tool of listedTools(wire)) {
+      const parameters = tool.parameters as Record<string, unknown>;
+      expect(parameters.encrypted).toBeUndefined();
+      expect((parameters.properties as Record<string, Record<string, unknown>>).encrypted)
+        .toEqual({ type: "boolean", description: "a legitimate argument name" });
+      expect((parameters.properties as Record<string, Record<string, unknown>>).message?.encrypted).toBeUndefined();
+      expect((parameters.properties as Record<string, Record<string, unknown>>).literalData?.const)
+        .toEqual({ encrypted: true });
+    }
+  });
+
+  test("keeps the marker for OpenAI-operated Responses destinations and explicitly trusted direct relays", () => {
+    const targets = [
+      { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" as const },
+      { adapter: "openai-responses", baseUrl: "https://api.openai.com/v1", authMode: "key" as const, apiKey: "openai-test" },
+      {
+        adapter: "openai-responses",
+        baseUrl: "http://127.0.0.1:10100/v1",
+        authMode: "key" as const,
+        apiKey: "trusted-relay-test",
+        allowEncryptedV2AgentTasks: true,
+      },
+    ] as const;
+
+    for (const target of targets) {
+      const wire = buildWire(target, bodyWithMarkedTools());
+      for (const tool of listedTools(wire)) {
+        expect((tool.parameters as Record<string, unknown>).encrypted).toBe(true);
+      }
+    }
   });
 });
 
