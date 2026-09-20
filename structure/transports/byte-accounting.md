@@ -171,3 +171,10 @@ Schema size still determines traversal work and the cost of copying a changed br
 Dashboard Fast-row persistence and client refresh follow the [Fast selector rows setting contract](../gui-and-management-api.md#fast-selector-rows-setting).
 
 The [compaction routing override](responses.md#compaction-routing-overrides) changes model and effort scalars on the already-read request body, before parsing, within the existing body-reader budget.
+
+### Fork reasoning sequence accounting
+
+`src/server/responses-reasoning-summary-rewrite.ts` 使用 `Set<number>` 去重，每个保留的整数序号
+按 32 字节计入官方 `translatorBudget`，不另设 256 个序号或 256 KiB 配额。
+客户端与 replay projection 共用调用方预算；独立调用在需要时创建默认 32 MiB 预算。
+终态、`flush` 和 `dispose` 释放序号记账，只销毁 rewrite 自建的预算，不销毁调用方预算。

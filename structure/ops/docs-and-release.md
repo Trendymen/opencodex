@@ -8,6 +8,8 @@ Refresh-lock validation covers fresh unreadable locks, descriptor-matched releas
 
 The CLI documents explicit Windows x64 installation observation separately from updates; observation never grants installation authority. See the [read-only observation contract](../runtime.md#explicit-codex-cli-installation-observation).
 
+`scripts/install-local.ts` restores a macOS launchd plist before loading a previously loaded service after safe rollback; a failed stop check, package rollback, or plist restoration does not attempt another start and leaves the runtime state unknown, and `--no-restart` restores only the plist.
+
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged. CLI installation inspection reason codes, including Windows deferral, follow the [runtime inspection contract](../runtime.md#lifecycle).
 
