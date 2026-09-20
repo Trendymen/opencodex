@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { configReasoningPinsConfigError } from "./provider-validation";
+import { configAgentMessageFormatError } from "./diagnostics";
 import type { OcxConfig } from "../types";
 import { refreshUserCostOverlays, withPreservedDiskOnlyProviders } from "../usage/user-cost-overlays";
 import { atomicWriteFile, isMissingPathError } from "./atomic-write";
@@ -56,6 +57,8 @@ function failClosedClientPersistenceError(
 export function persistConfigUnlocked(config: OcxConfig): boolean {
   const pinError = configReasoningPinsConfigError(config);
   if (pinError) throw new Error(pinError);
+  const agentMessageFormatError = configAgentMessageFormatError(config);
+  if (agentMessageFormatError) throw new Error(agentMessageFormatError);
   const configPath = getConfigPath();
   const rawBeforeWrite = readRawConfigJson();
   const clientPersistenceError = failClosedClientPersistenceError(rawBeforeWrite, config);

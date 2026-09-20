@@ -435,6 +435,8 @@ export interface TransientRetryOptions extends ResetRetryOptions {
    * it; a caller that can genuinely wait longer says so and is not cut short.
    */
   retryAfterCeilingMs?: number;
+  /** 配置的发送次数耗尽且最终仍为 transient 状态时通知调用方。 */
+  onTransientExhausted?: () => void;
 }
 
 export type UpstreamSendRecovery = "connection-reset" | "transient-5xx";
@@ -654,6 +656,9 @@ export async function fetchWithTransientRetry(
       if (err instanceof SendBudgetExhaustedError) throw err;
       throw new UpstreamRetryEvidenceError(transientStatuses, err);
     }
+  }
+  if (isTransientUpstreamStatus(res.status) && !opts.abortSignal?.aborted) {
+    opts.onTransientExhausted?.();
   }
   // Budget exhausted: the last response is returned with its body intact.
   return res;
