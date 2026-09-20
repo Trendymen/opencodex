@@ -71,7 +71,7 @@ Codex 桌面端只把非 code span 里的 `:codex-annotation{index="N"}` 渲染�
 已知边界：输出侧不按本轮注解数量启用，模型在无注解轮刻意演示行内代码形式时反引号也会被去掉；反引号按行配对，跨行 code span 不参与判定；native 直通只经过入站改写，输出侧兜底只在路由路径生效；客户端 chip 渲染不在本仓库，未做真机验收。
 
 代码：`src/server/responses/annotation-instructions.ts`、`src/responses/annotation-directive.ts`，接线在 `src/server/responses/request-prepare.ts` 的解析前处理，以及 `src/bridge/sse.ts` 的 delta 链、消息收尾和 `src/bridge/response-json.ts` 的非流式路径。
-测试：`tests/server/annotation-instructions.test.ts`、`tests/responses/annotation-directive.test.ts`、`tests/adapters/bridge.test.ts`。
+测试：`tests/server/annotation-instructions.test.ts`、`tests/responses/annotation-directive.test.ts`、`tests/adapters/bridge-annotation-directive.test.ts`。
 
 ### 第三方工具任务的用户可见进度契约
 
@@ -248,13 +248,12 @@ Fork 提供 `bun run install:local`，构建 GUI 后安装本地源码包，上�
 根 `package.json` 保持只读，构建前冻结 manifest；后续 staging、pack、验证、替换和 cleanup 比较同一快照。
 owner-only stage 收集完整 runtime dependency closure，校验 tarball 文件、完整性、入口、资源和当前平台 Bun binary；使用隔离 cache 离线验证，关闭 install scripts，不回退联网。
 同卷 sibling stage 验证后才执行 `live -> backup`、`stage -> live`，首次 rename 前写 transaction marker。
-安装器保留 backup 到配置、service repair/restart 与 readiness 全部成功；失败先停新 runtime，再按 marker 恢复旧包和服务。
-stage/backup 对象身份、普通目录与 containment 必须可验证；恢复不安全时拒绝继续 restart，必要时保留 quarantine 供人工恢复。
+安装器保留 backup 到配置、service repair/restart 与 readiness 全部成功。失败时先确认新 runtime 已停止；确认后才按 marker 回滚包字节，无论该确认或包回滚是否失败都会回写安装前 plist 的字节和权限。
+只有停服确认、包回滚和 plist 恢复全部成功，才恢复原先已加载的 macOS launchd 服务并检查 ready；原先未加载的服务保持未加载。stage/backup 对象身份、普通目录与 containment 必须可验证；恢复不安全时拒绝继续 restart，必要时保留 quarantine 供人工恢复。
 Windows wrapper 遇到 recovery marker 拒绝自动 restore；Node launcher 的失败提示仍沿用上游 warning-and-continue。
 安装目标识别包含活动服务与 Volta 实际包路径；服务从新包的绝对入口 repair/restart，并验证 readiness。
 Volta 登记同步与包替换共用事务，校验失败触发回滚，避免包已更新但 shim 或服务仍选择旧版本。
-macOS 本地安装默认补 `OCX_DEBUG=1` 和 `OCX_PROVIDER_TEXT_DEBUG=1` 后 reload；`--no-restart` 只更新磁盘 plist，非 Darwin 保持环境。运行该命令即表示本机操作者授权结构诊断与有界文本样本持久化；样本仍受脱敏、单条/每轮限额和总保留预算约束。
-包替换、Volta 登记或 readiness 在提交前失败时，同时恢复安装前 plist 的字节、权限和 launchd loaded 状态；安装前无法确认 launchd 状态时直接拒绝替换。`--no-restart` 的恢复只写回 plist，不主动 reload 服务。
+macOS 本地安装默认补 `OCX_DEBUG=1` 和 `OCX_PROVIDER_TEXT_DEBUG=1` 后 reload；`--no-restart` 的安装与恢复只更新磁盘 plist，非 Darwin 保持环境。运行该命令即表示本机操作者授权结构诊断与有界文本样本持久化；样本仍受脱敏、单条/每轮限额和总保留预算约束。安装前无法确认 launchd 状态时直接拒绝替换。
 
 代码：`scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts`、`src/update/transactional-install.mjs`、`src/service/windows-taskxml.ts`。
 测试：`tests/ci-workflows/fork-install-local-*.test.ts`、`tests/ci-workflows/install-local.test.ts`、`tests/ci-workflows/install-local-vendor.test.ts`、`tests/server/fork-provider-debug-safety.test.ts`、`tests/windows/fork-windows-service-pending-transaction.test.ts`。
