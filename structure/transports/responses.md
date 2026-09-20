@@ -718,6 +718,10 @@ caller cancellation retain precedence on both branches. Native recovery prefligh
 also preserves a rejected body reader and its bounded prefix for the normal
 mid-stream failure path; it does not turn that rejection into a decrypt retry.
 
+Fork 在 clean EOF 时保留其他显式 type/code/message 的普通错误，输出有界且脱敏的 `response.failed`。
+首个带 message 的错误若为通用 `upstream_error`，仍按官方 bare-error 的候选优先级映射，
+不让更深层 envelope 的拒绝码或消息覆盖该传输诊断。
+
 Native Responses may rebuild once when encrypted function/custom-tool output or
 agent-message content receives the exact known decrypt rejection before output
 commits. Recovery replaces only encrypted parts with an omission marker, preserves

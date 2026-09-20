@@ -93,6 +93,28 @@ describe("fork overload error clean-EOF fidelity", () => {
   });
 
   test.each([
+    ["pull", () => relaySseWithFailedTail(streamFromChunks([sse("error", {
+      type: "error",
+      error: { type: "vendor_error", code: "vendor_limited", message: "Vendor rejected this turn." },
+    })]), new AbortController())],
+    ["eager", () => relaySseEagerBounded(streamFromChunks([sse("error", {
+      type: "error",
+      error: { type: "vendor_error", code: "vendor_limited", message: "Vendor rejected this turn." },
+    })]), new AbortController(), eagerHooks())],
+  ])("%s relay preserves a bounded typed ordinary error at clean EOF", async (_lane, relay) => {
+    const payload = failedPayload(await readAll(relay()));
+    const response = payload.response as { error?: unknown; last_error?: unknown };
+    const expected = {
+      type: "vendor_error",
+      code: "vendor_limited",
+      message: "Vendor rejected this turn.",
+    };
+
+    expect(response.error).toEqual(expected);
+    expect(response.last_error).toEqual(expected);
+  });
+
+  test.each([
     ["pull", () => relaySseWithFailedTail(streamFromChunks([sse("response.created", { type: "response.created" })]), new AbortController())],
     ["eager", () => relaySseEagerBounded(streamFromChunks([sse("response.created", { type: "response.created" })]), new AbortController(), eagerHooks())],
   ])("%s relay keeps adapter_eof when clean EOF has no usable error", async (_lane, relay) => {

@@ -122,7 +122,7 @@ function looksLikeUnknownOpaqueSlot(payload: string): boolean {
  */
 export function backendTaskCiphertextRuns(payload: string): string[] {
   return payload.match(/gAAAA[A-Za-z0-9+/=_-]{59,}/g)
-    ?.filter(run => looksLikeBackendCiphertext(run)) ?? [];
+    ?.filter(looksLikeUnknownOpaqueSlot) ?? [];
 }
 
 export function isBackendTaskCiphertext(payload: string): boolean {

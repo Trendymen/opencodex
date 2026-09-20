@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   handleResponses,
   hasUnreadableEncryptedAgentTask,
@@ -10,8 +10,10 @@ import {
 } from "../../src/server/responses/encrypted-payload";
 import type { OcxConfig } from "../../src/types";
 import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
+import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 const originalFetch = globalThis.fetch;
+let releaseSpendHome: (() => void) | undefined;
 
 /**
  * Structurally faithful Fernet fixture: version + timestamp + IV + one AES-CBC
@@ -31,6 +33,7 @@ const TOO_SHORT_FERNET = `gAAAA${"A".repeat(60)}`;
 const INVALID_BLOCK_FERNET = fernetFixture(17);
 const INVALID_VERSION_FERNET = fernetFixture(16, 0x81);
 const BACKEND_TASK = `gAAAA${"A".repeat(128)}`;
+const NON_BACKEND_OPAQUE_SLOT = "A".repeat(133);
 const ROUTING_ENVELOPE = [
   "Message Type: NEW_TASK",
   "Task name: /root/worker",
@@ -39,7 +42,13 @@ const ROUTING_ENVELOPE = [
   "",
 ].join("\n");
 
+beforeEach(() => {
+  releaseSpendHome = acquireOwnedSpendHome();
+});
+
 afterEach(() => {
+  releaseSpendHome?.();
+  releaseSpendHome = undefined;
   globalThis.fetch = originalFetch;
 });
 
@@ -145,6 +154,11 @@ describe("fork V2 strict backend ciphertext envelope guard", () => {
     expect(hasStrictBackendEncryptedAgentTask(agentMessage([
       { type: "input_text", text: `${ROUTING_ENVELOPE}plaintext payload` },
       { type: "encrypted_content", encrypted_content: BACKEND_TASK },
+    ]))).toBe(false);
+    expect(backendTaskCiphertextRuns(NON_BACKEND_OPAQUE_SLOT)).toEqual([]);
+    expect(hasStrictBackendEncryptedAgentTask(agentMessage([
+      { type: "input_text", text: ROUTING_ENVELOPE },
+      { type: "encrypted_content", encrypted_content: NON_BACKEND_OPAQUE_SLOT },
     ]))).toBe(false);
   });
 

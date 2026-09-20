@@ -716,6 +716,9 @@ export function cleanEofUpstreamErrorFromParsed(parsed: unknown): CleanEofUpstre
       // otherwise this path would replace the original frame and change its
       // canonical upstream_server_error classification.
       if (!explicitType && !explicitCode) continue;
+      // This is the relay's generic transport envelope, not a typed upstream
+      // terminal. Its message wins over later envelopes, so use the bare path.
+      if (explicitType === "upstream_error") return null;
       const error = {
         type: redactSecretString(explicitType ?? "upstream_error")
           .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
