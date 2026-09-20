@@ -219,6 +219,36 @@ function boundedBareUpstreamErrorMessage(payload: unknown): string | undefined {
   return message ? redactSecretString(message).slice(0, MAX_TAIL_ERROR_MESSAGE_CHARS) : undefined;
 }
 
+type UpstreamErrorCandidate = {
+  record: JsonRecord;
+  cleanEofEligible: boolean;
+};
+
+/** Candidate order shared by bare-error and clean-EOF terminal classification. */
+function upstreamErrorCandidates(root: JsonRecord): UpstreamErrorCandidate[] {
+  const response = asJsonRecord(root.response);
+  return [
+    { record: asJsonRecord(root.error), cleanEofEligible: true },
+    { record: asJsonRecord(root.last_error), cleanEofEligible: true },
+    { record: asJsonRecord(response?.error), cleanEofEligible: true },
+    { record: asJsonRecord(response?.incomplete_details), cleanEofEligible: false },
+    { record: root, cleanEofEligible: false },
+  ].filter((candidate): candidate is UpstreamErrorCandidate => candidate.record !== null);
+}
+
+function firstErrorCandidate(
+  candidates: readonly UpstreamErrorCandidate[],
+  field: "code" | "message",
+): UpstreamErrorCandidate | undefined {
+  if (field === "message") {
+    return candidates.find(candidate => {
+      const value = candidate.record["message"];
+      return value !== null && value !== undefined;
+    });
+  }
+  return candidates.find(candidate => stringField(candidate.record, field) !== undefined);
+}
+
 /**
  * A bare upstream `error` event reduced to what the synthesized terminal needs.
  *
@@ -241,20 +271,13 @@ function boundedBareUpstreamError(payload: unknown): {
   const root = asJsonRecord(payload);
   if (!root || root.type !== "error") return undefined;
   const message = boundedBareUpstreamErrorMessage(payload);
-  const response = asJsonRecord(root.response);
+  const candidates = upstreamErrorCandidates(root);
   // Precedence is {@link upstreamErrorMessageFromPayload}'s, so the envelope
   // that supplied the message also supplies the verdict. Taking the FIRST code
   // rather than searching for a refusal is what stops a refusal nested below a
   // transient one from overruling it.
-  const code = [
-    asJsonRecord(root.error),
-    asJsonRecord(root.last_error),
-    asJsonRecord(response?.error),
-    asJsonRecord(response?.incomplete_details),
-    root,
-  ]
-    .map(candidate => stringField(candidate, "code"))
-    .find(candidate => candidate !== undefined);
+  const codeCandidate = firstErrorCandidate(candidates, "code");
+  const code = codeCandidate === undefined ? undefined : stringField(codeCandidate.record, "code");
   const refusalCode = code !== undefined
     ? (isTerminalRefusalCode(code) ? code : undefined)
     : message === undefined ? undefined : safetyRefusalCodeFromMessage(message);
@@ -700,47 +723,44 @@ export function cleanEofUpstreamErrorFromParsed(parsed: unknown): CleanEofUpstre
   try {
     const root = asJsonRecord(parsed);
     if (!root || root.type !== "error" || cyberPolicyTerminalError(parsed)) return null;
-    const response = asJsonRecord(root.response);
-    const candidates = [
-      asJsonRecord(root.error),
-      asJsonRecord(root.last_error),
-      asJsonRecord(response?.error),
-    ];
-    for (const candidate of candidates) {
-      const message = stringField(candidate, "message");
-      if (!message) continue;
-      const explicitType = stringField(candidate, "type");
-      const explicitCode = stringField(candidate, "code");
-      // A message-only bare error already has the legacy, byte-preserving
-      // upstreamError fallback. Promote only a typed/code-bearing envelope;
-      // otherwise this path would replace the original frame and change its
-      // canonical upstream_server_error classification.
-      if (!explicitType && !explicitCode) continue;
-      // This is the relay's generic transport envelope, not a typed upstream
-      // terminal. Its message wins over later envelopes, so use the bare path.
-      if (explicitType === "upstream_error") return null;
-      const error = {
-        type: redactSecretString(explicitType ?? "upstream_error")
-          .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
-        code: redactSecretString(explicitCode ?? "upstream_error")
-          .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
-        message: redactSecretString(message).slice(0, MAX_TAIL_ERROR_MESSAGE_CHARS),
-      };
-      const terminalRefusal = explicitCode !== undefined && isTerminalRefusalCode(explicitCode);
-      return {
-        error,
-        httpStatus: httpStatusFromTerminalError(error),
-        payload: JSON.stringify({
-          type: "response.failed",
-          response: {
-            status: "failed",
-            error,
-            last_error: error,
-            ...(terminalRefusal ? { retryable: false } : {}),
-          },
-        }),
-      };
-    }
+    const candidates = upstreamErrorCandidates(root);
+    const messageCandidate = firstErrorCandidate(candidates, "message");
+    const codeCandidate = firstErrorCandidate(candidates, "code");
+    if (!messageCandidate || !messageCandidate.cleanEofEligible || (
+      codeCandidate !== undefined && codeCandidate !== messageCandidate
+    )) return null;
+    const message = stringField(messageCandidate.record, "message");
+    const explicitType = stringField(messageCandidate.record, "type");
+    const explicitCode = stringField(messageCandidate.record, "code");
+    // A message-only bare error already has the legacy, byte-preserving
+    // upstreamError fallback. Promote only a typed/code-bearing envelope;
+    // otherwise this path would replace the original frame and change its
+    // canonical upstream_server_error classification.
+    if (message === undefined || (!explicitType && !explicitCode)) return null;
+    // This is the relay's generic transport envelope, not a typed upstream
+    // terminal. Its message wins over later envelopes, so use the bare path.
+    if (explicitType === "upstream_error") return null;
+    const error = {
+      type: redactSecretString(explicitType ?? "upstream_error")
+        .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
+      code: redactSecretString(explicitCode ?? "upstream_error")
+        .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
+      message: redactSecretString(message).slice(0, MAX_TAIL_ERROR_MESSAGE_CHARS),
+    };
+    const terminalRefusal = explicitCode !== undefined && isTerminalRefusalCode(explicitCode);
+    return {
+      error,
+      httpStatus: httpStatusFromTerminalError(error),
+      payload: JSON.stringify({
+        type: "response.failed",
+        response: {
+          status: "failed",
+          error,
+          last_error: error,
+          ...(terminalRefusal ? { retryable: false } : {}),
+        },
+      }),
+    };
   } catch {
     // EOF repair must retain the existing generic fallback when an upstream
     // payload cannot be normalized safely.
