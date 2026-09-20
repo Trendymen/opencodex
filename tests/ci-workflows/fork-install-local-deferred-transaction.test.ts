@@ -649,7 +649,7 @@ describe("install:local deferred package transaction", () => {
     })).rejects.toBe(failure);
     expect(events).toEqual([
       "stop", "verify", "write-provider-debug-plist", "reload-launchd-1",
-      "stop", "verify", "rollback-package", "reload-launchd-2", "ready", "restore-launchd-snapshot",
+      "stop", "verify", "rollback-package", "restore-launchd-snapshot", "reload-launchd-2", "ready",
     ]);
   });
 
@@ -678,7 +678,7 @@ describe("install:local deferred package transaction", () => {
     })).rejects.toBeInstanceOf(AggregateError);
     expect(events).toEqual([
       "stop", "verify", "restart-1", "ready", "stop", "verify", "rollback-package",
-      "restart-2", "restore-launchd-snapshot",
+      "restore-launchd-snapshot", "restart-2",
     ]);
   });
 

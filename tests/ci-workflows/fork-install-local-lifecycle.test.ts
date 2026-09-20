@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalizePackageModes } from "../../scripts/prepare-package";
-import { validatedPackedTarball } from "../../scripts/install-local";
+import { runLocalInstallLifecycle, validatedPackedTarball } from "../../scripts/install-local";
 import { repoPath } from "../helpers/repo-root";
 
 // Windows CI runners spawn Node/Bun child processes slowly ("Slow filesystem detected");
@@ -73,7 +73,8 @@ test("local installer snapshots launchd through the tri-state probe and refuses 
   expect(installer).toContain("const launchdLoad = serviceWasInstalled && process.platform === \"darwin\"");
   expect(installer).toContain("probeLaunchdLoadState()");
   expect(installer).toContain('if (launchdLoad?.state === "unknown")');
-  expect(installer).toContain('launchdLoad.state === "loaded-current" || launchdLoad.state === "loaded-stale"');
+  expect(installer).toContain('launchdLoad?.state !== "loaded-current" && launchdLoad?.state !== "loaded-stale"');
+  expect(installer).toContain("restartAfterRollback: launchdSnapshot");
   expect(installer).not.toContain("captureProviderDebugLaunchdSnapshot(launchdProxyPlistPath(), diagnoseService().running)");
 });
 
@@ -178,6 +179,144 @@ test("local installer stops and verifies before replacement, and aborts replacem
     ready: () => { events.push("ready"); },
   });
   expect(events).toEqual(["stop", "verify", "replace"]);
+});
+
+test("restores configuration after every deferred rollback attempt and only starts after safe recovery", async () => {
+  const events: string[] = [];
+  let newRuntimeReady = false;
+
+  await expect(runLocalInstallLifecycle(true, {
+    stop: () => { events.push("stop"); },
+    verifyStopped: () => { events.push("verify"); },
+    replace: () => ({
+      commit: () => ({ ok: true, phase: "committed" }),
+      rollback: () => { events.push("rollback"); return { ok: true, phase: "rolled-back" }; },
+    }),
+    restart: () => { events.push("restart"); },
+    ready: () => {
+      events.push("ready");
+      if (!newRuntimeReady) {
+        newRuntimeReady = true;
+        throw new Error("new runtime readiness failed");
+      }
+    },
+    afterRollback: () => { events.push("restore-plist"); },
+    restartAfterRollback: () => { events.push("load-restored-launchd"); return true; },
+  })).rejects.toThrow("new runtime readiness failed");
+
+  expect(events).toEqual([
+    "stop", "verify", "restart", "ready",
+    "stop", "verify", "rollback", "restore-plist", "load-restored-launchd", "ready",
+  ]);
+});
+
+test("keeps the replacement failure primary when the restored runtime does not become ready", async () => {
+  const events: string[] = [];
+  const replacementFailure = new Error("new runtime readiness failed");
+  const restoredRuntimeFailure = new Error("restored runtime readiness failed");
+  let readyCalls = 0;
+
+  let thrown: unknown;
+  try {
+    await runLocalInstallLifecycle(true, {
+      stop: () => { events.push("stop"); },
+      verifyStopped: () => { events.push("verify"); },
+      replace: () => ({
+        commit: () => ({ ok: true, phase: "committed" }),
+        rollback: () => { events.push("rollback"); return { ok: true, phase: "rolled-back" }; },
+      }),
+      restart: () => { events.push("restart-new"); },
+      ready: () => {
+        readyCalls += 1;
+        events.push(`ready-${readyCalls}`);
+        throw readyCalls === 1 ? replacementFailure : restoredRuntimeFailure;
+      },
+      afterRollback: () => { events.push("restore-plist"); },
+      restartAfterRollback: () => { events.push("load-restored-launchd"); return true; },
+    });
+  } catch (error) {
+    thrown = error;
+  }
+
+  expect(thrown).toBeInstanceOf(AggregateError);
+  expect((thrown as AggregateError).errors).toEqual([replacementFailure, restoredRuntimeFailure]);
+  expect(events).toEqual([
+    "stop", "verify", "restart-new", "ready-1",
+    "stop", "verify", "rollback", "restore-plist", "load-restored-launchd", "ready-2",
+  ]);
+});
+
+test("attempts configuration restore but does not start when rollback or restoration is unsafe", async () => {
+  for (const rollback of [
+    () => ({ ok: false, phase: "rollback", error: "backup unsafe", recoveryUnsafe: true }),
+    () => { throw new Error("rollback threw"); },
+  ]) {
+    const events: string[] = [];
+    await expect(runLocalInstallLifecycle(true, {
+      stop: () => { events.push("stop"); },
+      verifyStopped: () => { events.push("verify"); },
+      replace: () => ({
+        commit: () => ({ ok: true, phase: "committed" }),
+        rollback: () => { events.push("rollback"); return rollback(); },
+      }),
+      restart: () => { events.push("restart"); },
+      ready: () => { events.push("ready"); throw new Error("new runtime readiness failed"); },
+      afterRollback: () => { events.push("restore-plist"); },
+      restartAfterRollback: () => { events.push("unexpected-restart"); return true; },
+    })).rejects.toThrow("local package replacement failed");
+    expect(events).toEqual(["stop", "verify", "restart", "ready", "stop", "verify", "rollback", "restore-plist"]);
+  }
+});
+
+test("does not start a restored service when the second stop check or plist restoration fails", async () => {
+  for (const scenario of [
+    { secondVerifyFails: false, afterRollback: () => { throw new Error("plist restoration failed"); } },
+    { secondVerifyFails: true, afterRollback: () => {} },
+  ]) {
+    const events: string[] = [];
+    let verifies = 0;
+    await expect(runLocalInstallLifecycle(true, {
+      stop: () => { events.push("stop"); },
+      verifyStopped: () => {
+        events.push("verify");
+        verifies += 1;
+        if (scenario.secondVerifyFails && verifies === 2) throw new Error("new runtime did not stop");
+      },
+      replace: () => ({
+        commit: () => ({ ok: true, phase: "committed" }),
+        rollback: () => { events.push("rollback"); return { ok: true, phase: "rolled-back" }; },
+      }),
+      restart: () => { events.push("restart"); },
+      ready: () => { events.push("ready"); throw new Error("new runtime readiness failed"); },
+      afterRollback: () => { events.push("restore-plist"); return scenario.afterRollback(); },
+      restartAfterRollback: () => { events.push("unexpected-restart"); return true; },
+    })).rejects.toThrow("local package replacement failed");
+    expect(events).toEqual(scenario.secondVerifyFails
+      ? ["stop", "verify", "restart", "ready", "stop", "verify", "restore-plist"]
+      : ["stop", "verify", "restart", "ready", "stop", "verify", "rollback", "restore-plist"]);
+  }
+});
+
+test("does not wait for readiness when the old launchd service was originally unloaded or restart is disabled", async () => {
+  for (const restart of [true, false]) {
+    const events: string[] = [];
+    await expect(runLocalInstallLifecycle(restart, {
+      stop: () => { events.push("stop"); },
+      verifyStopped: () => { events.push("verify"); },
+      replace: () => ({
+        commit: () => ({ ok: true, phase: "committed" }),
+        rollback: () => { events.push("rollback"); return { ok: true, phase: "rolled-back" }; },
+      }),
+      afterReplace: () => { throw new Error("post-replace failure"); },
+      restart: () => { events.push("unexpected-restart"); },
+      ready: () => { events.push("unexpected-ready"); },
+      afterRollback: () => { events.push("restore-plist"); },
+      restartAfterRollback: () => { events.push("loaded-state-check"); return false; },
+    })).rejects.toThrow("post-replace failure");
+    expect(events).toEqual(restart
+      ? ["stop", "verify", "stop", "verify", "rollback", "restore-plist", "loaded-state-check"]
+      : ["stop", "verify", "rollback", "restore-plist"]);
+  }
 });
 
 

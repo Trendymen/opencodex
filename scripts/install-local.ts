@@ -102,7 +102,11 @@ type LaunchdPlistWriteDeps = {
   validate?: (path: string) => void;
 };
 
-type LaunchdPlistRollbackDeps = LaunchdPlistWriteDeps & {
+type LaunchdPlistRollbackDeps = {
+  platform?: NodeJS.Platform;
+};
+
+type LaunchdPlistLoadDeps = {
   launchctl?: typeof runLaunchctl;
   platform?: NodeJS.Platform;
 };
@@ -229,13 +233,12 @@ export function ensureProviderDebugLaunchdDefault(
 }
 
 export type ProviderDebugLaunchdSnapshot = {
-  restore(reload: boolean): void;
+  restore(): void;
 };
 
 /** Save the pre-install launchd definition so a pending package transaction can restore it. */
 export function captureProviderDebugLaunchdSnapshot(
   plistPath = launchdProxyPlistPath(),
-  wasLoaded: boolean,
   deps: LaunchdPlistRollbackDeps = {},
 ): ProviderDebugLaunchdSnapshot | undefined {
   if ((deps.platform ?? process.platform) !== "darwin") return undefined;
@@ -246,21 +249,24 @@ export function captureProviderDebugLaunchdSnapshot(
   const mode = stat.mode & 0o777;
 
   return {
-    restore(reload: boolean): void {
+    restore(): void {
       replaceLaunchdPlistAtomically(plistPath, contents, mode);
-      if (!reload) return;
-      const launchctl = deps.launchctl ?? runLaunchctl;
-      const unloaded = launchctl(["unload", plistPath]);
-      if (!unloaded.ok) {
-        throw new Error(`launchctl could not unload restored ${plistPath}: ${unloaded.stderr || "command failed"}`);
-      }
-      if (!wasLoaded) return;
-      const loaded = launchctl(["load", "-w", plistPath]);
-      if (!loaded.ok || launchctlLoadFailed(loaded.stderr)) {
-        throw new Error(`launchctl could not load restored ${plistPath}: ${loaded.stderr || "command failed"}`);
-      }
     },
   };
+}
+
+/** Load a restored launchd definition after the lifecycle has confirmed the new runtime is stopped. */
+export function loadRestoredLaunchd(
+  plistPath = launchdProxyPlistPath(),
+  deps: LaunchdPlistLoadDeps = {},
+): boolean {
+  if ((deps.platform ?? process.platform) !== "darwin") return false;
+  const launchctl = deps.launchctl ?? runLaunchctl;
+  const loaded = launchctl(["load", "-w", plistPath]);
+  if (!loaded.ok || launchctlLoadFailed(loaded.stderr)) {
+    throw new Error(`launchctl could not load restored ${plistPath}: ${loaded.stderr || "command failed"}`);
+  }
+  return true;
 }
 
 /** Reload launchd only when install-local changed the service definition. */
@@ -432,7 +438,10 @@ export interface LocalInstallLifecycleDeps {
   replace: () => void | LocalInstallPendingTransaction | Promise<void | LocalInstallPendingTransaction>;
   afterReplace?: () => void | Promise<void>;
   beforeCommit?: () => void | Promise<void>;
+  /** Restores configuration only; it must not start or reload a service. */
   afterRollback?: () => void | Promise<void>;
+  /** Starts a restored runtime after compensation and returns whether ready() must run. */
+  restartAfterRollback?: () => boolean | Promise<boolean>;
   restart: () => void | Promise<void>;
   ready: () => void | Promise<void>;
 }
@@ -514,41 +523,48 @@ export async function runLocalInstallLifecycle(
     }
     return;
   } catch (replaceError) {
-    let rollbackError: unknown;
     if (transaction) {
+      const recoveryErrors: unknown[] = [];
       if (restart) {
         try {
           await deps.stop();
           await deps.verifyStopped();
         } catch (error) {
-          rollbackError = error;
+          recoveryErrors.push(error);
         }
       }
-      if (rollbackError === undefined) {
-        const rolledBack = transaction.rollback();
-        if (!rolledBack.ok) {
-          rollbackError = Object.assign(
-            new Error(`local package transaction rollback failed (${rolledBack.phase}): ${rolledBack.error ?? "unknown error"}`),
-            { localInstallRecoverySafe: false },
-          );
-        }
-      }
-      if (restart && rollbackError === undefined) {
+      if (recoveryErrors.length === 0) {
         try {
-          await deps.restart();
-          await deps.ready();
+          const rolledBack = transaction.rollback();
+          if (!rolledBack.ok) {
+            recoveryErrors.push(Object.assign(
+              new Error(`local package transaction rollback failed (${rolledBack.phase}): ${rolledBack.error ?? "unknown error"}`),
+              { localInstallRecoverySafe: false },
+            ));
+          }
         } catch (error) {
-          rollbackError = error;
+          recoveryErrors.push(error);
         }
       }
       try {
         await deps.afterRollback?.();
       } catch (error) {
-        rollbackError = rollbackError === undefined
-          ? error
-          : new AggregateError([rollbackError, error], "local install rollback compensation failed");
+        recoveryErrors.push(error);
       }
-      if (rollbackError !== undefined) {
+      if (restart && recoveryErrors.length === 0) {
+        try {
+          const started = deps.restartAfterRollback
+            ? await deps.restartAfterRollback()
+            : (await deps.restart(), true);
+          if (started) await deps.ready();
+        } catch (error) {
+          recoveryErrors.push(error);
+        }
+      }
+      if (recoveryErrors.length > 0) {
+        const rollbackError = recoveryErrors.length === 1
+          ? recoveryErrors[0]
+          : new AggregateError(recoveryErrors, "local install rollback compensation failed");
         throw Object.assign(
           new AggregateError(
             [replaceError, rollbackError],
@@ -597,6 +613,7 @@ export async function runLocalInstallLifecycleWithManifestGuard(
     },
     afterReplace: deps.afterReplace,
     afterRollback: deps.afterRollback,
+    restartAfterRollback: deps.restartAfterRollback,
     // Once replacement starts, service recovery wins over source-tree diagnostics.
     // A later completion/cleanup check still reports drift without stranding the proxy.
     restart: deps.restart,
@@ -1139,7 +1156,6 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
     const launchdSnapshot = launchdLoad
       ? captureProviderDebugLaunchdSnapshot(
         launchdProxyPlistPath(),
-        launchdLoad.state === "loaded-current" || launchdLoad.state === "loaded-stale",
       )
       : undefined;
     await runLocalInstallLifecycleWithManifestGuard(restart, {
@@ -1226,7 +1242,13 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         registration?.sync();
         localInstallAfterReplace(serviceWasInstalled, restart);
       },
-      afterRollback: () => { launchdSnapshot?.restore(restart); },
+      afterRollback: () => { launchdSnapshot?.restore(); },
+      restartAfterRollback: launchdSnapshot
+        ? () => {
+          if (launchdLoad?.state !== "loaded-current" && launchdLoad?.state !== "loaded-stale") return false;
+          return loadRestoredLaunchd(launchdProxyPlistPath());
+        }
+        : undefined,
       restart: () => {
         console.log(serviceWasInstalled
           ? "==> Refreshing background service with packaged proxy..."

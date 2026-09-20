@@ -6,10 +6,12 @@ import {
   captureProviderDebugLaunchdSnapshot,
   ensureProviderDebugLaunchdDefault,
   launchdProxyPlistPath,
+  loadRestoredLaunchd,
   localInstallAfterReplace,
   localInstallRestartEnv,
   refreshProviderDebugLaunchd,
   restartLocalInstall,
+  runLocalInstallLifecycleWithManifestGuard,
   verifyLocalInstallReadiness,
 } from "../../scripts/install-local";
 
@@ -155,33 +157,105 @@ describe("local installer provider debug handling", () => {
     },
   );
 
-  test("restores saved plist bytes and modes without reloading for no-restart, then restores its loaded state", () => {
+  test("restores saved plist bytes and modes without starting launchd", () => {
     const plist = tempPlist();
     chmodSync(plist, 0o644);
     const original = readFileSync(plist, "utf8");
-    const events: string[] = [];
-    const snapshot = captureProviderDebugLaunchdSnapshot(plist, true, {
+    const snapshot = captureProviderDebugLaunchdSnapshot(plist, {
       platform: "darwin",
-      launchctl: args => {
-        events.push(args.join(" "));
-        return { ok: true, stdout: "", stderr: "", status: 0 };
-      },
     });
     expect(snapshot).toBeDefined();
     writeFileSync(plist, "replacement plist", { encoding: "utf8", mode: 0o600 });
     chmodSync(plist, 0o600);
 
-    snapshot!.restore(false);
+    snapshot!.restore();
     expect(readFileSync(plist, "utf8")).toBe(original);
     expect(statSync(plist).mode & 0o777).toBe(0o644);
-    expect(events).toEqual([]);
 
     writeFileSync(plist, "replacement plist again", { encoding: "utf8", mode: 0o600 });
     chmodSync(plist, 0o600);
-    snapshot!.restore(true);
+    snapshot!.restore();
     expect(readFileSync(plist, "utf8")).toBe(original);
     expect(statSync(plist).mode & 0o777).toBe(0o644);
-    expect(events).toEqual([`unload ${plist}`, `load -w ${plist}`]);
+  });
+
+  test("restores a real plist before loading the old launchd service through lifecycle recovery", async () => {
+    const plist = tempPlist();
+    chmodSync(plist, 0o644);
+    const original = readFileSync(plist, "utf8");
+    const snapshot = captureProviderDebugLaunchdSnapshot(plist, { platform: "darwin" });
+    const events: string[] = [];
+    let oldRuntimeLoaded = false;
+
+    writeFileSync(plist, "replacement plist", { encoding: "utf8", mode: 0o600 });
+    await expect(runLocalInstallLifecycleWithManifestGuard(true, {
+      stop: () => { events.push("stop"); },
+      verifyStopped: () => { events.push("verify"); },
+      replace: () => ({
+        commit: () => ({ ok: true, phase: "committed" }),
+        rollback: () => { events.push("rollback"); return { ok: true, phase: "rolled-back" }; },
+      }),
+      restart: () => { events.push("restart-new"); },
+      ready: () => {
+        events.push("ready");
+        if (!oldRuntimeLoaded) throw new Error("new runtime is not ready");
+      },
+      afterRollback: () => {
+        events.push("restore-plist");
+        snapshot!.restore();
+      },
+      restartAfterRollback: () => {
+        oldRuntimeLoaded = loadRestoredLaunchd(plist, {
+          platform: "darwin",
+          launchctl: args => {
+            expect(readFileSync(plist, "utf8")).toBe(original);
+            expect(statSync(plist).mode & 0o777).toBe(0o644);
+            events.push(args.join(" "));
+            return { ok: true, stdout: "", stderr: "", status: 0 };
+          },
+        });
+        return oldRuntimeLoaded;
+      },
+    }, () => {})).rejects.toThrow("new runtime is not ready");
+
+    expect(readFileSync(plist, "utf8")).toBe(original);
+    expect(statSync(plist).mode & 0o777).toBe(0o644);
+    expect(events).toEqual([
+      "stop", "verify", "restart-new", "ready",
+      "stop", "verify", "rollback", "restore-plist", `load -w ${plist}`, "ready",
+    ]);
+  });
+
+  test("restores a real plist but never loads it when package rollback is unsafe", async () => {
+    const plist = tempPlist();
+    chmodSync(plist, 0o644);
+    const original = readFileSync(plist, "utf8");
+    const snapshot = captureProviderDebugLaunchdSnapshot(plist, { platform: "darwin" });
+    const events: string[] = [];
+
+    writeFileSync(plist, "replacement plist", { encoding: "utf8", mode: 0o600 });
+    await expect(runLocalInstallLifecycleWithManifestGuard(true, {
+      stop: () => { events.push("stop"); },
+      verifyStopped: () => { events.push("verify"); },
+      replace: () => ({
+        commit: () => ({ ok: true, phase: "committed" }),
+        rollback: () => ({ ok: false, phase: "rollback", error: "backup unsafe", recoveryUnsafe: true }),
+      }),
+      restart: () => { events.push("restart-new"); },
+      ready: () => { throw new Error("new runtime is not ready"); },
+      afterRollback: () => { snapshot!.restore(); },
+      restartAfterRollback: () => loadRestoredLaunchd(plist, {
+        platform: "darwin",
+        launchctl: args => {
+          events.push(args.join(" "));
+          return { ok: true, stdout: "", stderr: "", status: 0 };
+        },
+      }),
+    }, () => {})).rejects.toThrow("local package replacement failed");
+
+    expect(readFileSync(plist, "utf8")).toBe(original);
+    expect(statSync(plist).mode & 0o777).toBe(0o644);
+    expect(events).toEqual(["stop", "verify", "restart-new", "stop", "verify"]);
   });
 
   test("does not invoke the post-replace plist hook for a restart or absent service", () => {
