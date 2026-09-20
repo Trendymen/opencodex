@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.59.0`（`134c92a01b120162f00c7275189cc47858720379`）。
+- 上游基线：`v2.60.0`（`7c625fc9755c9824653ab944190e243091a2c85c`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -203,7 +203,7 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 
 
 上游提供通用 recovery admission、turn termination 与失败原因；Fork 扩展 strict non-Fernet backend ciphertext 的识别、admission、routed trigger 和 fail-closed forwarding。
-官方 `v2.54.0` 会在向非 canonical 第三方 Responses 目的地首次发送前，把重放 `agent_message` 中不可读的 ChatGPT 密文替换为 omission marker；Fork 沿用该发送前清理。canonical ChatGPT backend 继续保留原始密文并允许既有 rejection recovery。显式 `allowEncryptedV2AgentTasks=true` 的可信 key-auth Responses 直连也可保留原密文出站，但该授权不允许把 strict ciphertext 写入本地 continuation cache。禁写不依赖 `agentTaskRecovery` 是否启用，并在 `previous_response_id` 展开后按最终请求复核。
+官方 `v2.54.0` 会在向非 canonical 第三方 Responses 目的地首次发送前，把重放 `agent_message` 中不可读的 ChatGPT 密文替换为 omission marker；Fork 沿用该发送前清理。canonical ChatGPT backend 沿用官方 Fernet 结构校验与 rejection recovery；Fork 只额外保留经过 strict `NEW_TASK` envelope 校验的当前任务密文 part，其他历史 slot 仍走官方清理。显式 `allowEncryptedV2AgentTasks=true` 的可信 key-auth Responses 直连也可保留原密文出站，但该授权不允许把 strict ciphertext 写入本地 continuation cache。禁写不依赖 `agentTaskRecovery` 是否启用，并在 `previous_response_id` 展开后按最终请求复核。
 官方 `v2.53.0` 将 Fernet recovery 扩为最多 32 个连续完整 part、合计 2 MiB，并按有序密文序列隔离缓存。Fork 的 strict backend ciphertext 与父任务超时通知仍只接受单个密文和精确两段 content；替换前比较完整输入快照，不把 multipart 放宽到 strict 路径。
 官方 `v2.50.0` 已覆盖直接路由中原生模型切换为第三方后重放加密历史的恢复入口，不再要求该请求是派生子任务；Fork 保留严格 backend envelope、父任务 `MESSAGE`、原生 5xx 重试恢复和超时通知等扩展。
 受 `agentTaskRecovery.enabled` 控制：原生目标的 transient 5xx 重试耗尽后，严格匹配 canonical `NEW_TASK` envelope 才恢复，并对已确定的 Provider、模型、account、tier、options 重放一次。
@@ -294,6 +294,8 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 
 | 旧差异 | 当前处理与证据入口 |
 | --- | --- |
+| 独立的原生 compact 端点 predicate 测试 | 上游 `tests/responses/responses-compaction-routing.test.ts` 保留相同的两组 `supportsNativeResponsesCompactEndpoint` 断言；删除重复的 Fork 测试文件及双布局登记。 |
+| Responses state 的 Fork watchdog floor | 上游现用 `watchdogMs(8_000)`，覆盖原 Fork 本地全量运行的 5/8 秒下限，并保留 CI 的 30/45 秒预算；采用官方表达式，见 `tests/responses/responses-state.test.ts`。 |
 | 缺失/非法 `call_id` 的独立 Fork 修复与测试 | 上游 passthrough、compaction 和 parser 已覆盖。Fork 会从经过类型和字符校验的 `namespace`、`name` 写入来源提示；无可用来源时采用 `[Tool output without call identification]`。见 `tests/responses/openai-responses-passthrough.test.ts`。 |
 | 动态 `scripts/fork-test-runner.ts`、local-only worker group、quarantine list | 已移除，隔离和 serial lane 由上游 `scripts/test.ts` 管理。 |
 | 按工具名过滤 Kimi 工具、automation 专用 lowering | 已由通用 compiler 替代，不恢复 allowlist 或过滤工具目录；见 `src/fork/glm-kimi-compat.ts`。 |
