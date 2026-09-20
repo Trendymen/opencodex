@@ -671,6 +671,7 @@ export function createUndeclaredToolCallGuardBlockRewrite(
   declaredNamelessClientCallTypes: ReadonlySet<string> = EMPTY_DECLARED_NAMELESS_CLIENT_CALL_TYPES,
   providerExecutedCallTypes: ProviderExecutedCallTypes = EMPTY_PROVIDER_EXECUTED_CALL_TYPES,
   declaredBare?: ReadonlySet<string>,
+  onReject?: (name: string) => void,
 ): SseBlockRewrite {
   let tripped = false;
   return (block: string) => {
@@ -685,6 +686,7 @@ export function createUndeclaredToolCallGuardBlockRewrite(
     }
     const name = undeclaredToolCallName(parsed, declared, declaredNamelessClientCallTypes, providerExecutedCallTypes, declaredBare);
     if (name !== undefined) {
+      onReject?.(name);
       tripped = true;
       return failedBlocks(name, block.includes("\r\n") ? "\r\n" : "\n");
     }

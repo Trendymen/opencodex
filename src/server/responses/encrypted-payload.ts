@@ -114,6 +114,22 @@ function looksLikeUnknownOpaqueSlot(payload: string): boolean {
   return payload.length >= 64 && /^[A-Za-z0-9+/=_-]+$/.test(payload);
 }
 
+/**
+ * The canonical backend's task ciphertext currently uses the Fernet-looking
+ * `gAAAA` prefix. This is deliberately only a token-shape predicate: callers
+ * that could make a routing or recovery decision must additionally bind it to
+ * the strict NEW_TASK envelope below.
+ */
+export function backendTaskCiphertextRuns(payload: string): string[] {
+  return payload.match(/gAAAA[A-Za-z0-9+/=_-]{59,}/g)
+    ?.filter(run => looksLikeBackendCiphertext(run)) ?? [];
+}
+
+export function isBackendTaskCiphertext(payload: string): boolean {
+  const runs = backendTaskCiphertextRuns(payload);
+  return runs.length === 1 && runs[0] === payload;
+}
+
 
 
 /**
@@ -249,6 +265,52 @@ function splitFernetParts(content: unknown[]): Set<object> {
   }
   finish();
   return protectedParts;
+}
+
+const STRICT_NEW_TASK_HEADER = /^Message Type[ \t]*:[ \t]*NEW_TASK[ \t]*\r?\nTask name[ \t]*:[ \t]*(\S+)[ \t]*\r?\nSender[ \t]*:[ \t]*(\S+)[ \t]*\r?\nPayload[ \t]*:[ \t]*(?:\r?\n)?$/;
+
+function currentAgentMessage(input: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(input)) return null;
+  let index = input.length - 1;
+  while (index >= 0) {
+    const item = input[index];
+    const type = item && typeof item === "object" ? (item as { type?: unknown }).type : undefined;
+    if (type !== "compaction_trigger" && type !== "additional_tools") break;
+    index -= 1;
+  }
+  const item = input[index];
+  return item && typeof item === "object" && (item as { type?: unknown }).type === "agent_message"
+    ? item as Record<string, unknown>
+    : null;
+}
+
+/**
+ * Accept only the current codex-rs NEW_TASK shape that can safely be submitted
+ * to the opt-in backend recovery endpoint. In particular, a `gAAAA` string in
+ * ordinary text, reasoning, history, or an ambiguous multipart agent message
+ * is never a recovery candidate.
+ */
+export function hasStrictBackendEncryptedAgentTask(input: unknown): boolean {
+  const item = currentAgentMessage(input);
+  if (!item || typeof item.author !== "string" || typeof item.recipient !== "string") return false;
+  const content = item.content;
+  if (!Array.isArray(content) || content.length !== 2) return false;
+
+  const header = content[0] as { type?: unknown; text?: unknown } | null;
+  const encrypted = content[1] as { type?: unknown; encrypted_content?: unknown } | null;
+  if (
+    !header
+    || (header.type !== "input_text" && header.type !== "text")
+    || typeof header.text !== "string"
+    || !encrypted
+    || encrypted.type !== "encrypted_content"
+    || typeof encrypted.encrypted_content !== "string"
+    || !isBackendTaskCiphertext(encrypted.encrypted_content)
+    || structurallyValidFernetTokens(encrypted.encrypted_content).length > 0
+  ) return false;
+
+  const match = STRICT_NEW_TASK_HEADER.exec(header.text);
+  return !!match && match[1] === item.recipient && match[2] === item.author;
 }
 
 export function hasUnreadableEncryptedAgentTask(input: unknown): boolean {
@@ -413,6 +475,55 @@ export function stripAgentMessageCiphertextInPlace(input: unknown): number {
     const parts = contentWithoutCiphertext(content);
     if (parts === content) continue;
     input[index] = { ...record, content: parts };
+    repaired += 1;
+  }
+  return repaired;
+}
+
+/**
+ * Replay poison guard for tool-call history. A model switch can leave an encrypted
+ * collaboration call (typically a historical spawn_agent) in the conversation; a routed model
+ * that copies that shape forwards ciphertext the backend has already refused to decrypt for
+ * this caller. Rewrite only argument text that validates as backend task ciphertext: the same
+ * strictness the agent_message text path uses, so a digest or ordinary base64 argument is never
+ * touched. Non-collaboration calls cannot carry these tokens in a meaningful slot, but the
+ * rewrite is keyed to content, not tool name, because the poisoned call has been observed with
+ * both the native and lowered names. Custom tool calls are not rewritten: their payload field
+ * is `input`, and no poisoned delegation has been observed on that wire.
+ */
+export function stripToolCallCiphertextArgumentsInPlace(input: unknown): number {
+  if (!Array.isArray(input)) return 0;
+  let repaired = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    const item = input[index];
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    if (record.type !== "function_call") continue;
+    let args: unknown = record.arguments;
+    if (typeof args === "string") {
+      const replaced = textWithoutCiphertext(args);
+      if (replaced === args) continue;
+      input[index] = { ...record, arguments: replaced };
+      repaired += 1;
+      continue;
+    }
+    if (!args || typeof args !== "object" || Array.isArray(args)) continue;
+    const argsRecord = args as Record<string, unknown>;
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(argsRecord)) {
+      if (typeof value === "string") {
+        const replaced = textWithoutCiphertext(value);
+        if (replaced !== value) {
+          next[key] = replaced;
+          changed = true;
+          continue;
+        }
+      }
+      next[key] = value;
+    }
+    if (!changed) continue;
+    input[index] = { ...record, arguments: next };
     repaired += 1;
   }
   return repaired;
