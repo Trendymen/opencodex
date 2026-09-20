@@ -3,9 +3,11 @@ import { handleResponses } from "../../src/server/responses";
 import type { RequestLogContext } from "../../src/server/request-log";
 import type { OcxConfig } from "../../src/types";
 import { originalFetch, FERNET_TASK, codexHeaders } from "../helpers/agent-task-recovery";
+import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 describe("pre-dispatch function-call ciphertext egress", () => {
   test("a poisoned replayed spawn call reaches the third-party Responses provider without ciphertext", async () => {
+    const releaseSpendHome = acquireOwnedSpendHome();
     const outbound: Array<Record<string, unknown>> = [];
     globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       outbound.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
@@ -58,8 +60,8 @@ describe("pre-dispatch function-call ciphertext egress", () => {
       expect(args.message).toBe("[encrypted content omitted]");
       expect(JSON.stringify(sent)).not.toContain(FERNET_TASK);
     } finally {
+      releaseSpendHome();
       globalThis.fetch = originalFetch;
     }
   });
 });
-

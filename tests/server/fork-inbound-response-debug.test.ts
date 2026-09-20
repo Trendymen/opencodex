@@ -19,10 +19,12 @@ import { providerConfigSeed } from "../../src/providers/derive";
 import { getProviderRegistryEntry } from "../../src/providers/registry";
 import { handleResponses } from "../../src/server/responses/core";
 import type { OcxConfig } from "../../src/types";
+import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 const originalFetch = globalThis.fetch;
 let previousOpenCodexHome: string | undefined;
 let testDir = "";
+let releaseSpendHome: (() => void) | undefined;
 
 function deepseekConfig(): OcxConfig {
   return {
@@ -48,11 +50,14 @@ beforeEach(() => {
   previousOpenCodexHome = process.env.OPENCODEX_HOME;
   testDir = mkdtempSync(join(tmpdir(), "ocx-inbound-response-debug-"));
   process.env.OPENCODEX_HOME = testDir;
+  releaseSpendHome = acquireOwnedSpendHome();
   resetDebugLogBufferForTests();
 });
 
 describe("inbound upstream Responses debug observer", () => {
   afterEach(() => {
+    releaseSpendHome?.();
+    releaseSpendHome = undefined;
     globalThis.fetch = originalFetch;
     resetDebugSettingsForTests();
     resetDebugLogBufferForTests();

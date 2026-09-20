@@ -19,9 +19,11 @@ import {
   recoverySse,
   routedConfig,
 } from "../helpers/agent-task-recovery";
+import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 const originalFetch = globalThis.fetch;
 const originalDateNow = Date.now;
+let releaseSpendHome: (() => void) | undefined;
 
 /** Fork-only wrapper: extend the official helper request with arbitrary body fields. */
 function post(
@@ -42,11 +44,14 @@ function post(
 
 describe("fork agent task recovery (strict backend ciphertext)", () => {
   beforeEach(() => {
+    releaseSpendHome = acquireOwnedSpendHome();
     resetAgentTaskRecoveryState();
     clearResponseStateForTests();
   });
 
   afterEach(() => {
+    releaseSpendHome?.();
+    releaseSpendHome = undefined;
     globalThis.fetch = originalFetch;
     Date.now = originalDateNow;
     resetAgentTaskRecoveryState();
@@ -92,6 +97,63 @@ describe("fork agent task recovery (strict backend ciphertext)", () => {
     expect(forwardedBodies[3]).not.toContain(backendCiphertext);
     expect(sendBudget.used).toBe(4);
     expect(sendBudget.reserveSpent).toBe(true);
+  });
+
+  test("cleans an older unknown slot while preserving the strict current task for bounded recovery", async () => {
+    const backendCiphertext = `gAAAA${"D".repeat(128)}`;
+    const olderUnknownSlot = "A".repeat(128);
+    const assignment = "Return only the recovered current task.";
+    const nativeBodies: string[] = [];
+    let recoveryAttempts = 0;
+    globalThis.fetch = (async (_input, init) => {
+      const body = typeof init?.body === "string" ? init.body : "";
+      if (body.includes("capture_assignment")) {
+        recoveryAttempts += 1;
+        return new Response(recoverySse(assignment), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      nativeBodies.push(body);
+      return nativeBodies.length <= 3
+        ? new Response("temporarily unavailable", { status: 502 })
+        : providerResponse();
+    }) as typeof fetch;
+
+    const response = await post(
+      routedConfig({ enabled: true }),
+      "gpt-5.5",
+      [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "encrypted_content", encrypted_content: olderUnknownSlot }],
+        },
+        ...encryptedInput({ ciphertext: backendCiphertext }),
+      ],
+      codexHeaders(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(recoveryAttempts).toBe(1);
+    expect(nativeBodies).toHaveLength(4);
+    for (const body of nativeBodies.slice(0, 3)) {
+      const sent = JSON.parse(body) as { input: Array<Record<string, unknown>> };
+      expect(sent.input[0]).toEqual({
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: olderUnknownSlot }],
+      });
+      expect(sent.input[1]).toMatchObject({
+        type: "agent_message",
+        content: [
+          { type: "input_text" },
+          { type: "encrypted_content", encrypted_content: backendCiphertext },
+        ],
+      });
+    }
+    expect(nativeBodies[3]).toContain(assignment);
+    expect(nativeBodies[3]).not.toContain(backendCiphertext);
   });
 
   test("保留共享预算耗尽时的原始 transient 响应，且 oneShot 不再发送", async () => {

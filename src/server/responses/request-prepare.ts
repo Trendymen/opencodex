@@ -31,6 +31,7 @@ import {
   hasStrictBackendEncryptedAgentTask,
   hasUnreadableEncryptedAgentTask,
   sanitizeEncryptedContentInPlace,
+  strictBackendEncryptedAgentTaskContentPart,
   stripAgentMessageCiphertextInPlace,
   stripToolCallCiphertextArgumentsInPlace,
 } from "./encrypted-payload";
@@ -935,17 +936,28 @@ export async function prepareResponsesRequest(
     }
   }
 
-  if (hasStrictBackendEncryptedAgentTask(
-    (parsed._rawBody as { input?: unknown } | undefined)?.input,
-  )) {
+  const finalRouteStrictBackendEncryptedTaskPart = strictBackendEncryptedAgentTaskContentPart(
+    (body as { input?: unknown } | undefined)?.input,
+  );
+  const finalRouteHasStrictBackendEncryptedTask = finalRouteStrictBackendEncryptedTaskPart !== null;
+  if (finalRouteHasStrictBackendEncryptedTask) {
     markBodyNonPersistable(parsed._rawBody);
   }
 
   if (options.abortSignal?.aborted) return clientCancelledResponse();
 
-  if (inboundWire === "responses" && isCanonicalOpenAiForwardProvider(route.provider)) {
+  if (
+    inboundWire === "responses"
+    && isCanonicalOpenAiForwardProvider(route.provider)
+  ) {
     const rewritten = sanitizeEncryptedContentInPlace(
       (body as { input?: unknown } | undefined)?.input,
+      // Preserve only the validated current-task ciphertext until the native transient path
+      // decides whether it needs one bounded plaintext recovery. Older unknown slots still
+      // receive the official canonical sanitization.
+      finalRouteStrictBackendEncryptedTaskPart
+        ? { preserveEncryptedContentParts: new Set([finalRouteStrictBackendEncryptedTaskPart]) }
+        : undefined,
     );
     if (rewritten > 0) {
       console.warn(

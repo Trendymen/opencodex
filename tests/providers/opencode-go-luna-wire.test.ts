@@ -267,6 +267,7 @@ describe("OpenCode Go stateless reasoning and continuation routes", () => {
     }) as typeof fetch;
     const config = { providers: { "opencode-go": opencodeGo() } } as unknown as OcxConfig;
     const initial = { type: "message", role: "user", content: [{ type: "input_text", text: "Run sparse probe" }] };
+    takeSpendHome();
     const first = await handleResponses(new Request("http://localhost/v1/responses", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: `opencode-go/${MODEL}`, stream: true, reasoning: { summary: "auto" }, input: [initial] }),
@@ -315,6 +316,7 @@ describe("OpenCode Go stateless reasoning and continuation routes", () => {
       });
     }) as typeof fetch;
     const config = { providers: { "opencode-go": opencodeGo() } } as unknown as OcxConfig;
+    takeSpendHome();
     const first = await handleResponses(new Request("http://localhost/v1/responses", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: `opencode-go/${MODEL}`, stream: true, reasoning: { summary: "auto" }, input: "terminal only" }),
@@ -363,6 +365,7 @@ describe("OpenCode Go stateless reasoning and continuation routes", () => {
       ).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
     }) as typeof fetch;
     const config = { providers: { "opencode-go": opencodeGo() } } as unknown as OcxConfig;
+    takeSpendHome();
     const first = await handleResponses(new Request("http://localhost/v1/responses", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: `opencode-go/${MODEL}`, stream: true, input: "first" }),

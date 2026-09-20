@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { handleResponses } from "../../src/server/responses/core";
 import type { OcxConfig } from "../../src/types";
+import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 const originalFetch = globalThis.fetch;
+let releaseSpendHome: (() => void) | undefined;
 
 const message = {
   type: "message",
@@ -23,7 +25,13 @@ const upstreamSse = [
   { type: "response.completed", response: { id: "resp_phase", status: "completed", output: [message] } },
 ].map(event => `data: ${JSON.stringify(event)}\n\n`).join("");
 
-afterEach(() => { globalThis.fetch = originalFetch; });
+beforeEach(() => { releaseSpendHome = acquireOwnedSpendHome(); });
+
+afterEach(() => {
+  releaseSpendHome?.();
+  releaseSpendHome = undefined;
+  globalThis.fetch = originalFetch;
+});
 
 describe("provider-configured native Responses message phase repair", () => {
   test("labels a configured provider's terminal message final_answer in the streamed item and snapshot", async () => {

@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { providerConfigSeed } from "../../src/providers/derive";
 import { getProviderRegistryEntry } from "../../src/providers/registry";
 import { handleResponses } from "../../src/server/responses/core";
 import type { OcxConfig } from "../../src/types";
+import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 /**
  * The passthrough relay for DeepSeek's native /responses endpoint emits
@@ -96,7 +97,15 @@ function sseEvents(text: string): Record<string, unknown>[] {
 }
 describe("fork passthrough opaque reasoning SSE", () => {
   const originalFetch = globalThis.fetch;
-  afterEach(() => { globalThis.fetch = originalFetch; });
+  let releaseSpendHome: (() => void) | undefined;
+
+  beforeEach(() => { releaseSpendHome = acquireOwnedSpendHome(); });
+
+  afterEach(() => {
+    releaseSpendHome?.();
+    releaseSpendHome = undefined;
+    globalThis.fetch = originalFetch;
+  });
 
   test("SSE: requested summary preserves opaque DeepSeek state while exposing the terminal summary", async () => {
       const response = await runHandleResponses(

@@ -623,6 +623,7 @@ test("native Responses JSON/SSE and replay share spawn_agent fork_turns repair",
     ].join(""), { headers: { "content-type": "text/event-stream" } }) : Response.json(response);
   }) as typeof fetch;
   try {
+    takeSpendHome();
     for (const stream of [false, true]) {
       activeId = `resp_spawn_${crypto.randomUUID()}`;
       const request = (extra: object = {}) => new Request("http://localhost/v1/responses", {

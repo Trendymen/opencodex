@@ -290,11 +290,11 @@ function currentAgentMessage(input: unknown): Record<string, unknown> | null {
  * ordinary text, reasoning, history, or an ambiguous multipart agent message
  * is never a recovery candidate.
  */
-export function hasStrictBackendEncryptedAgentTask(input: unknown): boolean {
+export function strictBackendEncryptedAgentTaskContentPart(input: unknown): object | null {
   const item = currentAgentMessage(input);
-  if (!item || typeof item.author !== "string" || typeof item.recipient !== "string") return false;
+  if (!item || typeof item.author !== "string" || typeof item.recipient !== "string") return null;
   const content = item.content;
-  if (!Array.isArray(content) || content.length !== 2) return false;
+  if (!Array.isArray(content) || content.length !== 2) return null;
 
   const header = content[0] as { type?: unknown; text?: unknown } | null;
   const encrypted = content[1] as { type?: unknown; encrypted_content?: unknown } | null;
@@ -307,10 +307,14 @@ export function hasStrictBackendEncryptedAgentTask(input: unknown): boolean {
     || typeof encrypted.encrypted_content !== "string"
     || !isBackendTaskCiphertext(encrypted.encrypted_content)
     || structurallyValidFernetTokens(encrypted.encrypted_content).length > 0
-  ) return false;
+  ) return null;
 
   const match = STRICT_NEW_TASK_HEADER.exec(header.text);
-  return !!match && match[1] === item.recipient && match[2] === item.author;
+  return match && match[1] === item.recipient && match[2] === item.author ? encrypted : null;
+}
+
+export function hasStrictBackendEncryptedAgentTask(input: unknown): boolean {
+  return strictBackendEncryptedAgentTaskContentPart(input) !== null;
 }
 
 export function hasUnreadableEncryptedAgentTask(input: unknown): boolean {
@@ -606,7 +610,10 @@ function contentWithoutCiphertext(content: unknown[]): unknown[] {
 
 export function sanitizeEncryptedContentInPlace(
   input: unknown,
-  options: { preserveUnknownOpaqueSlots?: boolean } = {},
+  options: {
+    preserveUnknownOpaqueSlots?: boolean;
+    preserveEncryptedContentParts?: ReadonlySet<object>;
+  } = {},
 ): number {
   if (!Array.isArray(input)) return 0;
   let rewritten = 0;
@@ -641,7 +648,8 @@ export function sanitizeEncryptedContentInPlace(
         const payload = (child as { encrypted_content: string }).encrypted_content;
         const preserveUnknown = options.preserveUnknownOpaqueSlots === true
           && looksLikeUnknownOpaqueSlot(payload);
-        if (!protectedFragments.has(child) && !looksLikeBackendCiphertext(payload) && !preserveUnknown) {
+        const preserveStrictPart = options.preserveEncryptedContentParts?.has(child) === true;
+        if (!protectedFragments.has(child) && !looksLikeBackendCiphertext(payload) && !preserveUnknown && !preserveStrictPart) {
           const parts = encryptedSlotParts(payload);
           frame.node.splice(frame.index, 1, ...parts);
           rewritten += 1;

@@ -14,6 +14,7 @@ import type { OcxConfig, OcxProviderConfig } from "../../../src/types";
 import { acquireOwnedSpendHome } from "../../helpers/owned-spend-home";
 
 let releaseSpendHome: (() => void) | undefined;
+const takeSpendHome = (): void => { releaseSpendHome ??= acquireOwnedSpendHome(); };
 
 interface SseEvent {
   event?: string;
@@ -184,7 +185,7 @@ describe("GitHub Copilot Responses client stream contract", () => {
     } as unknown as OcxConfig;
 
     // Direct dispatch needs the writer lease that startServer normally owns for this home.
-    releaseSpendHome = acquireOwnedSpendHome();
+    takeSpendHome();
     const response = await handleResponses(
       new Request("http://localhost/v1/responses", {
         method: "POST",
@@ -310,6 +311,7 @@ describe("GitHub Copilot Responses client stream contract", () => {
     const config = {
       providers: { "github-copilot": { ...copilotProvider(), ...routeConfig } },
     } as unknown as OcxConfig;
+    takeSpendHome();
     const first = await handleResponses(
       new Request("http://localhost/v1/responses", {
         method: "POST",

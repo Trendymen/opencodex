@@ -343,6 +343,8 @@ decrypt/decode identity enters one request-budgeted sanitize-and-rebuild attempt
 pre-commit SSE/WebSocket terminal envelopes; the single-shot guard remains armed on the rebuilt
 send.
 
+Fork 在 canonical Responses 的最终清理中，只保留经过 strict `NEW_TASK` envelope 校验的当前任务密文 part，供原生 transient 重试耗尽后的有界恢复使用；同一请求的其他历史 slot 仍按上述官方规则清理。这不放宽通用 Fernet 分类，也不允许该任务写入 continuation cache。
+
 > Decision record: [ADR-5236](../decisions/ADR-5236-responses-http-sse.md)
 
 Codex pool account changes are a separate portability question from destination serving identity.

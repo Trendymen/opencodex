@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createResponsesPassthroughAdapter as createResponsesPassthroughAdapterProduction } from "../../src/adapters/openai-responses";
 import { handleResponses } from "../../src/server/responses";
 import type { OcxConfig } from "../../src/types";
+import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
 
 const createResponsesPassthroughAdapter = (...args: Parameters<typeof createResponsesPassthroughAdapterProduction>) =>
@@ -185,8 +186,13 @@ class FakeWebSocket {
 }
 
 const realWebSocket = globalThis.WebSocket;
+let releaseSpendHome: (() => void) | undefined;
+
+beforeEach(() => { releaseSpendHome = acquireOwnedSpendHome(); });
 
 afterEach(() => {
+  releaseSpendHome?.();
+  releaseSpendHome = undefined;
   globalThis.WebSocket = realWebSocket;
   FakeWebSocket.instances = [];
   FakeWebSocket.script = () => {};

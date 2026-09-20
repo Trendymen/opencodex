@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { handleResponses } from "../../src/server/responses/core";
 import { rewriteAnnotationInstructionsInPlace } from "../../src/server/responses/annotation-instructions";
 import type { OcxConfig } from "../../src/types";
+import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 /**
  * The desktop client injects this block as a user message ahead of the annotation selections. Its
@@ -52,6 +53,7 @@ describe("annotation instruction rewrite", () => {
       upstreamBody = typeof init?.body === "string" ? init.body : "";
       return new Response(upstreamSse, { status: 200, headers: { "content-type": "text/event-stream" } });
     }) as typeof fetch;
+    const releaseSpendHome = acquireOwnedSpendHome();
     try {
       const config = {
         defaultProvider: "passthrough",
@@ -89,6 +91,7 @@ describe("annotation instruction rewrite", () => {
       expect(sentText!.slice(sentText!.indexOf("<response-annotations>")))
         .toBe(text.slice(text.indexOf("<response-annotations>")));
     } finally {
+      releaseSpendHome();
       globalThis.fetch = originalFetch;
     }
   });

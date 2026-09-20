@@ -8,13 +8,19 @@ import {
   recoverySse,
   routedConfig,
 } from "../helpers/agent-task-recovery";
+import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
+
+let releaseSpendHome: (() => void) | undefined;
 
 describe("fork agent task recovery body ceiling", () => {
   beforeEach(() => {
+    releaseSpendHome = acquireOwnedSpendHome();
     resetAgentTaskRecoveryState();
   });
 
   afterEach(() => {
+    releaseSpendHome?.();
+    releaseSpendHome = undefined;
     globalThis.fetch = originalFetch;
     resetAgentTaskRecoveryState();
   });
