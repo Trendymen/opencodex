@@ -178,6 +178,7 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 普通 pull reader error 只 dispose；nested-exec barrier 只有 dispose，不承诺 flush。
 保留 Volcengine 默认开启、显式 `false` 关闭的 snapshot repair；客户端与 Provider 开关独立，沿用上游 Grok framing。
 裸顶层 upstream error 保留分类和状态码；message-only nested error 沿用原始 frame；legacy/eager 终态后的重复 `[DONE]` 只发送一枚。
+多层错误 envelope 沿用官方 message 的 nullish 来源顺序和首个有效 code；两者来自不同候选时使用 bare-error 路径，避免内层拒绝码或消息覆盖外层诊断。单一 typed error 的有界、脱敏字段保真仍保留。
 
 代码：`src/server/sse-payload-rewrite.ts`、`src/server/relay.ts`、`src/server/relay-eager.ts`、`src/server/responses/passthrough-delivery.ts`。
 测试：`tests/responses/fork-sse-block-rewrite-flush.test.ts`、`tests/server/fork-relay-eager-flush.test.ts`、`tests/server/fork-overload-error-eof-fidelity.test.ts`、`tests/responses/responses-snapshot-repair-server.test.ts`、`tests/responses/sse-failed-tail.test.ts`。
