@@ -381,6 +381,8 @@ export const SERIAL_FULL_SUITE_FILES = [
   // changing. Quarantining it here is what keeps it a test of the relay instead of a test of
   // its neighbours.
   "server/server-live.test.ts",
+  "responses/responses-opaque-blob-recovery.test.ts",
+  "server/memory-watchdog.test.ts",
   // These exercise the default-home service authority, shared by parallel Bun workers.
   // A fresh process/home prevents another file's authority from becoming this fixture's input.
   "service/service-ownership-state.test.ts",

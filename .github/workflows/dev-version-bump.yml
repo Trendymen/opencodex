@@ -2,7 +2,8 @@ name: Dev version bump
 
 # Before a release publishes, open a pull request that moves `dev` past the intended
 # version. Merge that pull request before promoting and publishing so `dev` and pull
-# requests based on it never inherit a version-line failure from the new tag.
+# requests based on it never inherit a version-line failure from the new tag. Fork `ben.N`
+# releases are immutable snapshots and the decision helper returns a no-op for them.
 #
 # That has been repaired by hand four times: 32529c2b2, e4a85d134, 076ad3036, befcac3e1.
 # The workflow now prepares the move before publication. Explicit repair mode retains
@@ -11,7 +12,8 @@ name: Dev version bump
 # WHAT THIS DOES NOT DO. It does not push to `dev`. It opens a pull request and a human
 # merges it, because ruleset `Protect dev` requires an approving review and code-owner
 # sign-off that a bot cannot supply. `release.yml` independently refuses publication
-# until `dev` already outranks the intended version.
+# until `dev` already outranks an ordinary intended version. Fork `ben.N` releases do not
+# couple later `dev` commits to a version bump.
 #
 # WHY THIS IS DISPATCHED. The intended version is known before publication, and this
 # workflow's purpose is to queue the reviewed `dev` move first. It is not called by the

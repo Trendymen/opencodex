@@ -118,6 +118,13 @@ change target order or attempt accounting; provider-400 decisions follow the [re
 
 The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
 
+For canonical Responses, the Fork's final sanitizer retains ciphertext only from the current task
+part that passes strict `NEW_TASK` envelope validation, for one bounded recovery after native
+transient retries are exhausted. Other historical slots still follow the canonical rule.
+This does not broaden Fernet detection or admit the task into continuation caching. The one-shot
+replay uses the shared physical-send budget and retains the original transient response when no
+send permit remains.
+
 ## Upstream key attempt accounting
 
 Key identity is sealed at the guarded physical dispatch after queued selections are rebuilt.
@@ -450,6 +457,17 @@ route where this was first observed; explicit provider and operator caps may onl
 
 Regression coverage: `tests/server/input-admission.test.ts` and
 `tests/helpers/combo-context-headroom-cases.ts`.
+
+## Injected output budgets share the window
+
+For key-auth `openai-responses` routes with no caller `max_output_tokens`, the configured
+`modelMaxOutputTokens` or `defaultMaxOutputTokens` is a ceiling. With a positive resolved
+`modelContextWindows` or `contextWindow`, `applyConfiguredResponsesMaxOutputTokens` subtracts
+estimated input and 256–4,096 tokens of headroom from that window before filling the output
+allowance, with a 512-token floor. If the remaining window is already at or below that floor,
+the configured ceiling is sent unchanged so the upstream can report the over-window turn.
+Forward-auth and caller-specified allowances are unchanged. The `configured Responses output
+budget` group in `tests/responses/openai-responses-passthrough.test.ts` covers this behavior.
 
 Native steering retains fixed phase deadlines and reconciled replay output; see the [steering stability contract](../transports/streaming-health.md#steering-deadlines-and-replay-completeness).
 

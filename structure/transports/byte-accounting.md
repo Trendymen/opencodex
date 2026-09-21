@@ -182,3 +182,11 @@ Schema size still determines traversal work and the cost of copying a changed br
 Dashboard Fast-row persistence and client refresh follow the [Fast selector rows setting contract](../gui-and-management-api.md#fast-selector-rows-setting).
 
 The [compaction routing override](responses-failover.md#compaction-routing-overrides) changes model and effort scalars on the already-read request body, before parsing, within the existing body-reader budget.
+
+### Fork reasoning sequence accounting
+
+`src/server/responses-reasoning-summary-rewrite.ts` deduplicates retained integer sequence numbers
+with a `Set<number>` and charges 32 bytes per unique number to the caller's `translatorBudget`.
+Client delivery and replay projection share that budget. A standalone rewrite creates a default
+32 MiB budget when needed. Terminal, `flush`, and `dispose` release sequence charges; only a
+rewrite that created its own budget destroys it. The [Fork extension contract](../fork-extensions.md#responses-输出与-continuation) owns the projection behavior.
