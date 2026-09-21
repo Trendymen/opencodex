@@ -16,6 +16,8 @@ Refresh-lock validation covers fresh unreadable locks, descriptor-matched releas
 
 The CLI documents explicit Windows x64 installation observation separately from updates; observation never grants installation authority. See the [read-only observation contract](../runtime.md#explicit-codex-cli-installation-observation).
 
+`scripts/install-local.ts` restores a macOS launchd plist before loading a previously loaded service after safe rollback; a failed stop check, package rollback, or plist restoration does not attempt another start and leaves the runtime state unknown, and `--no-restart` restores only the plist.
+
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged. CLI installation inspection reason codes, including Windows deferral, follow the [runtime inspection contract](../runtime.md#lifecycle).
 
@@ -436,7 +438,12 @@ the Rust toolchain, or the app bundle. Those regressions are caught at the promo
 `preview` or `main`, before publication, and on demand by explicit dispatch — a pull request
 that is green is not full-platform proof.
 
-No recovery retry can turn a failed workflow green. Linux, Windows, macOS shards and macOS control use
+macOS reads the serial manifest from `scripts/test.ts`, excludes each listed basename from both
+parallel shards, and runs its assigned files with `--parallel=1` in fresh Bun processes.
+`tests/server/memory-watchdog.test.ts` is listed because its memory endpoint calls `bun:jsc`
+`heapStats()`, whose cost depends on the process heap accumulated by earlier tests.
+Nothing in the workflow retries. Linux and Windows use `scripts/ci/run-bun-test-batches.sh`, but
+recovery retry can turn a failed workflow green. Linux, Windows, macOS shards and macOS control use
 `scripts/ci/run-bun-test-batches.sh`, but
 each lane owns its measured process shape: Linux keeps the default twelve files and 120 seconds;
 Windows uses six files and 480 seconds. macOS control uses twelve files, 300 seconds and one

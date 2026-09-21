@@ -353,6 +353,8 @@ decrypt/decode identity enters one request-budgeted sanitize-and-rebuild attempt
 pre-commit SSE/WebSocket terminal envelopes; the single-shot guard remains armed on the rebuilt
 send.
 
+Fork 在 canonical Responses 的最终清理中，只保留经过 strict `NEW_TASK` envelope 校验的当前任务密文 part，供原生 transient 重试耗尽后的有界恢复使用；同一请求的其他历史 slot 仍按上述官方规则清理。这不放宽通用 Fernet 分类，也不允许该任务写入 continuation cache。
+
 > Decision record: [ADR-5236](../decisions/ADR-5236-responses-http-sse.md)
 
 Codex pool account changes are a separate portability question from destination serving identity.
@@ -561,9 +563,16 @@ custom result has no local call, because its original wire type cannot be establ
 would send an unmatched result upstream. The check resolves the selected wire protocol and the
 request's own tool declarations after final route selection, so stateful destinations keep their
 upstream-owned native function and native-only custom continuations. Explicit input still receives
-orphan repair; this path asks the client to replay rather than reconstructing history. Content-channel reasoning stays content in SSE, JSON and stored replay output; native
-summary items and opaque blobs retain their upstream representation. Full-content replay
-fingerprints compare the same client-visible items without content-to-summary conversion.
+orphan repair; this path asks the client to replay rather than reconstructing history. The canonical
+Console Go Responses route collapses repeated `function_call_output` or `custom_tool_call_output`
+items only when they have exactly one matching call in the same input, then emits one output before
+the validator. Output-only items and call IDs shared by multiple calls remain unchanged. For a bare,
+unnamespaced `custom_tool_call` named `exec`, a successful empty wrapper is dropped when a later
+result carries content; multiple content fragments remain in order. OpenCode Go content-channel
+reasoning stays content-only
+when the client omits or disables `reasoning.summary`.
+When the client explicitly requests it, the response keeps raw content and opaque state while the client-visible summary projection is produced, stored, and used for continuation comparison. Native summary items and opaque blobs retain their upstream representation.
+The projection lifecycle is defined in [Fork extensions](../fork-extensions.md#responses-输出与-continuation).
 It does not change streaming selection or Chat model routes. Go fixtures cover Luna, Grok
 and Muse against both response formats.
 
@@ -771,6 +780,8 @@ clearing avoidance as if the turn had succeeded. Existing real terminals and
 caller cancellation retain precedence on both branches. Native recovery preflight
 also preserves a rejected body reader and its bounded prefix for the normal
 mid-stream failure path; it does not turn that rejection into a decrypt retry.
+
+Fork 在 clean EOF 时只保留同一个候选同时提供首个非 nullish message 与首个有效字符串 code 的显式普通错误，输出有界且脱敏的 `response.failed`；整个 payload 没有 code 时，type/message 仍可保真。候选顺序与 bare-error 相同：`error`、`last_error`、`response.error`、`response.incomplete_details`、顶层 `error` event。`false`、空字符串或非字符串 message 仍占据官方 message 来源，只有 `null`/`undefined` 才继续向后查找。首个 message 与首个 code 来自不同候选时，或首个 message 属于通用 `upstream_error`、`response.incomplete_details`、顶层 event 时，仍按官方 bare-error 路径映射；不得让更深层 envelope 的拒绝码或消息覆盖先出现的传输诊断。
 
 Native Responses may rebuild once when encrypted function/custom-tool output or
 agent-message content receives the exact known decrypt rejection before output
@@ -1505,3 +1516,24 @@ Native steering retains fixed phase deadlines and reconciled replay output; see 
 Native steering generation overrides, explicit public-API eligibility and the consent-gated wire probe follow the [shared control contract](streaming-health.md#steering-settings-public-api-and-diagnostic-probe); this owner does not change routing or execute diagnostic tools.
 
 Dashboard Fast-row persistence and client refresh follow the [Fast selector rows setting contract](../gui-and-management-api.md#fast-selector-rows-setting).
+
+## Injected output budgets share the window
+
+Codex omits `max_output_tokens`, so key-auth `openai-responses` providers fill the configured
+`modelMaxOutputTokens` / `defaultMaxOutputTokens` before dispatch. A fixed fill collides with
+gateways that charge input and output against one window: a 680k-token conversation plus a 370k
+reserve exceeds a 1M model before generation starts, and the upstream rejects the turn with a
+context-length error that names the reserve as requested completion tokens.
+
+`applyConfiguredResponsesMaxOutputTokens` in `src/adapters/openai-responses/passthrough.ts`
+therefore treats the configured budget as a ceiling, not a constant. When a positive
+`modelContextWindows` / `contextWindow` value resolves for the routed model, the fill is
+`min(configured ceiling, resolved window - estimated input - headroom)`, with the headroom
+between 256 and 4,096 tokens (10% of the remaining window, clamped) absorbing estimator error.
+The injected budget never drops below 512 tokens. When the remaining window is already at or
+below that floor, the configured ceiling goes out unchanged: that turn is over window no matter
+what OCx injects, and shrinking the reserve to force it through would silently trade a clear
+upstream rejection for a truncated answer. Forward-auth requests keep skipping the fill.
+
+Regression coverage: the `configured Responses output budget` group in
+`tests/responses/openai-responses-passthrough.test.ts`.
