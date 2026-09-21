@@ -524,6 +524,11 @@ terminal tail, while an opted-in terminal repair keeps its unframed suffix taint
 `missing_terminal_event`. Pull/tee and eager relays therefore agree on terminal, sentinel, and
 request-log accounting without promoting a truncated repair candidate.
 
+On clean EOF, the Fork's `src/server/relay.ts` promotes an ordinary upstream error to a bounded,
+redacted `response.failed` only when its first non-nullish message and first valid code come from
+the same candidate. A missing code may retain a typed message; a later candidate cannot override
+an earlier transport diagnosis. Other cases keep the upstream-first terminal boundary above.
+
 > Decision record: [ADR-0044](../decisions/ADR-0044-responses-http-sse.md)
 
 
@@ -554,6 +559,12 @@ code mode, the host rejects unknown nested tools. See [ADR-0099](../decisions/AD
 
 > Decision record: [ADR-0099](../decisions/ADR-0099-responses-http-sse.md)
 
+On canonical Console Go Responses routes, `src/adapters/openai-responses/tool-output-recovery.ts`
+combines repeated function or custom-tool outputs only when their input contains exactly one
+matching call. Output-only items and call IDs shared by multiple calls remain unchanged. For a
+bare `exec` custom call, an empty success wrapper is omitted when a later result has content;
+remaining content fragments keep their order.
+
 ## Mixed encrypted-content slots
 
 A mixed `encrypted_content` slot may contain structurally valid Fernet runs alongside text.
@@ -583,6 +594,12 @@ delivery's terminal fold fills. That fold builds no `ocxr1` envelope (`omitHidde
 so a block that fit the live stream cannot overflow the translator budget there and skip the cache
 write. A fallback route without the option shows raw reasoning again. A native passthrough route
 relays the upstream's own frames and ignores the option.
+
+For an eligible routed native Responses provider, an explicit client request for
+`reasoning.summary` projects content-channel reasoning into a client-visible summary without
+changing raw content, opaque state, or continuation replay. An omitted or disabled request keeps
+reasoning on its original channel. See the
+[Fork extension contract](../fork-extensions.md#responses-输出与-continuation).
 
 ## Codex App visualization references
 
