@@ -78,6 +78,7 @@ export function sanitizeReasoningInputContent(
      * placeholder, rather than emitted in the shape the upstream 400s on.
      */
     requirePlaintextReasoning?: boolean;
+    stripRawContentBackedEncryptedContent?: boolean;
   },
 ): unknown {
   if (!body || typeof body !== "object" || Array.isArray(body)) return body;
@@ -90,6 +91,9 @@ export function sanitizeReasoningInputContent(
     const rec = item as Record<string, unknown>;
     if (rec.type !== "reasoning") return item;
     const hasRawContent = Array.isArray(rec.content) && rec.content.length > 0;
+    const hasRawReasoningText = Array.isArray(rec.content)
+      && rec.content.some(part => part && typeof part === "object" && !Array.isArray(part)
+        && (part as Record<string, unknown>).type === "reasoning_text");
     // ocxr1 envelopes are proxy-minted (Anthropic signatures), not OpenAI encryption — the native
     // backend cannot decrypt them and would reject the request. Strip regardless of content shape.
     const hasOcxEnvelope = typeof rec.encrypted_content === "string" && rec.encrypted_content.startsWith(OCX_REASONING_PREFIX);
@@ -97,7 +101,18 @@ export function sanitizeReasoningInputContent(
     const hasEncryptedContent = Object.prototype.hasOwnProperty.call(rec, "encrypted_content");
     const missingSummary = !Object.prototype.hasOwnProperty.call(rec, "summary");
     const stripEncryptedContent = hasOcxEnvelope
-      || (opts?.stripEncryptedContent === true && hasEncryptedContent);
+      || (opts?.stripEncryptedContent === true && hasEncryptedContent)
+      // A third-party Responses turn can be interrupted after it has emitted raw reasoning but
+      // before it records a terminal route identity. A later native GPT replay must not carry
+      // that provider's opaque continuation token alongside the raw content it came with. Native
+      // OpenAI reasoning items are summary-only on replay, so this leaves their own opaque blobs
+      // intact while dropping the observed cross-provider shape.
+      || (
+        opts?.stripRawContentBackedEncryptedContent === true
+        && hasRawReasoningText
+        && hasEncryptedContent
+        && !(typeof rec.encrypted_content === "string" && rec.encrypted_content.startsWith("gAAAA"))
+      );
     // An id-only item is as foreign as one with a blob: a stateful destination still resolves it
     // against its own store.
     const dropItemId = opts?.dropForeignItemId === true

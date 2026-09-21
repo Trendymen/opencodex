@@ -42,6 +42,7 @@ import { rememberResponseState } from "../../responses/state";
 import { trackStreamLifetime } from "../lifecycle";
 import { awaitThoughtSignatureDurability } from "../../responses/thought-signature-replay";
 import { undeclaredToolCallMessage } from "../responses-undeclared-tool-guard";
+import { createNestedExecAdapterEventRepair } from "../responses-nested-exec-call-repair";
 // LOCAL PATCH (runturn-websearch)
 import { planWebSearch } from "../../web-search";
 import { runTurnWebSearchInitialParsed, runTurnWebSearchLoop } from "../../web-search/run-turn-loop";
@@ -144,6 +145,12 @@ export async function executeResponsesRunTurn(
     notifyResponseComplete,
   } = responseEffects;
   const { routedCompaction } = sidecarState;
+  const { repairSource: repairAdapterEventSource, repairBatch: repairAdapterEventBatch } = createNestedExecAdapterEventRepair({
+    rawBody: parsed._rawBody,
+    replayPrefixLength: parsed._replayPrefixLen ?? 0,
+    isPassthrough: false,
+    translatorBudget,
+  });
 
   // LOCAL PATCH (runturn-websearch): resolving the OpenAI search credential can
   // hold the account's sole cooldown-recovery probe lease. The fetch path hands
@@ -549,7 +556,7 @@ export async function executeResponsesRunTurn(
           console.warn(emptyCompletionNotice(route.providerName, route.modelId));
         });
       const sseStream = bridgeToResponsesSSE(
-        guardedSource, parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
+        repairAdapterEventSource(guardedSource), parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
         () => {
           cancelResponseCompletion();
           runTurnAbort.abort();
@@ -666,6 +673,7 @@ export async function executeResponsesRunTurn(
         }
         events = searched;
       }
+      events = await repairAdapterEventBatch(events);
       if (options.comboAttempt) {
         const firstMeaningfulIndex = events.findIndex(event => event.type !== "heartbeat");
         const firstMeaningful = firstMeaningfulIndex === -1 ? undefined : events[firstMeaningfulIndex];

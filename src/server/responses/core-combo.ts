@@ -43,7 +43,7 @@ import {
   previousResponseReplayFailure,
   previousResponseProviderState,
 } from "../../responses/state";
-import { hasUnreadableEncryptedAgentTask } from "./encrypted-payload";
+import { hasStrictBackendEncryptedAgentTask, hasUnreadableEncryptedAgentTask } from "./encrypted-payload";
 import { routeConcreteModel, comboRouteDecisionTrace } from "../../router";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
 import type { AgentTaskRecoveryFailureReason } from "./agent-task-recovery";
@@ -366,6 +366,9 @@ export async function executeComboResponses(
 
   const unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (body as { input?: unknown } | undefined)?.input,
+  ) || (
+    agentTaskRecoveryConfig(config) !== null
+    && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input)
   );
   const canDecryptUnreadableAgentTask = (target: (typeof combo.targets)[number]): boolean => {
     const provider = config.providers[target.provider];

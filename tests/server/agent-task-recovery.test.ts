@@ -190,7 +190,7 @@ describe("agent task recovery (opt-in, default off)", () => {
     }) as typeof fetch;
     try {
       const pending = recoverEncryptedAgentTaskWithResult(
-        new Request("http://localhost/v1/responses", { headers: codexHeaders() }), encryptedInput(), {}, routedConfig(),
+        new Request("http://localhost/v1/responses", { headers: codexHeaders() }), encryptedInput(), { maxRetries: 0 }, routedConfig(),
         { abortSignal: caller.signal },
       );
       await ready;
@@ -633,7 +633,7 @@ describe("agent task recovery (opt-in, default off)", () => {
     expect(providerFetches).toBe(0);
   });
 
-  test("times out recovery without dispatching the encrypted task", async () => {
+  test("exhausts timeout retries without dispatching the encrypted task", async () => {
     let recoveryFetches = 0;
     let providerFetches = 0;
     globalThis.fetch = ((input, init) => {
@@ -658,7 +658,7 @@ describe("agent task recovery (opt-in, default off)", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(recoveryFetches).toBe(1);
+    expect(recoveryFetches).toBe(3);
     expect(providerFetches).toBe(0);
   });
 
@@ -1413,4 +1413,49 @@ describe("agent task recovery transient retry (#3661)", () => {
     // 2.5 s exceeds RECOVERY_RETRY_MAX_DELAY_MS (2 s), so a capped wait would resend sooner.
     expect(secondAt - firstAt).toBeGreaterThanOrEqual(2_400);
   }, 10_000);
+
+  test("timeout and transient retries have independent bounded send budgets", async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    let deadlines = 0;
+    const timers = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay?: number) => {
+      if (delay === 5_000 && deadlines++ < 2) {
+        queueMicrotask(callback);
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }
+      return realSetTimeout(callback, delay);
+    }) as typeof setTimeout);
+    let fetches = 0;
+    globalThis.fetch = ((_, init) => {
+      fetches += 1;
+      if (fetches <= 2) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        });
+      }
+      return Promise.resolve(fetches <= 4
+        ? new Response("private failure", { status: 503 })
+        : new Response(recoverySse("Recovered after bounded retries.")));
+    }) as typeof fetch;
+    try {
+      expect(await recoverEncryptedAgentTaskWithResult(
+        req(), encryptedInput(), { timeoutMs: 5_000, maxRetries: 2, retries: 2 }, routedConfig(),
+      )).toEqual({ recovered: true });
+      expect(fetches).toBe(5);
+      expect(deadlines).toBe(3);
+    } finally {
+      timers.mockRestore();
+    }
+  }, 10_000);
+
+  test("invalid encrypted content remains terminal with both retry budgets enabled", async () => {
+    let fetches = 0;
+    globalThis.fetch = (async () => {
+      fetches += 1;
+      return new Response('data: {"type":"error","error":{"code":"invalid_encrypted_content"}}\n\n');
+    }) as typeof fetch;
+    expect(await recoverEncryptedAgentTaskWithResult(
+      req(), encryptedInput(), { maxRetries: 2, retries: 2 }, routedConfig(),
+    )).toEqual({ recovered: false, reason: "recovery_unreadable" });
+    expect(fetches).toBe(1);
+  });
 });

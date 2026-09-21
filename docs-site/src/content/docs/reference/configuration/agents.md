@@ -226,22 +226,22 @@ after changing the setting.
 
 ## Encrypted v2 task recovery
 
-`agentTaskRecovery` is an experimental compatibility path for backend-encrypted v2 tasks that reach
-a routed provider. Two request shapes qualify: a native ChatGPT parent spawning a routed v2 child,
-and a live thread switched from a native ChatGPT model to a routed one, whose history replays a
-backend-minted encrypted agent message on every later turn
-([#4089](https://github.com/lidge-jun/opencodex/issues/4089)). It is disabled by default. When
-explicitly enabled and the final routed task contains an otherwise unreadable Fernet payload,
-opencodex uses a raw Responses passthrough request to the fixed
-`https://chatgpt.com/backend-api/codex/responses` endpoint with forward-mode authentication.
-ChatGPT returns the plaintext assignment through a forced function call; opencodex then converts
-only that task item to a standard user message before routed-provider dispatch. Direct routed
-recovery, cached history replay, and the unreadable-task detector recognise all four codex-rs
-agent-message types: `NEW_TASK`, `MESSAGE`, `FOLLOWUP_TASK`, and `FINAL_ANSWER`. Combo recovery
-remains limited to spawned-child turns. A `FINAL_ANSWER` envelope may omit its `Task name` line.
-Recovery then has no header address to compare with the item's recipient, so that single cross-check
-does not run; the sender comparison and the cache scope, which still binds the structured recipient,
-are unchanged.
+`agentTaskRecovery` is an experimental, disabled-by-default compatibility path for backend-encrypted
+v2 tasks that reach a routed provider. It covers a native ChatGPT parent spawning a routed v2 child,
+a live thread switched from a native ChatGPT model to a routed one, and an admitted routed parent
+receiving an encrypted worker `MESSAGE`; the current request need not itself be a spawned child. A
+mid-thread switch replays a backend-minted encrypted agent message on every later turn
+([#4089](https://github.com/lidge-jun/opencodex/issues/4089)). When the final routed task contains an
+otherwise unreadable Fernet payload, opencodex sends a raw Responses passthrough request to the fixed
+`https://chatgpt.com/backend-api/codex/responses` endpoint with forward-mode authentication. ChatGPT
+returns the plaintext assignment through a forced function call; opencodex converts only that task
+item to a standard user message before routed-provider dispatch. Existing admission checks, cache
+scope, and strict message-envelope validation continue to apply.
+
+It also handles a strict backend-ciphertext `NEW_TASK` envelope on a canonical native ChatGPT child.
+The native target is always attempted directly first. Only after its normal pre-output transient-5xx
+retries are exhausted can one recovery request run; opencodex then converts only that task item and
+retries the same native target once. A direct native success never performs recovery.
 
 This is not local decryption and does not fix the Codex wire protocol. It depends on undocumented
 ChatGPT backend behavior and may stop working after a backend change. The recovered assignment is
@@ -267,10 +267,25 @@ Admission and retention are deliberately narrow:
   and `accept` itself, and no other caller headers cross this boundary;
 - recovered plaintext is never logged or persisted; the process-local cache is credential-, parent-
   thread-, and ciphertext-scoped, expires after 15 minutes, and is bounded by both configured entry
-  count (200 by default, 512 maximum) and 8 MiB total;
-- any malformed envelope, failed recovery, timeout, or validation failure preserves the existing
-  fail-closed error; client cancellation returns 499. Neither path forwards ciphertext to the
-  routed provider.
+  count (200 by default, 512 maximum) and 8 MiB total. A timed-out parent `MESSAGE` stores only a
+  scoped 15-minute timeout marker, never its plaintext or ciphertext;
+- only a current, complete envelope with matching `author`, `recipient`, task name, and sender;
+  exactly one encrypted part; and no plaintext task body may use recovery. The native replay branch
+  remains limited to strict `NEW_TASK`; the routed-parent exception below is limited to an admitted
+  strict `MESSAGE`. Reasoning, compaction, ordinary `gAAAA…` text, malformed envelopes, and combo
+  attempts cannot activate it;
+- each recovery request uses `gpt-5.6-luna` with `reasoning.effort: "medium"` by default. An
+  attempt may run for 120 seconds. After response headers arrive, first-byte and inactivity stalls
+  remain capped at 45 seconds. Only a timeout is retried, with at most two retries after the first attempt; HTTP
+  refusal, invalid output, admission denial, and cancellation are terminal;
+- malformed envelopes, failed recovery, and validation failure preserve the existing terminal
+  response or fail-closed error; client cancellation returns 499. Neither path forwards ciphertext
+  to the routed provider. An admitted routed-parent `MESSAGE` whose timeout retries are exhausted
+  is the sole exception: opencodex replaces that item for the current request with a non-persistent
+  notice that names the sender, asks the parent to request up to two resends, then to use its
+  available child-result reading path or wait for completion. The notice never claims the message
+  was read or reviewed and never includes ciphertext. A later current copy of that same message may
+  start recovery again.
 
 Recovery accepts one consecutive run of up to 32 complete Fernet-shaped encrypted parts, with
 at most 2 MiB of combined ciphertext. Parts retain their order and boundaries in one authenticated
@@ -306,8 +321,10 @@ model output rather than authenticated plaintext.
 {
   "agentTaskRecovery": {
     "enabled": true,
-    "model": "gpt-5.6-sol",
-    "timeoutMs": 45000,
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "timeoutMs": 120000,
+    "maxRetries": 2,
     "cacheEntries": 200,
     "retries": 0
   }
@@ -318,13 +335,15 @@ Enable this only when the additional authenticated request, quota use, plaintext
 and private-backend dependency are acceptable. Prefer a native ChatGPT child or v1 heterogeneous
 delegation when they are not.
 
-This recovery path applies to direct-routed children and encrypted combo `NEW_TASK` spawns. At
-most 32 recovery requests can be active at once; additional misses fail closed. A combo with an
-available canonical native target still sends ciphertext directly; recovery runs only when no
-native target is selectable. After a stored Pool account's refresh and same-account replay are
-exhausted, recovery can use the incoming caller credential for one available routed target without
-trying another native account. Policy refusals remain terminal. Failed recovery, exhausted targets,
-or unavailable targets still fail closed without forwarding ciphertext to a routed provider.
+This recovery path applies to direct-routed children, the bounded canonical-native retry described
+above, and encrypted combo `NEW_TASK` spawns that have no selectable native target. All paths use the
+same `agentTaskRecovery.enabled` switch. With the switch off there is no backend-ciphertext
+classification, recovery request, extra retry, or recovery-cache effect. At most 32 recovery requests
+can be active at once; additional misses fail closed. A combo with an available canonical native
+target still sends ciphertext directly. After a stored Pool account's refresh and same-account replay
+are exhausted, recovery can use the incoming caller credential for one available routed target
+without trying another native account. Policy refusals remain terminal. Failed recovery, exhausted
+targets, or unavailable targets still fail closed without forwarding ciphertext to a routed provider.
 
 ## Effort caps
 

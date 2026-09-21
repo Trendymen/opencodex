@@ -166,14 +166,10 @@ upstream WS responses keep the downstream SSE contract and bypass `tee()` throug
 single-reader relay (4 MiB per raw/enveloped frame and an 8 MiB producer queue). Queue overflow
 closes the upstream and emits a terminal downstream `response.failed` event followed by `[DONE]`.
 
-For the final outgoing model `gpt-5.3-codex-spark`, canonical ChatGPT forwarding explicitly
-disables Responses Lite in both the HTTP header and native WS frame metadata, including when
-an alias selects Spark — but only when the outgoing body carries no `additional_tools` item with a nonempty `tools` array.
-That group IS the Lite tool-delivery shape, so a Spark body that still uses it keeps Lite ON even
-if a caller or configured header said otherwise; otherwise the frame would advertise non-Lite
-while the tools exist only in the Lite shape. A changed Lite identity retires the old socket; subsequent eligible
-requests with the same identity can reuse the new socket. Other models and gateways keep
-their existing Lite policy. Malformed native metadata still falls back to HTTP with its body unchanged.
+Retired Spark IDs have no model-specific Responses Lite override. Caller- or configuration-supplied
+Lite intent follows canonical forwarding's ordinary path. A changed Lite identity retires the old
+socket; subsequent eligible requests with the same identity can reuse the new socket. Malformed
+native metadata still falls back to HTTP with its body unchanged.
 
 When a provider rejects a streaming request with HTTP 413 before SSE begins, OpenCodex emits one
 terminal `response.failed` event with `context_length_exceeded` instead of relaying the retryable
@@ -253,11 +249,14 @@ When encrypted agent-task recovery refuses a routed task, its existing 400 error
 can include a bounded `recovery_reason`: `unsupported_envelope`,
 `admission_denied`, `recovery_unavailable`, `caller_cancelled`, `input_changed`,
 `recovery_http_rejected`, `recovery_timeout`, `recovery_aborted`,
-`recovery_transport_error`, or `recovery_invalid_output`.
+`recovery_transport_error`, `recovery_invalid_output`, or `recovery_unreadable`.
 HTTP rejection requires an observed non-success response. Invalid output includes
 invalid UTF-8, oversized bodies, malformed or incomplete recovery streams, and
 invalid or conflicting assignments. A caller's cancellation takes precedence over
 an owned deadline, which takes precedence over decode/transport failures.
+`recovery_unreadable` requires the recovery endpoint itself to terminate the stream with
+`invalid_encrypted_content`: the endpoint that owns the key refused those bytes, so the
+failure is terminal for that ciphertext rather than a retriable transcription defect.
 `recovery_aborted` describes a shared recovery cancelled independently of that caller.
 Shared-flight waiters receive the same underlying failure unless individually cancelled;
 only successful plaintext is cached. Diagnostics contain no upstream error or payload text.

@@ -27,6 +27,7 @@ type ConfigOwner = {
   version: 1;
   ownerId: string;
   root: string;
+  adopted?: true;
 };
 
 type ConfigUninstallManifest = ConfigOwner & {
@@ -67,6 +68,7 @@ const INITIAL_OWNED_PATHS = [
   "opencodex-tray-warning.ico",
   "opencodex-tray-warning-update.ico",
   "opencodex-tray.ps1",
+  "provider-debug.jsonl",
   "responses-state.json",
   "runtime-port.json",
   "service-api-token",
@@ -82,6 +84,21 @@ const INITIAL_OWNED_PATHS = [
   "version.json",
   "winsw",
 ] as const;
+
+/**
+ * Names only an OpenCodex runtime writes. `config.json` is deliberately absent:
+ * it is too common a name to prove a directory is ours, and a home that never
+ * ran the server has no debug capture to restore.
+ */
+const OWNERSHIP_ADOPTION_MARKERS = [
+  ".star-prompted",
+  "admin-api-token",
+  "codex-runtime.json",
+  "responses-state.json",
+  "runtime-port.json",
+  "service-state.json",
+] as const;
+
 const ownershipCache = new Map<string, {
   owner: ConfigOwner;
   manifest: ConfigUninstallManifest;
@@ -98,6 +115,11 @@ export function listLiveConfigOwnershipRoots(currentConfigDir: string): Readonly
     }
   }
   return roots;
+}
+
+export function resetConfigOwnershipForTests(): void {
+  ownershipCache.clear();
+  lastReconciledGeneration = 0;
 }
 
 export function reconcileConfigOwnershipRoots(context: GenerationContext): number {
@@ -141,7 +163,8 @@ function isOwner(value: unknown): value is ConfigOwner {
   return owner.version === 1
     && typeof owner.ownerId === "string"
     && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(owner.ownerId)
-    && typeof owner.root === "string";
+    && typeof owner.root === "string"
+    && (owner.adopted === undefined || owner.adopted === true);
 }
 
 function isManifest(value: unknown): value is ConfigUninstallManifest {
@@ -195,6 +218,7 @@ function loadOwnership(configDir: string): { owner: ConfigOwner; manifest: Confi
       !isOwner(owner)
       || !isManifest(manifest)
       || owner.ownerId !== manifest.ownerId
+      || owner.adopted !== manifest.adopted
       || !samePath(owner.root, root)
       || !samePath(manifest.root, root)
     ) return null;
@@ -227,6 +251,55 @@ function createOwnership(configDir: string): { owner: ConfigOwner; manifest: Con
   } catch (error) {
     try { unlinkSync(join(configDir, CONFIG_OWNER_FILE)); } catch { /* incomplete metadata fails closed */ }
     throw error;
+  }
+  return { owner, manifest };
+}
+
+/**
+ * Adopt a config directory that predates ownership metadata.
+ *
+ * `createOwnership` only claims an empty directory, so a home created by an older
+ * build stays unowned for the rest of its life and every `recordOwnedConfigPath`
+ * against it fails. Callers that use the boolean as bookkeeping ignore that; one
+ * that treats it as a gate goes silent, which is how the fork's provider-debug
+ * capture stopped writing on 2026-09-04.
+ *
+ * Adoption itself claims nothing: the manifest starts empty, and only names that
+ * a later `recordOwnedConfigPath` call registers — the adopted directory itself
+ * included — become removable at uninstall time. Refused when ownership metadata
+ * is present (never overwritten, even when it looks corrupt) or when no runtime
+ * marker proves the directory is one of ours.
+ */
+function adoptOwnership(configDir: string): { owner: ConfigOwner; manifest: ConfigUninstallManifest } | null {
+  let owner: ConfigOwner;
+  try {
+    const rootStat = lstatSync(configDir);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
+    const names = readdirSync(configDir);
+    if (!OWNERSHIP_ADOPTION_MARKERS.some(marker => names.includes(marker))) return null;
+    owner = { version: 1, ownerId: randomUUID(), root: canonicalRoot(configDir), adopted: true };
+  } catch {
+    return null;
+  }
+  const manifest: ConfigUninstallManifest = { ...owner, paths: [] };
+  try {
+    writeFileSync(join(configDir, CONFIG_OWNER_FILE), `${JSON.stringify(owner, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch {
+    return null;
+  }
+  try {
+    writeFileSync(join(configDir, CONFIG_UNINSTALL_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch {
+    try { unlinkSync(join(configDir, CONFIG_OWNER_FILE)); } catch { /* incomplete metadata fails closed */ }
+    return null;
   }
   return { owner, manifest };
 }
@@ -275,8 +348,19 @@ export function initializeConfigOwnership(configDir: string): boolean {
     mkdirSync(configDir, { recursive: true, mode: 0o700 });
   }
   let ownership = ownershipCache.get(cacheKey);
+  if (ownership !== undefined) {
+    const refreshed = loadOwnership(configDir);
+    if (!refreshed) {
+      ownershipCache.set(cacheKey, null);
+      return false;
+    }
+    ownership = refreshed;
+    ownershipCache.set(cacheKey, ownership);
+  }
   if (ownership === undefined) {
-    ownership = loadOwnership(configDir) ?? createOwnership(configDir);
+    const loaded = loadOwnership(configDir) ?? createOwnership(configDir);
+    const adopted = loaded ? null : adoptOwnership(configDir);
+    ownership = loaded ?? adopted;
     ownershipCache.set(cacheKey, ownership);
   }
   return ownership !== null;
@@ -290,6 +374,21 @@ export function recordOwnedConfigPath(configDir: string, candidatePath: string):
   const ownership = ownershipCache.get(cacheKey);
   if (!ownership) return false;
   if (ownership.manifest.paths.includes(rel)) return true;
+  if (ownership.owner.adopted === true) {
+    try {
+      const root = canonicalRoot(configDir);
+      const segments = rel.split("/");
+      let current = root;
+      for (let index = 0; index < segments.length; index += 1) {
+        current = join(current, segments[index]!);
+        const entry = lstatSync(current);
+        if (entry.isSymbolicLink() || index === segments.length - 1) return false;
+        if (!entry.isDirectory() || !isWithinRoot(root, realpathSync.native(current))) return false;
+      }
+    } catch (error) {
+      if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) return false;
+    }
+  }
   const manifest = {
     ...ownership.manifest,
     paths: [...ownership.manifest.paths, rel].sort(),

@@ -40,6 +40,15 @@ description: 监听、远程访问、准入密钥、超时、存储、侧车、�
 
 原生 Chat 等待上游输出时也使用 `stallTimeoutSec`。非空文本、推理、拒绝内容、工具更新和完成事件会重置等待额度；保活注释、仅角色事件和单独的用量信息不会。等待慢客户端读取期间暂停计时。超时产生 `upstream_stall_timeout`：流式请求收到错误事件，非流式请求返回 HTTP 502。在终态结果到达前取消请求会返回取消错误，而不会把部分答案当作成功。非流式 Chat 支持 LF、CRLF 及多行 data 的 SSE 格式。
 
+## Responses Lite 转发
+
+使用 Codex 账号转发到官方 ChatGPT 后端时，代理会保留传入的
+`x-openai-internal-codex-responses-lite` 请求头。值为 `true` 时，还会把缺失的
+`client_metadata.ws_request_header_x_openai_internal_codex_responses_lite` 补为 `"true"`，
+使上游 WebSocket 请求保留 Lite 标识。已有 metadata 字段（包括显式指定的 Lite 值）保持不变。
+请求头缺失或值不是 `true` 时不添加该字段；非对象的畸形 `client_metadata` 保持原样。
+这个映射不用于公共 API-key 提供方或第三方目标。
+
 ## 远程访问
 
 默认的 `127.0.0.1` 绑定仅限回环地址。像 `0.0.0.0` 这样的非回环地址需要
