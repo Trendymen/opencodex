@@ -24,6 +24,7 @@
  */
 export const ATTEMPT_RECOVERY_KIND_ROSTER = Object.freeze([
   "transient-5xx",
+  "agent-task-recovery",
   "connection-reset",
   "oauth-401",
   "key-401",
