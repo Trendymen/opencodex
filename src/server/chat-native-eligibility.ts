@@ -1,4 +1,5 @@
 import { chatBodyCarriesImage, chatBodyCarriesToolResultImage } from "../chat/image-parts";
+import { carriesCodeModeNestedExecSurface } from "../chat/nested-exec-eligibility";
 import type { ProtocolReasonCode } from "../protocols/contract";
 import type { RouteResult } from "../router";
 import type { OcxConfig } from "../types";
@@ -66,6 +67,7 @@ export function nativeChatDeclineReason(
       }
     }
   }
+  if (carriesCodeModeNestedExecSurface(rawBody)) return "responses-only-feature";
   return undefined;
 }
 

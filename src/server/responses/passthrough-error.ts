@@ -6,6 +6,7 @@ import {
   retainReplayRefusal,
   UPSTREAM_RESET_REPLAY_REFUSED_CODE,
 } from "../../lib/upstream-retry";
+import { arkQuotaClientError } from "../../fork/ark-quota-display";
 import {
   resolveClientRetryAfter,
   validateClientRetryAfterHeader,
@@ -86,6 +87,8 @@ export function formatPassthroughUpstreamError(
      * precisely when the empty-body branch would invent the retryable-429 default.
      */
     replayRefusal?: boolean;
+    /** Surface a permanent vendor quota message without triggering Codex's global 429 UI. */
+    renderQuotaAsClientError?: boolean;
   },
 ): Response {
   const trimmed = bodyText.trim();
@@ -97,7 +100,10 @@ export function formatPassthroughUpstreamError(
   // Two different reasons to answer with no wait at all, handled the same way: a hard policy
   // block will not become servable, and a refusal we made was never a rate limit.
   const suppressRetryAfter = cyberPolicyFailure || replayRefusal;
-  const resolved = suppressRetryAfter
+  const normalizedQuota = status === 429 && options?.renderQuotaAsClientError
+    ? arkQuotaClientError(bodyText)
+    : undefined;
+  const resolved = suppressRetryAfter || normalizedQuota
     ? undefined
     : resolveClientRetryAfter({
       status,
@@ -105,10 +111,12 @@ export function formatPassthroughUpstreamError(
       upstreamRetryAfter,
       now,
     });
+  const outgoingBody = normalizedQuota?.body ?? bodyText;
+  const outgoingStatus = normalizedQuota?.status ?? status;
 
   if (trimmed) {
-    const needsSet = resolved !== undefined && upstreamRetryAfter !== resolved;
-    const needsDelete = (suppressRetryAfter && upstreamRetryAfter !== undefined)
+    const needsSet = !normalizedQuota && resolved !== undefined && upstreamRetryAfter !== resolved;
+    const needsDelete = normalizedQuota !== undefined || (suppressRetryAfter && upstreamRetryAfter !== undefined)
       || (resolved === undefined
         && upstreamRetryAfter !== undefined
         && originalValid === undefined);
@@ -116,22 +124,27 @@ export function formatPassthroughUpstreamError(
     // A refusal always takes the rewriting path: it has a header to add even when the
     // upstream named no wait for it to remove.
     if (!needsSet && !needsDelete && !replayRefusal) {
-      return new Response(bodyText, {
-        status,
-        ...(options?.statusText ? { statusText: options.statusText } : {}),
-        ...(options?.headers ? { headers: options.headers } : { headers: { "Content-Type": "application/json" } }),
+      const headers = normalizedQuota
+        ? new Headers(options?.headers)
+        : options?.headers;
+      if (normalizedQuota && headers) headers.set("Content-Type", "application/json");
+      return new Response(outgoingBody, {
+        status: outgoingStatus,
+        ...(!normalizedQuota && options?.statusText ? { statusText: options.statusText } : {}),
+        ...(headers ? { headers } : { headers: { "Content-Type": "application/json" } }),
       });
     }
 
     const headers = options?.headers
       ? new Headers(options.headers)
       : new Headers({ "Content-Type": "application/json" });
+    if (normalizedQuota) headers.set("Content-Type", "application/json");
     if (needsSet) headers.set("Retry-After", resolved!);
     else headers.delete("Retry-After");
     if (replayRefusal) applyReplayRefusalClientHeaders(headers);
-    const rewritten = new Response(bodyText, {
-      status,
-      ...(options?.statusText ? { statusText: options.statusText } : {}),
+    const rewritten = new Response(outgoingBody, {
+      status: outgoingStatus,
+      ...(!normalizedQuota && options?.statusText ? { statusText: options.statusText } : {}),
       headers,
     });
     return replayRefusal ? retainReplayRefusal(rewritten) : rewritten;
