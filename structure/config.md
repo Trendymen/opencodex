@@ -329,10 +329,13 @@ catalog/request tier metadata may use `priority`. Do not collapse these spelling
 
 ## Provider output defaults
 
-`OcxProviderConfig.defaultMaxOutputTokens` and `modelMaxOutputTokens` are OpenAI Chat wire defaults,
-not context-window metadata. They are applied only when a Responses request omits
-`max_output_tokens`; an explicit request value wins, then a model-specific configured value, then
-the provider default, then the adapter omits `max_tokens`.
+`OcxProviderConfig.defaultMaxOutputTokens` and `modelMaxOutputTokens` are per-request output budgets,
+not context-window metadata. They are fallbacks for a caller that states no output budget:
+`openai-chat` writes them as `max_tokens`, and a key-auth `openai-responses` provider receives them as
+`max_output_tokens` when the caller omitted the field. Precedence is an explicit request value, then
+a model-specific configured value, then the provider default; with none of the three the adapters
+omit the field and the upstream default applies. The ChatGPT forward backend rejects the parameter,
+so `authMode: "forward"` never receives an injected budget.
 
 Both fields must stay positive finite integers at disk-config and management validation boundaries.
 Registry entries may seed them through `providerConfigSeed`, key-login derivation, OAuth reconcile,
@@ -371,6 +374,11 @@ capture/route time and explicit false or empty declarations retain their field-s
 
 
 ## Provider validation ownership
+
+Fork 的 `agentMessageFormat`、phase 模型列表和 recovery 配置由 `src/config/schema/` 校验；
+custom-model 的加载清理、警告与写入校验位于 `src/config/diagnostics.ts`，
+`src/config/live-reconcile.ts` 按稳定 ID 合并，把缺失列表作为空集合处理。
+`src/codex/inject/config-toml.ts` 生成的 Provider table 保留 standalone web search 声明。
 
 `src/config/provider-validation.ts` owns the pure provider payload checks shared by persisted config,
 CLI writes, and management DTO validation. `src/config.ts` imports those checks for Zod refinement
