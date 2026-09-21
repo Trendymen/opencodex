@@ -22,6 +22,11 @@ import {
   repairFreeformToolInput,
 } from "../responses/apply-patch-envelope";
 import { progressiveFreeformInput } from "../responses/progressive-freeform-input";
+import {
+  createAnnotationDirectiveCodeSpanFilter,
+  stripAnnotationDirectiveCodeSpans,
+  type AnnotationDirectiveCodeSpanFilter,
+} from "../responses/annotation-directive";
 import { encodeCompactionSummary } from "../responses/compaction";
 import { compileCodeModeHelperInput, resolveCodeModeHelperName } from "../responses/code-mode-helper-compat";
 import { isTruncatedStopReason, truncationReasonFor } from "../responses/truncated-stop-reason";
@@ -346,6 +351,7 @@ export function bridgeToResponsesSSE(
         outputIndex: number;
         text: StringChunks;
         citationFilter: CitationMarkerFilter;
+        annotationFilter: AnnotationDirectiveCodeSpanFilter;
         phase?: OcxMessagePhase;
       } | null = null;
       let currentReasoning: { itemId: string; outputIndex: number; text: StringChunks } | null = null;
@@ -474,17 +480,16 @@ export function bridgeToResponsesSSE(
 
       const closeCurrentMessage = (inferredPhase?: OcxMessagePhase) => {
         if (!currentMsg) return;
-        // Release anything the citation filter was holding for this message, then strip the
-        // accumulated text: closeCurrentMessage re-sends it in output_text.done and
-        // output_item.done, so filtering only the deltas would leave the markers in both.
+        // 按相同顺序释放两个过滤器；done 事件也重写累积正文，避免重新带回标记。
         const trailing = currentMsg.citationFilter.flush();
-        if (trailing) {
+        const released = currentMsg.annotationFilter.push(trailing) + currentMsg.annotationFilter.flush();
+        if (released) {
           emit("response.output_text.delta", {
             item_id: currentMsg.itemId, output_index: currentMsg.outputIndex,
-            content_index: 0, delta: trailing,
+            content_index: 0, delta: released,
           });
         }
-        const messageText = stripCitationMarkers(joinChunks(currentMsg.text));
+        const messageText = stripAnnotationDirectiveCodeSpans(stripCitationMarkers(joinChunks(currentMsg.text)));
         // Chat Completions has no message-phase field. Keep its live item provisional, then
         // classify it only when the next adapter event proves whether this text led into more
         // work or completed the turn. Explicit adapter phases always outrank this inference.
@@ -874,6 +879,7 @@ export function bridgeToResponsesSSE(
                 currentMsg = {
                   itemId, outputIndex, text: emptyChunks(),
                   citationFilter: createCitationMarkerFilter(),
+                  annotationFilter: createAnnotationDirectiveCodeSpanFilter(),
                   ...(event.phase ? { phase: event.phase } : {}),
                 };
               }
@@ -885,7 +891,7 @@ export function bridgeToResponsesSSE(
               // A citation span can straddle a delta boundary, so the filter withholds an
               // unterminated tail and releases it at close (#3150). The accumulator above
               // keeps the raw text; it is stripped once in closeCurrentMessage.
-              const visible = currentMsg.citationFilter.push(event.text);
+              const visible = currentMsg.annotationFilter.push(currentMsg.citationFilter.push(event.text));
               if (visible) {
                 emit("response.output_text.delta", {
                   item_id: currentMsg.itemId, output_index: currentMsg.outputIndex,

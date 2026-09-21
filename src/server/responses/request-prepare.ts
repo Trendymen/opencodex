@@ -3,6 +3,7 @@ import {
   agentTaskRecoveryConfig,
   restoreCachedEncryptedAgentTasks,
   recoverEncryptedAgentTaskWithResult,
+  replaceTimedOutEncryptedAgentTaskWithNotice,
 } from "./agent-task-recovery";
 import { readJsonRequestBody, resolveInboundBodyLimitBytes } from "../request-decompress";
 import {
@@ -27,10 +28,14 @@ import {
 } from "../../lib/shadow-call";
 import { sanitizeLogMetadataString } from "../../lib/redact";
 import {
+  hasStrictBackendEncryptedAgentTask,
   hasUnreadableEncryptedAgentTask,
   sanitizeEncryptedContentInPlace,
+  strictBackendEncryptedAgentTaskContentPart,
   stripAgentMessageCiphertextInPlace,
+  stripToolCallCiphertextArgumentsInPlace,
 } from "./encrypted-payload";
+import { rewriteAnnotationInstructionsInPlace } from "./annotation-instructions";
 import {
   codexPoolAffinityKey,
   previewCodexPoolLineage,
@@ -252,9 +257,13 @@ export async function prepareResponsesRequest(
       onRequestBodyRead: undefined,
     });
   }
-  let unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+  let routedUnreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (body as { input?: unknown } | undefined)?.input,
   );
+  let strictBackendEncryptedAgentTask = agentTaskRecovery !== null
+    && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+  let unreadableEncryptedAgentTask = routedUnreadableEncryptedAgentTask
+    || strictBackendEncryptedAgentTask;
   const inboundClientThreadId = req.headers.get("x-codex-parent-thread-id")?.trim() || undefined;
   // The request's OWN thread, which `x-codex-parent-thread-id` is not: parallel children of one
   // parent all present the same parent id. `codexConversationIdentity` already reads this header
@@ -301,6 +310,19 @@ export async function prepareResponsesRequest(
       console.warn(
         `[opencodex] rewrote ${rewritten} plaintext encrypted_content part(s) to input_text (spawn-message compatibility)`,
       );
+  }
+
+  {
+    const instructions = rewriteAnnotationInstructionsInPlace(
+      (body as { input?: unknown } | undefined)?.input,
+    );
+    if (instructions.rewritten > 0) {
+      console.warn(
+        `[opencodex] rewrote ${instructions.rewritten} annotation instruction block(s) to require a bare directive`,
+      );
+    } else if (instructions.unrecognized > 0) {
+      console.warn("[opencodex] annotation instruction block does not match the known client template; left unchanged");
+    }
   }
 
   let parsed: OcxParsedRequest;
@@ -389,6 +411,10 @@ export async function prepareResponsesRequest(
     cursorConversationId: parsed._cursorConversationId,
   });
   bindTurnTerminationScope(parsed, resolvedConversationId);
+  const adoptParsedRequest = (next: OcxParsedRequest): void => {
+    parsed = next;
+    bindTurnTerminationScope(parsed, resolvedConversationId);
+  };
   const rememberKiroDeliveredFinalAnswer = (adapterName: string, response: unknown): void => {
     if (adapterName === "kiro") rememberDeliveredFinalAnswer(parsed, response);
   };
@@ -720,6 +746,7 @@ export async function prepareResponsesRequest(
   }
 
   let recoveryFailureReason: AgentTaskRecoveryFailureReason | undefined;
+  let recoveryNoticeInjected = false;
   // Native fallback and explicitly trusted direct Responses routes can consume ciphertext,
   // so recover only after final route selection.
   //
@@ -743,9 +770,12 @@ export async function prepareResponsesRequest(
     let recovered = restoreCachedEncryptedAgentTasks(
       req, (body as { input?: unknown } | undefined)?.input, config, { parentThreadId },
     ) > 0;
-    unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+    routedUnreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
       (body as { input?: unknown } | undefined)?.input,
     );
+    strictBackendEncryptedAgentTask = agentTaskRecovery !== null
+      && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+    unreadableEncryptedAgentTask = routedUnreadableEncryptedAgentTask || strictBackendEncryptedAgentTask;
     if (unreadableEncryptedAgentTask) try {
       const result = await recoverEncryptedAgentTaskWithResult(
         req,
@@ -756,14 +786,26 @@ export async function prepareResponsesRequest(
       );
       recovered = result.recovered;
       recoveryFailureReason = result.recovered ? undefined : result.reason;
+      if (!result.recovered && result.reason === "recovery_timeout") {
+        recoveryNoticeInjected = replaceTimedOutEncryptedAgentTaskWithNotice(
+          req,
+          (body as { input?: unknown } | undefined)?.input,
+          agentTaskRecovery,
+          config,
+          { parentThreadId },
+        );
+      }
     } catch {
       recovered = false;
       recoveryFailureReason = undefined;
     }
-    if (recovered) {
-      unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
+    if (recovered || recoveryNoticeInjected) {
+      routedUnreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
         (body as { input?: unknown } | undefined)?.input,
       );
+      strictBackendEncryptedAgentTask = agentTaskRecovery !== null
+        && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input);
+      unreadableEncryptedAgentTask = routedUnreadableEncryptedAgentTask || strictBackendEncryptedAgentTask;
       if (!unreadableEncryptedAgentTask) {
         try {
           const reparsed = parseRequest(body);
@@ -785,13 +827,13 @@ export async function prepareResponsesRequest(
               (reparsed as unknown as Record<string, unknown>)[key] = parsed[key];
             }
           }
-          bindTurnTerminationScope(reparsed, resolvedConversationId);
-          parsed = reparsed;
+          adoptParsedRequest(reparsed);
           // The recovery mutated `body.input` in place, so `_rawBody` now carries decrypted task
           // text. Bar it from the continuation cache before any recording path can reach it —
           // that cache is persisted to disk, which would defeat the recovery cache's TTL.
           markBodyNonPersistable(parsed._rawBody);
 
+          if (recovered) {
           // The ciphertext-only pass intentionally excludes routed candidates. Once recovery
           // makes the assignment readable, run selection again with the full configured chain
           // and keep the route in sync with any newly selected fallback.
@@ -919,6 +961,7 @@ export async function prepareResponsesRequest(
               );
             }
           }
+          }
         } catch {
           unreadableEncryptedAgentTask = true;
         }
@@ -926,11 +969,28 @@ export async function prepareResponsesRequest(
     }
   }
 
+  const finalRouteStrictBackendEncryptedTaskPart = strictBackendEncryptedAgentTaskContentPart(
+    (body as { input?: unknown } | undefined)?.input,
+  );
+  const finalRouteHasStrictBackendEncryptedTask = finalRouteStrictBackendEncryptedTaskPart !== null;
+  if (finalRouteHasStrictBackendEncryptedTask) {
+    markBodyNonPersistable(parsed._rawBody);
+  }
+
   if (options.abortSignal?.aborted) return clientCancelledResponse();
 
-  if (inboundWire === "responses" && isCanonicalOpenAiForwardProvider(route.provider)) {
+  if (
+    inboundWire === "responses"
+    && isCanonicalOpenAiForwardProvider(route.provider)
+  ) {
     const rewritten = sanitizeEncryptedContentInPlace(
       (body as { input?: unknown } | undefined)?.input,
+      // Preserve only the validated current-task ciphertext until the native transient path
+      // decides whether it needs one bounded plaintext recovery. Older unknown slots still
+      // receive the official canonical sanitization.
+      finalRouteStrictBackendEncryptedTaskPart
+        ? { preserveEncryptedContentParts: new Set([finalRouteStrictBackendEncryptedTaskPart]) }
+        : undefined,
     );
     if (rewritten > 0) {
       console.warn(
@@ -987,10 +1047,12 @@ export async function prepareResponsesRequest(
       route.staticPolicy,
     );
     if (wireProvider.adapter === "openai-responses" && !isCanonicalOpenAiForwardProvider(wireProvider)) {
-      const repaired = stripAgentMessageCiphertextInPlace((body as { input?: unknown } | undefined)?.input);
+      const input = (body as { input?: unknown } | undefined)?.input;
+      const repaired = stripAgentMessageCiphertextInPlace(input)
+        + stripToolCallCiphertextArgumentsInPlace(input);
       if (repaired > 0) {
         console.warn(
-          `[opencodex] replaced ciphertext in ${repaired} replayed agent message(s) with an omission marker; the selected provider cannot read native ChatGPT ciphertext`,
+          `[opencodex] replaced ciphertext in ${repaired} replayed agent item(s) with an omission marker; the selected provider cannot read native ChatGPT ciphertext`,
         );
       }
     }
@@ -1213,7 +1275,10 @@ export async function prepareResponsesRequest(
   return {
     inboundWire,
     translatorBudget,
-    parsed,
+    get parsed(): OcxParsedRequest {
+      return parsed;
+    },
+    adoptParsedRequest,
     toolBridgeMaps,
     responseStateOptions,
     rememberKiroDeliveredFinalAnswer,
@@ -1231,6 +1296,8 @@ export async function prepareResponsesRequest(
       subagentFallbackAccountId = value;
     },
     subagentQuotaFailureModel,
+    parentThreadId,
+    threadSpawn,
     poolAffinityKey,
     clientRequestedStream,
     substituteMainCredential,
