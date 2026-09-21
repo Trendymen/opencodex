@@ -17,7 +17,7 @@ import { repoPath } from "../helpers/repo-root";
  */
 const source = readFileSync(repoPath(".github", "workflows", "ci.yml"), "utf8");
 const workflow = Bun.YAML.parse(source) as {
-  on?: { push?: { paths?: string[] } };
+  on?: { push?: { branches?: string[]; paths?: string[] } };
   jobs?: Record<string, {
     if?: string;
     needs?: string | string[];
@@ -35,7 +35,7 @@ test("a change under structure/ selects a job that runs the structure gate", () 
   // The whole defect was that nothing satisfied this. Read the condition off the
   // job rather than naming the job, so renaming it does not quietly pass.
   expect(filters.structure).toContain("structure/**");
-  expect(changes?.outputs?.structure).toBe("${{ steps.filter.outputs.structure }}");
+  expect(changes?.outputs?.structure).toBe("${{ steps.scope.outputs.structure }}");
 
   const selected = Object.entries(workflow.jobs ?? {})
     .filter(([, job]) => job.if?.includes("needs.changes.outputs.structure == 'true'"))
@@ -52,13 +52,12 @@ test("a prose edit still does not start the cross-platform matrix", () => {
   expect(filters.ci).not.toContain("structure/");
 });
 
-test("the push trigger keeps mirroring the ci filter exactly", () => {
-  // The gate is pull-request scope, like `docs-site-build`, because the push
-  // trigger's `paths:` is pinned to equal the `ci` filter and `structure/**`
-  // deliberately is not in that filter. That costs nothing: `dev`, `main` and
-  // `preview` are protected to require a pull request, so no `structure/`
-  // change reaches an integration line without passing through one.
-  expect([...(workflow.on?.push?.paths ?? [])].sort()).toEqual([...(filters.ci ?? [])].sort());
+test("branch pushes keep an exact aggregate trigger without a path allowlist", () => {
+  // Branch pushes must create an exact-SHA aggregate run even for a message-only
+  // candidate amend. The cost filter scopes expensive jobs inside the workflow;
+  // a workflow-level `paths:` filter would skip the aggregate check entirely.
+  expect(workflow.on?.push?.branches).toEqual(["main", "preview", "dev"]);
+  expect(workflow.on?.push?.paths).toBeUndefined();
 });
 
 test("the aggregate gate expects the job instead of ignoring it", () => {
