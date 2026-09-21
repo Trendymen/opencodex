@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { fileURLToPath } from "node:url";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,8 +32,6 @@ const lastReadinessCommentBody = lastGateCommentBody;
 const lastEnforcerCommentBody = lastGateCommentBody;
 
 const root = pathToFileURL(repoRoot() + "/");
-const doctorGuiIfChangedScript = fileURLToPath(new URL("../../scripts/doctor-gui-if-changed.ts", import.meta.url));
-const lintGuiIfChangedScript = fileURLToPath(new URL("../../scripts/lint-gui-if-changed.ts", import.meta.url));
 
 async function readText(path: string): Promise<string> {
   return await Bun.file(new URL(path, root)).text();
@@ -42,6 +39,61 @@ async function readText(path: string): Promise<string> {
 
 function count(text: string, fragment: string): number {
   return text.split(fragment).length - 1;
+}
+
+function workflowExpressions(source: string): string[] {
+  const expressions: string[] = [];
+  let offset = 0;
+  while (offset < source.length) {
+    const start = source.indexOf("${{", offset);
+    if (start === -1) break;
+    let quoted = false;
+    let end = source.length;
+    for (let index = start + 3; index < source.length - 1; index++) {
+      if (source[index] === "'") {
+        if (quoted && source[index + 1] === "'") {
+          index++;
+          continue;
+        }
+        quoted = !quoted;
+        continue;
+      }
+      if (!quoted && source[index] === "}" && source[index + 1] === "}") {
+        end = index + 2;
+        break;
+      }
+    }
+    expressions.push(source.slice(start, end));
+    offset = end;
+  }
+  return expressions;
+}
+
+function unsafeWorkflowContextExpressions(source: string): string[] {
+  return workflowExpressions(source)
+    .filter(expression => {
+      if (/\bsecrets\b/i.test(expression)) return true;
+      for (const match of expression.matchAll(/\bgithub\b/gi)) {
+        const reference = expression.slice(match.index);
+        if (!/^github\s*\.\s*(?:ref|event_name|sha|run_id)\b(?!\s*(?:\.|\[))/i.test(reference)) {
+          return true;
+        }
+      }
+      return false;
+    });
+}
+
+function workflowActionUses(document: unknown): string[] {
+  if (Array.isArray(document)) return document.flatMap(workflowActionUses);
+  if (!document || typeof document !== "object") return [];
+  return Object.entries(document).flatMap(([key, value]) => [
+    ...(key === "uses" && typeof value === "string" ? [value] : []),
+    ...workflowActionUses(value),
+  ]);
+}
+
+function localWorkflowActionUses(document: unknown): string[] {
+  return workflowActionUses(document).filter(value => value.startsWith("./"));
 }
 
 /** Match an executable shell line, not a fragment that could appear in echo or a comment. */
@@ -90,6 +142,41 @@ function expectSecureLinuxKeyringBootstrap(workflow: string): void {
 }
 
 describe("GitHub Actions hardening", () => {
+  test("workflow security scanners reject context objects and comment-hidden local actions", () => {
+    const unsafeExpressions = [
+      "${{ secrets.NAME }}",
+      "${{ secrets['NAME'] }}",
+      "${{ toJSON(secrets) }}",
+      "${{ format('{{Hello {0}}}', secrets.NAME) }}",
+      "${{ github.token }}",
+      "${{ github['token'] }}",
+      "${{ toJSON(github) }}",
+      "${{ format('{{Hello {0}}}', github['token']) }}",
+    ];
+    expect(unsafeWorkflowContextExpressions(unsafeExpressions.join("\n")))
+      .toEqual(unsafeExpressions);
+    expect(unsafeWorkflowContextExpressions("${{ github.ref }}\n${{ github.event_name }}\n${{ github.sha }}\n${{ github.run_id }}"))
+      .toEqual([]);
+
+    const annotatedLocalAction = Bun.YAML.parse(`
+jobs:
+  probe:
+    steps:
+      - uses: ./.github/actions/unreviewed # local helper
+`);
+    expect(localWorkflowActionUses(annotatedLocalAction))
+      .toEqual(["./.github/actions/unreviewed"]);
+
+    const nestedCompositeAction = Bun.YAML.parse(`
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/nested # local helper
+`);
+    expect(localWorkflowActionUses(nestedCompositeAction))
+      .toEqual(["./.github/actions/nested"]);
+  });
+
   test("cross-platform CI keeps bounded jobs and immutable action references", async () => {
     const workflow = await readText(".github/workflows/ci.yml");
     const ci = Bun.YAML.parse(workflow) as {
@@ -164,11 +251,66 @@ describe("GitHub Actions hardening", () => {
     // exist — it just lives in the composite action now, and this workflow
     // must reference that local action rather than a third-party one.
     expect(workflow).toContain("./.github/actions/setup-project-bun");
-    expect(await readText(".github/actions/setup-project-bun/action.yml"))
+    const setupProjectBunActionSource = await readText(".github/actions/setup-project-bun/action.yml");
+    const setupProjectBunAction = Bun.YAML.parse(setupProjectBunActionSource);
+    expect(setupProjectBunActionSource)
       .toContain("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
     expect(workflow).toContain("actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e");
     expect(workflow).toContain("bun test --isolate tests");
     expect(workflow).not.toMatch(/uses:\s+\S+@(?:v\d+|main|master)\b/);
+
+    const actionSources = [workflow, setupProjectBunActionSource];
+    const externalUseLines = actionSources.flatMap(source => source.split(/\r?\n/)
+      .filter(line => /^\s*uses:\s+/.test(line) && !/^\s*uses:\s+\.\//.test(line)));
+    expect(externalUseLines.length).toBeGreaterThan(0);
+    for (const line of externalUseLines) {
+      expect(line).toMatch(/^\s*uses:\s+[^\s@]+@[0-9a-f]{40}\s+#\s+\S.*$/);
+    }
+    expect(externalUseLines.some(line => line.includes("dorny/paths-filter@"))).toBe(true);
+
+    const externalUses = [ci, setupProjectBunAction]
+      .flatMap(workflowActionUses)
+      .filter(value => !value.startsWith("./"));
+    expect(externalUses.length).toBe(externalUseLines.length);
+    for (const value of externalUses) {
+      expect(value).toMatch(/^[^\s@]+@[0-9a-f]{40}$/);
+    }
+
+    const jobs = ci.jobs as Record<string, { permissions?: Record<string, string> }>;
+    for (const [name, job] of Object.entries(jobs)) {
+      if (name === "changes") {
+        expect(job.permissions).toEqual({ contents: "read", "pull-requests": "read" });
+      } else if (name === "ci") {
+        // Official v2.58: the aggregate gate reads the run's own job list via the Actions API.
+        expect(job.permissions).toEqual({ contents: "read", actions: "read" });
+      } else {
+        expect(`${name}:${String(job.permissions)}`).toBe(`${name}:undefined`);
+      }
+    }
+    // Official v2.58 reads the workflow_dispatch lane input and the run-scoped
+    // github.token. Exempt only the exact safe forms: strip every sanctioned token
+    // from an expression and re-run the scanner on what remains, so an exempt token
+    // cannot smuggle secrets interpolation or a github context object through.
+    const sanctionedTokens = /github\.event\.inputs\.[A-Za-z_]+|github\.token/g;
+    const unsafe = unsafeWorkflowContextExpressions(workflow).filter(expression =>
+      unsafeWorkflowContextExpressions(expression.replace(sanctionedTokens, "")).length > 0);
+    expect(unsafe).toEqual([]);
+    expect(workflow).not.toMatch(/\bGITHUB_TOKEN\b/);
+
+    // Regression probe: a sanctioned token must not launder secrets or the github
+    // context object past the exemption. Stripping leaves the unsafe remainder, so
+    // these stay flagged.
+    const laundered = [
+      "${{ github.event.inputs.lane == 'all' && secrets.X }}",
+      "${{ format('{0}', github.token, secrets.NAME) }}",
+    ];
+    expect(laundered.filter(expression =>
+      unsafeWorkflowContextExpressions(expression.replace(sanctionedTokens, "")).length > 0))
+      .toEqual(laundered);
+
+    const localUses = localWorkflowActionUses(ci);
+    expect([...new Set(localUses)]).toEqual(["./.github/actions/setup-project-bun"]);
+    expect(localWorkflowActionUses(setupProjectBunAction)).toEqual([]);
 
     // Sharding is only safe while the shards tile the suite exactly. If the
     // matrix and the divisor drift apart, some files stop running and CI stays
@@ -445,13 +587,14 @@ describe("GitHub Actions hardening", () => {
     // branch into that path.
     const ci = Bun.YAML.parse(await readText(".github/workflows/ci.yml")) as {
       on?: {
-        push?: { branches?: string[]; paths?: string[] };
+        push?: { branches?: string[]; paths?: string[]; "paths-ignore"?: string[] };
         pull_request?: { branches?: string[]; paths?: string[] };
       };
       jobs?: Record<string, Record<string, unknown> | undefined>;
     };
     expect([...(ci.on?.push?.branches ?? [])].sort())
       .toEqual(["dev", "main", "preview"]);
+    expect(Object.keys(ci.on?.push ?? {}).sort()).toEqual(["branches"]);
 
     // The PR trigger must carry NO base-branch filter, and the two triggers
     // differ on purpose. GitHub matches `branches:` against the BASE ref, so
@@ -470,9 +613,9 @@ describe("GitHub Actions hardening", () => {
     expect(ci.on?.pull_request?.branches).toBeUndefined();
     expect(ci.on?.pull_request?.paths).toBeUndefined();
 
-    // The push trigger and pull-request `changes` job share one expensive-CI
-    // allowlist. PRs always create the workflow and aggregate check; this list
-    // decides whether the costly jobs run. Pin the entire list on both paths.
+    // `changes` is a pull-request cost filter only. Push is branch-only and
+    // every producer runs regardless of changed paths; this list scopes only
+    // the expensive jobs for pull requests.
     const ciPaths = [
       ".dockerignore",
       ".gitattributes",
@@ -498,7 +641,8 @@ describe("GitHub Actions hardening", () => {
       "tests/**",
       "tsconfig.json",
     ];
-    expect([...(ci.on?.push?.paths ?? [])].sort()).toEqual(ciPaths);
+    expect(ci.on?.push?.paths).toBeUndefined();
+    expect(ci.on?.push?.["paths-ignore"]).toBeUndefined();
 
     const filterStep = (ci.jobs?.changes as {
       steps?: { with?: Record<string, string> }[];
@@ -522,15 +666,14 @@ describe("GitHub Actions hardening", () => {
     const scopeStep = changesJob?.steps?.find(
       step => step.name === "Assert the scope output is usable",
     );
-    expect(changesJob?.outputs?.ci).toBe("${{ steps.scope.outputs.ci }}");
+    const scopeNames = ["ci", "gui", "packaging", "docs", "structure"] as const;
+    expect(changesJob?.outputs).toEqual(Object.fromEntries(scopeNames.map(scope => [scope, `\${{ steps.scope.outputs.${scope} }}`])));
     expect(scopeStep?.id).toBe("scope");
     expect(scopeStep?.shell).toBe("bash");
-    expect(scopeStep?.env?.CI_SCOPE).toBe("${{ steps.filter.outputs.ci }}");
-    expect(scopeStep?.run).not.toContain("${{");
-    expect(scopeStep?.run).toContain('case "$CI_SCOPE" in');
-    expect(scopeStep?.run).toContain("true|false)");
-    expect(scopeStep?.run).toContain(`printf 'ci=%s\\n' "$CI_SCOPE" >> "$GITHUB_OUTPUT"`);
-    expect(scopeStep?.run).toContain("exit 1");
+    expect(scopeStep?.env).toEqual(Object.fromEntries(scopeNames.map(scope => [`${scope.toUpperCase()}_SCOPE`, `\${{ steps.filter.outputs.${scope} }}`])));
+    const scopeRun = scopeStep?.run ?? "";
+    expect(scopeRun).not.toContain("${{");
+    for (const fragment of ["for scope in ci gui packaging docs structure; do", 'value_var="${scope^^}_SCOPE"', 'value="${!value_var}"', "true|false)", `printf '%s=%s\\n' "$scope" "$value" >> "$GITHUB_OUTPUT"`, "changes.outputs.%s was", "exit 1"]) expect(scopeRun).toContain(fragment);
     const filterIndex = changesJob?.steps?.findIndex(step => step.id === "filter") ?? -1;
     const scopeIndex = changesJob?.steps?.findIndex(step => step.id === "scope") ?? -1;
     expect(filterIndex).toBeGreaterThanOrEqual(0);
@@ -605,10 +748,9 @@ describe("GitHub Actions hardening", () => {
       steps?: { with?: Record<string, string> }[];
     })?.steps?.find(step => step.with?.filters);
 
-    // `base` is not cosmetic. Unset, paths-filter diffs a `dev` push against the
-    // repository default branch (`main`), so everything changed since the last
-    // promotion still reads as changed and the scoped jobs run anyway — the
-    // filter would look correct, stay green, and save nothing.
+    // `base` keeps branch-push diagnostics relative to the preceding branch
+    // commit instead of the older default-branch release. Push producers ignore
+    // these outputs; only pull-request cost scoping is authoritative.
     expect(filterStep?.with?.base).toBe("${{ github.ref }}");
 
     // paths-filter cannot read a PR's file list without this, and a filter that
@@ -639,9 +781,9 @@ describe("GitHub Actions hardening", () => {
       "src/**",
     ].sort());
 
-    // Every packaging pattern that names a real path must also appear in the
-    // shared expensive-CI filter. Otherwise the workflow records a cheap green
-    // aggregate while silently skipping the packaging verification.
+    // Every packaging pattern that names a real path must also appear in the PR
+    // expensive-CI filter. Push runs packaging unconditionally; this guard keeps
+    // scoped pull requests from recording a cheap green aggregate.
     const ciPatterns = (Bun.YAML.parse(filters) as { ci?: string[] }).ci ?? [];
     for (const pattern of packaging) {
       if (pattern === "scripts/prepare-package.ts") continue; // covered by scripts/**
@@ -5278,144 +5420,6 @@ describe("GitHub Actions hardening", () => {
   });
 });
 
-describe("doctor-gui-if-changed", () => {
-  test("guiPathsChanged is a slash-guarded gui/ prefix predicate", async () => {
-    const { guiPathsChanged } = await import("../../scripts/doctor-gui-if-changed");
-
-    expect(guiPathsChanged(["gui/src/App.tsx"])).toBe(true);
-    expect(guiPathsChanged(["gui"])).toBe(true);
-    expect(guiPathsChanged(["scripts/foo.ts", "gui/package.json"])).toBe(true);
-    expect(guiPathsChanged(["scripts/foo.ts"])).toBe(false);
-    expect(guiPathsChanged(["guitools/x.ts"])).toBe(false);
-    expect(guiPathsChanged([])).toBe(false);
-  });
-
-  test("looksLikeDoctorInfraFailure detects registry/network outages", async () => {
-    const { looksLikeDoctorInfraFailure } = await import("../../scripts/doctor-gui-if-changed");
-    expect(looksLikeDoctorInfraFailure("npm ERR! network getaddrinfo ENOTFOUND registry.npmjs.org")).toBe(true);
-    expect(looksLikeDoctorInfraFailure("npm ERR! code ECONNRESET")).toBe(true);
-    expect(looksLikeDoctorInfraFailure("npm ERR! network timeout")).toBe(true);
-    expect(looksLikeDoctorInfraFailure("All 2 issues\nBugs > 1 errors")).toBe(false);
-    // Findings copy can mention "network" without being an infra outage.
-    expect(looksLikeDoctorInfraFailure("Network requests > 1 errors")).toBe(false);
-  });
-
-  test("DRY_RUN prints the run/skip decision without spawning the doctor", () => {
-    const run = Bun.spawnSync(["bun", doctorGuiIfChangedScript], {
-      env: { ...process.env, DOCTOR_DRY_RUN: "1", DOCTOR_FILES: "gui/src/App.tsx\nscripts/x.ts" },
-    });
-    expect(run.exitCode).toBe(0);
-    expect(run.stdout.toString()).toContain("doctor:run");
-
-    const skip = Bun.spawnSync(["bun", doctorGuiIfChangedScript], {
-      env: { ...process.env, DOCTOR_DRY_RUN: "1", DOCTOR_FILES: "scripts/x.ts\nREADME.md" },
-    });
-    expect(skip.exitCode).toBe(0);
-    expect(skip.stdout.toString()).toContain("doctor:skip");
-  });
-
-  test("degrades gracefully when the doctor engine is unavailable (offline prepush)", () => {
-    const run = Bun.spawnSync(["bun", doctorGuiIfChangedScript], {
-      env: {
-        ...process.env,
-        DOCTOR_FILES: "gui/src/App.tsx",
-        DOCTOR_CMD: "definitely-not-a-real-command-xyz",
-      },
-    });
-    expect(run.exitCode).toBe(0);
-    expect(run.stderr.toString()).toContain("skipping scan");
-  });
-
-  test("soft-skips when doctor exits nonzero due to a registry/network failure", () => {
-    // Simulate `bun run doctor` starting, then npx failing offline: numeric status
-    // plus registry noise in stderr — must not gate the push.
-    // cwd for DOCTOR_CMD is gui/, so reach fixtures via ../scripts/...
-    const run = Bun.spawnSync(["bun", doctorGuiIfChangedScript], {
-      env: {
-        ...process.env,
-        DOCTOR_FILES: "gui/src/App.tsx",
-        DOCTOR_CMD: "bun ../scripts/fixtures/doctor-offline-exit.ts",
-      },
-    });
-    expect(run.exitCode).toBe(0);
-    expect(run.stderr.toString()).toContain("skipping scan");
-  });
-
-  test("propagates a non-zero doctor exit so findings gate the push", () => {
-    const run = Bun.spawnSync(["bun", doctorGuiIfChangedScript], {
-      env: {
-        ...process.env,
-        DOCTOR_FILES: "gui/src/App.tsx",
-        DOCTOR_CMD: "bun ../scripts/fixtures/doctor-findings-exit.ts",
-      },
-    });
-    expect(run.exitCode).not.toBe(0);
-  });
-
-  test("isDoctorBufferOverflow recognizes ENOBUFS / maxBuffer errors", async () => {
-    const { isDoctorBufferOverflow } = await import("../../scripts/doctor-gui-if-changed");
-    expect(isDoctorBufferOverflow("ENOBUFS")).toBe(true);
-    expect(isDoctorBufferOverflow("ERR_CHILD_PROCESS_STDIO_MAXBUFFER")).toBe(true);
-    expect(isDoctorBufferOverflow("ENOENT")).toBe(false);
-    expect(isDoctorBufferOverflow(undefined)).toBe(false);
-  });
-
-  test("hard-fails when doctor output exceeds maxBuffer (does not soft-skip)", () => {
-    const run = Bun.spawnSync(["bun", doctorGuiIfChangedScript], {
-      env: {
-        ...process.env,
-        DOCTOR_FILES: "gui/src/App.tsx",
-        DOCTOR_CMD: "bun ../scripts/fixtures/doctor-huge-output.ts",
-        // Tiny buffer so the fixture's stdout trips the overflow branch.
-        OCX_DOCTOR_MAX_BUFFER: "256",
-      },
-    });
-    expect(run.exitCode).not.toBe(0);
-    expect(run.stderr.toString()).toContain("exceeded buffer");
-  });
-});
-
-describe("lint-gui-if-changed", () => {
-  test("DRY_RUN prints the run/skip decision without spawning lint", () => {
-    const run = Bun.spawnSync(["bun", lintGuiIfChangedScript], {
-      env: { ...process.env, LINT_DRY_RUN: "1", LINT_FILES: "gui/src/App.tsx\nscripts/x.ts" },
-    });
-    expect(run.exitCode).toBe(0);
-    expect(run.stdout.toString()).toContain("lint:run");
-
-    const skip = Bun.spawnSync(["bun", lintGuiIfChangedScript], {
-      env: { ...process.env, LINT_DRY_RUN: "1", LINT_FILES: "scripts/x.ts\nREADME.md" },
-    });
-    expect(skip.exitCode).toBe(0);
-    expect(skip.stdout.toString()).toContain("lint:skip");
-  });
-
-  test("runs eslint when gui/ changed and fails the push on findings", () => {
-    // `bun run lint` in gui/ exits non-zero on findings; a fake command makes
-    // the spawn deterministic without depending on the real eslint output.
-    const run = Bun.spawnSync(["bun", lintGuiIfChangedScript], {
-      env: {
-        ...process.env,
-        LINT_FILES: "gui/src/App.tsx",
-        LINT_CMD: "bun ../scripts/fixtures/lint-findings-exit.ts",
-      },
-    });
-    expect(run.exitCode).not.toBe(0);
-  });
-
-  test("skips eslint when gui/ did not change", () => {
-    const run = Bun.spawnSync(["bun", lintGuiIfChangedScript], {
-      env: {
-        ...process.env,
-        LINT_FILES: "scripts/x.ts\nREADME.md",
-        LINT_CMD: "bun ../scripts/fixtures/lint-findings-exit.ts",
-      },
-    });
-    expect(run.exitCode).toBe(0);
-    expect(run.stdout.toString()).toContain("lint:gui: skip");
-  });
-});
-
 describe("gui exhaustive-deps suppression stays scoped and effective", () => {
   // `bun run doctor:gui` exited 1 on dev for one deliberate exception at
   // gui/src/pages/Models.tsx, and doctor:gui runs inside `prepush`, so every
@@ -5498,6 +5502,25 @@ describe("gui exhaustive-deps suppression stays scoped and effective", () => {
     // react/react-compiler penalises a component merely for carrying suppressions. If one
     // reappears, the config route has been misunderstood.
     expect(models).not.toContain("react-doctor-disable-next-line");
+  });
+
+  test("dev bump keeps full history before the version decision", async () => {
+    const workflow = await readText(".github/workflows/dev-version-bump.yml");
+    const parsed = Bun.YAML.parse(workflow) as {
+      jobs?: Record<string, { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> }>;
+    };
+    const checkout = parsed.jobs?.["open-bump-pr"]?.steps?.find(step =>
+      step.uses?.startsWith("actions/checkout@")
+    );
+
+    // Existing candidate branches are validated with an origin/dev...origin/<branch>
+    // merge-base diff, so a depth-1 checkout can fail before the version helper decides
+    // whether an ordinary release needs a bump or a Fork ben release is a no-op.
+    expect(checkout?.with?.ref).toBe("dev");
+    expect(checkout?.with?.["fetch-depth"]).toBe(0);
+    expect(workflow).toContain('bun scripts/bump-dev-version.ts "${RELEASED_VERSION}" package.json');
+    expect(workflow).toContain("release-version-line.test.ts");
+    expect(workflow).toContain("Prove the chosen version is unused");
   });
 });
 

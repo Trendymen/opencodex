@@ -8,7 +8,7 @@ import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { repoPath } from "../helpers/repo-root";
 import { INTERNAL_DEADLINE_MS, SPAWN_BUDGET_MS } from "../helpers/test-budget";
 
-// Deliberately independent of the real six-file policy: expansion, quoting, and
+// Deliberately independent of the real serial-file policy: expansion, quoting, and
 // index-based ownership must work for canonical paths relative to tests/.
 const SERIAL_FILES = [
   "serial/falcon.test.ts",
