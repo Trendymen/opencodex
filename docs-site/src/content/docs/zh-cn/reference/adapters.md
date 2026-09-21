@@ -94,6 +94,10 @@ interface ProviderAdapter {
   明确的 tool-call/result 批次之后。并行调用保持在其对应输出之前分组，因此每个调用都留在承载
   推理的 assistant 回合中。宽容的 provider 和歧义的（重复、缺失或乱序的）call ID 保留原始输入顺序。
 
+- 可修复但没有可用 `call_id` 的工具输出会转成 user message。标记只使用通过类型和字符校验的结构化
+  `namespace`、`name`；普通工具会保留可用来源，已知的跨任务消息和任务委派使用专用提示。只有没有
+  可用来源时才会说明无法识别调用。工具输出正文不会决定标记。
+
 - `forward` URL → `{baseUrl}/responses`。`key` provider 默认保留原有的 `{baseUrl}/v1/responses` 构造。
 - `key` provider 可设置经过验证的相对 `responsesPath`；adapter 会移除 `baseUrl` 末尾的一个 `/`，并向 `{trimmedBaseUrl}{responsesPath}` 发送请求。Ark Agent Plan 使用 `baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3"` 和 `responsesPath: "/responses"`。
 - `forward` 模式只会转发安全的 header allowlist（`FORWARD_HEADERS`）：authorization、ChatGPT

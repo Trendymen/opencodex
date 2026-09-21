@@ -22,6 +22,8 @@ export const PROVIDER_MODEL_RENAME_ROLES = {
   commandCodeVersion: "none",
   statelessResponses: "none",
   requiresAdjacentResponsesToolResults: "none",
+  inferResponsesMessagePhaseModels: "list",
+  agentMessageFormat: "none",
   requiresPairedResponsesToolResults: "none",
   annotateEmptyToolOutputs: "none",
   supportsServiceTier: "none",

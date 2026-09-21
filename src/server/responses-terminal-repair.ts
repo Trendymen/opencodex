@@ -8,6 +8,13 @@ export interface ResponsesTerminalRepairScheduler {
   cancel(handle: unknown): void;
 }
 
+/** Observe original upstream bytes before terminal repair adds any synthetic event. */
+export interface ResponsesTerminalRepairRawTap {
+  onChunk?(chunk: Uint8Array): void;
+  onFinish?(): void;
+  onDispose?(): void;
+}
+
 const systemScheduler: ResponsesTerminalRepairScheduler = {
   nowMs: () => Date.now(),
   schedule(callback, delayMs) {
@@ -80,6 +87,7 @@ export function relayResponsesSseWithTerminalRepair(
   policy: ResponsesTerminalRepairPolicy,
   budget: TranslatorBudget,
   scheduler: ResponsesTerminalRepairScheduler = systemScheduler,
+  rawTap?: ResponsesTerminalRepairRawTap,
 ): ReadableStream<Uint8Array> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -98,6 +106,24 @@ export function relayResponsesSseWithTerminalRepair(
   let disposed = false;
   let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
   let activeRead: Promise<void> | null = null;
+  let rawTapSettled = false;
+
+  const finishRawTap = (): void => {
+    if (rawTapSettled) return;
+    rawTapSettled = true;
+    try { rawTap?.onFinish?.(); } catch { /* observation must not affect the relay */ }
+  };
+
+  const disposeRawTap = (): void => {
+    if (rawTapSettled) return;
+    rawTapSettled = true;
+    try { rawTap?.onDispose?.(); } catch { /* observation must not affect the relay */ }
+  };
+
+  const observeRawChunk = (chunk: Uint8Array): void => {
+    if (rawTapSettled) return;
+    try { rawTap?.onChunk?.(chunk); } catch { /* observation must not affect the relay */ }
+  };
 
   const onUpstreamAbort = (): void => {
     if (disposed) return;
@@ -135,6 +161,7 @@ export function relayResponsesSseWithTerminalRepair(
     cancelTimer();
     releaseRetainedState();
     releaseBuffer();
+    disposeRawTap();
   };
 
   const replaceBuffer = (next: string): void => {
@@ -291,6 +318,7 @@ export function relayResponsesSseWithTerminalRepair(
       controller.enqueue(encoder.encode(next.block + next.delimiter));
       emitted = true;
       if (kind === "done") {
+        finishRawTap();
         reader.cancel("Responses stream ended with DONE").catch(() => {});
         dispose();
         controller.close();
@@ -306,6 +334,7 @@ export function relayResponsesSseWithTerminalRepair(
         const { done, value } = await reader.read();
         if (disposed) return;
         if (done) {
+          finishRawTap();
           appendBuffer(decoder.decode());
           if (buffer.length > 0) {
             // A delimiter-less suffix is not a complete SSE event. Preserve an
@@ -327,6 +356,7 @@ export function relayResponsesSseWithTerminalRepair(
           controller.close();
           return;
         }
+        observeRawChunk(value);
         appendBuffer(decoder.decode(value, { stream: true }));
         const result = emitBlocks(controller);
         if (result.closed || result.emitted) return;
