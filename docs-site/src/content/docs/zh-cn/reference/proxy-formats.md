@@ -75,7 +75,7 @@ Responses 表示是这座桥的中心。原生兼容的路由可以跳过部分�
 面向客户端的 Responses SSE 帧按 SSE 块分隔符之前的原始字节计算，每帧限制为 4 MiB。对于 HTTP，未终止的上游帧一旦超过该限制，会以合成的 `response.failed` 事件并随后发送 `data: [DONE]` 的方式 fail closed。对于 Responses WebSocket 桥，相同情况会发送 502 `websocket_protocol_error` 并取消上游 reader。已经完整到达的 Responses 终止帧具有优先权；其后的超大或格式错误字节会被丢弃，而不会把已经完成的轮次替换为传输失败。
 
 :::note
-对于原生透传，Responses 终止事件具有最高优先级；过早出现的 `data: [DONE]` 会被保留，直到该事件到达。普通原生路径在没有已解析终止事件的情况下正常到达 HTTP 200 EOF 时，代理会发送一个带有 `incomplete_details.reason: "adapter_eof"` 的 `response.incomplete`，随后发送一个 `data: [DONE]`。语法有效但缺少分隔符的终止 JSON 只会被接受一次；格式错误或被截断的 JSON 仍保持 incomplete。对于启用了按模型终止修复的提供方，未成帧但形似终止事件的后缀和 EOF 处过早出现的 `data: [DONE]`，会在没有可提升的完整生命周期候选时以 `missing_terminal_event` 的形式 fail closed；完整候选则会被提升为 `response.completed`。高置信度的 `cyber_policy` 终止形态会在语义日志和计量中规范化为带有 `error.code: "cyber_policy"` 的 `response.failed`（status 400），但已经开始的流式 HTTP 响应仍保持 200。这个已提交请求的边界不会重试或重放请求。
+对于原生透传，Responses 终止事件具有最高优先级；过早出现的 `data: [DONE]` 会被保留，直到该事件到达。普通原生路径在没有已解析终止事件的情况下正常到达 HTTP 200 EOF 时，若此前已有普通顶层 `error`，代理会把其有界的 type、code 和脱敏 message 保留为一个 `response.failed`；若没有可用错误，则发送一个带有 `incomplete_details.reason: "adapter_eof"` 的 `response.incomplete`。两种结果随后都只发送一个 `data: [DONE]`。语法有效但缺少分隔符的终止 JSON 只会被接受一次；格式错误或被截断的 JSON 仍保持 incomplete。对于启用了按模型终止修复的提供方，未成帧但形似终止事件的后缀和 EOF 处过早出现的 `data: [DONE]`，会在没有可提升的完整生命周期候选时以 `missing_terminal_event` 的形式 fail closed；完整候选则会被提升为 `response.completed`。高置信度的 `cyber_policy` 终止形态会在语义日志和计量中规范化为带有 `error.code: "cyber_policy"` 的 `response.failed`（status 400），但已经开始的流式 HTTP 响应仍保持 200。这个已提交请求的边界不会重试或重放请求。
 :::
 
 每个终止的 Responses usage 对象都包含两个 detail 对象，即使提供方没有报告这些细节：
@@ -295,6 +295,52 @@ Claude replay 只会以当前 turn 已取得所有权的内存 snapshot 保留 m
 
 Anthropic 来源的失败会以 Anthropic 的错误封装呈现，因此该方言中的 origin 拒绝会是
 403 `permission_error`，而不是 OpenAI 风格的 `origin_rejected` body。
+
+## 补丁顺序与失败恢复提示
+
+在使用非 OpenAI 工具目录提示的 OpenAI 兼容 Chat 和原生 Responses 路由中，当前可见的
+Codex `apply_patch` 工具或已识别的 code-mode `exec` 还会收到补丁顺序和失败恢复说明：
+同一文件的补丁块按源码从上到下排列；
+遇到 `Failed to find expected lines` 时，检查补丁块是否倒序，重新读取当前文件，必要时拆成
+较小的独立补丁。
+
+Kiro 当前通过已识别的 code-mode `exec` 接收该提示，直接 `apply_patch` 路径不适用。
+这项提示不会重排补丁块、改写 `exec` JavaScript 或非空失败输出，也不会自动重试补丁。
+
+## spawn_agent 参数兼容
+
+向第三方目的地发送原生 Responses 请求时，如果当前可用的 `collaboration.spawn_agent`
+函数为 `fork_turns` 声明了受支持的 string schema，opencodex 会保留原描述并补充说明：
+`{"fork_turns":"3"}` 传入的是只含字符 `3` 的字符串，内容不包含引号字符。
+原始请求和 schema 的其他字段保持不变。
+
+在使用普通函数参数修复的原生 Responses 路径中，opencodex 可以为已完成调用的
+`fork_turns` 去掉一层多余的 JSON 字符串编码。修复要求当前工具声明授权这个具体函数，
+且解包后的值是 `none`、`all` 或受支持的正整数字符串。不支持的 schema、非法值和更多层
+编码保持原样；其他字段和其他工具不会被去引号。去引号时只替换该字段的字符串片段，
+保留其余参数原文；原始参数中存在重复的顶层 `fork_turns` 键时跳过去引号，其他已有参数转换仍按原规则处理。
+
+这条去引号规则仅支持普通 object 参数 schema，且 `fork_turns` 字段只能包含
+`type: "string"` 和可选的字符串 description。引用、组合关键字、字段 enum/pattern 及未知约束
+不参与处理。带引号的整数仅修复无前导零的规范十进制形式，范围为 `1` 到 `9007199254740991`。
+超出修复范围的值继续按已有参数规则处理，代理不会推断另一个轮次数值。
+
+流式预览保持不变，权威完成项、JSON 响应与重放使用修复后的值。
+规范 ChatGPT 登录转发不参与这项完成参数修复，代理也不会因此执行或重试工具。
+
+## 子代理消息
+
+向第三方 Responses 目的地发送非 GPT 模型请求前，opencodex 会将可读的 Codex `agent_message`
+转换为普通 user message。转换覆盖 key-auth 和第三方 `forward` 路由，让不读取 Codex 私有消息类型的模型
+能够接收任务分派、代理间消息和 reviewer 结果。
+
+转换保留正文、发送者和接收者、消息顺序以及图片/文件，不修改原始输入或重放数据。
+只有内容非空、且全部由 `input_text`、`input_image` 或 `input_file` 组成的消息才会转换；
+混合密文或未知 part 继续按已有规则处理。OpenAI 运营目的地与 GPT/OpenAI 模型族不适用这项扩展转换，
+已有的目的地专用处理仍保留。
+判断使用解析后的 model id：`gpt`、`chatgpt`、`codex`、`o1`、`o3`、`o4` 在名称边界出现时，以及
+`openai/gpt-*` 和 `openai-gpt-*` 都属于排除范围。`my-gpt-helper`、`openai-compatible-glm` 这类
+只包含相关词的名称仍是普通别名或模型 id，先按路由结果处理。
 
 ## 加密内容卫生
 

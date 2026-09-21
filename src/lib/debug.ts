@@ -2,10 +2,10 @@ import { appendDebugLogLine } from "./debug-log-buffer";
 import { isDebugEnabled } from "./debug-settings";
 import { redactSecrets } from "./redact";
 
-function emitDebugLine(line: string): void {
+function emitDebugLine(line: string, options?: { durableFullLine?: boolean }): void {
   if (!isDebugEnabled()) return;
   try {
-    appendDebugLogLine(line);
+    appendDebugLogLine(line, options?.durableFullLine ? { durableLine: line } : undefined);
     console.error(line);
   } catch {
     /* diagnostics must never affect request handling */
@@ -21,10 +21,15 @@ export function debugDroppedFrame(adapter: string, payload: string): void {
 }
 
 /** Provider-agnostic diagnostic logging: `[ocx:<adapter>:<event>] {...}`. */
-export function debugProviderDiagnostic(adapter: string, event: string, details: Record<string, unknown>): void {
+export function debugProviderDiagnostic(
+  adapter: string,
+  event: string,
+  details: Record<string, unknown>,
+  options?: { durableFullLine?: boolean },
+): void {
   if (!isDebugEnabled()) return;
   try {
-    emitDebugLine(`[ocx:${adapter}:${event}] ${JSON.stringify(redactSecrets(details))}`);
+    emitDebugLine(`[ocx:${adapter}:${event}] ${JSON.stringify(redactSecrets(details))}`, options);
   } catch {
     /* diagnostics must never affect request handling */
   }
