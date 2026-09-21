@@ -20,6 +20,10 @@ Refresh-lock validation covers fresh unreadable locks, descriptor-matched releas
 
 The CLI documents explicit Windows x64 installation observation separately from updates; observation never grants installation authority. See the [read-only observation contract](../runtime.md#explicit-codex-cli-installation-observation).
 
+`scripts/install-local.ts` restores a macOS launchd plist before loading a previously loaded
+service after safe rollback. A failed stop check, package rollback, or plist restoration does not
+attempt another start and leaves runtime state unknown; `--no-restart` restores only the plist.
+
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages) is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged. CLI installation inspection reason codes, including Windows deferral, follow the [runtime inspection contract](../runtime.md#lifecycle).
 
 Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts.
@@ -240,18 +244,20 @@ invariants belong in `structure/`, not the README.
 
 ## Historical docs
 
-The root `docs/` folder is retired and declared in `absentPaths`, so the structure gate fails if a
-file there is tracked again. Its notes remain readable in git history before the retirement commit.
-Investigations and plans go to `devlog/`; the GUI design-system contract lives in `gui/design-system/`.
+The upstream root `docs/` folder is retired. This Fork retains its sync policy in
+`docs/fork-sync-automation.md` and Superpowers plans and specs under
+`docs/superpowers/`; other retired notes remain readable in git history. New investigations and
+general plans go to `devlog/`; formal Superpowers plans and specs stay under `docs/superpowers/`.
+The GUI design-system contract lives in `gui/design-system/`.
 When an investigation graduates into a maintained invariant, summarize it here under `structure/`
 and link public workflows from `docs-site/`.
 
 Pull-request screenshot evidence stays out of the `dev` tree by rule. Authors attach images through
 the description editor or commit them to the orphan `pr-assets` branch and link them by commit SHA;
 a "Protect pr-assets" ruleset blocks deletion and force-push there so pinned links stay valid. No
-workflow's `push` trigger matches that branch. `tests/ci-workflows/repo-hygiene.test.ts` enforces
-only the retired paths: `docs/`, the three old evidence folders and five loose `assets/` images. An
-image committed anywhere else is caught by review, not by a gate.
+workflow's `push` trigger matches that branch. `tests/ci-workflows/repo-hygiene.test.ts` rejects
+other files under `docs/`, the three retired evidence folders, and five loose `assets/` images.
+An image committed anywhere else is caught by review, not by a gate.
 
 Cross-cutting structure contracts are maintained by editing `structure/manifest.json`, the authority
 statement, and any dependent whose local explanation changes. Regenerate `structure/INDEX.md` with

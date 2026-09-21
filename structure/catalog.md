@@ -41,6 +41,11 @@ falls through to that map.
 Anthropic numeric point releases inherit the nearest configured family context window before the
 provider-wide fallback. Exact model output limits precede the provider default output limit.
 
+Fork 的进度提示资格由 `src/codex/catalog/model-hints.ts` 和 `routed-gather.ts` 按最终目的地计算，
+`derive-entry.ts` 在两条指令生成路径应用同一提示。自定义模型替换发现行时保留已有
+`pricingStatus` 和明确的资格值。canonical forward 默认认证 helper 由 `model-hints.ts` 提供，
+`gather-capture.ts` 保留兼容导出，避免两个模块相互运行时导入。
+
 `src/codex/catalog.ts` builds a shared Codex-shaped catalog for CLI, TUI, App, and SDK. It:
 
 - preserves native OpenAI entries from the live catalog or static fallback, and emits
