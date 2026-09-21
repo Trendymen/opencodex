@@ -23,7 +23,7 @@ import { repoPath } from "../helpers/repo-root";
  */
 
 const workflow = Bun.YAML.parse(readFileSync(repoPath(".github", "workflows", "ci.yml"), "utf8")) as {
-  on?: { push?: { branches?: string[] } };
+  on?: { push?: { branches?: string[]; paths?: string[] } };
   jobs?: Record<string, {
     if?: string;
     needs?: string | string[];
@@ -293,14 +293,10 @@ function runGate(inputs: GateInputs, results: Record<string, string>): { gatedJo
 }
 
 describe("the push trigger", () => {
-  test("carries main and preview, and no longer dev", () => {
-    // main and preview must stay: release.yml requires a successful push-event
-    // run for the exact release SHA and states that a pull_request run does not
-    // qualify, so removing either breaks publication. dev is the deliberate
-    // removal — its integration evidence is the pull_request run, and
-    // workflow_dispatch covers anything else — so the push run stopped doubling
-    // the full matrix behind a merge that was just verified as a PR.
-    expect([...(workflow.on?.push?.branches ?? [])].sort()).toEqual(["main", "preview"]);
+  test("covers Fork candidate and release SHAs without a path filter", () => {
+    // A message-only candidate amendment still needs a push run for its new SHA.
+    expect([...(workflow.on?.push?.branches ?? [])].sort()).toEqual(["dev", "main", "preview"]);
+    expect(workflow.on?.push?.paths).toBeUndefined();
   });
 });
 
