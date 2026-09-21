@@ -36,6 +36,7 @@ export const RESPONSES_CORE_MODULES = [
   "compaction-recovery.ts",
   "compaction-recovery-policy.ts",
   "memory-models.ts",
+  "annotation-instructions.ts",
   "request-transport.ts",
   "request-sidecar-auth.ts",
   "response-effects.ts",
