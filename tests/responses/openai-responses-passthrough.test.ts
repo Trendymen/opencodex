@@ -4573,7 +4573,7 @@ test("canonical Responses hint suppression is opt-in at the request boundary", a
       const response = await handleResponses(new Request("http://localhost/v1/responses", {
         method: "POST", headers: { "content-type": "application/json", authorization: "Bearer fixture-forward-token" },
         body: JSON.stringify({ model: "openai/gpt-5.6-sol", input: "ping", stream: true }),
-      }), config, { model: "", provider: "" });
+      }), config, { model: "", provider: "" }, { codexWsRuntimeIdentity: "1.3.14" });
       expect(response.status).toBe(200);
       expect(response.headers.has("x-codex-safety-buffering-enabled")).toBe(dropCodexSafetyBuffering !== true);
       expect(response.headers.get("x-codex-turn-id")).toBe("fixture-turn");

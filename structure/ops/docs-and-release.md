@@ -350,6 +350,10 @@ runs the full suite in nine shards only on manual `workflow_dispatch` with `lane
 empty lane). Pushes to `dev`, `main` and `preview` do not activate that Windows matrix, and an
 aggregate green `ci` check on those events legitimately includes a deliberate Windows skip.
 
+macOS reads the serial manifest from `scripts/test.ts`, excludes each listed basename from both
+parallel shards, and runs its assigned files with `--parallel=1` in fresh Bun processes.
+`tests/server/memory-watchdog.test.ts` is listed because its memory endpoint calls `bun:jsc`
+`heapStats()`, whose cost depends on the process heap accumulated by earlier tests.
 Nothing in the workflow retries. Linux and Windows use `scripts/ci/run-bun-test-batches.sh`, but
 each lane owns its measured process shape: Linux keeps the default twelve files and 120 seconds;
 Windows uses six files and 480 seconds. Windows selects all test families, while Linux leaves the
