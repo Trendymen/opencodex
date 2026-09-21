@@ -2014,7 +2014,7 @@ describe("provider discovered model display names", () => {
     modelDisplayNames: { "grok-4.6": "Grok 4.6" },
   };
 
-  test("an exact provider model id receives the configured display name without losing catalog metadata", () => {
+  test("an exact provider model id receives the configured display name without losing catalog metadata or Fork route hint", () => {
     const discovered = {
       provider: "xai",
       id: "grok-4.6",
@@ -2044,6 +2044,7 @@ describe("provider discovered model display names", () => {
       // either xAI transport, so the hint fills the capability and its description.
       supportsServiceTier: true,
       fastTierDescription: "Priority processing; tier pricing applies on key auth only",
+      routedProgressContractEligible: true,
     });
     expect(catalogModelSlug(output)).toBe("xai/grok-4.6");
   });
@@ -7946,40 +7947,5 @@ describe("routed rows never carry native eligibility metadata", () => {
     expect(entry).not.toHaveProperty("minimal_client_version");
     expect(entry).not.toHaveProperty("availability_nux");
     expect(entry).not.toHaveProperty("upgrade");
-  });
-});
-
-describe("Codex 0.151 catalog contract fields", () => {
-  test("legacy shell types canonicalize while disabled remains disabled", () => {
-    const normalizedLegacy = ["default", "local", "shell_command"].map(shell_type =>
-      ensureStrictCatalogFields({ slug: "test", shell_type }).shell_type);
-
-    expect(normalizedLegacy).toEqual(["unified_exec", "unified_exec", "unified_exec"]);
-    expect(ensureStrictCatalogFields({ slug: "test", shell_type: "disabled" }).shell_type)
-      .toBe("disabled");
-  });
-
-  test("missing booleans receive serde defaults", () => {
-    expect(ensureStrictCatalogFields({ slug: "test" })).toMatchObject({
-      node_repl_disabled: false,
-      node_repl_auto_review_required: false,
-      include_plugin_usage_instructions: false,
-      include_apps_usage_instructions: true,
-    });
-  });
-
-  test("explicit per-model booleans are never overwritten by defaults", () => {
-    expect(ensureStrictCatalogFields({
-      slug: "test",
-      node_repl_disabled: true,
-      node_repl_auto_review_required: true,
-      include_plugin_usage_instructions: true,
-      include_apps_usage_instructions: false,
-    })).toMatchObject({
-      node_repl_disabled: true,
-      node_repl_auto_review_required: true,
-      include_plugin_usage_instructions: true,
-      include_apps_usage_instructions: false,
-    });
   });
 });

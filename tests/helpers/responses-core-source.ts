@@ -30,6 +30,7 @@ export const RESPONSES_CORE_MODULES = [
   "core-combo.ts",
   "request-prepare.ts",
   "compaction-routing.ts",
+  "annotation-instructions.ts",
   "request-transport.ts",
   "request-sidecar-auth.ts",
   "response-effects.ts",
