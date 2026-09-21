@@ -4,6 +4,9 @@ dist/
 *.log
 .DS_Store
 
+# Root-local archives produced by `npm pack` / `bun run install:local`.
+/bitkyc08-opencodex-*.tgz
+
 # Generated CL compatibility identity embedded by prepare:package. It must stay
 # untracked so the manifest cannot hash itself.
 src/generated/compatibility-version.json
@@ -68,12 +71,12 @@ tests/**/.tmp-*
 # tests/ci-workflows/repo-hygiene.test.ts, which fails if any path here becomes tracked again.
 go/
 
-# Retired root docs/ folder and the pull-request screenshot folders that used to
-# collect evidence images. Screenshots belong in the PR description or on the
-# orphan `pr-assets` branch; tests/ci-workflows/repo-hygiene.test.ts fails if any
-# path here becomes tracked again. Root-anchored so docs-site/src/content/docs/
-# is not caught by the docs/ rule.
-/docs/
+# Retired upstream docs stay out of the tree. The Fork keeps its sync policy and
+# Superpowers plans/specs here; repo-hygiene.test.ts checks that scope.
+# PR screenshots belong in the PR description or on the orphan `pr-assets` branch.
+/docs/*
+!/docs/fork-sync-automation.md
+!/docs/superpowers/
 /.github/pr-assets/
 /assets/pr-screenshots/
 /docs-site/public/pr-screenshots/
