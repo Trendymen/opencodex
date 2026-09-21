@@ -23,41 +23,10 @@ on:
     # because this workflow is `pull_request` (not `pull_request_target`),
     # declares `contents: read`, and reads no secrets.
     #
-    # `push:` stays pinned to the release lines: it gates publication, and
-    # review is covered by the pull_request trigger above. dev is dropped:
-    # its integration evidence comes from the pull_request run into dev, and
-    # workflow_dispatch covers anything a maintainer wants proven by hand.
-    # main and preview MUST stay: release.yml requires a successful
-    # push-event Cross-platform CI run for the exact release SHA and states
-    # that a pull-request run does not qualify, so removing either branch
-    # breaks publication.
+    # Pushes to dev, main and preview produce CI for each commit. Fork candidate
+    # and release checks bind to the pushed SHA, including message-only amendments.
   push:
-    branches: [main, preview]
-    paths:
-      - "Dockerfile"
-      - "compose.yaml"
-      - ".dockerignore"
-      - "docker/**"
-      - "src/**"
-      - "bin/**"
-      - "tests/**"
-      - "scripts/**"
-      - "app/**"
-      - "desktop/**"
-      - "gui/**"
-      - "assets/**"
-      - ".github/scripts/**"
-      - ".github/workflows/**"
-      - ".gitattributes"
-      - ".npmignore"
-      - "package.json"
-      - "bun.lock"
-      - "tsconfig.json"
-      - "README.md"
-      - "readme/**"
-      - "skills/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - "LICENSE"
+    branches: [dev, main, preview]
   workflow_dispatch:
     inputs:
       lane:

@@ -6,6 +6,7 @@ import {
   CONFIG_OWNER_FILE,
   CONFIG_UNINSTALL_MANIFEST,
   recordOwnedConfigPath,
+  resetConfigOwnershipForTests,
   removeOwnedConfigState,
 } from "../../src/lib/config-ownership";
 import { writePristineCatalogBackup } from "../../src/codex/catalog/parsing";
@@ -40,6 +41,97 @@ describe("owned config uninstall", () => {
       expect(result.status).toBe("refused");
       expect(result.reason).toContain("ownership");
       expect(readFileSync(configPath, "utf8")).toBe('{"keep":true}\n');
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("adopts a legacy runtime home without claiming its existing files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ocx-ownership-adopt-"));
+    const foreignPath = join(dir, "personal.txt");
+    const ownedPath = join(dir, "usage.jsonl");
+    writeFileSync(join(dir, "runtime-port.json"), '{"port":10100}\n');
+    writeFileSync(foreignPath, "keep me\n");
+
+    try {
+      expect(recordOwnedConfigPath(dir, ownedPath)).toBe(true);
+      const manifest = JSON.parse(
+        readFileSync(join(dir, CONFIG_UNINSTALL_MANIFEST), "utf8"),
+      ) as { paths: string[] };
+      expect(manifest.paths).toEqual(["usage.jsonl"]);
+
+      writeFileSync(ownedPath, "{}\n");
+      const result = removeOwnedConfigState(dir);
+      expect(result.status).toBe("partial");
+      expect(result.residualPaths).toContain(foreignPath);
+      expect(existsSync(ownedPath)).toBe(false);
+      expect(readFileSync(foreignPath, "utf8")).toBe("keep me\n");
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("keeps adoption protection after recording a new path and after cache reload", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ocx-ownership-adopt-persistent-"));
+    writeFileSync(join(dir, "runtime-port.json"), "{\"port\":10100}\n");
+    try {
+      expect(recordOwnedConfigPath(dir, join(dir, "new.json"))).toBe(true);
+      const debugDir = join(dir, "provider-debug");
+      mkdirSync(debugDir);
+      writeFileSync(join(debugDir, "sentinel"), "keep\n");
+      expect(recordOwnedConfigPath(dir, debugDir)).toBe(false);
+      resetConfigOwnershipForTests();
+      expect(recordOwnedConfigPath(dir, debugDir)).toBe(false);
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("rejects a same-process manifest provenance mismatch before an owned-path fast path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ocx-ownership-cache-mismatch-"));
+    const path = join(dir, "provider-debug");
+    writeFileSync(join(dir, "runtime-port.json"), "{\"port\":10100}\n");
+    try {
+      expect(recordOwnedConfigPath(dir, path)).toBe(true);
+      const manifestPath = join(dir, CONFIG_UNINSTALL_MANIFEST);
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+      delete manifest.adopted;
+      writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+      expect(recordOwnedConfigPath(dir, path)).toBe(false);
+    } finally {
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("does not register an existing adopted diagnostic symlink", () => {
+    const parent = mkdtempSync(join(tmpdir(), "ocx-ownership-adopt-link-"));
+    const dir = join(parent, "config");
+    const outside = join(parent, "outside");
+    mkdirSync(dir);
+    mkdirSync(outside);
+    writeFileSync(join(dir, "runtime-port.json"), "{\"port\":10100}\n");
+    symlinkSync(outside, join(dir, "provider-debug"), "dir");
+
+    try {
+      expect(recordOwnedConfigPath(dir, join(dir, "provider-debug"))).toBe(false);
+      const manifest = JSON.parse(readFileSync(join(dir, CONFIG_UNINSTALL_MANIFEST), "utf8")) as { paths: string[] };
+      expect(manifest.paths).toEqual([]);
+      expect(removeOwnedConfigState(dir).status).toBe("partial");
+      expect(existsSync(join(dir, "provider-debug"))).toBe(true);
+    } finally {
+      removeTreeWithRetry(parent);
+    }
+  });
+
+  test("does not adopt a non-empty directory without a runtime marker", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ocx-ownership-unmarked-"));
+    writeFileSync(join(dir, "config.json"), "{}\n");
+    writeFileSync(join(dir, "legacy.txt"), "keep\n");
+
+    try {
+      expect(recordOwnedConfigPath(dir, join(dir, "usage.jsonl"))).toBe(false);
+      expect(existsSync(join(dir, CONFIG_OWNER_FILE))).toBe(false);
+      expect(existsSync(join(dir, CONFIG_UNINSTALL_MANIFEST))).toBe(false);
     } finally {
       removeTreeWithRetry(dir);
     }
