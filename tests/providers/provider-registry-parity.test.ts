@@ -24,7 +24,7 @@ import type { ProviderRegistryEntry } from "../../src/providers/registry/types";
 import { META_MUSE_MODELS } from "../../src/providers/registry/model-seeds";
 import { FREE_PROVIDER_DIRECTORY } from "../../src/providers/free-directory";
 import { applyProviderConfigHints } from "../../src/codex/catalog";
-import { routeModel } from "../../src/router";
+import { routeModel, routedProviderConfig } from "../../src/router";
 import { resolveAdapter } from "../../src/server";
 import { isModelVisionSidecarConsumer } from "../../src/vision/eligibility";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
@@ -239,6 +239,7 @@ describe("provider registry parity", () => {
       expect(Object.keys(map ?? {})).toContain("deepseek-flash");
     }
     expect(nativeDeepseek?.preserveReasoningContentModels).toContain("deepseek-flash");
+    expect(nativeDeepseek?.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
     expect(nativeDeepseek?.noVisionModels).not.toContain("deepseek-flash");
     // The new id keeps the Flash ladder, not the Pro one, through isDeepseekFlashModel.
     expect(nativeDeepseek?.modelReasoningEfforts?.["deepseek-flash"])
@@ -370,10 +371,23 @@ describe("provider registry parity", () => {
     expect(KEY_LOGIN_PROVIDERS.deepseek.modelReasoningEffortMap?.["deepseek-v4-flash"]?.max).toBe("max");
     expect(KEY_LOGIN_PROVIDERS.deepseek.preserveReasoningContentModels)
       .toEqual(["deepseek-flash", "deepseek-v4-flash"]);
-    // #4436: first-party Flash accepts images; unprobed compatibility aliases keep the sidecar.
+    expect(KEY_LOGIN_PROVIDERS.deepseek.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
+    expect(KEY_LOGIN_PROVIDERS.deepseek.modelInputModalities?.["deepseek-v4-flash"]).toEqual(["text", "image"]);
     expect(KEY_LOGIN_PROVIDERS.deepseek.noVisionModels).toEqual([
-      "deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash",
+      "deepseek-chat", "deepseek-reasoner",
     ]);
+  });
+
+  test("DeepSeek V4 Flash keeps its images instead of handing them to the vision sidecar", () => {
+    const entry = PROVIDER_REGISTRY.find(row => row.id === "deepseek");
+    expect(entry).toBeDefined();
+    // Assert the MERGED route provider, not the seed: routedProviderConfig unions the registry
+    // list with the saved one, so an install whose config still names `deepseek-v4-flash` stays
+    // sidecar-covered until that stale entry is removed.
+    const merged = routedProviderConfig("deepseek", providerConfigSeed(entry!));
+    expect(merged.modelInputModalities?.["deepseek-v4-flash"]).toEqual(["text", "image"]);
+    expect(isModelVisionSidecarConsumer(merged, "deepseek-v4-flash")).toBe(false);
+    expect(isModelVisionSidecarConsumer(merged, "deepseek-chat")).toBe(true);
   });
 
   test("OpenAI API route max-input metadata is trusted and user values only lower it", () => {
@@ -598,13 +612,14 @@ describe("provider registry parity", () => {
     expect(neuralwatt?.preserveReasoningContentModels).not.toContain("moonshotai/Kimi-K2.5");
   });
 
-  test("first-party DeepSeek Flash advertises native images without widening gateway aliases (#4436)", () => {
+  test("first-party DeepSeek Flash aliases advertise native images without widening gateway aliases (#4436)", () => {
     const provider = providerConfigSeed(PROVIDER_REGISTRY.find(entry => entry.id === "deepseek")!);
     expect(KEY_LOGIN_PROVIDERS.deepseek.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
     expect(provider.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
     expect(isModelVisionSidecarConsumer(provider, "deepseek-flash")).toBe(false);
+    expect(isModelVisionSidecarConsumer(provider, "deepseek-v4-flash")).toBe(false);
     expect(isModelVisionSidecarConsumer(provider, "deepseek-v4-flash-vision-exp")).toBe(false);
-    for (const model of ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash"]) {
+    for (const model of ["deepseek-chat", "deepseek-reasoner"]) {
       expect(isModelVisionSidecarConsumer(provider, model)).toBe(true);
     }
     // Only the Go tier was probed (2026-09-19) and only for deepseek-v4.1-flash. The sibling
