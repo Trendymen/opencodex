@@ -391,6 +391,8 @@ export interface PassthroughWebSearchBridgeStreamOptions {
   /** Releases request-scoped resources when the stream completes, fails, or is cancelled. */
   onFinalize?: () => void;
   signal?: AbortSignal;
+  /** 仅观察原始上游 payload；观察异常不能影响 bridge 转发。 */
+  onRawPayload?: (payload: Record<string, unknown>) => void;
 }
 
 function parseQueries(argumentsText: string): string[] {
@@ -517,6 +519,8 @@ class BridgeStreamState {
   private heldItemIds = new Set<string>();
   private terminalPayload: Record<string, unknown> | undefined;
 
+  constructor(private readonly onRawPayload?: (payload: Record<string, unknown>) => void) {}
+
   beginLeg(): void {
     this.indexMap = new Map();
     this.suppressedSearches = new Map();
@@ -619,6 +623,11 @@ class BridgeStreamState {
       return [block];
     }
     if (!isRecord(payload) || typeof payload.type !== "string") return [block];
+    try {
+      this.onRawPayload?.(payload);
+    } catch {
+      // 诊断观察不能影响上游转发。
+    }
 
     // A continuation leg opens its own response lifecycle; the client already has one.
     if ((payload.type === "response.created" || payload.type === "response.in_progress") && !isFirstLeg) {
@@ -1018,7 +1027,7 @@ async function* bridgeStreamBlocks(
   options: PassthroughWebSearchBridgeStreamOptions,
   aborted: () => boolean,
 ): AsyncGenerator<string> {
-  const state = new BridgeStreamState();
+  const state = new BridgeStreamState(options.onRawPayload);
   let requestBody = options.requestBody;
   let leg: ReadableStream<Uint8Array> = options.firstLeg;
   let isFirstLeg = true;

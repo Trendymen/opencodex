@@ -84,18 +84,25 @@ ocx observe usage --range 30d --json
 
 部分用量记录无法计入时，人类可读输出会显示警告，即使没有可读取的记录也是如此。显示的总数仅反映可读取的记录。如果筛选条件没有匹配到可读取的记录，输出将显示警告和提示，而不显示总数行；被跳过的记录可能包含匹配项。`--json` 原样保留响应中的 `usageIncomplete` 诊断及原因。
 
-### `ocx debug <provider|usage|injection|claude> <on|off|status|reset|logs [-f]>`
+### `ocx debug <provider|provider-text|usage|injection|claude> <on|off|status|reset|logs [-f]>`
 
 通过正在运行的代理的管理 API 读取或更改运行时调试覆盖项。
 
 ```bash
 ocx debug provider on|off|status|reset
 ocx debug provider logs [-f|--follow]
+ocx debug provider-text on|off|status|reset
 ocx debug usage on|off|status|reset
 ocx debug usage logs [-f|--follow]
 ```
 
-没有指定作用域时，`ocx debug` 会输出用法；如果代理已停止，还会输出下次启动时的环境默认值。提供方调试默认来自 `OCX_DEBUG=1`（旧版 `OCX_DEBUG_FRAMES=1` 也可用）；用量调试默认来自 `OPENCODEX_USAGE_DEBUG=1`。
+没有指定作用域时，`ocx debug` 会输出用法；如果代理已停止，还会输出下次启动时的环境默认值。提供方调试默认来自 `OCX_DEBUG=1`（旧版 `OCX_DEBUG_FRAMES=1` 也可用）；用量调试默认来自 `OPENCODEX_USAGE_DEBUG=1`。普通提供方调试默认只保存结构信息，不保存文本。只有单独开启 `provider-text`、设置 `OCX_PROVIDER_TEXT_DEBUG=1`，或在仪表盘开启对应独立开关，才会持久化有界的响应／推理文本样本。
+
+样本位于 `$OPENCODEX_HOME/provider-debug-artifacts`。主日志及其工件合计最多保留七天、20 GiB（21,474,836,480 字节），不限制文件数量。主日志和引用工件按 4 MiB 分组，两个调试目录使用 UTC `YYYY-MM-DD/HH/groups/<group-id>/` 结构保存同组文件。每组按完整额度预留容量，因此清理可能在文件实际占满 20 GiB 之前发生。
+
+达到保留期或容量上限时，删除最旧的主日志分段及其引用的文本、timeline 工件，然后继续捕获，当天较早的分段也可被淘汰。清理先删除主日志，主日志删除失败时保留其工件。旧版按天存放的日志按日期整组清理，不删除同日的新分组。清理中断留下的孤立工件仍会纳入后续清理。无关的不可读或不安全条目会保留并告警；其大小无法纳入可管理数据的容量上限。
+
+关闭调试开关即可停止捕获。手动删除时，先停止代理，再一起删除 `provider-debug` 和 `provider-debug-artifacts`；只删工件会让保留的主日志留下失效引用。
 
 ## API access
 

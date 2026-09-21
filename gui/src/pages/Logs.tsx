@@ -337,6 +337,8 @@ const ESTIMATE_REASON_KEYS = {
  */
 const RECOVERY_KIND_KEYS = {
   "transient-5xx": "logs.detail.attempt.recovery.transient5xx",
+  "reasoning-effort-downgrade": "logs.detail.attempt.recovery.reasoningEffortDowngrade",
+  "agent-task-recovery": "logs.detail.attempt.recovery.agentTaskRecovery",
   "connection-reset": "logs.detail.attempt.recovery.connectionReset",
   "oauth-401": "logs.detail.attempt.recovery.oauth401",
   "key-401": "logs.detail.attempt.recovery.key401",
@@ -345,10 +347,9 @@ const RECOVERY_KIND_KEYS = {
   "anthropic-oauth-429": "logs.detail.attempt.recovery.anthropicOauth429",
   "oauth-account-429": "logs.detail.attempt.recovery.oauthAccount429",
   "image-413": "logs.detail.attempt.recovery.image413",
+  "opaque-blob-rejection": "logs.detail.attempt.recovery.opaqueBlobRejection",
   "empty-completion": "logs.detail.attempt.recovery.emptyCompletion",
   "console-go-upload-retry": "logs.detail.attempt.recovery.consoleGoUpload",
-  "opaque-blob-rejection": "logs.detail.attempt.recovery.opaqueBlobRejection",
-  "reasoning-effort-downgrade": "logs.detail.attempt.recovery.reasoningEffortDowngrade",
   "anthropic-fast-downgrade": "logs.detail.attempt.recovery.anthropicFastDowngrade",
 } as const satisfies Record<AttemptRecoveryKind, string>;
 

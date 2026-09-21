@@ -1,6 +1,9 @@
 import type { OcxConfig } from "../../types";
 import { effectiveProviderAlias } from "../../providers/default-aliases";
 import { neutralizeIdentity } from "../../adapters/identity";
+import { identifyRoutedModel } from "../../adapters/identity";
+import { finalizeRoutedToolPrompt } from "../../fork/routed-progress-contract";
+import { OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
 import { COMBO_NAMESPACE } from "../../combos";
 import {
   CODEX_CUSTOM_MODEL_CATALOG_KIND,
@@ -108,6 +111,13 @@ export function deriveEntry(
   contextCap?: NativeContextLimitsInput,
 ): RawEntry {
   const preserveExact = isExactComboCatalogModel(model, exactComboSlugs);
+  const shouldApplyRoutedProgressContract = model !== undefined
+    && model.codexForwardNativeCapabilityAlias !== true
+    && (model.routedProgressContractEligible === true
+      || (model.routedProgressContractEligible === undefined
+        && model.provider !== COMBO_NAMESPACE
+        && model.provider !== OPENAI_CODEX_PROVIDER_ID
+        && model.provider !== OPENAI_API_PROVIDER_ID));
   // Go exposes model-specific upstream enums; synthetic tiers mislead subagent overrides.
   const preserveExactReasoning = preserveExact || model?.provider === "opencode-go";
   const codexForwardNativeCapabilityAlias = model?.codexForwardNativeCapabilityAlias === true
@@ -148,10 +158,10 @@ export function deriveEntry(
       if (typeof e.base_instructions === "string") {
         // Proxy-neutral: keep the GPT-5/OpenAI disclaimer but never advertise the opencodex proxy
         // (leaking that into base_instructions is a non-first-party signature → ToS risk).
-        // Model-neutral on disk (#5217): Codex stores this block as the session's instructions and
-        // replays it verbatim into a sub-agent spawned on a DIFFERENT model, so a baked-in model id
-        // follows the worker and misnames it. The destination id is written at request time instead.
-        e.base_instructions = neutralizeIdentity(e.base_instructions);
+        const identified = identifyRoutedModel(e.base_instructions, modelName);
+        e.base_instructions = shouldApplyRoutedProgressContract
+          ? finalizeRoutedToolPrompt(identified)
+          : identified;
       }
       applyReasoningLevels(
         e,
@@ -208,6 +218,9 @@ export function deriveEntry(
       : {}),
   };
   if (isRouted) {
+    if (shouldApplyRoutedProgressContract) {
+      entry.base_instructions = finalizeRoutedToolPrompt(String(entry.base_instructions ?? ""));
+    }
     applyRoutedCodexToolMode(entry, model?.codexToolMode);
     applyReasoningLevels(
       entry,

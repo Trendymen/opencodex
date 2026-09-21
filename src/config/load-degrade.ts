@@ -15,6 +15,7 @@ import { redactSecretString } from "../lib/redact";
 import { isValidProviderName } from "./provider-name";
 import { MODEL_ALIAS_PATTERN } from "../providers/default-aliases";
 import { MODEL_DISCOVERY_MAX_MODELS } from "../providers/model-discovery-limits";
+import { isReservedNativeOpenAiAlias } from "../providers/openai-model-identity";
 import { getProviderRegistryEntry, providerMatchesRegistryTransport, registryModelServiceTierCapabilityApplies } from "../providers/registry";
 import { providerFastSwitchOff } from "../providers/fast-opt-in";
 import { isCodexReasoningEffort } from "../reasoning-effort";
@@ -901,7 +902,7 @@ export function sanitizeAliasesForLoad(raw: unknown): void {
     for (const [id, value] of Object.entries(aliases)) {
       const lower = typeof value === "string" ? value.toLowerCase() : "";
       if (typeof value !== "string" || !MODEL_ALIAS_PATTERN.test(value) || claimed.has(lower)
-        || nativeIds.has(lower) || comboAliases.has(lower) || /^(?:gpt-|o1-|o3-|o4-|codex-)/i.test(value)) {
+        || nativeIds.has(lower) || comboAliases.has(lower) || isReservedNativeOpenAiAlias(value)) {
         console.warn(`Ignoring invalid or colliding model alias for ${id} in config.json`);
         delete aliases[id];
       } else claimed.add(lower);

@@ -1,6 +1,7 @@
 import { agentRouterDefaultHeaders } from "../agentrouter";
 import { openaiChatCompletionsUrl } from "../openai-chat-url";
 import type { OcxProviderConfig } from "../../types";
+import { isOfficialOpenAiApiHost } from "../../providers/openai-tiers-destination";
 
 // Providers may opt into stripping one trailing "[...]" group from the wire model id.
 // Z.AI needs this because its OpenAI path rejects glm-5.2[1m] with 400 code 1211;
@@ -42,9 +43,5 @@ export function openAIChatTransport(provider: OcxProviderConfig): {
 }
 
 export function isNativeOpenAIChatTarget(provider: OcxProviderConfig): boolean {
-  try {
-    return new URL(provider.baseUrl).hostname === "api.openai.com";
-  } catch {
-    return false;
-  }
+  return isOfficialOpenAiApiHost(provider.baseUrl);
 }

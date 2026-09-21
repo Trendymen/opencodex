@@ -90,7 +90,9 @@ Les règles d’admission et de conservation sont volontairement strictes :
 - les identifiants ChatGPT bruts sont envoyés uniquement au point de terminaison ChatGPT codé en dur. Ils ne sont jamais placés dans le corps de la requête, les journaux, les clés de cache ou la requête destinée au fournisseur. La portée du cache en mémoire n’utilise qu’un condensat, calculé avec une clé aléatoire propre au processus, de l’identifiant et du compte de l’appelant ;
 - la requête de récupération ne transmet que `authorization`, le `chatgpt-account-id` concordant, `originator` et, facultativement, les métadonnées `openai-beta` et `user-agent`. opencodex définit lui-même `content-type` et `accept` ; aucun autre en-tête de l’appelant ne franchit cette limite ;
 - le texte en clair récupéré n’est jamais journalisé ni conservé. Le cache propre au processus est cloisonné par identifiant, fil parent et texte chiffré ; il expire après 15 minutes et est limité à la fois par le nombre d’entrées configuré (200 par défaut, 512 au maximum) et par une taille totale de 8 MiB ;
-- toute enveloppe mal formée, tout échec de récupération, dépassement de délai ou échec de validation conserve l’erreur fermée existante. Une annulation par le client renvoie 499. Aucun des deux chemins n’envoie le texte chiffré au fournisseur routé.
+- la récupération utilise par défaut `gpt-5.6-luna` avec `reasoning.effort: "medium"`. Chaque tentative peut durer 120 secondes ; après les en-têtes de réponse, le premier octet et les périodes sans activité sont limités à 45 secondes. Seul un dépassement de délai est réessayé, au plus deux fois après la première tentative ;
+- après épuisement de ces tentatives, un `MESSAGE` strict d’un enfant vers son parent et admis remplace l’élément courant par un avis non persistant. L’avis identifie l’enfant, demande au parent jusqu’à deux renvois, puis de lire son résultat final avec la capacité disponible ou d’attendre sa fin. Il n’inclut pas le texte chiffré et ne prétend pas que le message a été lu ou vérifié ;
+- toute autre enveloppe mal formée, tout autre échec de récupération, dépassement de délai ou échec de validation conserve l’erreur fermée existante. Une annulation par le client renvoie 499. Aucun des deux chemins n’envoie le texte chiffré au fournisseur routé.
 
 ### Modèle de menace
 
@@ -102,8 +104,10 @@ Ce mécanisme ne protège pas contre un autre processus exécuté sous le même 
 {
   "agentTaskRecovery": {
     "enabled": true,
-    "model": "gpt-5.6-sol",
-    "timeoutMs": 45000,
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "timeoutMs": 120000,
+    "maxRetries": 2,
     "cacheEntries": 200
   }
 }
