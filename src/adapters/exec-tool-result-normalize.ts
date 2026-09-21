@@ -11,18 +11,6 @@
  * Kiro consumes this helper directly.
  */
 
-/**
- * Matches exec wrappers whose only payload is an empty-output marker.
- *
- * `Script failed` is deliberately NOT in this set. A failed cell with no captured output is still
- * a FAILURE, and the success guidance below ("not a blocked tool", "do not re-run") would erase the
- * only signal that anything went wrong — reachable through Responses history, where
- * `function_call_output` is parsed with `isError: false`. Cursor combines this set with
- * `isFailedEmptyExecWrapper` below for Computer Use, where a failed wrapper is separately marked
- * `isError`.
- */
-export const EMPTY_EXEC_OUTPUT_REGEX = /^(?:(?:Script completed|Command finished|Execution finished)[^\n]*\n+)?(?:Wall time[^\n]*\n+)?(?:Output:\s*)?(?:<empty>)?\s*$/;
-
 function skipFailedWrapperBlankSeparators(text: string, start: number): number {
   let index = start;
   while (index < text.length) {
@@ -52,6 +40,53 @@ function skipFailedWrapperLine(text: string, start: number): number {
   const newline = text.indexOf("\n", start);
   return newline === -1 ? text.length : skipFailedWrapperBlankSeparators(text, newline + 1);
 }
+
+const SUCCESSFUL_EXEC_WRAPPER_PREFIXES = [
+  "Script completed",
+  "Command finished",
+  "Execution finished",
+] as const;
+
+function skipSuccessfulWrapperLine(text: string, start: number): number {
+  const newline = text.indexOf("\n", start);
+  if (newline === -1) return -1;
+  let index = newline + 1;
+  while (index < text.length && text[index] === "\n") index += 1;
+  return index;
+}
+
+/**
+ * Matches successful exec wrappers whose only payload is an empty-output marker.
+ *
+ * This is a monotonic equivalent of the former exported regex. The regex let `Output:\s*` and
+ * the final `\s*` repartition the same whitespace on a failed near-match, producing quadratic
+ * backtracking. Every scan here advances one index and no consumed prefix is retried.
+ *
+ * `Script failed` is deliberately NOT in this set. A failed cell with no captured output is still
+ * a FAILURE, and the success guidance below ("not a blocked tool", "do not re-run") would erase the
+ * only signal that anything went wrong.
+ */
+export function isSuccessfulEmptyExecWrapper(text: string): boolean {
+  let index = 0;
+  if (SUCCESSFUL_EXEC_WRAPPER_PREFIXES.some(prefix => text.startsWith(prefix, index))) {
+    index = skipSuccessfulWrapperLine(text, index);
+    if (index === -1) return false;
+  }
+  if (text.startsWith("Wall time", index)) {
+    index = skipSuccessfulWrapperLine(text, index);
+    if (index === -1) return false;
+  }
+  if (text.startsWith("Output:", index)) {
+    index = skipFailedWrapperWhitespace(text, index + "Output:".length);
+  }
+  if (text.startsWith("<empty>", index)) index += "<empty>".length;
+  return skipFailedWrapperWhitespace(text, index) === text.length;
+}
+
+/** Backward-compatible `.test()` surface for the existing Cursor consumer. */
+export const EMPTY_EXEC_OUTPUT_REGEX: Pick<RegExp, "test"> = {
+  test: isSuccessfulEmptyExecWrapper,
+};
 
 /**
  * Wrapper for a cell that FAILED without emitting output: empty, but not a success.

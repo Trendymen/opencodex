@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { OcxConfig } from "./types";
-import { configReasoningPinsConfigError } from "./config/provider-validation";
 import { recordOwnedConfigPath } from "./lib/config-ownership";
 import { assertNotRealHomeUnderTest } from "./lib/test-home-guard";
 import {
@@ -139,6 +138,7 @@ export {
   reconcileLiveConfigFromDisk,
   saveConfigPreservingClaudeCode,
 } from "./config/live-reconcile";
+export { saveConfig } from "./config/save";
 
 // create-only path — never persist-unlocked / atomicWriteFile
 import { InitialConfigPublicationError, publishInitialConfigNoReplace, type InitialConfigPublicationIO } from "./config/initialize";
@@ -147,7 +147,9 @@ import {
   configDiagnosticsFromRaw,
   mergeConfigDefaults,
   readConfigFileSnapshot,
+  sanitizeCustomModelsForLoad,
   validateConfigCandidate,
+  warnDegradedCustomModels,
   type ConfigFileSnapshot,
 } from "./config/diagnostics";
 
@@ -223,6 +225,7 @@ export function loadConfig(): OcxConfig {
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
     sanitizeCapabilityDeclarationsForLoad(parsed);
+    sanitizeCustomModelsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       const config = normalizeApiKeyIds(result.data as OcxConfig);
@@ -231,6 +234,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
+      warnDegradedCustomModels(parsed);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
@@ -259,6 +263,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
+      warnDegradedCustomModels(parsed);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
@@ -288,6 +293,7 @@ export function loadConfig(): OcxConfig {
         warnDegradedHostname(parsed, config);
         warnDegradedListeners(parsed, config);
         warnDegradedApiKeys(parsed, config);
+        warnDegradedCustomModels(parsed);
         warnDegradedCodexAccountPriorities(parsed, config);
         warnDegradedCodexQuotaAutoRefresh(parsed, config);
         warnDegradedClaudeSubagentEffort(parsed);
@@ -350,25 +356,6 @@ export function initializePersistedConfigIfMissing(
     if (published) throw new InitialConfigPublicationError("published", false, false, { cause });
     throw cause;
   }
-}
-
-/** Persist `config` to config.json under the config-mutation lock. */
-export function saveConfig(config: OcxConfig): void {
-  const pinError = configReasoningPinsConfigError(config);
-  if (pinError) throw new Error(pinError);
-  // Keep the real-home assertion ahead of even lock-directory preparation.
-  assertNotRealHomeUnderTest(getConfigDir());
-  withConfigMutationLockSync(() => {
-    const withProvenance = projectCustomModelCatalogMigration(
-      readRawConfigJson(),
-      projectConfigRebaseProvenance(config),
-    );
-    if (persistConfigUnlocked(withProvenance)) bumpGenerationForCooperatingConfigWrite();
-    adoptCustomModelCatalogMigration(config, withProvenance);
-    if (withProvenance.configRebaseProvenance === undefined) delete config.configRebaseProvenance;
-    else config.configRebaseProvenance = structuredClone(withProvenance.configRebaseProvenance);
-    clearPendingConfigTopLevelDeletions(config);
-  });
 }
 
 export type PersistedConfigMutation<T> = {

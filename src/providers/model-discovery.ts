@@ -25,6 +25,21 @@ const MODEL_DISCOVERY_MAX_FILTER_VALUES = 256;
 const MODEL_DISCOVERY_MAX_FILTER_STRING_LENGTH = 1_024;
 const TRAILING_SLASHES = /\/+$/;
 const TRAILING_MODELS = /\/models$/;
+const ZHIPU_BIGMODEL_CODEX_PROVIDER = "zhipu-bigmodel-codex";
+const ZHIPU_BIGMODEL_CODEX_BASE_URL = "https://open.bigmodel.cn/api/v1";
+const ZHIPU_BIGMODEL_CODEX_DISCOVERY: ProviderModelDiscoverySpec = {
+  envelopeKey: "models",
+  idField: "slug",
+};
+
+function isZhipuBigmodelCodexDiscoveryProvider(
+  providerName: string,
+  provider: Pick<OcxProviderConfig, "baseUrl" | "adapter">,
+): boolean {
+  return providerName === ZHIPU_BIGMODEL_CODEX_PROVIDER
+    && provider.adapter === "openai-responses"
+    && provider.baseUrl.replace(/\/+$/, "") === ZHIPU_BIGMODEL_CODEX_BASE_URL;
+}
 
 export interface ResolvedProviderModelDiscovery {
   spec?: ProviderModelDiscoverySpec;
@@ -169,7 +184,9 @@ export function resolveProviderModelDiscovery(
   const entry = namedEntry
     ? (providerMatchesRegistryTransport(providerName, provider) ? namedEntry : undefined)
     : registryEntryForProviderDestination(provider);
-  const spec = entry?.modelDiscovery;
+  const spec = isZhipuBigmodelCodexDiscoveryProvider(providerName, provider)
+    ? ZHIPU_BIGMODEL_CODEX_DISCOVERY
+    : entry?.modelDiscovery;
   return {
     ...(spec ? { spec } : {}),
     maxResponseBytes: positiveIntegerAtMost(spec?.maxResponseBytes, MODEL_DISCOVERY_MAX_RESPONSE_BYTES),

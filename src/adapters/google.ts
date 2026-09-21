@@ -24,7 +24,7 @@ import { ANTIGRAVITY_REQUEST_UA, antigravitySessionAnchor, antigravitySessionId,
 import { summarizeGoogleWireShape } from "./google-wire-shape";
 import { compileGoogleWireBody } from "./google-wire-compiler";
 import type { GoogleToolSchemaLossReport, GoogleToolSchemaProfile } from "./google-tool-schema";
-import { identifyRoutedModel } from "./identity";
+import { identifyRoutedModel, identifyRoutedToolPrompt } from "./identity";
 import {
   antigravityUsesReplayCache,
   applyAntigravityReplay,
@@ -296,7 +296,8 @@ function messagesToGeminiFormat(
   // Neutralize Codex's GPT-5 identity line (Gemini/Antigravity share this path) so a routed model
   // never misreports as GPT-5/OpenAI, and never leaks the proxy identity upstream.
   const toolCatalogNudge = buildNonOpenAIToolCatalogNudgeForTools(parsed.context.tools, parsed.options.toolChoice);
-  const identifiedSystemText = identifyRoutedModel([
+  const identifySystem = toolCatalogNudge ? identifyRoutedToolPrompt : identifyRoutedModel;
+  const identifiedSystemText = identifySystem([
     ...(parsed.context.systemPrompt ?? []),
     ...(toolCatalogNudge ? [toolCatalogNudge] : []),
     GOOGLE_BREVITY_INSTRUCTION,

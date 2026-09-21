@@ -50,6 +50,7 @@ import { relayResponsesSseWithTerminalRepair } from "../responses-terminal-repai
 import {
   hasResponsesSnapshotRepair,
   createResponsesSnapshotBlockRewrite,
+  repairResponsesSnapshotJson,
 } from "../responses-snapshot-repair";
 import { createResponsesModelPayloadRewrite, rewriteResponsesModelJson } from "../responses-model-rewrite";
 import { createImageGenCallRestoreRewrite, restoreImageGenCallsInJson } from "../responses-image-gen-repair";
@@ -89,8 +90,9 @@ import {
   restorePlaintextV2AgentMessageCallsInJsonResult,
   PLAINTEXT_V2_AGENT_MESSAGE_RESTORE_OVERFLOW_MESSAGE,
 } from "../../responses/plaintext-v2-agent-messages";
-import { createResponsesFieldBackfillBlockRewrite } from "./responses-field-backfill";
+import { backfillResponsesFieldsJson, createResponsesFieldBackfillBlockRewrite } from "./responses-field-backfill";
 import { createResponsesFunctionToolRepairBlockRewrite } from "../responses-function-tool-repair";
+import { repairFunctionCallsInJson } from "../../responses/function-call-compat";
 import {
   createUndeclaredToolCallGuardBlockRewrite,
   undeclaredToolCallNameInResponse,
@@ -125,6 +127,25 @@ import { inspectResponseLogJson } from "../request-log";
 import { restoreRoutedCustomCallsInJson } from "../../responses/custom-tool-compat";
 import { restoreRoutedToolSearchCallsInJson } from "../../responses/tool-search-compat";
 import { responsesJsonToSseStream } from "../responses-json-events";
+import { usesVolcengineAgentPlanResponses } from "../../fork/glm-kimi-compat";
+import { rendersArkQuotaAsClientError } from "../../fork/ark-quota-display";
+import {
+  createReasoningSummaryChannelBlockRewrite,
+  rewriteReasoningSummaryInJsonString,
+} from "../responses-reasoning-summary-rewrite";
+import {
+  createResponsesMessagePhaseBlockRewrite,
+  rewriteResponsesMessagePhasesInJsonString,
+  routeUsesResponsesMessagePhaseInference,
+} from "../../fork/responses-message-phase";
+import {
+  createNestedExecCallRepairBlockRewrite,
+  createNestedExecClientOutcomeBlockRewrite,
+} from "../responses-nested-exec-call-repair";
+import { repairNestedExecCallsInJson } from "../../responses/nested-exec-call-repair";
+import { createInboundResponsesDebugObserver, persistInboundResponsesDebugSummary } from "../../fork/inbound-response-debug";
+
+import { isDebugEnabled } from "../../lib/debug-settings";
 
 /** One responsibility of the Responses request pipeline; state owners are explicit. */
 export async function deliverPassthroughResponse(
@@ -175,6 +196,16 @@ export async function deliverPassthroughResponse(
     | "rememberPassthroughResponse"
     | "noteInspectedPayload"
     | "normalizeFunctionCompletionJson"
+    | "projectContentChannelReasoning"
+    | "reasoningReplayProjection"
+    | "nestedExecRepairPlan"
+    | "nestedExecRepairCoordinator"
+    | "nestedExecInspection"
+    | "inboundDebugObserver"
+    | "inboundDebugUsesRawTerminalRepairTap"
+    | "isEventStream"
+    | "notePlaintextClientTerminal"
+    | "rememberClientVisiblePassthroughResponse"
   >,
 ): Promise<Response> {
   const { logCtx, config, options, req } = requestContext;
@@ -198,11 +229,100 @@ export async function deliverPassthroughResponse(
     rememberPassthroughResponse,
     noteInspectedPayload,
     normalizeFunctionCompletionJson,
+    projectContentChannelReasoning,
+    reasoningReplayProjection,
+    nestedExecRepairPlan,
+    nestedExecRepairCoordinator,
+    nestedExecInspection,
+    inboundDebugObserver,
+    rememberClientVisiblePassthroughResponse,
   } = nativeExchange;
   const { commitReasoningReplayServingRoute, recordTerminalOutcomes } = responseEffects;
   const { parsed, route, subagentQuotaFailureModel, clientRequestedStream, translatorBudget } = requestState;
   const { openAiSidecar } = sidecarState;
   const { requestBindings } = transportState;
+  let inboundDebugPersisted = false;
+  const persistInboundDebug = (): void => {
+    if (inboundDebugPersisted || !inboundDebugObserver) return;
+    inboundDebugPersisted = true;
+    let host = "";
+    let pathname = "";
+    try { const url = new URL(nativeExchange.request.url); host = url.host; pathname = url.pathname; }
+    catch { pathname = "invalid-url"; }
+    persistInboundResponsesDebugSummary({
+      observer: inboundDebugObserver,
+      host,
+      pathname,
+      model: route.modelId,
+      stage: "upstream-inbound",
+      threadIdTag: nativeExchange.request.threadIdTag,
+      httpStatus: upstreamResponse.status,
+    });
+  };
+
+  let host = "";
+  let pathname = "";
+  try {
+    const url = new URL(nativeExchange.request.url);
+    host = url.host;
+    pathname = url.pathname;
+  } catch {
+    pathname = "invalid-url";
+  }
+  const inboundDebugContext = { host, pathname, httpStatus: upstreamResponse.status };
+    const downstreamObserver = isDebugEnabled()
+      ? createInboundResponsesDebugObserver({ stage: "downstream-after-rewrite" })
+      : undefined;
+    let downstreamPersisted = false;
+    const persistDownstreamOnce = (): void => {
+      if (downstreamPersisted || !downstreamObserver || !inboundDebugContext) return;
+      downstreamPersisted = true;
+      persistInboundResponsesDebugSummary({
+        observer: downstreamObserver,
+        host: inboundDebugContext.host,
+        pathname: inboundDebugContext.pathname,
+        model: route.modelId,
+        stage: "downstream-after-rewrite",
+        threadIdTag: nativeExchange.request.threadIdTag,
+        httpStatus: inboundDebugContext.httpStatus,
+      });
+    };
+    const observeClientBoundSse = (body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> => {
+      if (!downstreamObserver) return body;
+      const inspector = createSseInspector({
+        onParsedPayload: payload => downstreamObserver.notePayload(payload),
+      });
+      const reader = body.getReader();
+      let settled = false;
+      const settle = (): void => {
+        if (settled) return;
+        settled = true;
+        try { inspector.finish(); } catch { /* diagnostics must not alter delivery */ }
+        inspector.dispose();
+        persistDownstreamOnce();
+      };
+      return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              settle();
+              controller.close();
+              return;
+            }
+            if (value) inspector.feed(value);
+            controller.enqueue(value);
+          } catch (error) {
+            settle();
+            controller.error(error);
+          }
+        },
+        cancel(reason) {
+          settle();
+          return reader.cancel(reason);
+        },
+      });
+    };
 
     const headers = sanitizePassthroughHeaders(upstreamResponse.headers, codexSafetyBufferingOptions);
     const resolvedModel = headers.get("openai-model")?.trim();
@@ -216,6 +336,8 @@ export async function deliverPassthroughResponse(
     const passthroughCt = headers.get("content-type")?.toLowerCase();
     const isEventStream = passthroughCt?.includes("text/event-stream")
       || (responseEffects.plaintextV2AgentMessageToolNames.size === 0 && upstreamResponse.ok && !!upstreamResponse.body && !passthroughCt && parsed.stream);
+    nativeExchange.isEventStream = !!isEventStream;
+    const inferResponsesMessagePhases = routeUsesResponsesMessagePhaseInference(route.provider, route.modelId);
     const recordTerminalOutcome = codexForwardTerminalOutcomeRecorder(
       config,
       admissionState.authCtx,
@@ -328,6 +450,7 @@ export async function deliverPassthroughResponse(
         // Provenance, not inference: `errorText` is empty when the bounded read finds nothing
         // display-safe, and an empty body is exactly what the retryable-429 default fires on.
         replayRefusal: isReplayRefusalResponse(upstreamResponse),
+        renderQuotaAsClientError: rendersArkQuotaAsClientError(route.providerName),
       });
     }
 
@@ -381,6 +504,11 @@ export async function deliverPassthroughResponse(
       const webSearchBridgeBinding = requestBindings.get(nativeExchange.request);
       // The bridge wraps the RAW upstream body, so terminal repair below still owns the single
       // client-facing terminal — the bridge drops the terminal of every intercepted leg.
+      const rawInboundSseInspector = !webSearchBridgePlan && terminalRepairPolicy && inboundDebugObserver
+        ? createSseInspector({ onParsedPayload: payload => inboundDebugObserver.notePayload(payload) })
+        : undefined;
+      nativeExchange.inboundDebugUsesRawTerminalRepairTap = rawInboundSseInspector !== undefined
+        || (webSearchBridgePlan !== undefined && inboundDebugObserver !== undefined);
       const upstreamSseBody = webSearchBridgePlan
         ? createPassthroughWebSearchBridgeStream({
           plan: webSearchBridgePlan,
@@ -431,6 +559,7 @@ export async function deliverPassthroughResponse(
           // terminal path; after an executed search, the outcome recorder has already settled it.
           onFinalize: () => releaseCodexAuthContextProbeLease(openAiSidecar?.authContext),
           signal: upstream.signal,
+          onRawPayload: payload => inboundDebugObserver?.notePayload(payload),
         })
         : upstreamResponse.body;
       const passthroughSseBody = terminalRepairPolicy
@@ -440,6 +569,11 @@ export async function deliverPassthroughResponse(
           terminalRepairPolicy,
           translatorBudget,
           options.responsesTerminalRepairScheduler,
+          rawInboundSseInspector ? {
+            onChunk: chunk => rawInboundSseInspector.feed(chunk),
+            onFinish: () => rawInboundSseInspector.finish(),
+            onDispose: () => rawInboundSseInspector.dispose(),
+          } : undefined,
         )
         : upstreamSseBody;
       const repairConfig = route.provider.responsesItemIdRepair;
@@ -449,11 +583,16 @@ export async function deliverPassthroughResponse(
       // explicit Grok compatibility marker enables strict client compatibility rewrites.
       // The provider's broader snapshot/lifecycle repair remains opt-in.
       const grokClientCompatibilityEnabled = logCtx.surface === "grok";
-      const snapshotRepairEnabled = hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair);
+      const snapshotRepairEnabled = route.provider.responsesSnapshotRepair !== false
+        && (hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair)
+          || usesVolcengineAgentPlanResponses(route.provider));
       const githubCopilotRepairEnabled = route.providerName === "github-copilot";
       const responseModelRewrite = parsed._responseModelId !== undefined
         && parsed._responseModelId !== parsed.modelId
         ? createResponsesModelPayloadRewrite(parsed._responseModelId)
+        : undefined;
+      const reasoningSummaryBlockRewrite = projectContentChannelReasoning
+        ? createReasoningSummaryChannelBlockRewrite({ translatorBudget })
         : undefined;
       // Compose opt-in payload rewrites into one parse/stringify pass (image-gen restore first).
       const payloadRewrites = [
@@ -481,7 +620,10 @@ export async function deliverPassthroughResponse(
       // Only validated client blocks may publish plaintext continuation state.
       // Raw inspection precedes rewriting on eager relays, so it cannot own this write.
       const plaintextInspector = responseEffects.plaintextV2AgentMessageToolNames.size > 0
-        ? createSseInspector({ onCompletedResponse: rememberPassthroughResponseChecked })
+        ? createSseInspector({
+          onTerminal: nativeExchange.notePlaintextClientTerminal,
+          onCompletedResponse: rememberPassthroughResponseChecked,
+        })
         : undefined;
       const plaintextEncoder = plaintextInspector ? new TextEncoder() : undefined;
       const rememberPlaintextBlock = plaintextInspector
@@ -493,6 +635,17 @@ export async function deliverPassthroughResponse(
       const blockRewrites = [
         payloadRewrites.length > 0
           ? payloadRewriteAsBlockRewrite(composeSsePayloadRewrites(...payloadRewrites))
+          : undefined,
+        reasoningSummaryBlockRewrite,
+        inferResponsesMessagePhases
+          ? createResponsesMessagePhaseBlockRewrite(translatorBudget)
+          : undefined,
+        nestedExecRepairPlan && nestedExecRepairCoordinator
+          ? createNestedExecCallRepairBlockRewrite(
+            nestedExecRepairPlan,
+            nestedExecRepairCoordinator,
+            translatorBudget,
+          )
           : undefined,
         routedCustomToolNames.size > 0 || routedCustomToolRepairNames.size > 0
           ? createRoutedCustomToolRestoreBlockRewrite(
@@ -537,7 +690,11 @@ export async function deliverPassthroughResponse(
             declaredNamelessClientCallTypes,
             providerExecutedCallTypes,
             declaredBareWireToolNames,
+            nestedExecRepairCoordinator ? () => nestedExecRepairCoordinator.reject() : undefined,
           )
+          : undefined,
+        nestedExecRepairCoordinator
+          ? createNestedExecClientOutcomeBlockRewrite(nestedExecRepairCoordinator)
           : undefined,
         rememberPlaintextBlock,
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
@@ -560,9 +717,10 @@ export async function deliverPassthroughResponse(
       // branch retained bytes without a bound. Force the existing bounded,
       // single-reader relay before tee; HTTP fallback responses stay unmarked.
       const forceCodexWsEagerRelay = isCodexWsUpstreamResponse(upstreamResponse);
+      const phaseBarrierRequiresEagerRelay = inferResponsesMessagePhases;
       const inlineEagerRewrite = needsClientRewrite
-        && (forceCodexWsEagerRelay || win32EagerRewrite || eagerPath?.useEagerRelay === true);
-      if (forceCodexWsEagerRelay || eagerPath?.useEagerRelay || win32EagerRewrite) {
+        && (forceCodexWsEagerRelay || win32EagerRewrite || eagerPath?.useEagerRelay === true || phaseBarrierRequiresEagerRelay);
+      if (forceCodexWsEagerRelay || eagerPath?.useEagerRelay || win32EagerRewrite || phaseBarrierRequiresEagerRelay) {
         const turnAc = new AbortController();
         linkAbortSignal(upstream, turnAc.signal);
         registerTurn(turnAc, options.turnAdmissionLease);
@@ -588,29 +746,38 @@ export async function deliverPassthroughResponse(
         const inspector = createSseInspector({
           onTerminal: reportNativeTerminal,
           logCtx,
-          onCompletedResponse: rememberPassthroughResponse && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
+          onCompletedResponse: rememberPassthroughResponse && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberClientVisiblePassthroughResponse : undefined,
           onParsedPayload: noteInspectedPayload,
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
         });
+        const clientInspector = downstreamObserver
+          ? createSseInspector({ onParsedPayload: payload => downstreamObserver.notePayload(payload) })
+          : undefined;
         const eagerBody = relaySseEagerBounded(passthroughSseBody, turnAc, {
           inspectChunk: chunk => inspector.feed(chunk),
           finishInspection: () => inspector.finish(),
-          disposeInspection: () => inspector.dispose(),
+          disposeInspection: () => {
+            inspector.dispose();
+            reasoningReplayProjection?.dispose();
+            persistInboundDebug();
+            nestedExecInspection?.dispose();
+          },
+          ...(clientInspector ? { onClientChunk: (chunk: Uint8Array) => clientInspector.feed(chunk) } : {}),
           // Stream lifetime follows the protocol terminal even when this request
           // has no outcome callback configured (reported() would stay false).
           sawTerminal: () => inspector.terminalSeen(),
           ...(clientBlockRewrite
             ? { rewriteBlocks: clientBlockRewrite }
             : {}),
-          onSynthetic: (kind, reason) => {
+          onSynthetic: (kind, httpStatusOverride) => {
             if (!reportNativeTerminal) return;
             if (kind === "incomplete") {
               logCtx.terminalSource = "synthetic";
               reportNativeTerminal("incomplete");
-            } else if (reason === "upstream_error") {
+            } else if (kind === "upstream-error") {
               logCtx.terminalSource = "synthetic";
-              reportNativeTerminal("failed", logCtx.terminalHttpStatus ?? 502);
+              reportNativeTerminal("failed", httpStatusOverride ?? logCtx.terminalHttpStatus ?? 502);
             } else {
               logCtx.transportPhase = "mid_stream";
               logCtx.terminalSource = "synthetic";
@@ -622,7 +789,15 @@ export async function deliverPassthroughResponse(
             responseEffects.responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
           },
-          onDone: () => unregisterTurn(turnAc),
+          onDone: () => {
+            try { clientInspector?.finish(); } catch { /* Diagnostics must not interrupt delivery. */ }
+            clientInspector?.dispose();
+            persistDownstreamOnce();
+            reasoningReplayProjection?.dispose();
+            persistInboundDebug();
+            nestedExecInspection?.dispose();
+            unregisterTurn(turnAc);
+          },
         }, {
           clientGoneSignal: options.abortSignal,
           terminalBoundary: codexSafetyBufferingOptions,
@@ -684,13 +859,18 @@ export async function deliverPassthroughResponse(
           inspectBody,
           reportNativeTerminal,
           turnAc.signal,
-          () => unregisterTurn(turnAc),
+          () => {
+            persistInboundDebug();
+            reasoningReplayProjection?.dispose();
+            nestedExecInspection?.dispose();
+            unregisterTurn(turnAc);
+          },
           logCtx,
           () => {
             responseEffects.responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
           },
-          rememberPassthroughResponse && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
+          rememberPassthroughResponse && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberClientVisiblePassthroughResponse : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -699,8 +879,13 @@ export async function deliverPassthroughResponse(
           inspectBody,
           logCtx,
           turnAc.signal,
-          () => unregisterTurn(turnAc),
-          rememberPassthroughResponse && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
+          () => {
+            persistInboundDebug();
+            reasoningReplayProjection?.dispose();
+            nestedExecInspection?.dispose();
+            unregisterTurn(turnAc);
+          },
+          rememberPassthroughResponse && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberClientVisiblePassthroughResponse : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -712,7 +897,7 @@ export async function deliverPassthroughResponse(
       const rewrittenBody = clientBlockRewrite !== undefined
         ? relaySseWithBlockRewrite(nativeBody, clientBlockRewrite, translatorBudget)
         : nativeBody;
-      const clientBody = relaySseWithFailedTail(
+      const clientBody = observeClientBoundSse(relaySseWithFailedTail(
         rewrittenBody,
         upstream,
         reason => {
@@ -720,7 +905,7 @@ export async function deliverPassthroughResponse(
           clientGone.abort(reason);
         },
         { upstreamError: logCtx.upstreamError, terminalBoundary: codexSafetyBufferingOptions },
-      );
+      ));
       return markNativePassthroughSseResponse(new Response(clientBody, {
         status: upstreamResponse.status,
         headers,
@@ -735,19 +920,28 @@ export async function deliverPassthroughResponse(
       // Oversize and stall deadlines both fail closed; a partial body is never parsed.
       const bounded = await readBoundedResponseBody(upstreamResponse, UPSTREAM_JSON_BODY_READ_OPTIONS);
       if (bounded.oversized) {
+        inboundDebugObserver?.noteJsonResponse({});
+        persistInboundDebug();
         return formatErrorResponse(502, "upstream_error", "upstream JSON response exceeded the safe body limit");
       }
       if (bounded.truncated) {
+        inboundDebugObserver?.noteJsonResponse({});
+        persistInboundDebug();
         return formatErrorResponse(502, "upstream_error", "upstream JSON response stalled before completing");
       }
       const text = bounded.text;
+      try { inboundDebugObserver?.noteJsonResponse(JSON.parse(text)); } catch { inboundDebugObserver?.noteJsonResponse({}); }
+      persistInboundDebug();
       inspectResponseLogJson(logCtx, text);
       let plaintextV2RestoreFailed = false;
+      const nestedUpstreamJson = nestedExecRepairPlan
+        ? repairNestedExecCallsInJson(text, nestedExecRepairPlan)
+        : text;
       let clientJson = (() => {
         const restoredNamespace = restoreRoutedNamespaceCallsInJson(
           scrubSelfNamedToolCallNamespaceInJson(
             restoreMuseToolNamesInJson(
-              restoreImageGenCallsInJson(text, imageGenCallAliases),
+              restoreImageGenCallsInJson(nestedUpstreamJson, imageGenCallAliases),
               responseEffects.routedMuseToolNameAliases,
             ),
             selfNamedNamespaceScrubAuthorization,
@@ -768,16 +962,29 @@ export async function deliverPassthroughResponse(
           restored,
           routedToolSearchNames,
         );
-        const normalizedJson = normalizeFunctionCompletionJson(restoredToolSearch);
+        const phaseRepaired = inferResponsesMessagePhases
+          ? rewriteResponsesMessagePhasesInJsonString(restoredToolSearch)
+          : restoredToolSearch;
+        const normalizedJson = normalizeFunctionCompletionJson(phaseRepaired);
         const plaintextRestore = restorePlaintextV2AgentMessageCallsInJsonResult(
           normalizedJson, responseEffects.plaintextV2AgentMessageToolNames, responseEffects.plaintextV2AgentMessageAliasedToolNames,
         );
         plaintextV2RestoreFailed = plaintextRestore.overflowed;
-        const repaired = plaintextRestore.value;
+        const snapshotRepaired = (route.provider.responsesSnapshotRepair !== false
+          && (hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair)
+            || usesVolcengineAgentPlanResponses(route.provider)))
+          ? repairResponsesSnapshotJson(plaintextRestore.value, nativeExchange.outboundRequestBody)
+          : plaintextRestore.value;
+        const repaired = repairFunctionCallsInJson(
+          backfillResponsesFieldsJson(snapshotRepaired),
+          functionRepairSchemas,
+        );
         const modelRewritten = parsed._responseModelId !== undefined && parsed._responseModelId !== parsed.modelId
           ? rewriteResponsesModelJson(repaired, parsed._responseModelId)
           : repaired;
-        return modelRewritten;
+        return projectContentChannelReasoning
+          ? rewriteReasoningSummaryInJsonString(modelRewritten)
+          : modelRewritten;
       })();
       if (plaintextV2RestoreFailed) {
         return formatErrorResponse(502, "upstream_error", PLAINTEXT_V2_AGENT_MESSAGE_RESTORE_OVERFLOW_MESSAGE);
@@ -812,9 +1019,12 @@ export async function deliverPassthroughResponse(
       commitReasoningReplayServingRoute(nativeExchange.request.headers);
       try {
         rememberPassthroughResponseChecked(
-          JSON.parse(text) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
+          JSON.parse(clientJson) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
         );
       } catch { /* non-JSON despite content-type; recording is best-effort */ }
+      nestedExecRepairCoordinator?.markClientCommitted();
+      nestedExecInspection?.dispose();
+      nestedExecRepairCoordinator?.dispose();
       // #875: the transport-neutral reliability policy forced a bounded JSON
       // upstream for a client that asked for SSE. Reframe the completed JSON
       // as the canonical terminal SSE sequence (created → output_item.done →
@@ -859,7 +1069,7 @@ export async function deliverPassthroughResponse(
           const sseHeaders = sanitizePassthroughHeaders(headers, codexSafetyBufferingOptions);
           sseHeaders.set("content-type", "text/event-stream");
           sseHeaders.set("cache-control", "no-store");
-          return new Response(stream, {
+          return new Response(observeClientBoundSse(stream), {
             status: upstreamResponse.status,
             statusText: upstreamResponse.statusText,
             headers: sseHeaders,
@@ -883,6 +1093,11 @@ export async function deliverPassthroughResponse(
           }
         })()
         : clientJson;
+      if (downstreamObserver) {
+        try { downstreamObserver.noteJsonResponse(JSON.parse(outboundJson)); }
+        catch { downstreamObserver.noteJsonResponse({}); }
+        persistDownstreamOnce();
+      }
       return new Response(outboundJson, {
         status: upstreamResponse.status,
         statusText: upstreamResponse.statusText,
@@ -895,6 +1110,8 @@ export async function deliverPassthroughResponse(
     }
     // An unclassified passthrough body is relayed directly and has no bounded completion observer;
     // use the same non-error-status success boundary as SSE instead of retaining per-stream state.
+    nestedExecInspection?.dispose();
+    nestedExecRepairCoordinator?.dispose();
     commitReasoningReplayServingRoute(nativeExchange.request.headers);
     const body = relayWithAbort(upstreamResponse.body, upstream);
     const turnAc = new AbortController();
