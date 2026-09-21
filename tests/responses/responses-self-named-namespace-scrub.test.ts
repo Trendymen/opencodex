@@ -6,21 +6,32 @@
  * which no client tool matches, and Codex re-issues the call every turn. The generic scrub
  * protects authorized bare custom tools on client-facing passthrough (SSE and bounded JSON).
  */
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { handleResponses } from "../../src/server/responses";
 import { scrubSelfNamedToolCallNamespace } from "../../src/server/responses-self-named-namespace-scrub";
 import type { OcxConfig } from "../../src/types";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
 let releaseSpendHome: (() => void) | undefined;
 // Direct dispatch needs the writer lease that prevents spend-ledger ownership failures.
 const takeSpendHome = (): void => { releaseSpendHome ??= acquireOwnedSpendHome(); };
+// 本文件验证 HTTP/SSE 改写；WS 构造拒绝后进入已有 HTTP fallback，不访问外网。
+class SseOnlyWebSocket {
+  constructor() {
+    throw new Error("HTTP/SSE namespace fixture does not open WebSockets");
+  }
+}
+beforeEach(() => {
+  globalThis.WebSocket = SseOnlyWebSocket as unknown as typeof WebSocket;
+});
 afterEach(() => {
   // Release the lease before later teardown can replace the preload sandbox home.
   releaseSpendHome?.();
   releaseSpendHome = undefined;
   globalThis.fetch = originalFetch;
+  globalThis.WebSocket = originalWebSocket;
 });
 
 function forwardConfig(): OcxConfig {

@@ -546,6 +546,16 @@ describe("bun test argv", () => {
     expect(plan.find(lane => lane.label === "codex-shim.test.ts")?.timeoutMs).toBe(3 * 60 * 1000);
   });
 
+  test("the default full suite gives memory watchdog a fresh one-worker process", () => {
+    const plan = resolveBunTestPlan([]);
+    expect(plan[0]?.args).toContain("**/memory-watchdog.test.ts");
+    expect(plan.find(lane => lane.label === "memory-watchdog.test.ts")?.args).toEqual([
+      "--isolate",
+      "--parallel=1",
+      "./tests/server/memory-watchdog.test.ts",
+    ]);
+  });
+
   test("serial lanes override caller parallelism without changing the main lane", () => {
     const plan = resolveBunTestPlan(["--parallel=2", "--only-failures"]);
     expect(plan[0]?.args).toContain("--parallel=2");
