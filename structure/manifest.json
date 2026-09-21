@@ -6,10 +6,6 @@
   ],
   "absentPaths": [
     {
-      "path": "docs/",
-      "reason": "the root docs/ folder is retired; ops/docs-and-release.md documents where its material went and that no docs/ tree is tracked"
-    },
-    {
       "path": "go/",
       "reason": "the Go native-runtime experiment is retired; ops/docs-and-release.md documents that no go/ tree is tracked"
     }
@@ -367,6 +363,15 @@
       "documents": [
         "src/lab/",
         "src/server/index.ts"
+      ]
+    },
+    {
+      "path": "fork-extensions.md",
+      "tier": 4,
+      "title": "Trendymen Fork Extensions",
+      "scope": "Fork-only provider compatibility, Responses repair, diagnostics, and release policy modules.",
+      "documents": [
+        "src/fork/"
       ]
     },
     {

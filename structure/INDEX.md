@@ -65,6 +65,7 @@ Per-vendor contracts and the adapter authority that constructs them.
 | [`adapters/registry.md`](adapters/registry.md) | The single adapter construction authority and contract inheritance. |
 | [`adapters/compatibility-contracts.md`](adapters/compatibility-contracts.md) | Versioned provider compatibility claims and fixture-evidence boundaries. |
 | [`adapters/compatibility-lab.md`](adapters/compatibility-lab.md) | Optional Lab evidence, automation, and its core-runtime isolation boundary. |
+| [`fork-extensions.md`](fork-extensions.md) | Fork-only provider compatibility, Responses repair, diagnostics, and release policy modules. |
 
 ### Tier 5 — Surfaces and clients
 
@@ -122,6 +123,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/config.ts` | [`overview.md`](overview.md)<br>[`runtime.md`](runtime.md)<br>[`config.md`](config.md)<br>[`providers/openai-accounts.md`](providers/openai-accounts.md) |
 | `src/config/` | [`runtime.md`](runtime.md)<br>[`config.md`](config.md) |
 | `src/config/persisted-mutation.ts` | [`runtime.md`](runtime.md) |
+| `src/fork/` | [`fork-extensions.md`](fork-extensions.md) |
 | `src/generated/` | [`runtime.md`](runtime.md) |
 | `src/github/` | [`runtime.md`](runtime.md) |
 | `src/grok/` | [`runtime.md`](runtime.md) |
