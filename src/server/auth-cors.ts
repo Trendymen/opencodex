@@ -36,6 +36,7 @@ import { DECLARABLE_HOSTED_TOOL_TYPES } from "../responses/hosted-tool-policy";
 import { effectiveGoogleMode, getProviderRegistryEntry, providerCodexAccountMode, providerMatchesRegistryTransport, registryEntryForProviderDestination } from "../providers/registry";
 import { providerConfigSeed } from "../providers/derive";
 import type { OcxConfig, OcxProviderConfig } from "../types";
+import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers";
 import { openRouterRoutingConfigError } from "../providers/openrouter-routing";
 import { modelAutoCompactTokenLimitsConfigError } from "../providers/auto-compact-budget";
 import { vercelGatewayRoutingConfigError } from "../providers/vercel-gateway-routing";
@@ -718,6 +719,7 @@ export function providerManagementConfigError(
     // Validated operator overlays do not change the canonical auth/transport seed.
     delete canonicalCandidate.pinnedReasoningEffort;
     delete canonicalCandidate.modelPinnedReasoningEfforts;
+    delete canonicalCandidate.agentMessageFormat;
     delete canonicalCandidate.responsesSnapshotRepair;
     // modelCosts is a user-owned display overlay, not part of the canonical
     // forward seed; it is validated separately below (providerModelCostsConfigError).
@@ -877,6 +879,16 @@ export function providerManagementConfigError(
         + `${[...DECLARABLE_HOSTED_TOOL_TYPES].join(", ")}`;
     }
   }
+  const messagePhaseInferenceError = nonBlankStringArrayConfigError(
+    raw.inferResponsesMessagePhaseModels,
+    "inferResponsesMessagePhaseModels",
+  );
+  if (messagePhaseInferenceError) return `provider ${name} ${messagePhaseInferenceError}`;
+  if (raw.agentMessageFormat !== undefined
+    && raw.agentMessageFormat !== "preserve"
+    && raw.agentMessageFormat !== "user_message") {
+    return `provider ${name} agentMessageFormat must be preserve or user_message`;
+  }
   const openRouterError = openRouterRoutingConfigError(typed);
   if (openRouterError) return `provider ${name} ${openRouterError}`;
   const vercelError = vercelGatewayRoutingConfigError(typed);
@@ -892,10 +904,8 @@ export function providerManagementConfigError(
   }
   if (typed.authMode === "forward") {
     const normalizedName = name.trim().toLowerCase();
-    const base = typed.baseUrl.replace(/\/+$/, "");
     const isBuiltInChatGptForward = normalizedName === "openai"
-      && typed.adapter === "openai-responses"
-      && base === "https://chatgpt.com/backend-api/codex";
+      && isCanonicalOpenAiForwardProvider(typed);
     if (isBuiltInChatGptForward) return null;
     return `provider ${name} uses reserved authMode "forward"; configure ChatGPT passthrough via the built-in provider`;
   }
@@ -957,6 +967,8 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   statelessResponses: "editor",
   requiresAdjacentResponsesToolResults: "editor",
   requiresPairedResponsesToolResults: "editor",
+  inferResponsesMessagePhaseModels: "editor",
+  agentMessageFormat: "editor",
   annotateEmptyToolOutputs: "editor",
   supportsServiceTier: "editor",
   modelSupportsServiceTier: "editor",

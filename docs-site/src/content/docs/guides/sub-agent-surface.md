@@ -141,8 +141,20 @@ appears earlier in the chain. Combos remain canonical-native-only.
 
 ## Encrypted v2 task delivery
 
+For ordinary third-party Responses routes, this fork removes the ChatGPT-only `encrypted`
+annotation from function tool parameter schemas before sending them upstream. This includes
+namespace tools and tools supplied through `additional_tools`. OpenAI-operated Responses
+destinations and direct key-auth relays explicitly trusted with `allowEncryptedV2AgentTasks: true`
+retain the annotation. A third-party combo member does not inherit that direct-relay exception,
+including when its API key selection changes before dispatch. Properties actually named
+`encrypted`, schema literal values, and the caller's original schemas are preserved.
+
+This prepares the tool schema for plaintext delegation; it does not decrypt or repair an existing
+task payload. A malformed message already present in task history must be replaced with a valid
+plaintext assignment. The encrypted-task checks and recovery rules below still apply.
+
 Codex may send a v2 native-to-routed child task only as backend-encrypted `encrypted_content`. That
-payload can be read by the native ChatGPT backend, but not by an external provider. This is the
+payload can be read by the native ChatGPT backend, but not by an external provider without matching support. This is the
 known [#92 limitation](https://github.com/lidge-jun/opencodex/issues/92).
 
 opencodex fails safely instead of forwarding an empty or unreadable task:
@@ -181,6 +193,25 @@ Such a thread replays a backend-minted encrypted agent message on every later tu
 only workaround was to start a new thread. That switch turn is not a spawn, so the direct routed
 path no longer restricts recovery to spawned child turns; combo recovery still does.
 
+The same opt-in also covers an admitted routed parent receiving an encrypted worker `MESSAGE`; the
+current request need not be a spawned child. Existing admission checks, cache scope, and strict
+message-envelope validation still apply.
+
+For a strict backend-ciphertext `NEW_TASK` envelope on a canonical native ChatGPT child, the native
+target is attempted directly first. Only after its normal pre-output transient-5xx retries are
+exhausted can recovery run once; it converts only that task item and retries the same native target.
+A direct native success never triggers recovery.
+
+Recovery uses `gpt-5.6-luna` with `reasoning.effort: "medium"` by default. Each attempt may run
+for up to 120 seconds. After response headers arrive, first-byte and inactivity stalls remain
+limited to 45 seconds. Only timeout
+attempts retry, at most twice after the first attempt. When those retries are exhausted for an
+admitted parent `MESSAGE`, opencodex sends the routed parent a non-persistent notice instead of
+stopping it with `unreadable_encrypted_agent_task`. The notice first tells the parent to use an
+already received complete final answer when available; otherwise it asks for up to two resends, then
+to use a tool that returns the child's final text or wait for completion. It does not expose
+ciphertext or claim the message was read or reviewed. Other
+recovery failures, malformed envelopes, and cancellation keep their existing fail-closed behavior.
 Combo routing prefers a selectable canonical native ChatGPT target for encrypted tasks. If none
 is usable, or native authorization attempts are exhausted, an explicitly enabled recovery may
 make the task readable for one available routed target. All recovery trust and no-persistence

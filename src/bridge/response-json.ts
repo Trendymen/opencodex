@@ -17,6 +17,7 @@ import {
   type OcxErrorPayload,
 } from "../lib/errors";
 import { mayBecomePatchEnvelope, repairFreeformToolInput } from "../responses/apply-patch-envelope";
+import { stripAnnotationDirectiveCodeSpans } from "../responses/annotation-directive";
 import { encodeCompactionSummary } from "../responses/compaction";
 import { compileCodeModeHelperInput, resolveCodeModeHelperName } from "../responses/code-mode-helper-compat";
 import { isTruncatedStopReason, truncationReasonFor } from "../responses/truncated-stop-reason";
@@ -225,7 +226,7 @@ function buildResponseJSONWithBudget(
     // ChatGPT-backend citation markers arrive as literal private-use characters that the
     // Codex TUI prints verbatim (#3150). Strip them here rather than at the accumulator so
     // the retained byte accounting above still describes what the upstream actually sent.
-    const text = stripCitationMarkers(currentTextStr);
+    const text = stripAnnotationDirectiveCodeSpans(stripCitationMarkers(currentTextStr));
     const sourceBytes = pendingWebSources.reduce((sum, source) => sum + bytesOf(JSON.stringify(source)), 0);
     const annotations = pendingWebSources.map(s => ({
       type: "url_citation", url: s.url, ...(s.title ? { title: s.title } : {}), start_index: 0, end_index: 0,
