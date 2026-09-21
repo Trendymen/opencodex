@@ -124,11 +124,14 @@ When encrypted agent-task recovery refuses a routed task, its existing 400 error
 can include a bounded `recovery_reason`: `unsupported_envelope`,
 `admission_denied`, `recovery_unavailable`, `caller_cancelled`, `input_changed`,
 `recovery_http_rejected`, `recovery_timeout`, `recovery_aborted`,
-`recovery_transport_error`, or `recovery_invalid_output`.
+`recovery_transport_error`, `recovery_invalid_output`, or `recovery_unreadable`.
 HTTP rejection requires an observed non-success response. Invalid output includes
 invalid UTF-8, oversized bodies, malformed or incomplete recovery streams, and
 invalid or conflicting assignments. A caller's cancellation takes precedence over
 an owned deadline, which takes precedence over decode/transport failures.
+`recovery_unreadable` requires the recovery endpoint itself to terminate the stream with
+`invalid_encrypted_content`: the endpoint that owns the key refused those bytes, so the
+failure is terminal for that ciphertext rather than a retriable transcription defect.
 `recovery_aborted` describes a shared recovery cancelled independently of that caller.
 Shared-flight waiters receive the same underlying failure unless individually cancelled;
 only successful plaintext is cached. Diagnostics contain no upstream error or payload text.

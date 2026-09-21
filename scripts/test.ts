@@ -352,6 +352,9 @@ export const SERIAL_FULL_SUITE_FILES = [
   "adapters/openai/openai-provider-option-e2e.test.ts",
   "ci-workflows/release-helper.test.ts",
   "update/update-stop-first.test.ts",
+  "server/memory-watchdog.test.ts",
+  "server/server-live.test.ts",
+  "responses/responses-opaque-blob-recovery.test.ts",
 ] as const;
 
 type SerialLaneBasename = (typeof SERIAL_FULL_SUITE_FILES)[number] extends infer P
