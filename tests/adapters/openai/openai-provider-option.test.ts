@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { repoPath } from "../../helpers/repo-root";
 import {
   isCanonicalOpenAiForwardProvider as destinationIsCanonicalOpenAiForwardProvider,
+  isThirdPartyNonGptResponsesRoute,
   OPENAI_CODEX_PROVIDER_ID as DESTINATION_OPENAI_CODEX_PROVIDER_ID,
 } from "../../../src/providers/openai-tiers-destination";
 import { getDefaultConfig } from "../../../src/config";
@@ -12,12 +13,14 @@ import { getProviderRegistryEntry, providerCodexAccountMode } from "../../../src
 import {
   isCanonicalOpenAiForwardProvider,
   isOpenAiOperatedResponsesDestination,
+  supportsNativeResponsesCompactEndpoint,
   LEGACY_CHATGPT_PROVIDER_ID,
   LEGACY_OPENAI_MULTI_PROVIDER_ID,
   OPENAI_API_PROVIDER_ID,
   OPENAI_CODEX_PROVIDER_ID,
 } from "../../../src/providers/openai-tiers";
 import { OPENAI_PROVIDER_TIER_VERSION } from "../../../src/types";
+import { selectOpenAiImagesProvider } from "../../../src/providers/openai-sidecar";
 
 describe("OpenAI single-provider option foundation", () => {
   test("locks exact ids, modes, and migration version", () => {
@@ -43,6 +46,10 @@ describe("OpenAI single-provider option foundation", () => {
     expect(isCanonicalOpenAiForwardProvider({ ...canonical, adapter: "openai-chat" })).toBe(false);
     expect(isCanonicalOpenAiForwardProvider({ ...canonical, authMode: "key" })).toBe(false);
     expect(isCanonicalOpenAiForwardProvider({ ...canonical, baseUrl: `${canonical.baseUrl}?x=1` })).toBe(false);
+    expect(isCanonicalOpenAiForwardProvider({})).toBe(false);
+    expect(isCanonicalOpenAiForwardProvider({ adapter: "openai-responses" })).toBe(false);
+    expect(isCanonicalOpenAiForwardProvider({ baseUrl: canonical.baseUrl })).toBe(false);
+    expect(isCanonicalOpenAiForwardProvider({ adapter: "openai-responses", baseUrl: canonical.baseUrl })).toBe(false);
   });
 
   test("classifies only exact official OpenAI Responses destinations", () => {
@@ -95,6 +102,39 @@ describe("OpenAI single-provider option foundation", () => {
       baseUrl: "https://api.openai.com/v1",
       responsesPath: "/responses",
     })).toBe(true);
+  });
+
+  test("keeps compact normalization and Images raw-base matching separate", () => {
+    const config = getDefaultConfig();
+    config.providers["openai-apikey"] = {
+      adapter: "openai-responses",
+      authMode: "key",
+      apiKey: "sk-test",
+      baseUrl: "https://api.openai.com/v1",
+      responsesPath: "/custom-responses",
+    };
+    const provider = config.providers["openai-apikey"]!;
+    expect(supportsNativeResponsesCompactEndpoint("openai-apikey", provider)).toBe(true);
+    expect(selectOpenAiImagesProvider(config).keyed?.providerName).toBe("openai-apikey");
+
+    provider.baseUrl = "https://api.openai.com/v1/";
+    expect(supportsNativeResponsesCompactEndpoint("openai-apikey", provider)).toBe(true);
+    expect(selectOpenAiImagesProvider(config).keyed?.providerName).toBe("openai-apikey");
+
+    provider.baseUrl = " https://api.openai.com/v1 ";
+    expect(supportsNativeResponsesCompactEndpoint("openai-apikey", provider)).toBe(true);
+    expect(selectOpenAiImagesProvider(config).keyed).toBeUndefined();
+
+    provider.baseUrl = "https://API.OPENAI.COM/v1";
+    expect(supportsNativeResponsesCompactEndpoint("openai-apikey", provider)).toBe(true);
+    expect(selectOpenAiImagesProvider(config).keyed).toBeUndefined();
+  });
+
+  test("classifies third-party non-GPT Responses routes from destination and resolved model", () => {
+    expect(isThirdPartyNonGptResponsesRoute({ adapter: "openai-responses", baseUrl: "https://gateway.example.test/v1" }, "glm-5.3")).toBe(true);
+    expect(isThirdPartyNonGptResponsesRoute({ adapter: "openai-responses", baseUrl: "https://gateway.example.test/v1" }, "openai/gpt-oss-120b")).toBe(false);
+    expect(isThirdPartyNonGptResponsesRoute({ adapter: "openai-responses", baseUrl: "https://api.openai.com/v1" }, "glm-5.3")).toBe(false);
+    expect(isThirdPartyNonGptResponsesRoute({ adapter: "openai-chat", baseUrl: "https://gateway.example.test/v1" }, "glm-5.3")).toBe(false);
   });
 
   test("publishes one Codex-login registry, preset, init, and default row", () => {
