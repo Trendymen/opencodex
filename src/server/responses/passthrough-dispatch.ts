@@ -165,7 +165,7 @@ import { hasStrictBackendEncryptedAgentTask } from "./encrypted-payload";
 import { parseRequest } from "../../responses/parser";
 import {
   createReasoningSummaryReplayProjection,
-  routeUsesContentChannelReasoning,
+  shouldProjectContentChannelReasoning,
 } from "../responses-reasoning-summary-rewrite";
 import {
   createNestedExecAdapterEventRepair,
@@ -542,11 +542,11 @@ export async function preparePassthroughExchange(
       : undefined;
     const passiveQuotaObserved = hasPassiveAccountQuota(route.providerName)
       && route.provider.authMode === "oauth";
-    const requestedReasoningSummary = (parsed._rawBody as { reasoning?: { summary?: unknown } }).reasoning?.summary;
-    const projectContentChannelReasoning = typeof requestedReasoningSummary === "string"
-      && requestedReasoningSummary.length > 0
-      && requestedReasoningSummary !== "none"
-      && routeUsesContentChannelReasoning(route.provider, route.modelId);
+    const projectContentChannelReasoning = shouldProjectContentChannelReasoning(
+      parsed._rawBody,
+      route.provider,
+      route.modelId,
+    );
     const reasoningReplayProjection = projectContentChannelReasoning
       ? createReasoningSummaryReplayProjection({ translatorBudget })
       : undefined;
