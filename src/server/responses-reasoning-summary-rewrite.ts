@@ -798,6 +798,21 @@ export function rewriteReasoningSummaryInJsonString(json: string): string {
   return rewritten === parsed ? json : JSON.stringify(rewritten);
 }
 
+/** True when a request asks to project a content-channel reasoning trace. */
+export function shouldProjectContentChannelReasoning(
+  rawBody: unknown,
+  provider: { statelessResponses?: boolean; preserveReasoningContentModels?: string[] },
+  modelId: string,
+): boolean {
+  const summary = isPlainObject(rawBody) && isPlainObject(rawBody.reasoning)
+    ? rawBody.reasoning.summary
+    : undefined;
+  return typeof summary === "string"
+    && summary.length > 0
+    && summary !== "none"
+    && routeUsesContentChannelReasoning(provider, modelId);
+}
+
 /**
  * True when a routed native-Responses provider emits content-channel reasoning
  * (raw `reasoning_text`) instead of the summary channel. DeepSeek's
