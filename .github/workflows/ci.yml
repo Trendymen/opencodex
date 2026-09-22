@@ -155,10 +155,10 @@ jobs:
       # shape-checked by the same validation step as `native`.
       keyring_matrix: ${{ steps.matrices.outputs.keyring_matrix }}
       npm_global_matrix: ${{ steps.matrices.outputs.npm_global_matrix }}
-      gui: ${{ steps.filter.outputs.gui }}
-      packaging: ${{ steps.filter.outputs.packaging }}
-      docs: ${{ steps.filter.outputs.docs }}
-      structure: ${{ steps.filter.outputs.structure }}
+      gui: ${{ steps.scope.outputs.gui }}
+      packaging: ${{ steps.scope.outputs.packaging }}
+      docs: ${{ steps.scope.outputs.docs }}
+      structure: ${{ steps.scope.outputs.structure }}
       # Narrow scopes for two paths the ci filter leaves out on purpose. Both are re-emitted by the
       # validation step below, so a malformed filter output fails this job instead of silently
       # skipping the check it selects.
