@@ -368,6 +368,18 @@ export const SERIAL_FULL_SUITE_FILES = [
   // its neighbours.
   "server/server-live.test.ts",
   "responses/responses-opaque-blob-recovery.test.ts",
+  "ci-workflows/fork-install-local-staging.test.ts",
+  "ci-workflows/fork-install-local-volta-root.test.ts",
+  "ci-workflows/install-scripts.test.ts",
+  "codex-integration/codex-journal.test.ts",
+  "codex-integration/codex-cli-update-zero-effect.test.ts",
+  "providers/cursor/cursor-native-exec.test.ts",
+  "update/update-npm-cache-preflight.test.ts",
+  "update/fork-update-monotonicity.test.ts",
+  "clients/aside-profile-sync-owner.test.ts",
+  "adapters/translator-budget.test.ts",
+  "codex-integration/doctor.test.ts",
+  "claude-integration/claude-messages-endpoint.test.ts",
   "server/memory-watchdog.test.ts",
   // These exercise the default-home service authority, shared by parallel Bun workers.
   // A fresh process/home prevents another file's authority from becoming this fixture's input.
