@@ -142,14 +142,14 @@ afterEach(() => {
 
 
   test("keeps the GUI recovery-kind map exhaustive with the persisted backend union", () => {
-    const backendSource = readFileSync(repoPath("src/usage/log.ts"), "utf8");
+    const backendSource = readFileSync(repoPath("src/usage/telemetry-contract.ts"), "utf8");
     const guiSource = readFileSync(repoPath("gui/src/pages/Logs.tsx"), "utf8");
-    const backendBlock = /export type AttemptRecoveryKind =([\s\S]*?);/.exec(backendSource)?.[1];
+    const backendBlock = /ATTEMPT_RECOVERY_KIND_ROSTER = Object\.freeze\(\[([\s\S]*?)\] as const\)/.exec(backendSource)?.[1];
     const guiBlock = /const RECOVERY_KIND_KEYS = \{([\s\S]*?)\n\} as const satisfies Record<AttemptRecoveryKind, string>/.exec(guiSource)?.[1];
 
     expect(backendBlock).toBeDefined();
     expect(guiBlock).toBeDefined();
-    const backendKinds = [...backendBlock!.matchAll(/\|\s*"([^"]+)"/g)].map(match => match[1]).sort();
+    const backendKinds = [...backendBlock!.matchAll(/^\s*"([^"]+)",?$/gm)].map(match => match[1]).sort();
     const guiKinds = [...guiBlock!.matchAll(/^\s*"([^"]+)":/gm)].map(match => match[1]).sort();
     expect(guiKinds).toEqual(backendKinds);
   });

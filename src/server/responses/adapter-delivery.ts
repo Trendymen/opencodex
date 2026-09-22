@@ -196,7 +196,12 @@ export async function deliverAdapterResponse(
     if (shouldProjectContentChannelReasoning(parsed._rawBody, route.provider, route.modelId)) {
       sseStream = relaySseWithBlockRewrite(
         sseStream,
-        createReasoningSummaryChannelBlockRewrite({ translatorBudget }),
+        createReasoningSummaryChannelBlockRewrite({
+          translatorBudget,
+          ...(logCtx.provider === "xai" && transportState.activeAdapter.name === "openai-chat"
+            ? { emitInitialSparseDelta: true }
+            : {}),
+        }),
         translatorBudget,
       );
     }
