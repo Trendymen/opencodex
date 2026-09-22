@@ -33,30 +33,6 @@ on:
     # breaks publication.
   push:
     branches: [dev, main, preview]
-    # paths:
-    #  - "Dockerfile"
-    #  - "compose.yaml"
-    #  - ".dockerignore"
-    #  - "docker/**"
-    #  - "src/**"
-    #  - "bin/**"
-    #  - "tests/**"
-    #  - "scripts/**"
-    #  - "app/**"
-    #  - "desktop/**"
-    #  - "gui/**"
-    #  - "assets/**"
-    #  - ".gitattributes"
-    #  - ".npmignore"
-    #  - "package.json"
-    #  - "bun.lock"
-    #  - "tsconfig.json"
-    #  - "README.md"
-    #  - "LICENSE"
-    #  - ".github/workflows/ci.yml"
-    #  - ".github/workflows/release.yml"
-    #  - ".github/workflows/enforce-pr-target.yml"
-    #  - ".github/workflows/stale-needs-info.yml"
   workflow_dispatch:
     inputs:
       lane:
