@@ -12,8 +12,14 @@ import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "..
 import type { OcxProviderContinuationState, AdapterEvent } from "../../types";
 import { rememberResponseState } from "../../responses/state";
 import { trackStreamLifetime } from "../lifecycle";
+import { relaySseWithBlockRewrite } from "../sse-payload-rewrite";
 import { awaitThoughtSignatureDurability } from "../../responses/thought-signature-replay";
 import { adapterResponseReachedServingTerminal } from "./core-replay";
+import {
+  createReasoningSummaryChannelBlockRewrite,
+  rewriteReasoningSummaryInJson,
+  shouldProjectContentChannelReasoning,
+} from "../responses-reasoning-summary-rewrite";
 import {
   readResponseBodyWithInactivity,
   readResponseStreamWithInactivity,
@@ -176,7 +182,7 @@ export async function deliverAdapterResponse(
         bindUsage: usage => transportState.bindKeyUsageFromBridge(usage),
       });
     }
-    const sseStream = bridgeToResponsesSSE(
+    let sseStream = bridgeToResponsesSSE(
       repairAdapterEventSource(guardedEventStream), parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
       () => { cancelResponseCompletion(); upstream.abort(); }, 2_000,
       {
@@ -202,6 +208,13 @@ export async function deliverAdapterResponse(
         onCompletedResponse,
       },
     );
+    if (shouldProjectContentChannelReasoning(parsed._rawBody, route.provider, route.modelId)) {
+      sseStream = relaySseWithBlockRewrite(
+        sseStream,
+        createReasoningSummaryChannelBlockRewrite({ translatorBudget }),
+        translatorBudget,
+      );
+    }
     const bridgeTurnAc = new AbortController();
     const trackedSse = trackStreamLifetime(sseStream, bridgeTurnAc, cleanupUpstreamAbort, options.turnAdmissionLease);
     return new Response(trackedSse, {
@@ -303,7 +316,10 @@ export async function deliverAdapterResponse(
       commitReasoningReplayServingRoute();
     }
     notifyResponseComplete(json);
-    return new Response(JSON.stringify(json), { headers: { "Content-Type": "application/json" } });
+    const responseJson = shouldProjectContentChannelReasoning(parsed._rawBody, route.provider, route.modelId)
+      ? rewriteReasoningSummaryInJson(json)
+      : json;
+    return new Response(JSON.stringify(responseJson), { headers: { "Content-Type": "application/json" } });
   }
 
   return formatErrorResponse(400, "invalid_request_error", "Non-streaming not supported by this adapter");
