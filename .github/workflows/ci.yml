@@ -23,14 +23,10 @@ on:
     # because this workflow is `pull_request` (not `pull_request_target`),
     # declares `contents: read`, and reads no secrets.
     #
-    # `push:` stays pinned to the release lines: it gates publication, and
-    # review is covered by the pull_request trigger above. dev is dropped:
-    # its integration evidence comes from the pull_request run into dev, and
-    # workflow_dispatch covers anything a maintainer wants proven by hand.
-    # main and preview MUST stay: release.yml requires a successful
-    # push-event Cross-platform CI run for the exact release SHA and states
-    # that a pull-request run does not qualify, so removing either branch
-    # breaks publication.
+    # Fork: dev, main, and preview all require push-event exact-SHA aggregate CI.
+  # dev provides the candidate CI evidence for same-tree amend releases.
+  # main and preview gate publication: release.yml requires a successful
+  # push-event run that a pull_request run cannot replace.
   push:
     branches: [dev, main, preview]
   workflow_dispatch:
@@ -156,16 +152,15 @@ jobs:
       # step. A missing or malformed filter output must fail this job instead
       # of silently making every expensive job skip.
       ci: ${{ steps.scope.outputs.ci }}
-    native: ${{ steps.matrices.outputs.native }}
+      native: ${{ steps.matrices.outputs.native }}
       # Matrix include lists for keyring-smoke and npm-global-smoke, built and
       # shape-checked by the same validation step as `native`.
       keyring_matrix: ${{ steps.matrices.outputs.keyring_matrix }}
       npm_global_matrix: ${{ steps.matrices.outputs.npm_global_matrix }}
-      gui: ${{ steps.filter.outputs.gui }}
-      packaging: ${{ steps.filter.outputs.packaging }}
-      docs: ${{ steps.filter.outputs.docs }}
-      structure: ${{ steps.filter.outputs.structure }}
-施)
+      gui: ${{ steps.scope.outputs.gui }}
+      packaging: ${{ steps.scope.outputs.packaging }}
+      docs: ${{ steps.scope.outputs.docs }}
+      structure: ${{ steps.scope.outputs.structure }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7

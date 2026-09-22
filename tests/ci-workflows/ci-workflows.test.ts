@@ -30,7 +30,7 @@ const lastReadinessCommentBody = lastGateCommentBody;
 /** Alias kept for scenarios that named the pre-consolidation enforcer comment. */
 const lastEnforcerCommentBody = lastGateCommentBody;
 const root = pathToFileURL(repoRoot() + "/");
-nst doctorGuiIfChangedScript = fileURLToPath(new URL("../../scripts/doctor-gui-if-changed.ts", import.meta.url));
+const doctorGuiIfChangedScript = fileURLToPath(new URL("../../scripts/doctor-gui-if-changed.ts", import.meta.url));
 const lintGuiIfChangedScript = fileURLToPath(new URL("../../scripts/lint-gui-if-changed.ts", import.meta.url));
 async function readText(path: string): Promise<string> {
   return await Bun.file(new URL(path, root)).text();
@@ -491,11 +491,9 @@ describe("GitHub Actions hardening", () => {
       }
     }
 
-    // The push trigger stays pinned to the release-relevant lines: main and
-    // preview MUST stay because release.yml requires a successful push-event
-    // run for the exact release SHA and states that a pull-request run does
-    // not qualify. dev is deliberately absent: its integration evidence is
-    // the pull_request run, with workflow_dispatch for anything else.
+    // Every release-relevant branch needs a push aggregate: main and preview
+    // require a successful push-event run for the exact release SHA, and dev
+    // candidates cannot inherit CI from an older SHA after a same-tree amend.
     const ci = Bun.YAML.parse(await readText(".github/workflows/ci.yml")) as {
       on?: {
         push?: { branches?: string[]; paths?: string[] };
@@ -523,9 +521,9 @@ describe("GitHub Actions hardening", () => {
     expect(ci.on?.pull_request?.branches).toBeUndefined();
     expect(ci.on?.pull_request?.paths).toBeUndefined();
 
-    // The push trigger and pull-request `changes` job share one expensive-CI
-    // allowlist. PRs always create the workflow and aggregate check; this list
-    // decides whether the costly jobs run. Pin the entire list on both paths.
+    // Pushes always create an aggregate run. The pull-request `changes` job
+    // owns the expensive-CI allowlist, while official path-scoped jobs and
+    // steps retain their own conditions.
     const ciPaths = [
       ".dockerignore",
       ".gitattributes",
@@ -551,7 +549,7 @@ describe("GitHub Actions hardening", () => {
       "tests/**",
       "tsconfig.json",
     ];
-    expect([...(ci.on?.push?.paths ?? [])].sort()).toEqual(ciPaths);
+    expect(ci.on?.push?.paths).toBeUndefined();
 
     const filterStep = (ci.jobs?.changes as {
       steps?: { with?: Record<string, string> }[];
@@ -575,14 +573,27 @@ describe("GitHub Actions hardening", () => {
     const scopeStep = changesJob?.steps?.find(
       step => step.name === "Assert the scope output is usable",
     );
-    expect(changesJob?.outputs?.ci).toBe("${{ steps.scope.outputs.ci }}");
+    expect(changesJob?.outputs).toMatchObject({
+      ci: "${{ steps.scope.outputs.ci }}",
+      gui: "${{ steps.scope.outputs.gui }}",
+      packaging: "${{ steps.scope.outputs.packaging }}",
+      docs: "${{ steps.scope.outputs.docs }}",
+      structure: "${{ steps.scope.outputs.structure }}",
+    });
     expect(scopeStep?.id).toBe("scope");
     expect(scopeStep?.shell).toBe("bash");
-    expect(scopeStep?.env?.CI_SCOPE).toBe("${{ steps.filter.outputs.ci }}");
+    expect(scopeStep?.env).toEqual({
+      CI_SCOPE: "${{ steps.filter.outputs.ci }}",
+      GUI_SCOPE: "${{ steps.filter.outputs.gui }}",
+      PACKAGING_SCOPE: "${{ steps.filter.outputs.packaging }}",
+      DOCS_SCOPE: "${{ steps.filter.outputs.docs }}",
+      STRUCTURE_SCOPE: "${{ steps.filter.outputs.structure }}",
+    });
     expect(scopeStep?.run).not.toContain("${{");
-    expect(scopeStep?.run).toContain('case "$CI_SCOPE" in');
+    expect(scopeStep?.run).toContain("for scope in ci gui packaging docs structure; do");
+    expect(scopeStep?.run).toContain('case "$value" in');
     expect(scopeStep?.run).toContain("true|false)");
-    expect(scopeStep?.run).toContain(`printf 'ci=%s\\n' "$CI_SCOPE" >> "$GITHUB_OUTPUT"`);
+    expect(scopeStep?.run).toContain(`printf '%s=%s\\n' "$scope" "$value" >> "$GITHUB_OUTPUT"`);
     expect(scopeStep?.run).toContain("exit 1");
     const filterIndex = changesJob?.steps?.findIndex(step => step.id === "filter") ?? -1;
     const scopeIndex = changesJob?.steps?.findIndex(step => step.id === "scope") ?? -1;
