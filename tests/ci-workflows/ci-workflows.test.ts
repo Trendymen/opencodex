@@ -12,7 +12,6 @@ import {
 } from "../helpers/enforce-pr-target-harness";
 import { pathToFileURL } from "node:url";
 import { repoRoot } from "../helpers/repo-root";
-
 /** Final consolidated gate comment body (the single bot message). */
 function lastGateCommentBody(result: HarnessResult): string {
   const marker = "<!-- opencodex-pr-gate -->";
@@ -26,22 +25,71 @@ function lastGateCommentBody(result: HarnessResult): string {
   }
   return gateCreates[gateCreates.length - 1]!.body;
 }
-
 /** The single consolidated comment body; alias kept for scenario readability. */
 const lastReadinessCommentBody = lastGateCommentBody;
 /** Alias kept for scenarios that named the pre-consolidation enforcer comment. */
 const lastEnforcerCommentBody = lastGateCommentBody;
-
 const root = pathToFileURL(repoRoot() + "/");
-const doctorGuiIfChangedScript = fileURLToPath(new URL("../../scripts/doctor-gui-if-changed.ts", import.meta.url));
+nst doctorGuiIfChangedScript = fileURLToPath(new URL("../../scripts/doctor-gui-if-changed.ts", import.meta.url));
 const lintGuiIfChangedScript = fileURLToPath(new URL("../../scripts/lint-gui-if-changed.ts", import.meta.url));
-
 async function readText(path: string): Promise<string> {
   return await Bun.file(new URL(path, root)).text();
 }
 
 function count(text: string, fragment: string): number {
   return text.split(fragment).length - 1;
+}
+
+function workflowExpressions(source: string): string[] {
+  const expressions: string[] = [];
+  let offset = 0;
+  while (offset < source.length) {
+    const start = source.indexOf("${{", offset);
+    if (start === -1) break;
+    let quoted = false;
+    let end = source.length;
+    for (let index = start + 3; index < source.length - 1; index++) {
+      if (source[index] === "'") {
+        if (quoted && source[index + 1] === "'") {
+          index++;
+          continue;
+        }
+        quoted = !quoted;
+        continue;
+      }
+      if (!quoted && source[index] === "}" && source[index + 1] === "}") {
+        end = index + 2;
+        break;
+      }
+    }
+    expressions.push(source.slice(start, end));
+    offset = end;
+  }
+  return expressions;
+}
+function unsafeWorkflowContextExpressions(source: string): string[] {
+  return workflowExpressions(source)
+    .filter(expression => {
+      if (/\bsecrets\b/i.test(expression)) return true;
+      for (const match of expression.matchAll(/\bgithub\b/gi)) {
+        const reference = expression.slice(match.index);
+        if (!/^github\s*\.\s*(?:ref|event_name|sha|run_id)\b(?!\s*(?:\.|\[))/i.test(reference)) {
+          return true;
+        }
+      }
+      return false;
+    });
+}
+function workflowActionUses(document: unknown): string[] {
+  if (Array.isArray(document)) return document.flatMap(workflowActionUses);
+  if (!document || typeof document !== "object") return [];
+  return Object.entries(document).flatMap(([key, value]) => [
+    ...(key === "uses" && typeof value === "string" ? [value] : []),
+    ...workflowActionUses(value),
+  ]);
+}
+function localWorkflowActionUses(document: unknown): string[] {
+  return workflowActionUses(document).filter(value => value.startsWith("./"));
 }
 
 /** Match an executable shell line, not a fragment that could appear in echo or a comment. */
