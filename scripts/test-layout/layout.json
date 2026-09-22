@@ -261,6 +261,7 @@
     "adapter-event-oauth-failover.test.ts": "oauth",
     "adapter-inner-send-budget-wiring.test.ts": "adapters",
     "adapter-inner-send-budget.test.ts": "adapters",
+    "adapter-reasoning-summary-projection.test.ts": "responses",
     "physical-send.test.ts": "adapters",
     "adapter-registry-authority.test.ts": "adapters",
     "adapter-resolve.test.ts": "server",
