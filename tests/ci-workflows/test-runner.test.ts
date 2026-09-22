@@ -546,7 +546,7 @@ describe("bun test argv", () => {
     expect(plan.find(lane => lane.label === "codex-shim.test.ts")?.timeoutMs).toBe(3 * 60 * 1000);
   });
 
-est("a control budget is bounded and changes only the main lane", () => {
+test("a control budget is bounded and changes only the main lane", () => {
     const baseline = resolveBunTestPlan([], undefined, {});
     expect(baseline[0]!.timeoutMs).toBe(900_000);
     const control = resolveBunTestPlan([], undefined, { OCX_TEST_MAIN_TIMEOUT_MS: "3600000" });
