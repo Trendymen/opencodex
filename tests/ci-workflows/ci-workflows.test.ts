@@ -30,7 +30,7 @@ const lastReadinessCommentBody = lastGateCommentBody;
 /** Alias kept for scenarios that named the pre-consolidation enforcer comment. */
 const lastEnforcerCommentBody = lastGateCommentBody;
 const root = pathToFileURL(repoRoot() + "/");
-nst doctorGuiIfChangedScript = fileURLToPath(new URL("../../scripts/doctor-gui-if-changed.ts", import.meta.url));
+const doctorGuiIfChangedScript = fileURLToPath(new URL("../../scripts/doctor-gui-if-changed.ts", import.meta.url));
 const lintGuiIfChangedScript = fileURLToPath(new URL("../../scripts/lint-gui-if-changed.ts", import.meta.url));
 async function readText(path: string): Promise<string> {
   return await Bun.file(new URL(path, root)).text();
@@ -565,10 +565,22 @@ describe("GitHub Actions hardening", () => {
     const scopeStep = changesJob?.steps?.find(
       step => step.name === "Assert the scope output is usable",
     );
-    expect(changesJob?.outputs?.ci).toBe("${{ steps.scope.outputs.ci }}");
+    expect(changesJob?.outputs).toMatchObject({
+      ci: "${{ steps.scope.outputs.ci }}",
+      gui: "${{ steps.scope.outputs.gui }}",
+      packaging: "${{ steps.scope.outputs.packaging }}",
+      docs: "${{ steps.scope.outputs.docs }}",
+      structure: "${{ steps.scope.outputs.structure }}",
+    });
     expect(scopeStep?.id).toBe("scope");
     expect(scopeStep?.shell).toBe("bash");
-    expect(scopeStep?.env?.CI_SCOPE).toBe("${{ steps.filter.outputs.ci }}");
+    expect(scopeStep?.env).toEqual({
+      CI_SCOPE: "${{ steps.filter.outputs.ci }}",
+      GUI_SCOPE: "${{ steps.filter.outputs.gui }}",
+      PACKAGING_SCOPE: "${{ steps.filter.outputs.packaging }}",
+      DOCS_SCOPE: "${{ steps.filter.outputs.docs }}",
+      STRUCTURE_SCOPE: "${{ steps.filter.outputs.structure }}",
+    });
     expect(scopeStep?.run).not.toContain("${{");
     expect(scopeStep?.run).toContain("for scope in ci gui packaging docs structure; do");
     expect(scopeStep?.run).toContain('case "$value" in');
