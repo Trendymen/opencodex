@@ -315,3 +315,5 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 - Node 缺少通用 `openat`，诊断持久化和安装器的路径防护不能完全排除父目录并发替换。
 - Windows 跳过 package-shaped npm launcher 子进程用例；Bun `runUpdate()` 缺真实 package-shaped smoke。GUI update badge 尚不显示同基线更高 `ben.N`，preview parser 仍是既有单数字形态。
 - 同基线新 Tag 名称无法建立 wildcard lease，发布依赖 single publisher，并在 push 后、Release 前复核；具体规则与结果记录按同步文档执行。
+
+Fork 串行测试清单在 v2.63.0 基线上保持 28 项，覆盖 npm pack、Volta、spend ledger 等并行资源争用场景。
