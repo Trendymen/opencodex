@@ -3,6 +3,7 @@ import {
   createReasoningSummaryChannelBlockRewrite,
   createReasoningSummaryChannelPayloadRewrite,
   routeUsesContentChannelReasoning,
+  shouldProjectContentChannelReasoning,
   rewriteReasoningSummaryInJson,
   rewriteReasoningSummaryInJsonString,
 } from "../../src/server/responses-reasoning-summary-rewrite";
@@ -654,5 +655,50 @@ describe("routeUsesContentChannelReasoning", () => {
 
   test("other providers do not", () => {
     expect(routeUsesContentChannelReasoning({}, "gpt-5.5")).toBe(false);
+  });
+});
+
+describe("shouldProjectContentChannelReasoning", () => {
+  test("rejects missing and non-string requested summaries", () => {
+    expect(shouldProjectContentChannelReasoning({}, { statelessResponses: true }, "deepseek-v4-flash")).toBe(false);
+    expect(shouldProjectContentChannelReasoning(
+      { reasoning: { summary: 1 } },
+      { statelessResponses: true },
+      "deepseek-v4-flash",
+    )).toBe(false);
+  });
+
+  test("rejects empty and none requested summaries", () => {
+    expect(shouldProjectContentChannelReasoning(
+      { reasoning: { summary: "" } },
+      { statelessResponses: true },
+      "deepseek-v4-flash",
+    )).toBe(false);
+    expect(shouldProjectContentChannelReasoning(
+      { reasoning: { summary: "none" } },
+      { statelessResponses: true },
+      "deepseek-v4-flash",
+    )).toBe(false);
+  });
+
+  test("accepts a requested summary for stateless and preserved models", () => {
+    expect(shouldProjectContentChannelReasoning(
+      { reasoning: { summary: "auto" } },
+      { statelessResponses: true },
+      "deepseek-v4-flash",
+    )).toBe(true);
+    expect(shouldProjectContentChannelReasoning(
+      { reasoning: { summary: "auto" } },
+      { preserveReasoningContentModels: ["deepseek-v4-flash"] },
+      "deepseek-v4-flash",
+    )).toBe(true);
+  });
+
+  test("rejects a requested summary when the route uses no content channel", () => {
+    expect(shouldProjectContentChannelReasoning(
+      { reasoning: { summary: "auto" } },
+      {},
+      "deepseek-v4-flash",
+    )).toBe(false);
   });
 });
