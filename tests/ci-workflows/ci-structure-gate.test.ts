@@ -56,7 +56,7 @@ test("branch pushes keep an exact aggregate trigger without a path allowlist", (
   // Branch pushes must create an exact-SHA aggregate run even for a message-only
   // candidate amend. The cost filter scopes expensive jobs inside the workflow;
   // a workflow-level `paths:` filter would skip the aggregate check entirely.
-  expect(workflow.on?.push?.branches).toEqual(["main", "preview", "dev"]);
+  expect(workflow.on?.push?.branches).toEqual(["dev", "main", "preview"]);
   expect(workflow.on?.push?.paths).toBeUndefined();
 });
 
