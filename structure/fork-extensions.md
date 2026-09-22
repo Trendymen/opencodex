@@ -67,7 +67,8 @@ continuation replay 使用同一分类，OpenAI/GPT 目的地硬排除。
 第三方 reasoning summary 只在客户端显式请求 `reasoning.summary` 时投影；Provider 的
 `showThinkingSummary` 默认值不能把 raw reasoning 改名成 summary。投影保留原始 content、
 opaque terminal 和 replay state，分段、terminal、EOF、重复或迟到事件通过同一有状态 rewrite
-处理；切回原生 OpenAI GPT 时只删除由第三方 `reasoning_text` 支撑的 opaque token，不删除真实
+处理。xAI 的 `openai-chat` adapter 流缺少 `content_part.added` 时，会在首个 reasoning delta 立即建立
+摘要项，不等待首句或长度阈值；切回原生 OpenAI GPT 时只删除由第三方 `reasoning_text` 支撑的 opaque token，不删除真实
 OpenAI blob。
 每个 rewrite 用 `Set<number>` 精确去重整数 sequence number。每个唯一序号按 32 字节计入 `translatorBudget`；重复序号不会重放，乱序的未见序号仍会保留。调用方传入的预算由同一请求的 client 与 replay projection 共享；独立 rewrite 在收到首个序号时创建自己的默认 32 MiB 预算，并在 terminal、`flush` 或 `dispose` 时释放和销毁。超限返回 `translation_buffer_limit`。
 

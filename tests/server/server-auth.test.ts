@@ -2,7 +2,7 @@ import { waitForNativeMainStartupGate } from "../../src/codex/native-profile-sta
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { logsFromApiBody } from "../helpers/logs-api";
-ort { timeoutGatedErrorBody } from "../helpers/timeout-gated-error-body";
+import { timeoutGatedErrorBody } from "../helpers/timeout-gated-error-body";
 import { abortableSseUpstream } from "../helpers/abortable-sse-upstream";
 import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

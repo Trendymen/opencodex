@@ -11,7 +11,6 @@ import {
 } from "../helpers/enforce-pr-target-harness";
 import { pathToFileURL } from "node:url";
 import { repoRoot } from "../helpers/repo-root";
-
 /** Final consolidated gate comment body (the single bot message). */
 function lastGateCommentBody(result: HarnessResult): string {
   const marker = "<!-- opencodex-pr-gate -->";
@@ -25,14 +24,11 @@ function lastGateCommentBody(result: HarnessResult): string {
   }
   return gateCreates[gateCreates.length - 1]!.body;
 }
-
 /** The single consolidated comment body; alias kept for scenario readability. */
 const lastReadinessCommentBody = lastGateCommentBody;
 /** Alias kept for scenarios that named the pre-consolidation enforcer comment. */
 const lastEnforcerCommentBody = lastGateCommentBody;
-
 const root = pathToFileURL(repoRoot() + "/");
-
 async function readText(path: string): Promise<string> {
   return await Bun.file(new URL(path, root)).text();
 }
@@ -40,7 +36,6 @@ async function readText(path: string): Promise<string> {
 function count(text: string, fragment: string): number {
   return text.split(fragment).length - 1;
 }
-
 function workflowExpressions(source: string): string[] {
   const expressions: string[] = [];
   let offset = 0;
@@ -68,7 +63,6 @@ function workflowExpressions(source: string): string[] {
   }
   return expressions;
 }
-
 function unsafeWorkflowContextExpressions(source: string): string[] {
   return workflowExpressions(source)
     .filter(expression => {
@@ -82,7 +76,6 @@ function unsafeWorkflowContextExpressions(source: string): string[] {
       return false;
     });
 }
-
 function workflowActionUses(document: unknown): string[] {
   if (Array.isArray(document)) return document.flatMap(workflowActionUses);
   if (!document || typeof document !== "object") return [];
@@ -91,7 +84,6 @@ function workflowActionUses(document: unknown): string[] {
     ...workflowActionUses(value),
   ]);
 }
-
 function localWorkflowActionUses(document: unknown): string[] {
   return workflowActionUses(document).filter(value => value.startsWith("./"));
 }
