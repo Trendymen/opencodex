@@ -122,18 +122,20 @@ describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
         // `node` can be a version-manager shim (Volta/asdf). Signalling the shim PID lets the
         // real Node launcher survive as an orphan, which makes this test report the product bug
         // it is meant to prevent. Probe process.execPath once and launch that executable directly.
+        const launcherEnv = {
+          ...process.env,
+          HOME: identity.homeDir,
+          USERPROFILE: identity.userProfile,
+          OPENCODEX_HOME: home,
+          CODEX_HOME: home,
+          ...identity.serviceManagerEnv,
+        };
+        delete launcherEnv.OCX_SERVICE;
         const child = spawn(nodeExecutable, [BIN_OCX, "start", "--port", String(port)], {
           // Keep launcher diagnostics when the startup deadline expires. The
           // actual no-orphan assertion remains the later port-release check.
           stdio: ["ignore", "pipe", "pipe"],
-          env: {
-            ...process.env,
-            HOME: identity.homeDir,
-            USERPROFILE: identity.userProfile,
-            OPENCODEX_HOME: home,
-            CODEX_HOME: home,
-            ...identity.serviceManagerEnv,
-          },
+          env: launcherEnv,
         });
         spawned.push(child);
 

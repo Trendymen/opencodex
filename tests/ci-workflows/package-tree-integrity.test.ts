@@ -730,6 +730,7 @@ describe("package tree integrity", () => {
       restartAcceptances = 0;
       return prepareServer({
         packageTreeInstaller: "npm",
+        packageTreeServiceChild: () => false,
         observePackageTree: () => observation,
         packageTreeIntegrityOptions: {
           replacedRestartDelayMs: 5_000,

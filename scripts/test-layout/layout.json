@@ -809,6 +809,7 @@
     "execution-budget-permits.test.ts": "lib",
     "exhaustive-deps-suppression.test.ts": "ci-workflows",
     "expand-user-path.test.ts": "config",
+    "external-task-input-seed.test.ts": "responses",
     "failure-attribution.test.ts": "lib",
     "failure-stage-model.test.ts": "lib",
     "fast-row-ingress.test.ts": "providers",
