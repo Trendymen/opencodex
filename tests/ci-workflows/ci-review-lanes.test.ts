@@ -59,11 +59,7 @@ describe("CI review lanes", () => {
       }
     }
 
-    // The push trigger stays pinned to the release-relevant lines: main and
-    // preview MUST stay because release.yml requires a successful push-event
-    // run for the exact release SHA and states that a pull-request run does
-    // not qualify. dev is deliberately absent: its integration evidence is
-    // the pull_request run, with workflow_dispatch for anything else.
+    // Every candidate and release SHA needs its own push-event aggregate run.
     const ci = Bun.YAML.parse(await readText(".github/workflows/ci.yml")) as {
       on?: {
         push?: { branches?: string[]; paths?: string[] };
@@ -72,7 +68,8 @@ describe("CI review lanes", () => {
       jobs?: Record<string, Record<string, unknown> | undefined>;
     };
     expect([...(ci.on?.push?.branches ?? [])].sort())
-      .toEqual(["main", "preview"]);
+      .toEqual(["dev", "main", "preview"]);
+    expect(ci.on?.push?.paths).toBeUndefined();
 
     // The PR trigger must carry NO base-branch filter, and the two triggers
     // differ on purpose. GitHub matches `branches:` against the BASE ref, so
@@ -91,10 +88,8 @@ describe("CI review lanes", () => {
     expect(ci.on?.pull_request?.branches).toBeUndefined();
     expect(ci.on?.pull_request?.paths).toBeUndefined();
 
-    // The push trigger and pull-request `changes` job share one expensive-CI
-    // allowlist. PRs always create the workflow and aggregate check; this list
-    // decides whether the costly jobs run. Pin the entire list on both paths,
-    // including every script and workflow used by repository automation.
+    // PRs always create the workflow and aggregate check; this filter selects
+    // their expensive jobs without suppressing push-event evidence.
     const ciPaths = [
       ".dockerignore",
       ".gitattributes",
@@ -121,8 +116,6 @@ describe("CI review lanes", () => {
       "tests/**",
       "tsconfig.json",
     ];
-    expect([...(ci.on?.push?.paths ?? [])].sort()).toEqual(ciPaths);
-
     const filterStep = (ci.jobs?.changes as {
       steps?: { with?: Record<string, string> }[];
     })?.steps?.find(step => step.with?.filters);
@@ -145,14 +138,27 @@ describe("CI review lanes", () => {
     const scopeStep = changesJob?.steps?.find(
       step => step.name === "Assert the scope output is usable",
     );
-    expect(changesJob?.outputs?.ci).toBe("${{ steps.scope.outputs.ci }}");
+    expect(changesJob?.outputs).toMatchObject({
+      ci: "${{ steps.scope.outputs.ci }}",
+      gui: "${{ steps.scope.outputs.gui }}",
+      packaging: "${{ steps.scope.outputs.packaging }}",
+      docs: "${{ steps.scope.outputs.docs }}",
+      structure: "${{ steps.scope.outputs.structure }}",
+    });
     expect(scopeStep?.id).toBe("scope");
     expect(scopeStep?.shell).toBe("bash");
-    expect(scopeStep?.env?.CI_SCOPE).toBe("${{ steps.filter.outputs.ci }}");
+    expect(scopeStep?.env).toEqual({
+      CI_SCOPE: "${{ steps.filter.outputs.ci }}",
+      GUI_SCOPE: "${{ steps.filter.outputs.gui }}",
+      PACKAGING_SCOPE: "${{ steps.filter.outputs.packaging }}",
+      DOCS_SCOPE: "${{ steps.filter.outputs.docs }}",
+      STRUCTURE_SCOPE: "${{ steps.filter.outputs.structure }}",
+    });
     expect(scopeStep?.run).not.toContain("${{");
-    expect(scopeStep?.run).toContain('case "$CI_SCOPE" in');
+    expect(scopeStep?.run).toContain("for scope in ci gui packaging docs structure; do");
+    expect(scopeStep?.run).toContain('case "$value" in');
     expect(scopeStep?.run).toContain("true|false)");
-    expect(scopeStep?.run).toContain(`printf 'ci=%s\\n' "$CI_SCOPE" >> "$GITHUB_OUTPUT"`);
+    expect(scopeStep?.run).toContain(`printf '%s=%s\\n' "$scope" "$value" >> "$GITHUB_OUTPUT"`);
     expect(scopeStep?.run).toContain("exit 1");
     const filterIndex = changesJob?.steps?.findIndex(step => step.id === "filter") ?? -1;
     const scopeIndex = changesJob?.steps?.findIndex(step => step.id === "scope") ?? -1;

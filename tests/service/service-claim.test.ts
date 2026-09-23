@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, statSync } from "node:fs";
+import { dirname } from "node:path";
 import { parseClaimArgs, runServiceClaim, CLAIM_SCHEMA } from "../../src/service/claim";
 import { ServiceOwnershipSubjectMismatchError, serviceStatePath, serviceStatePaths } from "../../src/service/state";
 import type { ServiceOwnershipSubject } from "../../src/service/state";
+import { isProtectedHomeUnderTest } from "../../src/lib/test-home-guard";
 import { createTempHome } from "../helpers/temp-home";
 
 const VALID = [
@@ -147,7 +149,8 @@ describe("runServiceClaim", () => {
     const previousUserProfile = process.env.USERPROFILE;
     if (process.platform === "win32") process.env.USERPROFILE = home.root;
     try {
-      expect(serviceStatePaths().every(path => path.startsWith(home.root))).toBe(true);
+      expect(serviceStatePaths()).toContain(serviceStatePath());
+      expect(serviceStatePaths().every(path => !isProtectedHomeUnderTest(dirname(path)))).toBe(true);
       mkdirSync(serviceStatePath());
       const lines: string[] = [];
       const code = await runServiceClaim([...VALID, "--json"], {
