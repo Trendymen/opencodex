@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.63.0`（`96b1406cb63e429cec8d2e3914af4ba99f2e37b9`）。
+- 上游基线：`v2.64.0`（`4cb43cb0a8c6b60318cf0d63ffa8e57fd18407b2`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -160,17 +160,18 @@ Kimi schema catalog 有独立的目录、文件数量、ownership 和权限预�
 ### 第三方 reasoning summary 与 GPT continuation 清理
 
 官方 `v2.53.0` 已保留 raw content 和 Provider summary provenance，但不把 content-channel reasoning 投影到 summary。Fork 继续保留 opaque terminal 与 raw content；仅在客户端显式请求 `reasoning.summary` 时，为第三方 reasoning 补完整 summary part 生命周期。Provider 的 `showThinkingSummary` 默认值本身不触发这项投影。
+同一条件也用于 adapter 路由：流式输出在交付客户端时投影，非流式只投影交付副本，存储用的原始 response 保持不变。已有 summary-channel 输出不重复投影。
 同一历史转向原生 OpenAI GPT 时，只删除由第三方 `reasoning_text` 支撑的 opaque token，保留真正的 OpenAI blob。summary 只追加 `summary_text`，保留 `reasoning.content`、原始字段与 replay state。
 入站 reasoning 缺少 `summary` 时，沿用官方 `sanitizeReasoningInputContent()` 补 `summary: []`；已有 summary 保持原值。该字段补全与 Fork 的 opaque token 清理同时生效，覆盖见 `tests/providers/deepseek-reasoning-replay.test.ts` 和 `tests/providers/fork-deepseek-opaque-reasoning.test.ts`。
 有状态 rewrite 按第三句或 500 code point 中先到的边界分段，每个 `summary_index` 独立闭合。
 EOF、稀疏 terminal、failed/incomplete 会先收尾；terminal-only reasoning 尾部仍投影。同一 item 内带重复整数 `sequence_number` 的 delta 被去重，`response.output_item.done` 后的迟到 delta 不重开已关闭 item。序号用 `Set<number>` 精确记录，每个唯一序号按 32 字节计入 `translatorBudget`；重复序号不重放，乱序的未见序号仍会保留。调用方传入的预算由同一请求的 client 与 replay projection 共享；独立 rewrite 在首个序号到达时创建默认 32 MiB 预算，并在 terminal、`flush` 或 `dispose` 时释放和销毁。超限走 `translation_buffer_limit`。重复/迟到 part 不重开 index，终态后迟到 close 被抑制，空 part 不造 `**Thinking**`，SSE `event:` 与 JSON `type` 一致。
-SSE 与有界 JSON continuation cache 都记录客户端实际收到的摘要形状，并保留官方 inspector 的稀疏 output 重建与已确定的 response ID；完整历史回传不因摘要格式不同而重复追加工具调用，Copilot 固定首个 ID 后仍能用该 ID 续接。首个失败终态后的 completed 不写缓存，重复 completed 不覆盖首份候选。
+原生 passthrough 的 SSE 与有界 JSON continuation cache 都记录客户端实际收到的摘要形状，并保留官方 inspector 的稀疏 output 重建与已确定的 response ID；完整历史回传不因摘要格式不同而重复追加工具调用，Copilot 固定首个 ID 后仍能用该 ID 续接。首个失败终态后的 completed 不写缓存，重复 completed 不覆盖首份候选。
 官方 `v2.53.0` 对无状态 Responses 的本地续接缺失返回 `previous_response_not_found`，不会把缺失历史前缀的 tool result 发给上游；首个失败终态后的迟到 completed 仍不能绕过这条边界。
 
 规范 `opencode-go` 预设新增 `preserveResponsesReasoningContent`：在此之前，该 Provider 的 Responses 回放按默认规则把 reasoning 正文清空；Console Go 对一条 `deepseek-flash` 续轮返回 HTTP 400，报错原文为 `The reasoning_text in the thinking mode must be passed back to the API`。清空与该 400 的因果关系没有做过 live 复现，属机制推断。该开关是 registry 缺省，仅在该字段缺失时回填，配置里显式 `false` 仍然优先；作用域为 Provider 级，与 `deepseek`、`zhipu-bigmodel-responses` 两个预设一致，同一 lane 的其他 Responses 模型（`gpt-5.6-luna`、`grok-4.6`、`muse-spark-1.2/1.3-contributor`）是否接受保留回放尚未验证。
 
-代码：`src/server/responses-reasoning-summary-rewrite.ts`、`src/server/responses/passthrough-dispatch.ts`、`src/server/responses/passthrough-delivery.ts`、`src/adapters/openai-responses/reasoning.ts`、`src/providers/registry/entries-core.ts`。
-测试：`tests/providers/deepseek-reasoning-replay.test.ts`、`tests/providers/opencode-go-luna-wire.test.ts`、`tests/responses/responses-original-field-preservation.test.ts` 及同目录 `responses-reasoning-summary-*.test.ts`。
+代码：`src/server/responses-reasoning-summary-rewrite.ts`、`src/server/responses/adapter-delivery.ts`、`src/server/responses/passthrough-dispatch.ts`、`src/server/responses/passthrough-delivery.ts`、`src/adapters/openai-responses/reasoning.ts`、`src/providers/registry/entries-core.ts`。
+测试：`tests/providers/deepseek-reasoning-replay.test.ts`、`tests/providers/opencode-go-luna-wire.test.ts`、`tests/responses/adapter-reasoning-summary-projection.test.ts`、`tests/responses/responses-original-field-preservation.test.ts` 及同目录 `responses-reasoning-summary-*.test.ts`。
 
 ### SSE block rewrite flush 与终态兼容
 
@@ -316,4 +317,4 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 - Windows 跳过 package-shaped npm launcher 子进程用例；Bun `runUpdate()` 缺真实 package-shaped smoke。GUI update badge 尚不显示同基线更高 `ben.N`，preview parser 仍是既有单数字形态。
 - 同基线新 Tag 名称无法建立 wildcard lease，发布依赖 single publisher，并在 push 后、Release 前复核；具体规则与结果记录按同步文档执行。
 
-Fork 串行测试清单在 v2.63.0 基线上保持 28 项，覆盖 npm pack、Volta、spend ledger 等并行资源争用场景。
+Fork 串行测试清单在 v2.64.0 基线上为 29 项，隔离 npm pack、Volta 和共享服务状态等会争用资源的测试。
