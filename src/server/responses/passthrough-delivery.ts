@@ -1229,7 +1229,7 @@ export async function deliverPassthroughResponse(
       commitReasoningReplayServingRoute(nativeExchange.request.headers);
       try {
         rememberPassthroughResponseChecked(
-          JSON.parse(clientJson) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
+          JSON.parse(grokUpstreamEchoEnabled ? clientJson : text) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
         );
       } catch { /* non-JSON despite content-type; recording is best-effort */ }
       nestedExecRepairCoordinator?.markClientCommitted();
