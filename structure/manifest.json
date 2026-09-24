@@ -116,6 +116,18 @@
       ]
     },
     {
+      "path": "config-capabilities.md",
+      "tier": 2,
+      "title": "Config Capabilities",
+      "scope": "Per-model capability declarations and their catalog-facing configuration.",
+      "documents": [
+        "src/config/",
+        "src/types.ts",
+        "src/codex/",
+        "src/vision/"
+      ]
+    },
+    {
       "path": "codex-home.md",
       "tier": 2,
       "title": "Codex Home",
