@@ -381,6 +381,7 @@ export async function deliverPassthroughResponse(
   const { parsed, route, subagentQuotaFailureModel, clientRequestedStream, translatorBudget } = requestState;
   const { openAiSidecar } = sidecarState;
   const { requestBindings } = transportState;
+  let upstreamResponse = nativeExchange.upstreamResponse;
   let inboundDebugPersisted = false;
   const persistInboundDebug = (): void => {
     if (inboundDebugPersisted || !inboundDebugObserver) return;
@@ -464,7 +465,6 @@ export async function deliverPassthroughResponse(
       });
     };
 
-  let upstreamResponse = nativeExchange.upstreamResponse;
   const originalContentType = upstreamResponse.headers.get("content-type");
   if (isUsageDebugEnabled() && originalContentType) logCtx.usageDebugContentType = originalContentType;
   if (responseEffects.plaintextV2AgentMessageToolNames.size > 0
@@ -810,7 +810,6 @@ export async function deliverPassthroughResponse(
           onCompletedResponse: rememberPassthroughResponseChecked,
         })
         : undefined;
-        : undefined;
       const plaintextEncoder = plaintextInspector ? new TextEncoder() : undefined;
       const rememberPlaintextBlock = plaintextInspector
         ? Object.assign((block: string): readonly string[] => {
@@ -899,7 +898,6 @@ export async function deliverPassthroughResponse(
         nestedExecRepairCoordinator
           ? createNestedExecClientOutcomeBlockRewrite(nestedExecRepairCoordinator)
           : undefined,
-          : undefined,
         rememberPlaintextBlock,
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
       const clientBlockRewrite = blockRewrites.length > 0
@@ -950,7 +948,7 @@ export async function deliverPassthroughResponse(
         const inspector = createSseInspector({
           onTerminal: reportNativeTerminal,
           logCtx,
-          rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberClientVisiblePassthroughResponse : undefined,
+          onCompletedResponse: rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberClientVisiblePassthroughResponse : undefined,
           onParsedPayload: noteInspectedPayload,
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
@@ -1083,6 +1081,12 @@ export async function deliverPassthroughResponse(
           inspectBody,
           logCtx,
           turnAc.signal,
+          () => {
+            persistInboundDebug();
+            reasoningReplayProjection?.dispose();
+            nestedExecInspection?.dispose();
+            unregisterTurn(turnAc);
+          },
           rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberClientVisiblePassthroughResponse : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
@@ -1220,9 +1224,7 @@ export async function deliverPassthroughResponse(
       commitReasoningReplayServingRoute(nativeExchange.request.headers);
       try {
         rememberPassthroughResponseChecked(
-          nestedExecRepairCoordinator
-            ? createNestedExecClientOutcomeBlockRewrite(nestedExecRepairCoordinator)
-            : undefined,
+          JSON.parse(grokUpstreamEchoEnabled ? clientJson : text) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
         );
       } catch { /* non-JSON despite content-type; recording is best-effort */ }
       nestedExecRepairCoordinator?.markClientCommitted();

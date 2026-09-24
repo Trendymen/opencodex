@@ -158,6 +158,7 @@ export function deriveEntry(
       if (typeof e.base_instructions === "string") {
         // Proxy-neutral: keep the GPT-5/OpenAI disclaimer but never advertise the opencodex proxy
         // (leaking that into base_instructions is a non-first-party signature → ToS risk).
+        const modelName = model?.id ?? slug.slice(slug.indexOf("/") + 1);
         const identified = identifyRoutedModel(e.base_instructions, modelName);
         e.base_instructions = shouldApplyRoutedProgressContract
           ? finalizeRoutedToolPrompt(identified)
