@@ -1081,6 +1081,12 @@ export async function deliverPassthroughResponse(
           inspectBody,
           logCtx,
           turnAc.signal,
+          () => {
+            persistInboundDebug();
+            reasoningReplayProjection?.dispose();
+            nestedExecInspection?.dispose();
+            unregisterTurn(turnAc);
+          },
           rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberClientVisiblePassthroughResponse : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
@@ -1218,9 +1224,7 @@ export async function deliverPassthroughResponse(
       commitReasoningReplayServingRoute(nativeExchange.request.headers);
       try {
         rememberPassthroughResponseChecked(
-          nestedExecRepairCoordinator
-            ? createNestedExecClientOutcomeBlockRewrite(nestedExecRepairCoordinator)
-            : undefined,
+          JSON.parse(grokUpstreamEchoEnabled ? clientJson : text) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
         );
       } catch { /* non-JSON despite content-type; recording is best-effort */ }
       nestedExecRepairCoordinator?.markClientCommitted();
