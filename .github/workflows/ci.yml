@@ -321,7 +321,6 @@ jobs:
         shell: bash
         env:
           CI_SCOPE: ${{ steps.filter.outputs.ci }}
-          CI_SCOPE: ${{ steps.filter.outputs.ci }}
           DESKTOP_SCOPE: ${{ steps.filter.outputs.desktop }}
           GUI_SCOPE: ${{ steps.filter.outputs.gui }}
           PACKAGING_SCOPE: ${{ steps.filter.outputs.packaging }}
