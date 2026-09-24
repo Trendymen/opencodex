@@ -324,7 +324,7 @@ export const MANAGEMENT_ROUTES: readonly ManagementRoute[] = [
   { method: "PUT", path: "/api/providers/keys/alias", module: "server/management/oauth-account-routes", mutates: true },
   // server/management/provider-routes
   { method: "DELETE", path: "/api/providers", module: "server/management/provider-routes", mutates: true },
-  { method: "GET", path: "/api/provider-context-caps", module: "server/management/provider-routes", mutates: false },
+  { method: "GET", path: "/api/provider-context-caps", module: "server/management/provider-context-cap-routes", mutates: false },
   { method: "GET", path: "/api/provider-presets", module: "server/management/provider-routes", mutates: false },
   { method: "GET", path: "/api/provider-quotas", module: "server/management/provider-routes", mutates: false },
   { method: "GET", path: "/api/provider-request-pacing", module: "server/management/provider-routes", mutates: false },
@@ -333,7 +333,7 @@ export const MANAGEMENT_ROUTES: readonly ManagementRoute[] = [
   { method: "POST", path: "/api/providers", module: "server/management/provider-routes", mutates: true },
   { method: "POST", path: "/api/providers/test", module: "server/management/provider-routes", mutates: true },
   { method: "PUT", path: "/api/providers", module: "server/management/provider-routes", mutates: true, exempt: { reason: "deferred-verb", why: "Issue #3280 scopes this atomic batch endpoint to the GUI JSON editor; a matching CLI verb is outside wp5 and remains owed.", owner: "wp5-followup", ownerDoc: "devlog/_fin/260903_bug_drawdown_bcda/050_phase5.md" } },
-  { method: "PUT", path: "/api/provider-context-caps", module: "server/management/provider-routes", mutates: true },
+  { method: "PUT", path: "/api/provider-context-caps", module: "server/management/provider-context-cap-routes", mutates: true },
   // server/management/quota-reset-routes
   { method: "GET", path: "/api/quota-resets", module: "server/management/quota-reset-routes", mutates: false, mechanism: "negated-guard" },
   // server/management/workflow-budget-routes

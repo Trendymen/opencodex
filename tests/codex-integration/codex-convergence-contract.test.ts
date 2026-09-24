@@ -376,7 +376,8 @@ test("a failure cause never carries message text, paths or identifiers (#1784)",
 
 test("the route inventory contains exactly the specified 8 + 14 + 2 + 2 convergence paths", () => {
   const counts = Object.fromEntries([
-    ["provider-routes.ts", 8],
+    ["provider-routes.ts", 5],
+    ["provider-context-cap-routes.ts", 3],
     ["model-routes.ts", 14],
     ["combo-routes.ts", 2],
     ["agent-settings-routes.ts", 2],
@@ -395,7 +396,8 @@ test("the route inventory contains exactly the specified 8 + 14 + 2 + 2 converge
     return [file, count];
   }));
   expect(counts).toEqual({
-    "provider-routes.ts": 8,
+    "provider-routes.ts": 5,
+    "provider-context-cap-routes.ts": 3,
     "model-routes.ts": 14,
     "combo-routes.ts": 2,
     "agent-settings-routes.ts": 2,
