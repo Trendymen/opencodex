@@ -140,6 +140,7 @@ describe("CI review lanes", () => {
     );
     expect(changesJob?.outputs).toMatchObject({
       ci: "${{ steps.scope.outputs.ci }}",
+      desktop: "${{ steps.scope.outputs.desktop }}",
       gui: "${{ steps.scope.outputs.gui }}",
       packaging: "${{ steps.scope.outputs.packaging }}",
       docs: "${{ steps.scope.outputs.docs }}",
@@ -149,13 +150,14 @@ describe("CI review lanes", () => {
     expect(scopeStep?.shell).toBe("bash");
     expect(scopeStep?.env).toEqual({
       CI_SCOPE: "${{ steps.filter.outputs.ci }}",
+      DESKTOP_SCOPE: "${{ steps.filter.outputs.desktop }}",
       GUI_SCOPE: "${{ steps.filter.outputs.gui }}",
       PACKAGING_SCOPE: "${{ steps.filter.outputs.packaging }}",
       DOCS_SCOPE: "${{ steps.filter.outputs.docs }}",
       STRUCTURE_SCOPE: "${{ steps.filter.outputs.structure }}",
     });
     expect(scopeStep?.run).not.toContain("${{");
-    expect(scopeStep?.run).toContain("for scope in ci gui packaging docs structure; do");
+    expect(scopeStep?.run).toContain("for scope in ci desktop gui packaging docs structure; do");
     expect(scopeStep?.run).toContain('case "$value" in');
     expect(scopeStep?.run).toContain("true|false)");
     expect(scopeStep?.run).toContain(`printf '%s=%s\\n' "$scope" "$value" >> "$GITHUB_OUTPUT"`);
