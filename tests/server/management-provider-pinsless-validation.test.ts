@@ -7,8 +7,6 @@
  * later pull request. The case is unchanged apart from its own temp directory.
  */
 import { afterEach, describe, expect, mock, setDefaultTimeout, spyOn, test } from "bun:test";
-
-import { describe, expect, mock, setDefaultTimeout, spyOn, test } from "bun:test";
 import { managementFetch as fetch } from "../helpers/management-auth";
 import { config } from "../helpers/management-relative-send-paths";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
@@ -41,12 +39,11 @@ function poolProviders(): OcxConfig["providers"] {
   };
 }
 
-<<<<<<< HEAD
 afterEach(() => {
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
 });
-=======
+
 function providerPostContext(liveConfig: OcxConfig, body: unknown): ManagementContext {
   const url = new URL("http://localhost/api/providers");
   return {
@@ -59,7 +56,6 @@ function providerPostContext(liveConfig: OcxConfig, body: unknown): ManagementCo
     syncClaudeAgentDefsBestEffort: mock(async () => {}),
   };
 }
->>>>>>> e68f2720f (test: 汇总 Fork 回归覆盖并推进 ben.3)
 
 describe("provider management validation", () => {
   test("provider POST validates a pins-less candidate before live adoption", async () => {
