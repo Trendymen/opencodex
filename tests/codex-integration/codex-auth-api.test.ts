@@ -1062,6 +1062,7 @@ describe("codex-auth API", () => {
   test("account DTO exposes the routing plan exclusion and clears it on renewal", async () => {
     const cfg = makeConfig({ codexPool: { excludedPlans: ["free"] } });
     seedPoolAccount(cfg, { id: "plan-row", email: "plan@example.test", plan: "free" });
+    updateAccountQuota("plan-row", 0);
     const read = async () => {
       const request = new Request("http://localhost/api/codex-auth/accounts");
       const response = await handleCodexAuthAPI(request, new URL(request.url), cfg);
@@ -4007,6 +4008,8 @@ describe("codex-auth API", () => {
     const config = makeConfig({ codexAccountPriorities: { work: 2 } });
     seedPoolAccount(config, { id: "work", email: "work@example.test" });
     seedPoolAccount(config, { id: "side", email: "side@example.test" });
+    updateAccountQuota("work", 0);
+    updateAccountQuota("side", 0);
 
     const accounts = await listCodexAuthAccounts(config);
 
