@@ -105,7 +105,7 @@ Kiro 当前通过已识别的 code-mode `exec` 接收该提示，仅有直接 `a
 
 上游已将裸 `exec_command` / `apply_patch` 接入统一 exec，并在 `v2.52.0` 增加 `default.` namespace 的请求有界归一化。Fork 额外修复 `functions.exec` / `web__run`，要求当前 turn 的 `functions` namespace 内恰有一个 `custom:exec`，且 lowering 来源一致。归一化只使用调用方明确声明的 bare tool 集；nested-exec 的延迟、拒绝和 continuation cache 门禁继续生效。
 普通 `function:exec`、顶层 `custom:exec`、其他 namespace 或多重声明不授权该修复。碎片事件与 passthrough SSE 原子缓冲；畸形、歧义、重复、超预算调用交给 undeclared-tool guard。
-Continuation cache 仅在客户端收到有效 terminal 后提交；有界 JSON 在 inspection 仍有效时完成校验和缓存提交。原生路由在 `passthrough-dispatch.ts` 暂存候选，由 `passthrough-delivery.ts` 的最终客户端终态确认；adapter 流式与有界事件分别在 `run-turn-execution.ts`、`adapter-delivery.ts` 接入同一修复。流式 combo 在首工具名称判定前先修复嵌套调用；预检长时间无可见事件时按配置的 stall 时限返回 504，调用方取消返回 499，两者都会停止本轮并禁止内部重放。
+Continuation cache 仅在客户端收到有效 terminal 后提交；有界 JSON 在 inspection 仍有效时完成校验和缓存提交。原生路由在 `passthrough-dispatch.ts` 暂存候选，由 `passthrough-delivery.ts` 的最终客户端终态确认；adapter 流式与有界事件分别在 `run-turn-execution.ts`、`adapter-delivery.ts` 接入同一修复。流式 combo 在首工具名称判定前先修复嵌套调用；预检长时间无可见事件时按配置的 stall 时限返回 504，调用方取消返回 499，两者都会停止本轮并禁止内部重放。内部事件队列超限会保留终态错误并返回 502，后续是否重试仍受 `replayUnsafe` 等既有门禁约束。
 code-mode 历史输出另要求字符串 `instructions`、唯一 bare unnamespaced `custom_tool_call(name=exec)` 与对应输出。同一 `call_id` 与 function、local-shell 或 standalone output 碰撞时视为歧义，不改写非 custom exec 输出。
 旧 Chat native 分流探针已移除：Chat 入站的 `tools` 只把 `function`、`web_search` 和 `web_search_preview` 转到 Responses，请求无法由此产生修复所需的 `functions` namespace 下 `custom:exec` 声明。该探针的测试也只有不触发分流的负例；当前输入转换与唯一消费者证明它未提供可达能力。这里没有声称官方完整覆盖 Chat nested exec。
 
