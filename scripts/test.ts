@@ -374,6 +374,9 @@ export const SERIAL_FULL_SUITE_FILES = [
   // Real CLI spawnSync children timed out in the four-worker full pool while the same
   // file passed alone; run this file in a fresh process without changing its assertions.
   "cli/cli-help.test.ts",
+  // In the full pool, provider CLI children reached their 40s deadline; the file
+  // passes in a fresh process with the same assertions and child budget.
+  "cli/cli-provider.test.ts",
   "update/update-stop-first.test.ts",
   // Relays a 50 MiB WebSocket frame end to end against a 15s deadline, so its result is a
   // measurement of the whole process, not of the relay. On a healthy 3-CPU macOS runner the
