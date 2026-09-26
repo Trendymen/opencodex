@@ -44,6 +44,7 @@ export const RESPONSES_CORE_MODULES = [
   "sidecar-execution.ts",
   "completion-policy.ts",
   "run-turn-execution.ts",
+  "combo-adapter-preflight.ts",
   "adapter-dispatch.ts",
   "adapter-continuation.ts",
   "adapter-delivery.ts",
