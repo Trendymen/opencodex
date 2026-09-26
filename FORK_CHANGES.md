@@ -135,6 +135,13 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 代码：`src/config/custom-models.ts`、`src/config/schema/`、`src/config/diagnostics.ts`、`src/config/persist-unlocked.ts`、`src/config/save.ts`、`src/server/management/model-routes.ts`，router、catalog 的 gather/derive owners 与 CLI 的窄接线。
 测试：`tests/config/fork-custom-model-config-schema.test.ts`、`tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts`、`tests/codex-integration/catalog-free-pricing-status.test.ts`、`tests/server/management-provider-pinsless-validation.test.ts`。
 
+### Provider 上下文上限的保存失败回滚
+
+`PUT /api/provider-context-caps` 更新单个 Provider、全局值或全部 Provider 时，保存配置失败会同步恢复运行中的 `contextCapValue`、`providerContextCaps`、`providerContextCapValues` 及相关删除标记。失败请求不会刷新模型缓存或目录，也不会让后续成功保存带入本次未持久化的上限。保存前复制两份上限映射，避免配置重整改动旧对象后使回滚失效。此保证限定于该路由的上限字段，不代表其他配置字段都具备相同回滚行为。
+
+代码：`src/server/management/provider-context-cap-routes.ts`，复用 `src/config/rebase-provenance.ts` 的 `captureConfigTopLevelRollback()`。
+测试：`tests/server/provider-context-cap-rollback.test.ts`，覆盖三种 PUT、保存失败后的 live/disk 状态，以及配置重整失败时原映射对象的保真。
+
 ### Routed custom tool output 字符串化
 
 上游已转换 item type；Fork 确保 `custom_tool_call_output` 降为 `function_call_output` 时 output 是字符串：字符串不变，text/refusal 按序换行拼接，其他结构转 JSON。
