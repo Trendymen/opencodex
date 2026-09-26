@@ -8,6 +8,7 @@ import type { StartupHealth } from "../../codex/autostart-health";
 import type { StartupInstallAction } from "../startup-action-control";
 import type { ManagementPrincipal, ManagementSessionControl } from "../management-auth";
 import type { CatalogModel } from "../../codex/catalog";
+import type { syncModelsToCodex } from "../../codex/sync";
 import type { refreshOwnedCatalogIntegrations } from "../../integrations/catalog-refresh";
 import type { Paths as CodexPromptPaths } from "../../codex/prompt-layers";
 import type { injectGrokConfig } from "../../grok/inject";
@@ -48,6 +49,7 @@ export interface ManagementApiDeps {
   getClaudeInterceptState?: typeof import("../../claude/intercept/runtime").getClaudeInterceptState;
   /** Reconciliation seam for field-scoped rollback tests. */
   reconcileClaudeFirstPartySettings?: typeof import("../../claude/first-party-settings").reconcileClaudeFirstPartySettings;
+  syncModelsToCodex?: typeof syncModelsToCodex;
   /** Read-only process-local aggregate metrics; absent keeps the scrape route unavailable. */
   requestMetrics?: RequestMetricsSnapshotter;
   checkPackageUpdate?: (channel: Channel) => Promise<UpdateCheckResult>;
