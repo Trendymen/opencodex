@@ -14,6 +14,7 @@ import {
   setProviderContextCap,
 } from "../../providers/context-cap";
 import { clearModelCache } from "../../codex/model-cache";
+import { captureConfigTopLevelRollback } from "../../config/rebase-provenance";
 import { reconcileLiveStateStores } from "../../lib/state-store-registrations";
 import { jsonResponse } from "../auth-cors";
 import type { ManagementContext } from "./context";
@@ -21,7 +22,7 @@ import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import { isPlainRecord } from "./shared";
 
 export async function handleProviderContextCapRoutes(ctx: ManagementContext): Promise<Response | null> {
-  const { req, url, config, convergeCodexCatalog } = ctx;
+  const { req, url, config, convergeCodexCatalog, deps } = ctx;
   if (url.pathname === "/api/provider-context-caps" && req.method === "GET") {
     return jsonResponse({
       cap: DEFAULT_PROVIDER_CONTEXT_CAP,
@@ -52,6 +53,18 @@ export async function handleProviderContextCapRoutes(ctx: ManagementContext): Pr
     values: selectedProviderContextCaps(config),
     catalogRefresh,
   });
+  const persistCaps = (mutate: () => void) => {
+    const rollback = captureConfigTopLevelRollback(config, ["contextCapValue", "providerContextCaps", "providerContextCapValues"]);
+    try {
+      if (config.providerContextCaps) config.providerContextCaps = { ...config.providerContextCaps };
+      if (config.providerContextCapValues) config.providerContextCapValues = { ...config.providerContextCapValues };
+      mutate();
+      (deps.saveConfigPreservingClaudeCode ?? saveConfigPreservingClaudeCode)(config);
+    } catch (error) {
+      rollback();
+      throw error;
+    }
+  };
 
   const hasProviderFields = Object.hasOwn(body, "provider") || Object.hasOwn(body, "enabled");
   if (hasProviderFields) {
@@ -65,6 +78,7 @@ export async function handleProviderContextCapRoutes(ctx: ManagementContext): Pr
 
   if (typeof body.provider === "string" && typeof body.enabled === "boolean") {
     const provider = body.provider.trim();
+    const enabled = body.enabled;
     if (!isValidProviderName(provider)) {
       return jsonResponse({ error: "provider name must use letters, numbers, dot, underscore, or hyphen and cannot be a reserved object key" }, 400);
     }
@@ -76,8 +90,7 @@ export async function handleProviderContextCapRoutes(ctx: ManagementContext): Pr
     if (perProviderValue !== undefined && perProviderValue < 1) {
       return jsonResponse({ error: "value must be a positive number" }, 400);
     }
-    setProviderContextCap(config, provider, body.enabled, perProviderValue);
-    saveConfigPreservingClaudeCode(config);
+    persistCaps(() => setProviderContextCap(config, provider, enabled, perProviderValue));
     reconcileLiveStateStores();
     clearModelCache(provider);
     return respond(await convergeCodexCatalog());
@@ -94,8 +107,7 @@ export async function handleProviderContextCapRoutes(ctx: ManagementContext): Pr
     }
     const affected = Object.keys(providerContextCaps(config));
     const applyToAll = body.setAll === true;
-    setGlobalContextCapValue(config, normalizedValue, applyToAll);
-    saveConfigPreservingClaudeCode(config);
+    persistCaps(() => setGlobalContextCapValue(config, normalizedValue, applyToAll));
     reconcileLiveStateStores();
     if (applyToAll) for (const provider of affected) clearModelCache(provider);
     return respond(await convergeCodexCatalog());
@@ -103,10 +115,10 @@ export async function handleProviderContextCapRoutes(ctx: ManagementContext): Pr
 
   if (body.setAll !== undefined) {
     if (typeof body.setAll !== "boolean") return jsonResponse({ error: "setAll must be a boolean" }, 400);
+    const enabled = body.setAll;
     const before = Object.keys(providerContextCaps(config));
     const names = Object.keys(config.providers);
-    setAllProviderContextCaps(config, names, body.setAll);
-    saveConfigPreservingClaudeCode(config);
+    persistCaps(() => setAllProviderContextCaps(config, names, enabled));
     reconcileLiveStateStores();
     for (const provider of new Set([...before, ...names])) clearModelCache(provider);
     return respond(await convergeCodexCatalog());
