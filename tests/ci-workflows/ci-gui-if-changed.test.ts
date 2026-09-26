@@ -19,11 +19,11 @@ describe("doctor-gui-if-changed", () => {
       git("init", "-q");
       writeFileSync(join(root, "package.json"), '{"version":"2.67.0-ben.1"}\n');
       git("add", "package.json");
-      git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "official");
+      git("-c", "user.name=Fixture", "-c", "user.email=fixture", "commit", "-qm", "official");
       const base = git("rev-parse", "HEAD");
       const mainBranch = git("branch", "--show-current");
       git("tag", "v2.67.0");
-      git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "fork");
+      git("-c", "user.name=Fixture", "-c", "user.email=fixture", "commit", "--allow-empty", "-qm", "fork");
 
       const module = await import("../../scripts/doctor-gui-if-changed") as unknown as {
         resolveForkDoctorBase?: (repoRoot: string) => string | null;
@@ -34,7 +34,7 @@ describe("doctor-gui-if-changed", () => {
       expect(module.resolveForkDoctorBase!(root)).toBeNull();
 
       git("checkout", "-qb", "sibling", base);
-      git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "sibling");
+      git("-c", "user.name=Fixture", "-c", "user.email=fixture", "commit", "--allow-empty", "-qm", "sibling");
       git("tag", "v2.67.0");
       git("checkout", "-q", mainBranch);
       expect(module.resolveForkDoctorBase!(root)).toBeNull();
