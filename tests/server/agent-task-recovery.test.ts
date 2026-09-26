@@ -710,7 +710,7 @@ describe("agent task recovery (opt-in, default off)", () => {
     expect(providerFetches).toBe(0);
   });
 
-  test("exhausts timeout retries without dispatching the encrypted task", async () => {
+  test("times out recovery without dispatching the encrypted task when timeout retries are disabled", async () => {
     let recoveryFetches = 0;
     let providerFetches = 0;
     globalThis.fetch = ((input, init) => {
@@ -735,7 +735,7 @@ describe("agent task recovery (opt-in, default off)", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(recoveryFetches).toBe(3);
+    expect(recoveryFetches).toBe(1);
     expect(providerFetches).toBe(0);
   });
 
