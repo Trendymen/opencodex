@@ -1174,6 +1174,7 @@
   "provider-config-batch-management.test.ts": "providers",
   "provider-config-validation.test.ts": "providers",
   "provider-connection-test.test.ts": "providers",
+  "provider-context-cap-rollback.test.ts": "server",
   "provider-cost-overlay-config.test.ts": "providers",
   "provider-discovery-log-suppression.test.ts": "providers",
   "provider-egress-fetch.test.ts": "responses",
