@@ -13,9 +13,11 @@ import { sessionLaneIdFromRequest } from "../../src/server/request-log-conversat
 import { captureConfigGeneration } from "../../src/lib/state-store-sweeper";
 import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 import type { OcxConfig } from "../../src/types";
 
 const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
 /**
  * `startServer` takes the spend-journal writer lease before anything can serve, so an ordinary
  * turn dispatched straight into the handler owns no state directory and the ledger refuses to
@@ -80,6 +82,7 @@ function upstreamCompletion(input: Record<string, unknown>): Response {
 }
 
 beforeEach(() => {
+  installHttpOnlyCodexWebSocket();
   releaseSpendHome = acquireOwnedSpendHome();
 });
 
@@ -88,6 +91,7 @@ afterEach(() => {
   releaseSpendHome?.();
   releaseSpendHome = undefined;
   globalThis.fetch = originalFetch;
+  globalThis.WebSocket = originalWebSocket;
   clearComboSelectionState();
   clearComboTargetCooldowns();
   clearComboRecallForTests();
