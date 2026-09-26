@@ -575,6 +575,8 @@ provider caps; disabled providers keep their remembered selections when later en
 In contrast, `{ "setAll": true }` without `value` enables every configured provider at the
 current global value, replacing their remembered selections. Turning a cap off does not
 activate its remembered value or erase the selection.
+If a PUT cannot save the configuration, the running global value, active caps, and remembered
+values stay unchanged; a later GET does not report the unsaved edit.
 
 
 `provider_has_dependent_combos` is a safety barrier: remove or edit the dependent combos before
