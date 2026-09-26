@@ -622,7 +622,7 @@ export async function executeResponsesRunTurn(
         const preflight = await preflightComboAdapterEvents(
           eventSource,
           classifyUndeclaredFirstTool,
-          runTurnAbort.signal,
+          options.abortSignal,
           resolveStallTimeoutSec(wsPlan?.stallTimeoutSec ?? config.stallTimeoutSec) * 1_000,
           () => { runTurnAbort.abort(); queue.close(); },
         );
