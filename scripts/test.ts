@@ -374,6 +374,9 @@ export const SERIAL_FULL_SUITE_FILES = [
   // Its management API import stalled the long-lived macOS isolate pool before
   // any case ran; the complete file finishes in under a second in a fresh process.
   "routing/subagent-roster-retention.test.ts",
+  // Real CLI spawnSync children timed out in the four-worker full pool while the same
+  // file passed alone; run this file in a fresh process without changing its assertions.
+  "cli/cli-help.test.ts",
   "update/update-stop-first.test.ts",
   // Relays a 50 MiB WebSocket frame end to end against a 15s deadline, so its result is a
   // measurement of the whole process, not of the relay. On a healthy 3-CPU macOS runner the
@@ -405,8 +408,6 @@ export const SERIAL_FULL_SUITE_FILES = [
   "service/service-ownership-state.test.ts",
   "service/service-sqlite-home.test.ts",
   "service/service.test.ts",
-  "service/service-claim.test.ts",
-  "service/service-wsl-home-ownership.test.ts",
   "codex-integration/native-codex-toggle.test.ts",
   "codex-integration/native-grok-toggle.test.ts",
 ] as const;
