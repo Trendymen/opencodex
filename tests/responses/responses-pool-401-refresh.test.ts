@@ -467,6 +467,7 @@ describe("ordinary pool 401 refresh and replay (#2887)", () => {
 
   test("a combo stops on a zero-output failure from the stored-account replay stream", async () => {
     const cfg = recoveryComboConfig();
+    cfg.providers.openai.upstreamWebsocket = false;
     const harness = installHarness({
       responseForSend: (authorization, _sendNumber, url) => {
         if (url.hostname === "backup.example") {
