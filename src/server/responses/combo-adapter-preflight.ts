@@ -7,7 +7,7 @@ export const COMBO_PREFLIGHT_ABORTED = Symbol("combo preflight aborted");
 export async function preflightComboAdapterEvents(
   source: AsyncIterable<AdapterEvent>,
   classifyFirstEvent: (event: AdapterEvent) => Extract<AdapterEvent, { type: "error" }> | undefined,
-  signal: AbortSignal,
+  signal: AbortSignal | undefined,
   stallTimeoutMs: number,
   stop: () => void,
 ): Promise<AdapterEventPreflight | typeof COMBO_PREFLIGHT_STALLED | typeof COMBO_PREFLIGHT_ABORTED> {
@@ -22,7 +22,7 @@ export async function preflightComboAdapterEvents(
   const guarded: AsyncIterator<AdapterEvent> = {
     next() {
       if (!guarding) return upstream.next();
-      if (signal.aborted) {
+      if (signal?.aborted) {
         stop();
         close();
         return Promise.reject(COMBO_PREFLIGHT_ABORTED);
@@ -31,7 +31,7 @@ export async function preflightComboAdapterEvents(
         let settled = false;
         const cleanup = (): void => {
           clearTimeout(timer);
-          signal.removeEventListener("abort", onAbort);
+          signal?.removeEventListener("abort", onAbort);
         };
         const fail = (reason: typeof COMBO_PREFLIGHT_STALLED | typeof COMBO_PREFLIGHT_ABORTED): void => {
           if (settled) return;
@@ -43,8 +43,8 @@ export async function preflightComboAdapterEvents(
         };
         const onAbort = (): void => fail(COMBO_PREFLIGHT_ABORTED);
         const timer = setTimeout(() => fail(COMBO_PREFLIGHT_STALLED), stallTimeoutMs);
-        signal.addEventListener("abort", onAbort, { once: true });
-        if (signal.aborted) onAbort();
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
         if (settled) return;
         try {
           void upstream.next().then(

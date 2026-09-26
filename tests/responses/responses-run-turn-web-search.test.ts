@@ -224,6 +224,30 @@ for (const streaming of [true, false]) {
   });
 }
 
+test("combo returns upstream failure when its runTurn event queue overflows before output", async () => {
+  events = [[
+    { type: "heartbeat" },
+    { type: "text_delta", text: "x".repeat(8 * 1024 * 1024 + 1) },
+  ]];
+  const config = {
+    port: 0,
+    defaultProvider: "cursor",
+    providers: {
+      cursor: { adapter: "cursor", baseUrl: "https://api2.cursor.sh", authMode: "oauth", models: ["model"] },
+    },
+    combos: { overflow: { strategy: "failover", targets: [{ provider: "cursor", model: "model" }] } },
+  } as OcxConfig;
+  const response = await handleResponses(new Request("http://localhost/v1/responses", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "combo/overflow", input: "answer", stream: true }),
+  }), config, { model: "", provider: "" });
+  const body = await response.text();
+  expect(response.status).toBe(502);
+  expect(body).toContain("single-event retained-string budget");
+  expect(body).not.toContain("client_cancelled");
+  expect(attempts).toHaveLength(1);
+});
+
 test.each(["image", "video"] as const)("media-only %s bridge still injects its tool", async media => {
   events = [[{ type: "text_delta", text: "media answer" }, { type: "done" }]];
   expect(await run(true, false, media, false)).toContain("media answer");
