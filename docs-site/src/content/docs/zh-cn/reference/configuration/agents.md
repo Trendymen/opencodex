@@ -22,7 +22,7 @@ description: 多代理界面、委派引导、首选模型、回退链、原生�
 | `effortCap?` | `string` | — | 对符合条件的 v2 主轮次和标记的派生子轮次设置硬上限。接受 `low` 到 `ultra`。 |
 | `subagentEffortCap?` | `string` | — | 仅针对派生子轮次的额外上限。两个上限同时适用时，较低者生效。 |
 | `plaintextV2AgentMessages?` | `boolean` | —（未设置） | 实验性选项。只有显式设置为 `true` 才会启用。符合条件的新 `spawn_agent`、`send_message` 和 `followup_task` 调用会使用明文消息参数。详见[明文 v2 代理消息](#明文-v2-代理消息)。 |
-| `agentTaskRecovery?` | `object` | — | 默认关闭的实验性加密 v2 任务恢复。默认使用 `gpt-5.6-luna` 与 `reasoningEffort: "medium"`；每次请求最多 120 秒，仅超时可在首次之后最多重试两次。 |
+| `agentTaskRecovery?` | `object` | — | 默认关闭的实验性加密 v2 任务恢复。默认使用 `gpt-5.6-luna` 与 `reasoningEffort: "medium"`；每次请求最多 120 秒，`maxRetries` 允许超时后再试两次。独立的 `retries` 默认 0，最多允许两次短暂 HTTP 或传输失败重试，在各次超时尝试间共用额度，并受当前尝试的截止时间约束。调用方取消或 `invalid_encrypted_content` 拒绝会终止重试。 |
 
 通过仪表板或 `ocx v2 status|on|off|mode <v1|default|v2>|threads <n>` 管理该界面。模式变更会应用于新会话。`maxConcurrentThreadsPerSession` 是 `PUT /api/v2` 字段，不是 `config.json` 键；`ocx v2 threads <n>` 会在启用 v2 后，将 `max_concurrent_threads_per_session` 写入 Codex 的 `$CODEX_HOME/config.toml` 中的 `[features.multi_agent_v2]` 下。
 

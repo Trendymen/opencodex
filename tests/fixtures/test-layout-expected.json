@@ -1113,7 +1113,6 @@
   "native-profile-startup-release.test.ts": "codex-integration",
   "native-profile-startup.test.ts": "codex-integration",
   "native-profile-store.test.ts": "codex-integration",
-  "nested-exec-eligibility.test.ts": "responses",
   "nested-exec-repair-context.test.ts": "responses",
   "nested-exec-repair.test.ts": "responses",
   "new-model-policy.test.ts": "providers",

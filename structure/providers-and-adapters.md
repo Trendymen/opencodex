@@ -3,6 +3,11 @@
 RunTurn hosted search uses `src/web-search/run-turn-loop.ts`: synthetic calls remain private, progress reaches the bridge during collection, and a validated terminal precedes search execution. Complete search calls remain actionable at a truncated `done`; cancellation prevents subsequent queries and calls. OAuth preflight replay in `src/server/responses/run-turn-execution.ts` retains the synthetic tool while refreshing credential-scoped route state. In `src/server/responses/sidecar-execution.ts`, a search plan takes priority over image/video bridge execution for both transports; only fetch-capable adapters enter the fetch search loop.
 
 Combo preflight allows the private search tool only while a search plan is active; client tool declaration checks and replay-unsafe heartbeat protection remain enforced.
+For a streaming combo, `src/server/responses/run-turn-execution.ts` repairs an admitted nested
+`exec` call before checking the first emitted tool name. The check waits for a complete call only
+up to the configured stall interval; timeout or caller cancellation stops the turn and releases
+retained events without an internal combo replay. Buffered turns repair the collected batch before
+the same name check. Search iterations and empty-completion retries are repaired before delivery.
 
 The opt-in `inlineThinkTagModels` list follows static-policy override and model-rename rules;
 shared Kiro/Chat splitting and raw display follow [Chat compatibility](providers/chat-compat.md#inline-think-tag-recovery).

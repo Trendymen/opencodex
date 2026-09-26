@@ -2530,6 +2530,28 @@ describe("OpenAI Responses passthrough sanitization", () => {
     });
   });
 
+  test("drops a third-party blob paired with raw reasoning on an unchanged native route", () => {
+    const adapter = createResponsesPassthroughAdapter(provider);
+    const request = adapter.buildRequest({
+      modelId: "gpt-5.6-sol",
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: {
+        model: "gpt-5.6-sol",
+        input: [{
+          type: "reasoning",
+          summary: [],
+          encrypted_content: "third-party-opaque-blob",
+          content: [{ type: "reasoning_text", text: "raw routed reasoning" }],
+        }],
+      },
+    }, { headers: new Headers({ authorization: "Bearer token" }) });
+    const body = JSON.parse(request.body) as { input: Record<string, unknown>[] };
+
+    expect(body.input[0]).toEqual({ type: "reasoning", summary: [], content: [] });
+  });
+
   test("keeps encrypted reasoning content without a proven route switch", () => {
     const adapter = createResponsesPassthroughAdapter(provider);
     const request = adapter.buildRequest({

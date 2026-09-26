@@ -192,8 +192,11 @@ a boundary. One fixed-endpoint request forwards separate parts, and assignment
 replacement compares the complete original item snapshot before splicing the run. Recovery output
 is model-transcribed plaintext, not cryptographic fidelity proof. An opt-in `retries` bound — off
 by default and capped at two extra sends — re-issues the same admitted request only on a transient
-upstream status or a transport failure, inside the same deadline and shared flight; terminal
+upstream status or a transport failure, inside the current attempt's deadline and shared flight; terminal
 statuses, invalid output, and budget exhaustion keep the bounded refusal reasons unchanged.
+Each timeout attempt has its own `timeoutMs` deadline and `maxRetries` allows at most two more
+attempts; transient retries share one allowance across those attempts and stay within the current
+attempt's deadline. Caller cancellation stops both retry paths.
 Recovery recognises all four codex-rs message types (NEW_TASK, MESSAGE, FOLLOWUP_TASK,
 FINAL_ANSWER); a FINAL_ANSWER envelope may omit the Task name line, in which case the
 structured recipient is not cross-checked because the envelope names no recipient, and

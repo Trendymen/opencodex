@@ -46,8 +46,8 @@ const MAX_ASSIGNMENT_BYTES = 2 * 1024 * 1024;
 const MAX_RECOVERY_RESPONSE_BYTES = 4 * 1024 * 1024;
 const RECOVERY_STALL_TIMEOUT_MS = 45_000;
 const CACHE_SCOPE_KEY = randomBytes(32);
-// 1 initial send + up to 2 retries matches TRANSIENT_RETRY_MAX_ATTEMPTS; retries stay inside
-// the caller's deadline, admission scope, and shared flight (#3661).
+// 1 initial send + up to 2 retries matches TRANSIENT_RETRY_MAX_ATTEMPTS; transient retries
+// stay inside the current timeout attempt's deadline, admission scope, and shared flight (#3661).
 const MAX_RECOVERY_RETRIES = 2;
 const RECOVERY_RETRY_BASE_DELAY_MS = 500;
 const RECOVERY_RETRY_MAX_DELAY_MS = 2_000;

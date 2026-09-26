@@ -1973,7 +1973,6 @@
     "fork-volcengine-empty-assistant-content.test.ts": "providers",
     "fork-windows-service-pending-transaction.test.ts": "windows",
     "fork-zhipu-glm-schema-lowering.test.ts": "providers",
-    "nested-exec-eligibility.test.ts": "responses",
     "nested-exec-repair-context.test.ts": "responses",
     "nested-exec-repair.test.ts": "responses",
     "annotation-directive.test.ts": "responses",

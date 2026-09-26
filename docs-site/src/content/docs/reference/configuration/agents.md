@@ -331,6 +331,12 @@ model output rather than authenticated plaintext.
 }
 ```
 
+`timeoutMs` bounds each recovery attempt. `maxRetries` allows up to two further sends after a
+timeout. The separate `retries` setting is off by default and allows up to two extra sends for
+transient HTTP or transport failures; that allowance is shared across timeout attempts. Each
+transient retry stays within its current attempt's deadline. Caller cancellation and an
+`invalid_encrypted_content` rejection stop both retry paths.
+
 Enable this only when the additional authenticated request, quota use, plaintext-in-process boundary,
 and private-backend dependency are acceptable. Prefer a native ChatGPT child or v1 heterogeneous
 delegation when they are not.
