@@ -16,9 +16,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { admitCodexWrite } from "../../src/codex/admission";
+import { injectCodexConfig } from "../../src/codex/inject";
+import { refreshCodexModelCatalog } from "../../src/codex/refresh";
+import { syncModelsToCodex } from "../../src/codex/sync";
 import { handleManagementAPI } from "../../src/server/management-api";
 import type { ManagementApiDeps } from "../../src/server/management/context";
 import type { OcxConfig } from "../../src/types";
+import { ownedServiceHomeInspection } from "../helpers/owned-service-home-inspection";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 let fixtureRoot = "";
@@ -44,6 +49,13 @@ function baseConfig(): OcxConfig {
 function testDeps(overrides: Partial<ManagementApiDeps> = {}): ManagementApiDeps {
   return {
     fetchAllModels: async () => [] as never,
+    syncModelsToCodex: (port: number) => syncModelsToCodex(port, undefined, null, {
+      refreshCodexModelCatalog,
+      injectCodexConfig,
+      admitCodexWrite: () => admitCodexWrite({
+        inspectOwnership: ownedServiceHomeInspection("native Codex toggle fixture"),
+      }),
+    }),
     ...overrides,
   } as ManagementApiDeps;
 }

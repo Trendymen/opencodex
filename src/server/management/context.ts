@@ -8,6 +8,7 @@ import type { StartupHealth } from "../../codex/autostart-health";
 import type { StartupInstallAction } from "../startup-action-control";
 import type { ManagementPrincipal, ManagementSessionControl } from "../management-auth";
 import type { CatalogModel } from "../../codex/catalog";
+import type { syncModelsToCodex } from "../../codex/sync";
 import type { refreshOwnedCatalogIntegrations } from "../../integrations/catalog-refresh";
 import type { Paths as CodexPromptPaths } from "../../codex/prompt-layers";
 import type { injectGrokConfig } from "../../grok/inject";
@@ -34,6 +35,7 @@ export type RemoteWorkspaceSessionsApi = Pick<RemoteWorkspaceSessionService,
   "availability" | "list" | "create" | "prompt" | "submitPrompt" | "stop" | "shutdown">;
 
 export interface ManagementApiDeps {
+  syncModelsToCodex?: typeof syncModelsToCodex;
   /** Read-only process-local aggregate metrics; absent keeps the scrape route unavailable. */
   requestMetrics?: RequestMetricsSnapshotter;
   checkPackageUpdate?: (channel: Channel) => Promise<UpdateCheckResult>;
