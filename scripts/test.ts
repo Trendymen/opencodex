@@ -368,6 +368,8 @@ export const SERIAL_FULL_SUITE_FILES = [
   // The full macOS isolate pool stalled in the structure gate's synchronous Git
   // child after earlier files; fresh-process execution retains the same assertions.
   "ci-workflows/structure-ssot.test.ts",
+  // CI shard 1/2 batch 8 stalled in a shared Bun process; every file passed alone.
+  "ci-workflows/ci-gui-if-changed.test.ts",
   // Synchronous injection subprocesses can wedge the long-lived macOS isolate
   // parent while reaping a history Worker; contain them in a fresh bounded lane.
   "codex-integration/codex-inject-write-lock.test.ts",
