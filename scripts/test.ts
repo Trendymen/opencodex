@@ -380,6 +380,12 @@ export const SERIAL_FULL_SUITE_FILES = [
   // In the full pool, provider CLI children reached their 40s deadline; the file
   // passes in a fresh process with the same assertions and child budget.
   "cli/cli-provider.test.ts",
+  // Full-pool contention timed out catalog requests and ACL subprocess probes.
+  // Fresh processes keep the same per-test deadlines and main-pool parallelism.
+  "claude-integration/claude-management-api.test.ts",
+  "claude-integration/claude-models-discovery.test.ts",
+  "lib/plugin-loader.test.ts",
+  "cli/cli-connect-readiness.test.ts",
   "update/update-stop-first.test.ts",
   // Relays a 50 MiB WebSocket frame end to end against a 15s deadline, so its result is a
   // measurement of the whole process, not of the relay. On a healthy 3-CPU macOS runner the
