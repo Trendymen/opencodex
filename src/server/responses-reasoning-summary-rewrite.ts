@@ -839,3 +839,28 @@ export function routeUsesContentChannelReasoning(
   return Array.isArray(preserved)
     && preserved.some(id => id.toLowerCase() === normalizedModelId);
 }
+
+type ReplayResponseSnapshot = { id?: unknown; output?: unknown; status?: unknown; model?: unknown };
+
+export function createPassthroughReasoningSummaryProjection(
+  rawBody: unknown,
+  provider: Parameters<typeof shouldProjectContentChannelReasoning>[1],
+  modelId: string,
+  translatorBudget: TranslatorBudget,
+) {
+  const projectContentChannelReasoning = shouldProjectContentChannelReasoning(rawBody, provider, modelId);
+  const reasoningReplayProjection = projectContentChannelReasoning
+    ? createReasoningSummaryReplayProjection({ translatorBudget })
+    : undefined;
+  return {
+    projectContentChannelReasoning,
+    reasoningReplayProjection,
+    wrapCacheRecorder(remember: (response: ReplayResponseSnapshot) => void) {
+      return (response: ReplayResponseSnapshot): void => {
+        const projected = reasoningReplayProjection?.projectSnapshot(response as Record<string, unknown>);
+        if (reasoningReplayProjection && projected === undefined) return;
+        remember(projected ?? response);
+      };
+    },
+  };
+}
