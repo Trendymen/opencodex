@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.67.0`（`4bc92294aa23a7edba75805095808d892efa72e2`）。
+- 上游基线：`v2.68.0`（`93f4231e4b9314f746902b336e7a77762643eaf1`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -213,6 +213,7 @@ Fork 为 block rewrite 增加可选 `flush` 和 stage 间传递：pull 正常 EO
 
 
 上游提供通用 recovery admission、turn termination 与失败原因；Fork 扩展 strict non-Fernet backend ciphertext 的识别、admission、routed trigger 和 fail-closed forwarding。
+官方 `v2.68.0` 新增的可选 `compactionRecovery` 处理 routed compaction 失败；它不处理 Fork 的 strict backend ciphertext envelope、父任务 `MESSAGE` 或原生 5xx 恢复。
 官方 `v2.54.0` 会在向非 canonical 第三方 Responses 目的地首次发送前，把重放 `agent_message` 中不可读的 ChatGPT 密文替换为 omission marker；Fork 沿用该发送前清理。canonical ChatGPT backend 沿用官方 Fernet 结构校验与 rejection recovery；Fork 只额外保留经过 strict `NEW_TASK` envelope 校验的当前任务密文 part，其他历史 slot 仍走官方清理。显式 `allowEncryptedV2AgentTasks=true` 的可信 key-auth Responses 直连也可保留原密文出站，但该授权不允许把 strict ciphertext 写入本地 continuation cache。禁写不依赖 `agentTaskRecovery` 是否启用，并在 `previous_response_id` 展开后按最终请求复核。
 官方 `v2.53.0` 将 Fernet recovery 扩为最多 32 个连续完整 part、合计 2 MiB，并按有序密文序列隔离缓存。Fork 的 strict backend ciphertext 与父任务超时通知仍只接受单个密文和精确两段 content；替换前比较完整输入快照，不把 multipart 放宽到 strict 路径。
 官方 `v2.50.0` 已覆盖直接路由中原生模型切换为第三方后重放加密历史的恢复入口，不再要求该请求是派生子任务；Fork 保留严格 backend envelope、父任务 `MESSAGE`、原生 5xx 重试恢复和超时通知等扩展。
@@ -270,7 +271,7 @@ macOS 本地安装默认补 `OCX_DEBUG=1` 和 `OCX_PROVIDER_TEXT_DEBUG=1` 后 re
 
 ### GUI Logs/Debug 增量
 
-采用上游 Logs/Debug 页面和 sidecar 布局。Fork 增加 `agent-task-recovery`、`oauth-account-429`、`opaque-blob-rejection`、`key-401`、`reasoning-effort-downgrade` 恢复标签及 9 个 locale 翻译，越南语目录补齐这些标签和 `providerText` 键；Debug 增加独立 `providerText` 授权开关和对应设置字段。
+采用上游 Logs/Debug 页面和 sidecar 布局。Fork 增加 `agent-task-recovery` 恢复标签；`oauth-account-429`、`opaque-blob-rejection`、`reasoning-effort-downgrade` 等既有标签保留 Fork 的专指文案及 9 个 locale 翻译，越南语目录补齐 `providerText` 键；Debug 增加独立 `providerText` 授权开关和对应设置字段。
 
 代码：`gui/src/pages/Logs.tsx`、`gui/src/pages/Debug.tsx`、`gui/src/pages/debug-settings-panel.tsx`、`gui/src/pages/debug-shared.ts`、`gui/src/i18n/`。
 测试：`gui/tests/debug-cache-revisit.test.tsx`、`gui/tests/debug-mutation-busy.test.tsx`、`gui/tests/debug-put-install-order.test.tsx`、`tests/usage/fork-usage-recovery-kinds.test.ts`；sidecar 沿用 `gui/tests/sidecar-layout.test.ts`。
@@ -294,7 +295,8 @@ HTTP/SSE fixture 显式隔离 canonical ChatGPT 上游 WebSocket，避免真实�
 Codex Auth 的账户 DTO、排序和阈值投影用例先写入有效的本地额度缓存，避免这些不涉及额度刷新的断言向真实 WHAM 端点请求；产品的额度刷新路径不变。
 `tests/server/memory-watchdog.test.ts` 加入 `scripts/test.ts` 的现有独立进程清单，本地完整测试与 macOS CI 都在新的 Bun 进程中执行它，避免内存采样依赖前序测试累积的堆；保留原测试断言、超时预算和全局并发。 HTTP mock 用例通过既有 runtime identity 接缝固定为直接 HTTP，不再发起真实上游 WebSocket 握手。
 `tests/cli/cli-help.test.ts` 也使用该清单中的独立进程：真实 CLI 子进程在完整并发池中出现超时，单文件与官方基线的同一测试能完成；调度改变不放宽断言、子进程时限或主池并发。
-本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；因此本轮检查的是相对 `v2.67.0` 的 Fork GUI 差异。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
+`claude-management-api.test.ts`、`claude-models-discovery.test.ts`、`plugin-loader.test.ts` 和 `cli-connect-readiness.test.ts` 也使用该清单中的独立进程，避免完整并发池中的短时限探针和进程级状态相互干扰；原有断言、用例时限和主池并发保持不变。
+本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；因此本轮检查的是相对 `v2.68.0` 的 Fork GUI 差异。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
 CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；官方 Tag verifier 使用完整对象 fetch，避免导入阶段依赖 promisor 懒取。candidate CI 在原子 promotion 前允许旧 `upstream-release` marker 保留，但必须证明它是新官方 Tag 的祖先；该例外由 verifier 在 GitHub dev push 环境中再次核对，合同测试同时覆盖 candidate 与非 candidate 环境，发布后的 verifier 仍要求 marker 与官方 Tag 精确相等。采用上游 Docker job/filter/aggregate。changes job 对 `ci`、`gui`、`packaging`、`docs`、`structure` 五个 scope 统一做 `true|false` 校验，并只把校验后的值提供给下游 job，缺失或非法输出直接失败。
 官方 Tag 来源与 ancestry 必须一致；发布后的 marker 必须与官方 Tag 精确相等，candidate CI 的旧 marker 只按祖先关系证明放行；缺失或冲突不能通过放宽测试解决。
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
