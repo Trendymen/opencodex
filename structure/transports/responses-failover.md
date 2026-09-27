@@ -11,7 +11,7 @@ requests keep their original route. One configured emergency target shares the o
 and translation budgets. Physical-send receipts and explicit retry-helper reports reconcile legacy
 fetch sends without double charging external reservations; one prepaid emergency permit is shared
 with adapter dispatch, and only additional retries draw from the remainder. Adapter observers retain partial-output and structured denial evidence
-before response projection. Native encrypted compaction, uploaded files, stored continuations,
+before response projection. Native encrypted compaction, `agent_message` history, uploaded files, stored continuations,
 and policy/combo routes are excluded. Emergency output must contain one readable portable
 compaction item; recent original user messages are retained verbatim, and recovery failure keeps
 the original failure. A source Kiro account lease is returned before the emergency child is
@@ -78,6 +78,8 @@ request's execution budget, so a combo child that derives its own scope draws on
 counter rather than holding a second. A replacement never widens a send budget: it still has to
 fit inside the allowance the leg already had, and it is charged to the same counter every other
 send goes through.
+Client-delivered `agent_message` items are input to the parent turn, so they remain eligible under
+the self-contained check; replacing the model send does not rerun the child agent.
 
 The number of replacements is the request's as well. A leg reads it from `route.provider`, which
 credential rotation, OAuth refresh, transport resolution and each combo target reassign inside one

@@ -90,6 +90,8 @@ replacements in total — across every recovery leg and every combo child, not o
 refusal returns as soon as that grant is spent, the leg has no send left, or a replacement fails
 for any other reason. A request that already emitted output or a tool call keeps the refusal
 regardless. A caller that cancels mid-replacement gets the cancellation, not the refusal.
+An `agent_message` already delivered by a child agent is client input and remains eligible; a
+replacement does not rerun that child agent.
 
 For WebSocket recovery, “before the first Responses event” is stricter than “before the
 first text”: even `response.created`, a tool event or a usage-bearing response closes the
