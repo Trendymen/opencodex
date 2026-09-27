@@ -25,6 +25,15 @@ describe("selfContainedResponsesBody", () => {
       input: [{ role: "user", content: "hi" }],
     })).toBe(true);
   });
+  test("accepts a client-delivered agent_message for reset replacement", () => {
+    expect(selfContainedResponsesBody({
+      ...clientTurn,
+      input: [
+        ...clientTurn.input,
+        { type: "agent_message", author: "/root/child", recipient: "/root", content: [{ type: "input_text", text: "result" }] },
+      ],
+    })).toBe(true);
+  });
 
   test("refuses anything that leaves state behind or continues someone else's turn", () => {
     for (const override of [
