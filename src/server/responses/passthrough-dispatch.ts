@@ -167,10 +167,7 @@ import { planReasoningEffortDowngrade } from "../../providers/reasoning-metadata
 import { agentTaskRecoveryConfig, recoverEncryptedAgentTask } from "./agent-task-recovery";
 import { hasStrictBackendEncryptedAgentTask } from "./encrypted-payload";
 import { parseRequest } from "../../responses/parser";
-import {
-  createReasoningSummaryReplayProjection,
-  shouldProjectContentChannelReasoning,
-} from "../responses-reasoning-summary-rewrite";
+import { createPassthroughReasoningSummaryProjection } from "../responses-reasoning-summary-rewrite";
 import {
   createNestedExecAdapterEventRepair,
   createNestedExecPassthroughRepair,
@@ -560,14 +557,12 @@ export async function preparePassthroughExchange(
       : undefined;
     const passiveQuotaObserved = hasPassiveAccountQuota(route.providerName)
       && route.provider.authMode === "oauth";
-    const projectContentChannelReasoning = shouldProjectContentChannelReasoning(
+    const { projectContentChannelReasoning, reasoningReplayProjection, wrapCacheRecorder } = createPassthroughReasoningSummaryProjection(
       parsed._rawBody,
       route.provider,
       route.modelId,
+      translatorBudget,
     );
-    const reasoningReplayProjection = projectContentChannelReasoning
-      ? createReasoningSummaryReplayProjection({ translatorBudget })
-      : undefined;
     const noteInspectedPayload = (payload: unknown) => {
       if (!inboundDebugUsesRawTerminalRepairTap) inboundDebugObserver?.notePayload(payload);
       reasoningReplayProjection?.notePayload(payload);
@@ -710,13 +705,7 @@ export async function preparePassthroughExchange(
         publishAcceptedResponse(normalizedReplayResponse);
       }
     };
-    const rememberClientVisiblePassthroughResponse = (
-      response: { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
-    ) => {
-      const projected = reasoningReplayProjection?.projectSnapshot(response as Record<string, unknown>);
-      if (reasoningReplayProjection && projected === undefined) return;
-      rememberPassthroughResponseChecked(projected ?? response);
-    };
+    const rememberClientVisiblePassthroughResponse = wrapCacheRecorder(rememberPassthroughResponseChecked);
     recordAdapterReasoning(logCtx, request);
     recordAdapterTier(logCtx, request);
     const actualHostKey = upstreamHostHealthKey(
