@@ -380,6 +380,11 @@ export const SERIAL_FULL_SUITE_FILES = [
   // In the full pool, provider CLI children reached their 40s deadline; the file
   // passes in a fresh process with the same assertions and child budget.
   "cli/cli-provider.test.ts",
+  // These CLI subprocess and global-fetch fixtures passed alone but failed in the four-worker pool.
+  "cli/cli-models.test.ts",
+  "cli/cli-headless-parity.test.ts",
+  "clients/client-connect.test.ts",
+  "clients/client-link-connect.test.ts",
   // Full-pool contention timed out catalog requests and ACL subprocess probes.
   // Fresh processes keep the same per-test deadlines and main-pool parallelism.
   "claude-integration/claude-management-api.test.ts",
