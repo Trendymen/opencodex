@@ -42,7 +42,9 @@ export async function preflightComboAdapterEvents(
           reject(reason);
         };
         const onAbort = (): void => fail(COMBO_PREFLIGHT_ABORTED);
-        const timer = setTimeout(() => fail(COMBO_PREFLIGHT_STALLED), stallTimeoutMs);
+        const timer = stallTimeoutMs > 0
+          ? setTimeout(() => fail(COMBO_PREFLIGHT_STALLED), stallTimeoutMs)
+          : undefined;
         signal?.addEventListener("abort", onAbort, { once: true });
         if (signal?.aborted) onAbort();
         if (settled) return;
