@@ -13,9 +13,10 @@ RunTurn hosted search uses `src/web-search/run-turn-loop.ts`: synthetic calls re
 
 Combo preflight allows the private search tool only while a search plan is active; client tool declaration checks and replay-unsafe heartbeat protection remain enforced.
 For a streaming combo, `src/server/responses/run-turn-execution.ts` repairs an admitted nested
-`exec` call before checking the first emitted tool name. The check waits for a complete call only
-up to the configured stall interval; timeout or caller cancellation stops the turn and releases
-retained events without an internal combo replay. Buffered turns repair the collected batch before
+`exec` call before checking the first emitted tool name. The check waits for a complete call up to
+the configured stall interval when it is positive. `stallTimeoutSec: 0` disables that timer;
+caller cancellation still stops the turn and releases retained events without an internal combo
+replay. Buffered turns repair the collected batch before
 the same name check. Search iterations and empty-completion retries are repaired before delivery.
 
 The opt-in `inlineThinkTagModels` list follows static-policy override and model-rename rules;

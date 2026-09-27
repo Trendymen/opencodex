@@ -159,7 +159,7 @@ for (const streaming of [true, false]) {
       sharedBudget.dispose();
     }
   }, 5_000);
-  if (streaming) test("caller cancellation ends a partial nested exec preflight before its stall deadline", async () => {
+  if (streaming) for (const stallTimeoutSec of [1, 0]) test(`caller cancellation ends a partial nested exec preflight (stall=${stallTimeoutSec})`, async () => {
     events = [[{ type: "tool_call_start", id: "nested", name: "web__run" }]];
     const tools = [{ type: "namespace", name: "functions", tools: [{ type: "custom", name: "exec", description: "Run JavaScript" }] }];
     const caller = new AbortController();
@@ -172,7 +172,7 @@ for (const streaming of [true, false]) {
     const cancellation = setTimeout(() => caller.abort(), 25);
     try {
       const started = Date.now();
-      const output = await run(true, false, undefined, false, true, tools, 1, caller.signal);
+      const output = await run(true, false, undefined, false, true, tools, stallTimeoutSec, caller.signal);
       expect(Date.now() - started).toBeLessThan(1_000);
       expect(output).toContain('"code":"client_cancelled"');
       expect(output).not.toContain("upstream_stall_timeout");
@@ -182,6 +182,23 @@ for (const streaming of [true, false]) {
       caller.abort();
     }
   }, 5_000);
+  if (streaming) test("disabled stall timeout allows a delayed combo first tool", async () => {
+    events = [[{ type: "tool_call_start", id: "delayed", name: "web__run" }]];
+    onAttempt = async (_index, _parsed, _incoming, emit) => {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      emit({ type: "tool_call_delta", arguments: '{"search_query":[{"q":"fixture"}]}' });
+      emit({ type: "tool_call_end" });
+      emit({ type: "done" });
+    };
+    const tools = [{ type: "namespace", name: "functions", tools: [{ type: "custom", name: "exec", description: "Run JavaScript" }] }];
+    let status = 0;
+    const output = await run(true, false, undefined, false, true, tools, 0, undefined,
+      response => { status = response.status; });
+    expect(status).toBe(200);
+    expect(output).toContain('"name":"exec"');
+    expect(output).not.toContain("upstream_stall_timeout");
+    expect(attempts).toHaveLength(1);
+  });
   test(`combo preflight permits the injected search tool (stream=${streaming})`, async () => {
     events = [[{ type: "tool_call_start", id: "search", name: "web_search" },
       { type: "tool_call_delta", arguments: '{"query":"fixture"}' }, { type: "tool_call_end" },
