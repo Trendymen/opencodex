@@ -207,6 +207,17 @@
       ]
     },
     {
+      "path": "transports/responses-reset-replay.md",
+      "tier": 3,
+      "title": "Responses Reset Replay Boundary",
+      "scope": "Ambiguous reset refusals, client retry signals, and replay markers across response surfaces.",
+      "documents": [
+        "src/bridge/",
+        "src/lib/",
+        "src/server/"
+      ]
+    },
+    {
       "path": "transports/responses-spend.md",
       "tier": 3,
       "title": "Responses Spend Reservations",
