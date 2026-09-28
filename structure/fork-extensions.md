@@ -81,6 +81,7 @@ SSE block rewrite 在正常 EOF 和 eager synthetic failure 前 flush retained b
 错误只 dispose；nested-exec barrier 不承诺 flush。高置信 policy terminal 统一为单个失败终态；
 普通顶层 upstream error 若在无 terminal 的干净 EOF 前出现，则保留有界 type、code 和脱敏 message，
 否则生成 `adapter_eof` incomplete。客户端最多收到一个终态和一个 `[DONE]`。
+干净 EOF 时，`src/server/relay.ts` 仅在普通上游错误的首个非空 message 与首个有效 code 来自同一候选时，将其投影为有界、脱敏的 `response.failed`。缺少 code 时可保留带类型的 message；后续候选不能覆盖先前的传输诊断。
 
 ## 诊断与持久化
 
