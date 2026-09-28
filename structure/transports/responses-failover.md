@@ -159,6 +159,8 @@ transient retries are exhausted. Other historical slots still follow the canonic
 This does not broaden Fernet detection or admit the task into continuation caching. The one-shot
 replay uses the shared physical-send budget and retains the original transient response when no
 send permit remains.
+`src/fork/passthrough-agent-task-recovery.ts` owns eligibility and reparsing;
+`src/server/responses/passthrough-dispatch.ts` retains the physical replay and budget accounting.
 
 ## Upstream key attempt accounting
 
