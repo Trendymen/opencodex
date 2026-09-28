@@ -1209,11 +1209,9 @@ export async function preparePassthroughExchange(
         }
       }
     }
-
     // Keep recovery kinds in sync with the generic `recovery:` loop below.
     passthroughRecovery: for (;;) {
     if (agentTaskRecoveryReplayTerminal) break;
-
     if (
       upstreamResponse.status === 401
       && (admissionState.authCtx.kind === "main-pool" || admissionState.authCtx.kind === "pool")
@@ -1335,9 +1333,7 @@ export async function preparePassthroughExchange(
       }
       continue passthroughRecovery;
     }
-
     if (codex401ReplayKind !== null && upstreamResponse.status === 401) break;
-
     // Native Responses providers return before the generic adapter recovery loop below. Keep
     // their OAuth contract identical: one pre-stream 401 forces a credential refresh and one
     // rebuilt replay. xAI's current subscription models use this branch now that their official
@@ -1460,7 +1456,6 @@ export async function preparePassthroughExchange(
         request.releaseBodyObservation?.();
       }
     }
-
     // Native Responses returns before the generic adapter's OAuth rotation loop. Keep
     // the same quorum, cooldown and request budget here, before any client bytes flow.
    if (
