@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.69.0`（`3cc34e1181926b64331490fdcfee162ffb62fe73`）。
+- 上游基线：`v2.70.0`（`53834ff47b29f8a9b87da321542c9efb8f6c318b`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -230,7 +230,7 @@ Slow 5xx、abort、直接成功、非 transient 和非原生 direct/combo 不触
 已准入的子到父 `MESSAGE` 在超时重试耗尽后转为不含密文的未恢复提示：要求父任务向子任务请求重发，最多两次，仍失败则读取子任务最终回复。按调用者、父任务和密文隔离的短期状态支持后续历史重放；提示不代表正文已读或审查通过。`NEW_TASK`、父到子指令、拒绝、无效输出及取消仍保留原有失败边界。
 严格 envelope 只接受精确 header/author/recipient/task、两段 content 与单个完整 ciphertext；成功和恢复后的 body 都不得写入 continuation state。
 
-代码：`src/server/responses/encrypted-payload.ts`、`src/server/responses/agent-task-recovery.ts`、`src/server/responses/request-prepare.ts`、`src/server/responses/passthrough-dispatch.ts`、`src/lib/upstream-retry.ts`、`src/usage/log.ts`。
+代码：`src/server/responses/encrypted-payload.ts`、`src/server/responses/agent-task-recovery.ts`、`src/fork/passthrough-agent-task-recovery.ts`、`src/server/responses/request-prepare.ts`、`src/server/responses/passthrough-dispatch.ts`、`src/lib/upstream-retry.ts`、`src/usage/log.ts`。
 测试：`tests/server/fork-agent-message-strict-envelope.test.ts`、`tests/server/fork-agent-task-recovery-backend.test.ts`、`tests/server/fork-agent-task-recovery-body-ceiling.test.ts`、`tests/server/agent-task-recovery-routed-backend.test.ts`、`tests/server/fork-tool-call-ciphertext-arguments.test.ts`、`tests/server/fork-tool-call-ciphertext-egress.test.ts`。
 
 ### key-auth Responses 的输出预算补全
@@ -299,7 +299,7 @@ Codex Auth 的账户 DTO、排序和阈值投影用例先写入有效的本地�
 `tests/server/memory-watchdog.test.ts` 加入 `scripts/test.ts` 的现有独立进程清单，本地完整测试与 macOS CI 都在新的 Bun 进程中执行它，避免内存采样依赖前序测试累积的堆；保留原测试断言、超时预算和全局并发。 HTTP mock 用例通过既有 runtime identity 接缝固定为直接 HTTP，不再发起真实上游 WebSocket 握手。
 `tests/cli/cli-help.test.ts` 也使用该清单中的独立进程：真实 CLI 子进程在完整并发池中出现超时，单文件与官方基线的同一测试能完成；调度改变不放宽断言、子进程时限或主池并发。
 `claude-management-api.test.ts`、`claude-models-discovery.test.ts`、`plugin-loader.test.ts` 和 `cli-connect-readiness.test.ts` 也使用该清单中的独立进程，避免完整并发池中的短时限探针和进程级状态相互干扰；原有断言、用例时限和主池并发保持不变。
-本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；因此本轮检查的是相对 `v2.69.0` 的 Fork GUI 差异。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
+本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；本轮候选对应 `v2.70.0`。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
 CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；官方 Tag verifier 使用完整对象 fetch，避免导入阶段依赖 promisor 懒取。candidate CI 在原子 promotion 前允许旧 `upstream-release` marker 保留，但必须证明它是新官方 Tag 的祖先；该例外由 verifier 在 GitHub dev push 环境中再次核对，合同测试同时覆盖 candidate 与非 candidate 环境，发布后的 verifier 仍要求 marker 与官方 Tag 精确相等。采用上游 Docker job/filter/aggregate。changes job 对 `ci`、`gui`、`packaging`、`docs`、`structure` 五个 scope 统一做 `true|false` 校验，并只把校验后的值提供给下游 job，缺失或非法输出直接失败。
 官方 Tag 来源与 ancestry 必须一致；发布后的 marker 必须与官方 Tag 精确相等，candidate CI 的旧 marker 只按祖先关系证明放行；缺失或冲突不能通过放宽测试解决。
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
