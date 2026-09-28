@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import {
   captureProviderDebugLaunchdSnapshot,
+  assertGuiHtmlOverflowClip,
   ensureProviderDebugLaunchdDefault,
   launchdProxyPlistPath,
   loadRestoredLaunchd,
   localInstallAfterReplace,
   localInstallRestartEnv,
+  patchBuiltGuiHtmlOverflowClip,
   refreshProviderDebugLaunchd,
   restartLocalInstall,
   runLocalInstallLifecycleWithManifestGuard,
@@ -43,6 +45,70 @@ function tempPlist(content = basePlist): string {
   chmodSync(plist, 0o600);
   return plist;
 }
+
+function tempGuiCss(content: string): { assetsDir: string; cssPath: string } {
+  const directory = mkdtempSync(join(tmpdir(), "ocx-install-local-css-"));
+  temporaryDirectories.push(directory);
+  const assetsDir = join(directory, "gui", "dist", "assets");
+  mkdirSync(assetsDir, { recursive: true });
+  const cssPath = join(assetsDir, "index-test.css");
+  writeFileSync(cssPath, content, "utf8");
+  return { assetsDir, cssPath };
+}
+
+describe("local installer built GUI overflow patch", () => {
+  const oldRule = "html{background:var(--bg);overflow-x:hidden}";
+  const newRule = "html{background:var(--bg);overflow:clip}";
+
+  test("replaces the old html rule and verifies the built asset", () => {
+    const { assetsDir, cssPath } = tempGuiCss(`body{margin:0}${oldRule}main{color:red}`);
+    expect(patchBuiltGuiHtmlOverflowClip(assetsDir)).toEqual({ files: 1, replacements: 1 });
+    expect(readFileSync(cssPath, "utf8")).toBe(`body{margin:0}${newRule}main{color:red}`);
+    expect(() => assertGuiHtmlOverflowClip(assetsDir, "installed gui/dist/assets")).not.toThrow();
+  });
+
+  test("already patched asset is accepted without another write", () => {
+    const { assetsDir, cssPath } = tempGuiCss(newRule);
+    expect(patchBuiltGuiHtmlOverflowClip(assetsDir)).toEqual({ files: 1, replacements: 0 });
+    expect(readFileSync(cssPath, "utf8")).toBe(newRule);
+  });
+
+  test.each([
+    ["missing", "body{margin:0}"],
+    ["unknown", "html{background:var(--bg);overflow-y:auto}"],
+    ["duplicate", `${oldRule}${oldRule}`],
+  ])("rejects %s html rule without modifying the asset", (_, content) => {
+    const { assetsDir, cssPath } = tempGuiCss(content);
+    expect(() => patchBuiltGuiHtmlOverflowClip(assetsDir)).toThrow(/html overflow rule/i);
+    expect(readFileSync(cssPath, "utf8")).toBe(content);
+  });
+
+  test("installed asset assertion rejects the old rule", () => {
+    const { assetsDir } = tempGuiCss(oldRule);
+    expect(() => assertGuiHtmlOverflowClip(assetsDir, "installed gui/dist/assets"))
+      .toThrow(/installed gui\/dist\/assets.*html overflow rule/i);
+  });
+
+  test.each([
+    ["string", `body::before{content:"${oldRule}"}`],
+    ["comment", `/* ${oldRule} */body{margin:0}`],
+    ["nested rule", `@media screen{${oldRule}}`],
+    ["already patched string", `body::before{content:"${newRule}"}`],
+  ])("ignores %s without a top-level html rule", (_, content) => {
+    const { assetsDir, cssPath } = tempGuiCss(content);
+    expect(() => patchBuiltGuiHtmlOverflowClip(assetsDir)).toThrow(/html overflow rule/i);
+    expect(() => assertGuiHtmlOverflowClip(assetsDir)).toThrow(/html overflow rule/i);
+    expect(readFileSync(cssPath, "utf8")).toBe(content);
+  });
+
+  test("patches the top-level html rule after string, comment and nested decoys", () => {
+    const prefix = `body::before{content:"${oldRule}"}/* ${oldRule} */@media screen{${oldRule}}`;
+    const { assetsDir, cssPath } = tempGuiCss(`${prefix}${oldRule}`);
+    expect(patchBuiltGuiHtmlOverflowClip(assetsDir)).toEqual({ files: 1, replacements: 1 });
+    expect(readFileSync(cssPath, "utf8")).toBe(`${prefix}${newRule}`);
+    expect(() => assertGuiHtmlOverflowClip(assetsDir)).not.toThrow();
+  });
+});
 
 describe("local installer provider debug handling", () => {
   test.skipIf(process.platform !== "darwin")(
