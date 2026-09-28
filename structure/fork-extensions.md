@@ -19,6 +19,7 @@ OpenAI 运营目的地和 ChatGPT forward 继续使用上游原生协议。
 | 模块 | 当前职责 |
 | --- | --- |
 | `src/fork/agent-message-format.ts` | 解析 `preserve` / `user_message`，决定第三方 Responses 的明文 `agent_message` 是否转换。 |
+| `src/fork/passthrough-agent-task-recovery.ts` | 判断原生 Responses 密文子任务在 transient 重试耗尽后能否恢复，并重解析恢复后的输入；物理重发和发送预算仍由 passthrough dispatch 管理。 |
 | `src/fork/glm-kimi-compat.ts` | 为 Ark Agent Plan GLM/Kimi 与 BigModel GLM 降低工具 schema、补尾部 user turn，并保留应用传入对象。 |
 | `src/fork/responses-message-phase.ts` | 对显式列入配置的第三方模型补缺失的 assistant `phase`；宣布阶段（`output_item.added`）自称 `final_answer` 时先降为 `commentary`，最终相位仍由 `done` 与终态快照给出；不生成、复制或摘要文字。 |
 | `src/fork/routed-progress-contract.ts` | 给带工具的第三方请求追加普通 assistant 文本进度约定；不合成进度消息。 |
