@@ -420,7 +420,7 @@ Both shapes carry the inbound caller-abort signal separately from the turn/shutd
 controller. A caller-driven read rejection is 499/client_cancel without pool penalty;
 a genuine upstream reset seen while reading the stream remains synthetic 502; the
 pre-header case is a different verdict and is covered by
-[ambiguous connection-reset replay boundary](responses-failover.md#ambiguous-connection-reset-replay-boundary).
+[ambiguous connection-reset replay boundary](responses-reset-replay.md#ambiguous-connection-reset-replay-boundary).
 An already received terminal, including
 one completed by the error-path parser flush, retains its real outcome. Eager relays
 remove the caller listener when done and close signal-cancelled downstream streams even
