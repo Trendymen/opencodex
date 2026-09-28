@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.68.0`（`93f4231e4b9314f746902b336e7a77762643eaf1`）。
+- 上游基线：`v2.69.0`（`3cc34e1181926b64331490fdcfee162ffb62fe73`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -103,7 +103,7 @@ Kiro 当前通过已识别的 code-mode `exec` 接收该提示，仅有直接 `a
 
 ### Nested code-mode 工具修复
 
-上游已将裸 `exec_command` / `apply_patch` 接入统一 exec，并在 `v2.52.0` 增加 `default.` namespace 的请求有界归一化。Fork 额外修复 `functions.exec` / `web__run`，要求当前 turn 的 `functions` namespace 内恰有一个 `custom:exec`，且 lowering 来源一致。归一化只使用调用方明确声明的 bare tool 集；nested-exec 的延迟、拒绝和 continuation cache 门禁继续生效。
+上游已将裸 `exec_command` / `apply_patch` 接入统一 exec，并在 `v2.52.0` 增加 `default.` namespace 的请求有界归一化。`v2.69.0` 还支持在明确声明 custom `exec` 且具备 code-mode 来源时将直接 `mcp__*` 调用归一到 `exec`；见 `tests/responses/responses-code-mode-mcp-direct.test.ts`。Fork 额外修复 `functions.exec` / `web__run`，要求当前 turn 的 `functions` namespace 内恰有一个 `custom:exec`，且 lowering 来源一致。归一化只使用调用方明确声明的 bare tool 集；nested-exec 的延迟、拒绝和 continuation cache 门禁继续生效。
 普通 `function:exec`、顶层 `custom:exec`、其他 namespace 或多重声明不授权该修复。碎片事件与 passthrough SSE 原子缓冲；畸形、歧义、重复、超预算调用交给 undeclared-tool guard。
 Continuation cache 仅在客户端收到有效 terminal 后提交；有界 JSON 在 inspection 仍有效时完成校验和缓存提交。原生路由在 `passthrough-dispatch.ts` 暂存候选，由 `passthrough-delivery.ts` 的最终客户端终态确认；adapter 流式与有界事件分别在 `run-turn-execution.ts`、`adapter-delivery.ts` 接入同一修复。流式 combo 在首工具名称判定前先修复嵌套调用；正数 stall 时限内无可见事件则返回 504，`stallTimeoutSec: 0` 关闭该计时器，调用方取消仍返回 499。504 和 499 都会停止本轮并禁止内部重放。内部事件队列超限会保留终态错误并返回 502，后续是否重试仍受 `replayUnsafe` 等既有门禁约束。
 code-mode 历史输出另要求字符串 `instructions`、唯一 bare unnamespaced `custom_tool_call(name=exec)` 与对应输出。同一 `call_id` 与 function、local-shell 或 standalone output 碰撞时视为歧义，不改写非 custom exec 输出。
@@ -124,6 +124,8 @@ code-mode 历史输出另要求字符串 `instructions`、唯一 bare unnamespac
 ### 自定义模型配置、工具模式与公开投影
 
 Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
+
+官方 `v2.69.0` 的 `PUT /api/model-settings` 修改已发现的 routed 模型行及其 Provider 级能力映射；Fork 的 `/api/custom-models` 管理用户声明的模型，两者保存位置和清除规则各自独立。对应官方回归见 `tests/server/model-settings-management-api.test.ts`。
 
 - 加载时逐行保留合法数据且不写盘；严格写入拒绝坏行、无效枚举、stable-ID 重复和新增 routed/native identity collision。历史冲突可保留，但歧义 selector 拒绝路由，仍可按精确 ID 删除。
 - 按 stable-ID 三方合并，正确处理首次新增、删除最后一行与并发新增；reasoning efforts 规范化，未知 opaque 字段只在内部保存，公开 API/CLI/export 使用已知字段投影。
@@ -296,7 +298,7 @@ Codex Auth 的账户 DTO、排序和阈值投影用例先写入有效的本地�
 `tests/server/memory-watchdog.test.ts` 加入 `scripts/test.ts` 的现有独立进程清单，本地完整测试与 macOS CI 都在新的 Bun 进程中执行它，避免内存采样依赖前序测试累积的堆；保留原测试断言、超时预算和全局并发。 HTTP mock 用例通过既有 runtime identity 接缝固定为直接 HTTP，不再发起真实上游 WebSocket 握手。
 `tests/cli/cli-help.test.ts` 也使用该清单中的独立进程：真实 CLI 子进程在完整并发池中出现超时，单文件与官方基线的同一测试能完成；调度改变不放宽断言、子进程时限或主池并发。
 `claude-management-api.test.ts`、`claude-models-discovery.test.ts`、`plugin-loader.test.ts` 和 `cli-connect-readiness.test.ts` 也使用该清单中的独立进程，避免完整并发池中的短时限探针和进程级状态相互干扰；原有断言、用例时限和主池并发保持不变。
-本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；因此本轮检查的是相对 `v2.68.0` 的 Fork GUI 差异。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
+本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；因此本轮检查的是相对 `v2.69.0` 的 Fork GUI 差异。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
 CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；官方 Tag verifier 使用完整对象 fetch，避免导入阶段依赖 promisor 懒取。candidate CI 在原子 promotion 前允许旧 `upstream-release` marker 保留，但必须证明它是新官方 Tag 的祖先；该例外由 verifier 在 GitHub dev push 环境中再次核对，合同测试同时覆盖 candidate 与非 candidate 环境，发布后的 verifier 仍要求 marker 与官方 Tag 精确相等。采用上游 Docker job/filter/aggregate。changes job 对 `ci`、`gui`、`packaging`、`docs`、`structure` 五个 scope 统一做 `true|false` 校验，并只把校验后的值提供给下游 job，缺失或非法输出直接失败。
 官方 Tag 来源与 ancestry 必须一致；发布后的 marker 必须与官方 Tag 精确相等，candidate CI 的旧 marker 只按祖先关系证明放行；缺失或冲突不能通过放宽测试解决。
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
