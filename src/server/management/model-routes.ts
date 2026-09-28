@@ -856,7 +856,7 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
     const resultingLadder = ladder === undefined
       ? (Array.isArray(storedLadder) ? storedLadder : effectiveModelReasoningEfforts(config, provider, modelId))
       : (ladder ?? inheritedModelReasoningEfforts(config, provider, modelId));
-    const defaultEffort = readDefaultReasoningEffort(body.defaultReasoningEffort, resultingLadder);
+    const defaultEffort = readDefaultReasoningEffort(body.defaultReasoningEffort, resultingLadder, true);
     if (defaultEffort.error) return jsonResponse({ error: defaultEffort.error }, 400);
 
     let changed = false;
