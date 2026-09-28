@@ -16,7 +16,7 @@ import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
 import { isLocalUpstream } from "../../lib/local-upstream";
 import { codexSafetyBufferingFilterOptions, terminalStatusFromParsed } from "../relay";
 import { imageGenToolCallAliases } from "../responses-image-gen-repair";
-import { markBodyNonPersistable, rememberResponseState, isBodyNonPersistable } from "../../responses/state";
+import { rememberResponseState, isBodyNonPersistable } from "../../responses/state";
 import {
   currentTurnWireToolCatalogBody,
   hasExplicitWireToolCatalog,
@@ -115,7 +115,6 @@ import {
   fetchWithTransientRetry,
   applyUpstreamRecoveryInit,
   TRANSIENT_RETRY_MAX_ATTEMPTS,
-  isTransientUpstreamStatus,
   isNonReplayableResponse,
   isConnectionResetError,
   settleOperatorReplacement,
@@ -166,9 +165,7 @@ import { ambiguousResendAllowanceFor, selfContainedResponsesBody } from "./reset
 import { upstreamErrorMessageFromPayload, ENCRYPTED_FUNCTION_OUTPUT_REJECTION } from "../../lib/errors";
 import { isTransientConsoleGoUploadRejection } from "../../providers/opencode-zen-rate-limit";
 import { planReasoningEffortDowngrade } from "../../providers/reasoning-metadata";
-import { agentTaskRecoveryConfig, recoverEncryptedAgentTask } from "./agent-task-recovery";
-import { hasStrictBackendEncryptedAgentTask } from "./encrypted-payload";
-import { parseRequest } from "../../responses/parser";
+import { maybeRecoverNativeEncryptedAgentTask } from "../../fork/passthrough-agent-task-recovery";
 import { createPassthroughReasoningSummaryProjection } from "../responses-reasoning-summary-rewrite";
 import {
   createNestedExecAdapterEventRepair,
@@ -1197,52 +1194,26 @@ export async function preparePassthroughExchange(
       }
     };
 
+    const taskRecovery = await maybeRecoverNativeEncryptedAgentTask({
+      transientRetryExhausted, upstreamResponse, inboundWire, threadSpawn,
+      comboAttempt: options.comboAttempt, provider: route.provider, parsed, config, req,
+      parentThreadId, abortSignal: options.abortSignal,
+    });
+    if (taskRecovery.kind === "aborted") return transportFailureResponse(taskRecovery.reason);
     let agentTaskRecoveryReplayTerminal = false;
-    if (
-      transientRetryExhausted
-      && isTransientUpstreamStatus(upstreamResponse.status)
-      && !isNonReplayableResponse(upstreamResponse)
-      && inboundWire === "responses"
-      && threadSpawn
-      && !options.comboAttempt
-      && isCanonicalOpenAiForwardProvider(route.provider)
-      && hasStrictBackendEncryptedAgentTask((parsed._rawBody as { input?: unknown } | undefined)?.input)
-    ) {
-      let recovered = false;
+    if (taskRecovery.kind === "recovered") {
       try {
-        const recovery = agentTaskRecoveryConfig(config);
-        if (recovery) recovered = await recoverEncryptedAgentTask(
-          req,
-          (parsed._rawBody as { input?: unknown } | undefined)?.input,
-          recovery,
-          config,
-          { parentThreadId, abortSignal: options.abortSignal },
-        );
-      } catch {
-        recovered = false;
-      }
-      if (options.abortSignal?.aborted || req.signal.aborted) {
-        return transportFailureResponse(
-          options.abortSignal?.reason ?? req.signal.reason ?? new DOMException("client disconnected", "AbortError"),
-        );
-      }
-      if (recovered) {
-        markBodyNonPersistable(parsed._rawBody);
-        try {
-          const reparsed = parseRequest(parsed._rawBody);
-          const nextParsed = { ...parsed, context: reparsed.context, _rawBody: reparsed._rawBody };
-          adoptParsedRequest(nextParsed);
-          parsed = nextParsed;
-          const retried = await rebuildAndRefetch("agent-task-recovery", true, upstreamResponse);
-          if ("failed" in retried) {
-            if (options.abortSignal?.aborted || req.signal.aborted) return retried.failed;
-          } else {
-            upstreamResponse = retried;
-            agentTaskRecoveryReplayTerminal = true;
-          }
-        } catch {
-          // Optional recovery keeps the original terminal response when a bounded replay cannot be built.
+        adoptParsedRequest(taskRecovery.parsed);
+        parsed = taskRecovery.parsed;
+        const retried = await rebuildAndRefetch("agent-task-recovery", true, upstreamResponse);
+        if ("failed" in retried) {
+          if (options.abortSignal?.aborted || req.signal.aborted) return retried.failed;
+        } else {
+          upstreamResponse = retried;
+          agentTaskRecoveryReplayTerminal = true;
         }
+      } catch {
+        // Optional recovery keeps the original terminal response when a bounded replay cannot be built.
       }
     }
     // Keep recovery kinds in sync with the generic `recovery:` loop below.
