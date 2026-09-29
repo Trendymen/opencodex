@@ -6,7 +6,7 @@
 
 - `main` 只表示最新已发布的 Fork Release：必须指向最新 Fork Tag 的 peeled commit，不承载未发布开发。
 - `dev` 是自由开发线，也是上游稳定版同步、rebase、验证、双审与 Fork Release 的唯一候选线。它可以在最新 Fork Release 之上继续开发，也可以为发布收敛、压缩并在有明确 lease 的前提下强制更新远端。
-- 每个官方基线只保留一个 `sync/vX.Y.Z` Release 指针。它不是 rebase 工作线；每次该基线的 `ben.N` 发布都用一次 `git push --atomic` 同时更新 `main`、`dev`、`sync/vX.Y.Z`、`upstream-release`、Fork Tag 和官方 Tag，其中允许用该 sync ref 的精确 expected-OID lease 强制更新到新的 `RELEASE_COMMIT`。禁止创建 `sync/vX.Y.Z-ben.N`，也禁止无 lease force、删除 sync ref 或把 sync 的可移动性扩展到任何 Tag。
+- 每个官方基线只保留一个 `sync/vX.Y.Z` Release 指针。它不是 rebase 工作线；每次该基线的 `ben.N` 发布都用一次 `git push --atomic` 包含 `main`、`dev`、`sync/vX.Y.Z`、`upstream-release`、Fork Tag 和官方 Tag 六个 refspec，其中允许用该 sync ref 的精确 expected-OID lease 强制更新到新的 `RELEASE_COMMIT`。发布前的 `dev` candidate push 按下文单独约束，不提前移动其余五个引用。禁止创建 `sync/vX.Y.Z-ben.N`，也禁止无 lease force、删除 sync ref 或把 sync 的可移动性扩展到任何 Tag。
 
 ## 目标与候选资格
 
@@ -29,7 +29,7 @@
 - `RELEASE_COMMIT`：父提交等于 `IMPLEMENTATION_HEAD`、且只修改 `FORK_CHANGES.md` 的末尾文档提交。
 - `OFFICIAL_COMMIT`：固定官方稳定 Tag 的 peeled commit。
 
-实现、rebase 与验证在本地 `dev` 上进行，允许它随提交推进；此阶段不移动本地 `main`、既有 sync ref、`upstream-release`、任何 Tag 或远端发布引用。压缩任务的单独 `dev` candidate push 按下文专用规则执行。发布动作使用下列唯一完整 refset：
+实现、rebase 与验证在本地 `dev` 上进行，允许它随提交推进；双审完成前不移动本地 `main`、既有 sync ref、`upstream-release`、任何 Tag 或远端发布引用。双审通过后，普通同步允许按下文执行一次只更新远端 `dev` 的 candidate push；压缩任务沿用其专用 candidate 规则。发布动作使用下列唯一完整 refset：
 
 <!-- official-atomic-refset:start -->
 branch|main|leased-force|RELEASE_COMMIT:refs/heads/main
@@ -39,6 +39,10 @@ branch|marker|leased-force|OFFICIAL_COMMIT:refs/heads/upstream-release
 tag|official|no-force-no-lease|refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
 tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
 <!-- official-atomic-refset:end -->
+
+普通稳定版同步的 candidate push 只用于取得最终 `RELEASE_COMMIT_RN` 的 GitHub CI：先核对双审均为 `PASS`、工作树干净、远端 `dev` 的 expected OID 与候选来源，再以 `--force-with-lease=refs/heads/dev:<expected>` 只推 `RELEASE_COMMIT_RN:refs/heads/dev`。它不创建 Tag，也不移动 `main`、`sync/vX.Y.Z` 或 `upstream-release`。随后只接受 `push` 到 `refs/heads/dev`、head SHA 精确等于 `RELEASE_COMMIT_RN` 且完成成功的 aggregate `ci`；旧 marker 仍须是经验证的新官方 Tag peeled commit 的祖先。CI 的官方基线准备步骤先从上游验证并导入官方 Tag，版本线测试随后运行；candidate 阶段不要求 origin 已发布新官方 Tag 或 Fork Tag，也不跳过版本测试。
+
+candidate CI 失败、缺失或指向旧 SHA 时停止建 Tag 和发布。远端 `dev` 保留无 Tag 的候选；修复后按审查轮次规则形成新的 `RELEASE_COMMIT_RN`，以最新远端 `dev` 的精确 lease 再推候选并重新取得 CI。推送结果不确定时先读取远端 `dev` 的实际 OID，不能把未证实的推送当成 CI 触发成功。发布时仍提交下方完整六引用原子集合；即使 candidate push 已使 `dev` 等于目标 SHA，也必须包含该 refspec 和精确 lease，不把其他发布引用拆开推送。
 
 <!-- fork-release-lifecycle:start -->
 rebase_branch=dev
@@ -480,9 +484,9 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 8. 文档更新后按“验证选择与结果复用”完成最终验证；新基线的最终实现必须有当前官方 prepush 的通过证据。验证促成实现修改时把当前 `AK` 标记为 abandoned，以最大 `K + 1` 回到第 7 步；验证失败的 `AK` 不得占用 `RN`，也不得写入 `PRIOR_FINDINGS`。
 9. 验证通过后只暂存 `FORK_CHANGES.md`，核对 staged list 与 diff check，创建 docs-only commit，并机械验证其父提交等于当前 `CANDIDATE_IMPLEMENTATION_HEAD_AK`。此时才将完整 SHA 对晋升为下一个审查轮次：尚无轮次时创建 `R1`；已有 reviewed round 时使用当前最大 `N + 1`。令 `IMPLEMENTATION_HEAD_RN=CANDIDATE_IMPLEMENTATION_HEAD_AK`、`RELEASE_COMMIT_RN=<docs-only commit>`，两者同时存在后才算分配成功。
 10. 生成最新完整 `RN` 的 review package，执行机械集合/冲突 replay 对账、命名风险检查与双审门禁（见上）。首次真实派发使用 `REVIEW_PHASE: INITIAL`。任一 Critical/Important finding 都从新 `AK` 回到第 7 步；新候选经第 7–9 步晋升为下一完整 `RN` 后，按 `REVIEW_PHASE: RE_REVIEW` 复用原 reviewer 并保留完整 `PRIOR_FINDINGS`。未取得两个 `PASS`，以及仅在明确未收敛跨边界风险时所需的窄审 `PASS` 前，禁止后续 push、Tag、Release。
-    candidate CI 在这一步之后、原子 promotion 之前运行。此时 origin 的 `upstream-release` 仍可能是 `OLD_OFFICIAL`；候选 verifier 只有在显式 candidate CI 环境中，且证明该 marker 是新官方 Tag peeled commit 的祖先时，才允许继续。发布后的 verifier 仍要求 marker 与新官方 Tag 精确相等；候选例外不能用于本地或非 candidate CI 运行。
+    按“提交术语与唯一原子集合”中的普通同步 candidate 规则，以精确 lease 只推最终 `RELEASE_COMMIT_RN` 到远端 `dev`，并在原子 promotion 之前取得该 SHA 的成功 `push` CI。此时 origin 的 `upstream-release` 仍可能是 `OLD_OFFICIAL`；候选 verifier 只有在显式 candidate CI 环境中，且证明该 marker 是新官方 Tag peeled commit 的祖先时，才允许继续。发布后的 verifier 仍要求 marker 与新官方 Tag 精确相等；候选例外不能用于本地或非 candidate CI 运行。
 11. 双审通过后创建中文注释 annotated Tag vX.Y.Z-ben.N；raw 类型必须是 tag，peeled 等于 `RELEASE_COMMIT`。远端已存在时核对 OID，否则 fail closed。禁止 force Tag。
-12. 紧邻 push 重新读取 `main`、`dev`、`refs/heads/sync/vX.Y.Z` 与 marker 的 expected OID；sync 首次不存在则重证 absent。按“提交术语与唯一原子集合”执行一次 `git push --atomic`，同时更新 `main`、`dev`、`RELEASE_SYNC_REF`、`upstream-release`、Fork Tag 和官方 Tag：前三个 branch 与 Fork Tag 指向 `RELEASE_COMMIT`，`upstream-release` 与官方 Tag 指向 `OFFICIAL_COMMIT`。四个 branch 均使用各自 ref-scoped force-with-lease；sync 使用 `+RELEASE_COMMIT:refs/heads/sync/vX.Y.Z`，允许 non-fast-forward。任一 lease 漂移、出现 revision-specific sync ref、Tag 冲突或 push 失败都 fail closed；禁止无 lease force、blanket force 和拆分推送。
+12. 紧邻 push 重新读取 `main`、`dev`、`refs/heads/sync/vX.Y.Z` 与 marker 的 expected OID；sync 首次不存在则重证 absent。按“提交术语与唯一原子集合”执行一次 `git push --atomic`，同时提交 `main`、`dev`、`RELEASE_SYNC_REF`、`upstream-release`、Fork Tag 和官方 Tag 六个 refspec：前三个 branch 与 Fork Tag 指向 `RELEASE_COMMIT`，`upstream-release` 与官方 Tag 指向 `OFFICIAL_COMMIT`。四个 branch 均使用各自 ref-scoped force-with-lease；candidate push 后 `dev` 通常已等于 `RELEASE_COMMIT`，仍须提交其 refspec 和精确 lease；sync 使用 `+RELEASE_COMMIT:refs/heads/sync/vX.Y.Z`，允许 non-fast-forward。任一 lease 漂移、出现 revision-specific sync ref、Tag 冲突或 push 失败都 fail closed；禁止无 lease force、blanket force 和拆分推送。
 13. push 成功后、Release API 前，严格按 `local-ref-cas-transaction` 使用一个带
     `start` / `prepare` / `commit` 的 `git update-ref --stdin` transaction，把本地
     `refs/heads/main`、`refs/heads/sync/vX.Y.Z` 与 `refs/heads/upstream-release` 同时
