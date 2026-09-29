@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { compareReleaseTags } from "../../scripts/release-notes";
 import { forkVersionTagError } from "../../src/fork/version-policy.mjs";
 import { repoPath, repoRoot as resolveRepoRoot } from "../helpers/repo-root";
@@ -35,8 +37,15 @@ const repoRoot = resolveRepoRoot();
 /** Release tags shaped vX.Y.Z[-pre]. Non-release tags are ignored, not an error. */
 const RELEASE_TAG = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
-function git(args: string[]): { ok: boolean; out: string } {
-  const result = Bun.spawnSync(["git", ...args], { cwd: repoRoot });
+function git(args: string[], cwd = repoRoot): { ok: boolean; out: string } {
+  const env = cwd === repoRoot ? process.env : {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))),
+    HOME: cwd,
+    XDG_CONFIG_HOME: cwd,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: join(cwd, "global-git-config"),
+  };
+  const result = Bun.spawnSync(["git", ...args], { cwd, env });
   return {
     ok: result.exitCode === 0,
     out: new TextDecoder().decode(result.stdout).trim(),
@@ -69,18 +78,23 @@ function highestReleaseTag(tags: string[]): string | null {
 }
 
 /**
- * True when the given tag names the commit under test.
+ * Stable and preview versions require the tag to name the commit under test.
+ * Fork ben versions use the ancestor check below.
  *
  * This is the difference between "equal is legal" and "equal is a duplicate". On a
  * release commit — main at v2.33.0, preview at v2.33.0-preview.20260825 — package.json
  * SHOULD equal the highest tag, and a test that demanded strictly-ahead everywhere would
- * turn every released commit red. On any other commit, equal means the tree claims a
- * version that is already published.
+ * turn every released commit red. For stable and preview versions, equality on any
+ * other commit means the tree claims a version that is already published.
  */
 function tagPointsAtHead(tag: string): boolean {
   const head = git(["rev-parse", "HEAD^{commit}"]);
   const tagged = git([`rev-parse`, `${tag}^{commit}`]);
   return head.ok && tagged.ok && head.out.length > 0 && head.out === tagged.out;
+}
+
+function forkTagIsAncestorOfHead(tag: string, cwd = repoRoot): boolean {
+  return git(["merge-base", "--is-ancestor", `${tag}^{commit}`, "HEAD"], cwd).ok;
 }
 
 describe("release version line", () => {
@@ -96,7 +110,7 @@ describe("release version line", () => {
     if (tags.length === 0) return;
 
     const version = inTreeVersion();
-    const forkTagError = forkVersionTagError(version, tags, tagPointsAtHead);
+    const forkTagError = forkVersionTagError(version, tags, forkTagIsAncestorOfHead);
     if (forkTagError !== undefined) {
       expect(
         forkTagError,
@@ -142,5 +156,38 @@ describe("release version line", () => {
     expect(compareReleaseTags("v2.35.0-preview.1", "v2.34.0")).toBeGreaterThan(0);
     // ...but a prerelease of the SAME core is behind its own stable release.
     expect(compareReleaseTags("v2.34.0-preview.1", "v2.34.0")).toBeLessThan(0);
+  });
+
+  test("a fork tag may precede HEAD but must stay on its history", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ocx-fork-version-line-"));
+    const run = (...args: string[]) => expect(git(args, cwd).ok, args.join(" ")).toBe(true);
+    const commit = (message: string) => run("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", message);
+    const version = "2.70.0-ben.1";
+    const tags = ["v2.70.0", "v2.70.0-ben.1"];
+    const policyError = () => forkVersionTagError(version, tags, tag =>
+      forkTagIsAncestorOfHead(tag, cwd));
+    try {
+      run("init", "-q");
+      commit("root");
+      run("tag", "v2.70.0");
+      const root = git(["rev-parse", "HEAD"], cwd).out;
+      commit("release");
+      run("tag", "v2.70.0-ben.1");
+      expect(forkTagIsAncestorOfHead("v2.70.0-ben.1", cwd)).toBe(true);
+      expect(policyError()).toBeNull();
+      commit("later");
+      expect(forkTagIsAncestorOfHead("v2.70.0-ben.1", cwd)).toBe(true);
+      expect(policyError()).toBeNull();
+      run("checkout", "--detach", root);
+      commit("diverged");
+      expect(forkTagIsAncestorOfHead("v2.70.0-ben.1", cwd)).toBe(false);
+      expect(policyError()).toContain("tag is not on HEAD history");
+      run("checkout", "--orphan", "unrelated");
+      commit("unrelated");
+      expect(forkTagIsAncestorOfHead("v2.70.0-ben.1", cwd)).toBe(false);
+      expect(policyError()).toContain("tag is not on HEAD history");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

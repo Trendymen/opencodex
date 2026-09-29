@@ -73,7 +73,7 @@ export function forkUpdateDecision(latest, current, channel = "latest") {
 }
 
 /** Validate the immutable, monotonic tag line for a recognized fork version. */
-export function forkVersionTagError(version, tags, pointsAtHead = () => false) {
+export function forkVersionTagError(version, tags, tagIsAncestorOfHead = () => false) {
   const base = forkBaseVersion(version);
   if (!base) return undefined;
   const baseTag = `v${base}`;
@@ -89,7 +89,7 @@ export function forkVersionTagError(version, tags, pointsAtHead = () => false) {
   }
 
   const currentTag = `v${version}`;
-  return tags.includes(currentTag) && !pointsAtHead(currentTag)
-    ? `fork version ${version} is already tagged on another commit`
+  return tags.includes(currentTag) && !tagIsAncestorOfHead(currentTag)
+    ? `fork version ${version} tag is not on HEAD history`
     : null;
 }

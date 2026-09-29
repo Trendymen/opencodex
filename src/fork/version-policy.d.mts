@@ -8,5 +8,5 @@ export function forkUpdateDecision(
 export function forkVersionTagError(
   version: unknown,
   tags: readonly string[],
-  pointsAtHead?: (tag: string) => boolean,
+  tagIsAncestorOfHead?: (tag: string) => boolean,
 ): string | null | undefined;

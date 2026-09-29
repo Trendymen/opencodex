@@ -34,7 +34,7 @@ type ForkVersionPolicy = {
   forkVersionTagError?: (
     version: string,
     tags: string[],
-    pointsAtHead: (tag: string) => boolean,
+    tagIsAncestorOfHead: (tag: string) => boolean,
   ) => string | null | undefined;
 };
 
@@ -142,7 +142,7 @@ esac
     expect(validate("2.34.0-ben.1", baseTags, () => false)).toBeNull();
     expect(validate("2.34.0-ben.1", [...baseTags, "v2.34.0-ben.1"], () => true)).toBeNull();
     expect(validate("2.34.0-ben.1", [...baseTags, "v2.34.0-ben.1"], () => false))
-      .toContain("already tagged on another commit");
+      .toContain("tag is not on HEAD history");
     expect(validate("2.34.0-ben.1", [...baseTags, "v2.34.0-ben.2"], () => false))
       .toContain("behind existing ben.2");
     expect(validate("2.34.0-ben.1", [...baseTags, "v2.34.0-ben.02"], () => false)).toBeNull();
@@ -163,7 +163,7 @@ esac
       "2.38.0-ben.2",
       ["v2.38.0", "v2.38.0-ben.2", "v2.39.0"],
       () => false,
-    )).toContain("already tagged on another commit");
+    )).toContain("tag is not on HEAD history");
     expect(validate("2.34.0", baseTags, () => false)).toBeUndefined();
   });
 

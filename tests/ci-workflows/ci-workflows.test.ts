@@ -187,6 +187,7 @@ describe("GitHub Actions hardening", () => {
       const steps = (ci.jobs?.[jobName] as { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> })?.steps ?? [];
       const checkout = steps.find(step => typeof step.uses === "string" && step.uses.includes("actions/checkout"));
       expect(`${jobName}:${String(checkout?.with?.["fetch-tags"])}`).toBe(`${jobName}:true`);
+      expect(`${jobName}:${String(checkout?.with?.["fetch-depth"])}`).toBe(`${jobName}:0`);
     }
 
     // Windows shards more finely than Linux. Six shards grew to 13-30 minutes against
