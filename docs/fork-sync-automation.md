@@ -2,6 +2,11 @@
 
 本文档是 Trendymen/opencodex Fork 每小时上游稳定版同步自动化的完整规则真源。自动化任务的消息文本是本文档的精简索引；两者冲突时以本文档为准。
 
+## 巡检入口
+
+- 每轮先完整读取本文、`AGENTS.local.md`、`AGENTS.md`、`scripts/AGENTS.md` 和 `MAINTAINERS.md`；存在当前轮次的 `.tmp/fork-sync-vX.Y.Z/<轮次>/` 审查或恢复材料时一并读取。先按“幂等收敛”处理未完成的发布，再检查新的上游稳定 Release。
+- 用户已长期授权自动化按本文完成符合条件的上游同步和第 1–15 步发布。任一门禁未通过、reviewer 通道不可用、证据不足或需要新的重大决策时，停止发布并按“通知策略”报告。
+
 ## 分支职责
 
 - `main` 只表示最新已发布的 Fork Release：必须指向最新 Fork Tag 的 peeled commit，不承载未发布开发。
@@ -13,7 +18,7 @@
 - 每小时检查上游 lidge-jun/opencodex 是否发布了比 upstream-release 更新的稳定 GitHub Release。
 - 只接受非 draft、非 prerelease 的正式 Release；忽略 preview、beta、rc、draft 和仅有 Tag 的版本。
 - 候选官方 Tag 必须指向可从上游默认分支 main 到达的 commit。
-- 用户要求对新官方稳定 Release 执行 rebase 时，默认同时授权并要求完成本文第 1–15 步的完整发布闭环；不得自行缩窄为只在本地 rebase、验证或建 Tag。只有用户明确要求暂停、中止或限定到某个中间门禁时，才停在该边界。
+- 用户单独要求对新官方稳定 Release 执行 rebase 时，也默认完成本文第 1–15 步；不得自行缩窄为只在本地 rebase、验证或建 Tag。只有用户明确要求暂停、中止或限定到某个中间门禁时，才停在该边界。
 
 ## 分支拓扑
 
