@@ -307,7 +307,7 @@
       "path": "providers-and-adapters.md",
       "tier": 4,
       "title": "Providers And Adapters",
-      "scope": "Provider and adapter selection, the adapter inventory, live model discovery, and the hosted-search continuation bridge.",
+      "scope": "Provider and adapter selection, the adapter inventory, and live model discovery. Hosted-search continuation lives in its own contract.",
       "documents": [
         "src/adapters/",
         "src/chat/",
@@ -339,6 +339,18 @@
       "documents": [
         "src/oauth/",
         "src/providers/"
+      ]
+    },
+    {
+      "path": "providers/hosted-search-continuation.md",
+      "tier": 4,
+      "title": "Hosted-Search Continuation Binding",
+      "scope": "Key-auth hosted-search continuation binding across retries and continuations.",
+      "documents": [
+        "src/adapters/",
+        "src/responses/",
+        "src/server/",
+        "src/web-search/"
       ]
     },
     {
@@ -547,7 +559,7 @@
       "path": "ops/docs-and-release.md",
       "tier": 6,
       "title": "Docs And Release",
-      "scope": "Docs site, workflow map, branch policy, release flow, and cross-platform CI.",
+      "scope": "Docs site, workflow map, branch policy, and cross-platform CI. Release flow lives in its own contract.",
       "documents": [
         ".github/",
         "bin/",
@@ -558,6 +570,19 @@
         "src/codex/",
         "src/lib/",
         "src/service.ts"
+      ]
+    },
+    {
+      "path": "ops/release-workflow.md",
+      "tier": 6,
+      "title": "Release Workflow",
+      "scope": "Npm release flow, notes, metadata invariants, and release gates.",
+      "documents": [
+        "scripts/",
+        "package.json",
+        ".github/",
+        "desktop/",
+        "gui/"
       ]
     },
     {
@@ -644,7 +669,7 @@
           "catalog.md",
           "config.md",
           "dashboard-and-usage.md",
-          "ops/docs-and-release.md",
+          "ops/release-workflow.md",
           "providers/openai-accounts.md",
           "runtime.md",
           "subagents.md"
