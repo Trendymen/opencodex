@@ -16,12 +16,13 @@ import { listComboIds, resolveComboId } from "../combos";
 import { hasOwnProvider } from "../config/provider-name";
 import { MAX_COMPATIBILITY_REQUIRED_SUITES } from "./compatibility/types";
 import { POLICY_NAMESPACE } from "./profile-namespace";
+import { isReservedNativeOpenAiAlias } from "../providers/openai-model-identity";
+export { NATIVE_OPENAI_FAMILY_PATTERN } from "../providers/openai-model-identity";
 
 export { POLICY_NAMESPACE };
 
 export const POLICY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export const POLICY_ALIAS_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$/;
-export const NATIVE_OPENAI_FAMILY_PATTERN = /^(?:gpt-|o1-|o3-|o4-|codex-)/;
 
 export const DEFAULT_PROFILE_WEIGHTS = {
   latency: 0.55,
@@ -161,7 +162,7 @@ function aliasIssues(
       message: `alias must not use the reserved "combo/" namespace`,
     });
   }
-  if (!alias.includes("/") && NATIVE_OPENAI_FAMILY_PATTERN.test(alias)) {
+  if (!alias.includes("/") && isReservedNativeOpenAiAlias(alias)) {
     issues.push({
       path: ["alias"],
       message: "bare aliases in the OpenAI native family (gpt-*, o1-*, o3-*, o4-*, codex-*) are not allowed",

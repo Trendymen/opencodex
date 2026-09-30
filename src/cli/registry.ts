@@ -68,7 +68,7 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
     summary: "Remove service/shim/config and restore native Codex.",
     details: [
       "Alias: ocx remove",
-      "Config cleanup requires ownership metadata created by a fresh install; legacy or shared directories are left in place.",
+      "Config cleanup needs ownership metadata: a fresh install writes it into an empty directory, and a runtime home picks it up on the next write. Only paths opencodex owns are removed.",
     ],
   },
   {
@@ -78,7 +78,7 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
     summary: "Remove service/shim/config and restore native Codex.",
     details: [
       "Alias of: ocx uninstall",
-      "Config cleanup requires ownership metadata created by a fresh install; legacy or shared directories are left in place.",
+      "Config cleanup needs ownership metadata: a fresh install writes it into an empty directory, and a runtime home picks it up on the next write. Only paths opencodex owns are removed.",
     ],
   },
   {
@@ -202,10 +202,11 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
   },
   {
     name: "debug",
-    usage: "ocx debug <provider|usage|injection|claude> <on|off|status|reset|logs [-f]>",
+    usage: "ocx debug <provider|provider-text|usage|injection|claude> <on|off|status|reset|logs [-f]>",
     summary: "Show or toggle runtime provider, usage, injection, and Claude debug capture.",
     details: [
       "Provider: ocx debug provider on | off | status | reset | logs [-f]",
+      "Provider text: ocx debug provider-text on | off | status | reset (default off)",
       "Usage JSONL: ocx debug usage on | off | status | reset | logs [-f]",
       "Env default: OCX_DEBUG=1 (legacy OCX_DEBUG_FRAMES still works)",
     ],

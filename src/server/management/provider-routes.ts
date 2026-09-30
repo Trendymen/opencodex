@@ -83,7 +83,7 @@ import { clearThreadAccountMap } from "../../codex/routing";
 import { primeCodexPoolQuotas } from "../../codex/auth-api";
 import { clearModelCache, getProviderDiscoveryStatus } from "../../codex/model-cache";
 import { getCodexModelEntitlementStatus } from "../../codex/model-entitlements";
-import { DEFAULT_PROVIDER_CONTEXT_CAP, globalContextCapValue, providerContextCap, providerContextCaps, selectedProviderContextCaps, forgetProviderContextCap, setAllProviderContextCaps, setGlobalContextCapValue, setProviderContextCap } from "../../providers/context-cap";
+import { forgetProviderContextCap } from "../../providers/context-cap";
 import { modelAutoCompactTokenLimitsConfigError } from "../../providers/auto-compact-budget";
 import { resolveCodexHomeDir } from "../../codex/home";
 import { readUsageEntries } from "../../usage/log";
@@ -116,7 +116,7 @@ import {
   type ProviderEditorConfigDTO,
   type ProviderEditorProviderDTO,
 } from "../auth-cors";
-import { providerCatalogCapabilityConfigError } from "./provider-capability-config";
+import { providerCatalogCapabilityConfigError, providerServiceTierConfigError } from "./provider-capability-config";
 import { providerEmptyToolOutputConfigError } from "../../config/provider-validation";
 import { applySystemEnvToggle } from "../system-env";
 import {
@@ -137,6 +137,7 @@ import { isPlainRecord, parseDebugLogQuery, tokPerSecondResult, unavailableCostR
 import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, CostResult, MetricSource } from "./shared";
 import type { ManagementContext } from "./context";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
+import { handleProviderContextCapRoutes } from "./provider-context-cap-routes";
 
 type ProviderPatchApplication =
   | { error: string }
@@ -772,6 +773,30 @@ function applyProviderPatchFields(
   const compat = applyProviderCompatPatchFields(rawBody, next);
   if ("error" in compat) return { error: compat.error };
   if (compat.touched) touched = true;
+  if (Object.hasOwn(rawBody, "inferResponsesMessagePhaseModels")) {
+    const value = rawBody.inferResponsesMessagePhaseModels;
+    if (value === null) {
+      delete next.inferResponsesMessagePhaseModels;
+    } else {
+      const error = nonBlankStringArrayConfigError(value, "inferResponsesMessagePhaseModels");
+      if (error) return { error };
+      const models = normalizeNonBlankStringArray(value as string[]);
+      if (models.length > 0) next.inferResponsesMessagePhaseModels = models;
+      else delete next.inferResponsesMessagePhaseModels;
+    }
+    touched = true;
+  }
+  if (Object.hasOwn(rawBody, "agentMessageFormat")) {
+    const value = rawBody.agentMessageFormat;
+    if (value === null) {
+      delete next.agentMessageFormat;
+    } else if (value === "preserve" || value === "user_message") {
+      next.agentMessageFormat = value;
+    } else {
+      return { error: "agentMessageFormat must be preserve, user_message, or null" };
+    }
+    touched = true;
+  }
 
   // headers is the one object-valued field in the mask. PATCH semantics merge it
   // shallowly into the existing block so a single fingerprint header can be added
@@ -952,6 +977,8 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       unsupportedHostedTools: p.unsupportedHostedTools,
       retainModels: p.retainModels,
       omitReasoningEffortWithToolsModels: p.omitReasoningEffortWithToolsModels,
+      inferResponsesMessagePhaseModels: p.inferResponsesMessagePhaseModels,
+      agentMessageFormat: p.agentMessageFormat,
       upstreamHttpVersion: p.upstreamHttpVersion,
       // As configured: unset on canonical `openai` means upstream WebSocket, so never coerce to false.
       upstreamWebsocket: p.upstreamWebsocket,
@@ -1162,22 +1189,23 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!isPlainRecord(body.provider)) return jsonResponse({ error: "provider must be a plain object" }, 400);
+    const submittedProvider = body.provider;
     // Same prohibition as PATCH: the canonical OpenAI row never carries these fields, and a clear
     // form would otherwise be normalized away before the merged-row guard could see it.
     if (name === "openai" && (Object.hasOwn(body.provider, "autoReviewModel") || Object.hasOwn(body.provider, "autoReviewModelOverrides"))) {
       return jsonResponse({ error: "provider openai must not include autoReviewModel or autoReviewModelOverrides" }, 400);
     }
     const existing = config.providers[name];
-    const aliasOwnershipError = providerAliasOverlayOwnershipError(body.provider, existing);
+    const aliasOwnershipError = providerAliasOverlayOwnershipError(submittedProvider, existing);
     if (aliasOwnershipError) return jsonResponse({ error: aliasOwnershipError }, 400);
-    const transportCandidate = providerTransportValidationCandidate(body.provider);
-    const pinError = applyProviderPinFields(transportCandidate as unknown as OcxProviderConfig, body.provider, existing);
+    const transportCandidate = providerTransportValidationCandidate(submittedProvider);
+    const pinError = applyProviderPinFields(transportCandidate as unknown as OcxProviderConfig, submittedProvider, existing);
     if (pinError) return jsonResponse({ error: pinError }, 400);
     const providerError = providerManagementConfigError(name, transportCandidate)
       ?? providerEmptyToolOutputConfigError(name, transportCandidate)
       ?? providerCompatFieldConfigError(body.provider as Record<string, unknown>);
     if (providerError) return jsonResponse({ error: providerError }, 400);
-    const rawProvider = body.provider as Record<string, unknown>;
+    const rawProvider = submittedProvider;
     if (rawProvider.upstreamWebsocket !== undefined && typeof rawProvider.upstreamWebsocket !== "boolean") {
       return jsonResponse({ error: "upstreamWebsocket must be a boolean" }, 400);
     }
@@ -1188,6 +1216,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // reached disk and the next loadConfig() refused it. Canonicalize to absent, which is what
     // "clear" means everywhere else.
     if (prov && prov.upstreamHttpVersion === null) delete prov.upstreamHttpVersion;
+    if (prov?.inferResponsesMessagePhaseModels) {
+      prov.inferResponsesMessagePhaseModels = normalizeNonBlankStringArray(prov.inferResponsesMessagePhaseModels);
+    }
     if (!name || !prov?.adapter || !prov?.baseUrl) {
       return jsonResponse({ error: "name, provider.adapter and provider.baseUrl are required" }, 400);
     }
@@ -1200,6 +1231,12 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     if (namespaceCollision) {
       return jsonResponse({ error: namespaceCollision }, 409);
     }
+    if (body.setDefault !== undefined && typeof body.setDefault !== "boolean") {
+      return jsonResponse({ error: "setDefault must be a boolean" }, 400);
+    }
+    if (body.setDefault === true && prov.disabled) {
+      return jsonResponse({ error: "cannot set a disabled provider as default", code: "default_provider_disabled" }, 400);
+    }
     // Hostname destinations additionally get a DNS-resolved SSRF check at write time —
     // the sync check above only classifies literal IPs (review finding, PR #96).
     // Canonical openai still runs the resolver: only Clash fake-IP (198.18.0.0/15)
@@ -1207,175 +1244,206 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     const allowBenchmarkAddresses = name === "openai" && isCanonicalOpenAiForwardProvider(prov);
     const resolvedError = await providerDestinationResolvedError(name, prov, { allowBenchmarkAddresses });
     if (resolvedError) return jsonResponse({ error: resolvedError }, 400);
-    if (body.setDefault !== undefined && typeof body.setDefault !== "boolean") {
-      return jsonResponse({ error: "setDefault must be a boolean" }, 400);
-    }
-    if (body.setDefault === true && prov.disabled) {
-      return jsonResponse({ error: "cannot set a disabled provider as default", code: "default_provider_disabled" }, 400);
-    }
-    // Catalog providers (e.g. ollama-cloud) carry a models + vision/reasoning classification the GUI
-    // doesn't send — merge it in so the sidecars are gated correctly.
-    // Sample request ownership BEFORE enrichment. Enrichment fills absent fields from the
-    // registry seed, after which "the client omitted this" and "the registry supplied it" are
-    // indistinguishable — so a carry-over guard written as `prov.x === undefined` after this
-    // call can never fire.
-    const submittedContextWindow = Object.hasOwn(prov, "contextWindow");
-    const submittedModelContextWindows = Object.hasOwn(prov, "modelContextWindows");
-    const submittedModelContextTiers = Object.hasOwn(prov, "modelContextTiers");
-    const submittedModelAutoCompactTokenLimits = Object.hasOwn(prov, "modelAutoCompactTokenLimits");
-    const submittedModelDisplayNames = Object.hasOwn(prov, "modelDisplayNames");
-    const submittedRequestPacing = Object.hasOwn(prov, "requestPacing");
-    const submittedUpstreamWebsocket = Object.hasOwn(prov, "upstreamWebsocket");
-    const submittedFastEnabled = Object.hasOwn(prov, "fastEnabled");
-    // Same trap, one more field: DeepSeek carries a registry default of `true` for
-    // annotateEmptyToolOutputs, so enrichment cannot distinguish "the client omitted it"
-    // from "the registry supplied it" either. Without this sample, an unrelated edit that
-    // omits the key resurrects the registry default over an operator's explicit `false`.
-    const submittedAnnotateEmptyToolOutputs = Object.hasOwn(prov, "annotateEmptyToolOutputs");
-    // And for the compatibility settings, several of which enrichment fills from the registry
-    // seed (#5563); the sample also records whether the request named an auth mode.
-    const overwriteSample = sampleProviderOverwrite(prov);
-    enrichProviderFromCatalog(name, prov);
-    const { saveConfigPreservingClaudeCode: save } = await import("../../config");
-    // Overwriting an existing provider must not drop its multi-key pool: carry it over, then
-    // let the (possibly new) apiKey join the pool as the active entry. Only while the provider
-    // keeps its destination: those keys were issued for the previous upstream.
-    const existingPool = config.providers[name]?.apiKeyPool;
-    if (existingPool && !prov.apiKeyPool
-      && providerOverwriteKeepsDestination(prov, config.providers[name], overwriteSample)) prov.apiKeyPool = existingPool;
-    // The same rule applies to user-configured price overlays: the dashboard's
-    // add/edit form does not send modelCosts, so an overwrite must not silently
-    // erase hand-edited per-model prices from Logs/Usage estimates.
-    const existingCosts = config.providers[name]?.modelCosts;
-    if (existingCosts && !prov.modelCosts) prov.modelCosts = existingCosts;
-    // The add/edit form also omits auto-review selectors. Preserve hand-configured
-    // provider-wide and per-model targets across an unrelated overwrite; clearing is
-    // explicit through PATCH with null.
-    const submittedAutoReviewModel = Object.hasOwn(body.provider, "autoReviewModel");
-    const submittedAutoReviewOverrides = Object.hasOwn(body.provider, "autoReviewModelOverrides");
-    const existingAutoReviewModel = config.providers[name]?.autoReviewModel;
-    if (!submittedAutoReviewModel && existingAutoReviewModel && !prov.autoReviewModel) prov.autoReviewModel = existingAutoReviewModel;
-    const existingAutoReviewOverrides = config.providers[name]?.autoReviewModelOverrides;
-    if (!submittedAutoReviewOverrides && existingAutoReviewOverrides && !prov.autoReviewModelOverrides) {
-      prov.autoReviewModelOverrides = { ...existingAutoReviewOverrides };
-    }
-    if (prov.autoReviewModel !== undefined) {
-      if (typeof prov.autoReviewModel === "string" && prov.autoReviewModel.trim()) {
-        prov.autoReviewModel = prov.autoReviewModel.trim();
-      } else {
-        delete prov.autoReviewModel;
-      }
-    }
-    if (prov.autoReviewModelOverrides !== undefined) {
-      const normalizedOverrides = normalizeAutoReviewModelOverrides(prov.autoReviewModelOverrides);
-      if (normalizedOverrides) prov.autoReviewModelOverrides = normalizedOverrides;
-      else delete prov.autoReviewModelOverrides;
-    }
-    // And to the per-provider account-failover opt-out (#2568d). `ProviderPayload` has no
-    // member for it either, so an add/edit save structurally cannot carry it — and dropping it
-    // silently ENABLES rotation, because activation is presence-driven once the knob is gone.
-    // An overwrite must not spend a second subscription account's quota as a side effect.
-    const existingFailover = config.providers[name]?.oauthAccountFailover;
-    if (existingFailover && !prov.oauthAccountFailover) prov.oauthAccountFailover = existingFailover;
-    // ...and to hand-edited context windows. `ProviderPayload` (gui/src/provider-payload.ts)
-    // has no member for either field, so the add/edit form structurally cannot send them:
-    // absence in the request means "not carried", never "the user deleted it". Deletion goes
-    // through PATCH with an explicit null (#1409).
-    if (!submittedModelDisplayNames && existing?.modelDisplayNames) {
-      prov.modelDisplayNames = { ...existing.modelDisplayNames };
-    }
-    if (!submittedRequestPacing && existing?.requestPacing) {
-      prov.requestPacing = structuredClone(existing.requestPacing);
-    }
-    if (!submittedContextWindow && existing?.contextWindow !== undefined) {
-      prov.contextWindow = existing.contextWindow;
-    }
-    // `!== undefined` rather than a truthiness test: the whole point of this field is that
-    // an explicit `false` must survive, and `false` is falsy.
-    if (!submittedAnnotateEmptyToolOutputs && existing?.annotateEmptyToolOutputs !== undefined) {
-      prov.annotateEmptyToolOutputs = existing.annotateEmptyToolOutputs;
-    }
-    // The provider add/edit form may omit this transport option. Preserve the stored value
-    // during a full overwrite; PATCH remains the explicit mutation path, and `!== undefined`
-    // keeps an operator's explicit false from being treated as absent.
-    if (!submittedUpstreamWebsocket && existing?.upstreamWebsocket !== undefined) {
-      prov.upstreamWebsocket = existing.upstreamWebsocket;
-    }
-    // The Models-page Fast switch is PATCH-owned and the provider form never sends it, so an
-    // unrelated full save must not silently turn an opted-in Anthropic Fast lane back off.
-    const liveFastEnabled = config.providers[name]?.fastEnabled;
-    if (!submittedFastEnabled && liveFastEnabled !== undefined) prov.fastEnabled = liveFastEnabled;
-    // The form sends none of the compatibility settings either (#5563). Read the live row rather
-    // than `existing`, like the alias overlays below: a PATCH that saved one of them while DNS
-    // validation awaited must not be undone. Only the hideRawReasoning display policy follows the
-    // provider to a new destination; the upstream compatibility settings do not.
-    carryProviderCompatFields(prov, config.providers[name], overwriteSample);
-    if (existing?.modelContextWindows) {
-      // When the client did send a map, its keys win and the user's other keys survive. When
-      // it did not, the stored value is the user's map alone: merging the registry seed in
-      // would persist seed keys into user config as a side effect of an unrelated save, and
-      // router.ts already fills registry values beneath user entries at resolve time.
-      prov.modelContextWindows = submittedModelContextWindows
-        ? { ...existing.modelContextWindows, ...(prov.modelContextWindows ?? {}) }
-        : { ...existing.modelContextWindows };
-    }
-    if (existing?.modelAutoCompactTokenLimits) {
-      prov.modelAutoCompactTokenLimits = submittedModelAutoCompactTokenLimits
-        ? { ...existing.modelAutoCompactTokenLimits, ...(prov.modelAutoCompactTokenLimits ?? {}) }
-        : { ...existing.modelAutoCompactTokenLimits };
-    }
-    // DNS validation above awaits. Re-read the live row so a dedicated alias write that
-    // completed during that wait remains authoritative instead of being overwritten by the
-    // older ownership snapshot used to admit this POST.
-    restorePersistedAliasOverlays(prov, config.providers[name]);
-    const capabilities = Object.hasOwn(body.provider, "modelCapabilities")
-      ? mergeModelCapabilities(undefined, prov.modelCapabilities)
-      : mergeModelCapabilities(config.providers[name]?.modelCapabilities, undefined);
-    if (capabilities === undefined) delete prov.modelCapabilities;
-    else prov.modelCapabilities = capabilities;
-    // The add/edit form omits wire choices. Read after DNS so a concurrent switch
-    // remains authoritative, including the marker that protects it on the next boot.
-    if (name === "xai") {
-      const latest = config.providers[name];
-      if (!Object.hasOwn(body.provider, "modelAdapters") && latest?.modelAdapters) {
-        prov.modelAdapters = { ...latest.modelAdapters };
-      }
-      if (latest?.xaiResponsesDefaultVersion !== undefined) {
-        prov.xaiResponsesDefaultVersion = latest.xaiResponsesDefaultVersion;
-      }
-    }
-    // Same reason for the Z.AI marker: the provider form never carries it, and losing it on an
-    // unrelated edit would let the one-time wire rewrite run a second time.
-    if (name === ZAI_PROVIDER_ID) {
-      const latest = config.providers[name];
-      if (latest?.zaiResponsesDefaultVersion !== undefined) {
-        prov.zaiResponsesDefaultVersion = latest.zaiResponsesDefaultVersion;
-      }
-    }
-    // Reapply pins after DNS/import awaits; validate the complete draft before adoption.
-    const latest = config.providers[name];
-    const latestPinError = applyProviderPinFields(prov, body.provider, latest);
-    if (latestPinError) return jsonResponse({ error: latestPinError }, 400);
-    const pinsOwned = Object.hasOwn(body.provider, "pinnedReasoningEffort")
-      || Object.hasOwn(body.provider, "modelPinnedReasoningEfforts")
-      || latest?.pinnedReasoningEffort !== undefined || latest?.modelPinnedReasoningEfforts !== undefined;
-    // Stage new-registration discovery state in a draft until validation passes.
-    const registrationDraft = !latest ? {
-      ...config,
-      ...(config.modelDiscovery === undefined ? {} : { modelDiscovery: structuredClone(config.modelDiscovery) }),
-    } : undefined;
-    initializeProviderModelSelection(name, prov, latest, registrationDraft ?? config);
-    const candidate = stripRegistryOnlyStaticHeaders(name, prov);
-    const previous = Object.getOwnPropertyDescriptor(config.providers, name);
-    const rollback = pinsOwned ? captureConfigTopLevelRollback(config, ["defaultProvider", "modelDiscovery", "disabledModels"]) : undefined;
-    let validationError: string | undefined;
+    let replayError: string | undefined;
+    let replayCode: string | undefined;
+    let replayStatus = 400;
+    let savedProvider: OcxProviderConfig | undefined;
+    // Destination validation awaits. Rebuild the candidate from the original request under
+    // the mutation lock so every field omitted by the dashboard is inherited from the newest
+    // row, not a snapshot that a PATCH could have changed while DNS was in flight.
     withConfigMutationLockSync(() => {
-      const liveTiers = config.providers[name]?.modelContextTiers;
+      const existing = config.providers[name];
+      const replayAliasOwnershipError = providerAliasOverlayOwnershipError(submittedProvider, existing);
+      if (replayAliasOwnershipError) {
+        replayError = replayAliasOwnershipError;
+        replayStatus = 409;
+        return;
+      }
+      const replayTransportCandidate = providerTransportValidationCandidate(submittedProvider);
+      const replayPinError = applyProviderPinFields(
+        replayTransportCandidate as unknown as OcxProviderConfig,
+        submittedProvider,
+        existing,
+      );
+      if (replayPinError) {
+        replayError = replayPinError;
+        return;
+      }
+      const replayProviderError = providerManagementConfigError(name, replayTransportCandidate)
+        ?? providerEmptyToolOutputConfigError(name, replayTransportCandidate)
+        ?? providerCompatFieldConfigError(submittedProvider);
+      if (replayProviderError) {
+        replayError = replayProviderError;
+        return;
+      }
+      const replayRawProvider = submittedProvider;
+      if (replayRawProvider.upstreamWebsocket !== undefined && typeof replayRawProvider.upstreamWebsocket !== "boolean") {
+        replayError = "upstreamWebsocket must be a boolean";
+        return;
+      }
+      const replayServiceTierError = providerServiceTierConfigError(name, replayTransportCandidate);
+      if (replayServiceTierError) {
+        replayError = replayServiceTierError;
+        return;
+      }
+      const replayProv = stripCodexRuntimeProviderFields(replayTransportCandidate as unknown as OcxProviderConfig);
+      if (replayProv && replayProv.upstreamHttpVersion === null) delete replayProv.upstreamHttpVersion;
+      if (replayProv?.inferResponsesMessagePhaseModels) {
+        replayProv.inferResponsesMessagePhaseModels = normalizeNonBlankStringArray(replayProv.inferResponsesMessagePhaseModels);
+      }
+      if (!replayProv?.adapter || !replayProv?.baseUrl) {
+        replayError = "name, provider.adapter and provider.baseUrl are required";
+        return;
+      }
+      const replayDisplayNamesError = modelDisplayNamesConfigError(replayProv.modelDisplayNames);
+      if (replayDisplayNamesError) {
+        replayError = replayDisplayNamesError;
+        return;
+      }
+      const replayNamespaceCollision = codexAccountNamespaceProviderCollisionError(config.codexAccountNamespaces, name);
+      if (replayNamespaceCollision) {
+        replayError = replayNamespaceCollision;
+        replayStatus = 409;
+        return;
+      }
+      if (body.setDefault !== undefined && typeof body.setDefault !== "boolean") {
+        replayError = "setDefault must be a boolean";
+        return;
+      }
+      if (body.setDefault === true && replayProv.disabled) {
+        replayError = "cannot set a disabled provider as default";
+        replayCode = "default_provider_disabled";
+        return;
+      }
+
+      // Catalog providers (e.g. ollama-cloud) carry a models + vision/reasoning classification the GUI
+      // doesn't send — merge it in so the sidecars are gated correctly. Sample request ownership
+      // before enrichment, because registry defaults must not look client-submitted afterwards.
+      const submittedContextWindow = Object.hasOwn(replayProv, "contextWindow");
+      const submittedModelContextWindows = Object.hasOwn(replayProv, "modelContextWindows");
+      const submittedModelContextTiers = Object.hasOwn(replayProv, "modelContextTiers");
+      const submittedModelAutoCompactTokenLimits = Object.hasOwn(replayProv, "modelAutoCompactTokenLimits");
+      const submittedModelDisplayNames = Object.hasOwn(replayProv, "modelDisplayNames");
+      const submittedRequestPacing = Object.hasOwn(replayProv, "requestPacing");
+      const submittedUpstreamWebsocket = Object.hasOwn(replayProv, "upstreamWebsocket");
+      const submittedFastEnabled = Object.hasOwn(replayProv, "fastEnabled");
+      const submittedModelAdapters = Object.hasOwn(replayProv, "modelAdapters");
+      const submittedInferResponsesMessagePhaseModels = Object.hasOwn(replayProv, "inferResponsesMessagePhaseModels");
+      const submittedAgentMessageFormat = Object.hasOwn(replayProv, "agentMessageFormat");
+      const submittedAnnotateEmptyToolOutputs = Object.hasOwn(replayProv, "annotateEmptyToolOutputs");
+      const overwriteSample = sampleProviderOverwrite(replayProv);
+      enrichProviderFromCatalog(name, replayProv);
+      const existingPool = existing?.apiKeyPool;
+      if (existingPool && !replayProv.apiKeyPool
+        && providerOverwriteKeepsDestination(replayProv, existing, overwriteSample)) replayProv.apiKeyPool = existingPool;
+      const existingCosts = existing?.modelCosts;
+      if (existingCosts && !replayProv.modelCosts) replayProv.modelCosts = existingCosts;
+      const submittedAutoReviewModel = Object.hasOwn(submittedProvider, "autoReviewModel");
+      const submittedAutoReviewOverrides = Object.hasOwn(submittedProvider, "autoReviewModelOverrides");
+      if (!submittedAutoReviewModel && existing?.autoReviewModel && !replayProv.autoReviewModel) {
+        replayProv.autoReviewModel = existing.autoReviewModel;
+      }
+      if (!submittedAutoReviewOverrides && existing?.autoReviewModelOverrides && !replayProv.autoReviewModelOverrides) {
+        replayProv.autoReviewModelOverrides = { ...existing.autoReviewModelOverrides };
+      }
+      if (replayProv.autoReviewModel !== undefined) {
+        if (typeof replayProv.autoReviewModel === "string" && replayProv.autoReviewModel.trim()) {
+          replayProv.autoReviewModel = replayProv.autoReviewModel.trim();
+        } else {
+          delete replayProv.autoReviewModel;        }
+      }
+      if (replayProv.autoReviewModelOverrides !== undefined) {
+        const normalizedOverrides = normalizeAutoReviewModelOverrides(replayProv.autoReviewModelOverrides);
+        if (normalizedOverrides) replayProv.autoReviewModelOverrides = normalizedOverrides;
+        else delete replayProv.autoReviewModelOverrides;
+      }
+      const existingFailover = existing?.oauthAccountFailover;
+      if (existingFailover && !replayProv.oauthAccountFailover) replayProv.oauthAccountFailover = existingFailover;
+      if (!submittedModelDisplayNames && existing?.modelDisplayNames) {
+        replayProv.modelDisplayNames = { ...existing.modelDisplayNames };
+      }
+      if (!submittedRequestPacing && existing?.requestPacing) {
+        replayProv.requestPacing = structuredClone(existing.requestPacing);
+      }
+      if (!submittedContextWindow && existing?.contextWindow !== undefined) {
+        replayProv.contextWindow = existing.contextWindow;
+      }
+      if (!submittedAnnotateEmptyToolOutputs && existing?.annotateEmptyToolOutputs !== undefined) {
+        replayProv.annotateEmptyToolOutputs = existing.annotateEmptyToolOutputs;
+      }
+      if (!submittedUpstreamWebsocket && existing?.upstreamWebsocket !== undefined) {
+        replayProv.upstreamWebsocket = existing.upstreamWebsocket;
+      }
+      if (!submittedFastEnabled && existing?.fastEnabled !== undefined) {
+        replayProv.fastEnabled = existing.fastEnabled;
+      }
+      carryProviderCompatFields(replayProv, existing, overwriteSample);
+      if (!submittedInferResponsesMessagePhaseModels && existing?.inferResponsesMessagePhaseModels) {
+        replayProv.inferResponsesMessagePhaseModels = [...existing.inferResponsesMessagePhaseModels];
+      }
+      if (!submittedAgentMessageFormat && existing?.agentMessageFormat !== undefined) {
+        replayProv.agentMessageFormat = existing.agentMessageFormat;
+      }
+      if (existing?.modelContextWindows) {
+        replayProv.modelContextWindows = submittedModelContextWindows
+          ? { ...existing.modelContextWindows, ...(replayProv.modelContextWindows ?? {}) }
+          : { ...existing.modelContextWindows };
+      }
+      if (existing?.modelAutoCompactTokenLimits) {
+        replayProv.modelAutoCompactTokenLimits = submittedModelAutoCompactTokenLimits
+          ? { ...existing.modelAutoCompactTokenLimits, ...(replayProv.modelAutoCompactTokenLimits ?? {}) }
+          : { ...existing.modelAutoCompactTokenLimits };
+      }
+      restorePersistedAliasOverlays(replayProv, existing);
+      const capabilities = Object.hasOwn(submittedProvider, "modelCapabilities")
+        ? mergeModelCapabilities(undefined, replayProv.modelCapabilities)
+        : mergeModelCapabilities(existing?.modelCapabilities, undefined);
+      if (capabilities === undefined) delete replayProv.modelCapabilities;
+      else replayProv.modelCapabilities = capabilities;
+      if (name === "xai") {
+        if (!submittedModelAdapters && existing?.modelAdapters) {
+          replayProv.modelAdapters = { ...existing.modelAdapters };
+        }
+        if (existing?.xaiResponsesDefaultVersion !== undefined) {
+          replayProv.xaiResponsesDefaultVersion = existing.xaiResponsesDefaultVersion;
+        }
+      }
+      // The provider form also omits the one-time Z.AI migration marker. Preserve the newest
+      // stored value under the same mutation lock so an unrelated edit cannot rerun migration.
+      if (name === ZAI_PROVIDER_ID && existing?.zaiResponsesDefaultVersion !== undefined) {
+        replayProv.zaiResponsesDefaultVersion = existing.zaiResponsesDefaultVersion;
+      }
+      // The locked `existing` row is the newest state after the async destination probe.
+      // Stage every new-registration side effect, validate the whole config, and only then
+      // adopt it so a persistence failure can restore the live object exactly.
+      const pinsOwned = Object.hasOwn(submittedProvider, "pinnedReasoningEffort")
+        || Object.hasOwn(submittedProvider, "modelPinnedReasoningEfforts")
+        || existing?.pinnedReasoningEffort !== undefined
+        || existing?.modelPinnedReasoningEfforts !== undefined;
+      const registrationDraft = !existing ? {
+        ...config,
+        ...(config.modelDiscovery === undefined ? {} : { modelDiscovery: structuredClone(config.modelDiscovery) }),
+      } : undefined;
+      initializeProviderModelSelection(name, replayProv, existing, registrationDraft ?? config);
+      const candidate = stripRegistryOnlyStaticHeaders(name, replayProv);
+      const liveTiers = existing?.modelContextTiers;
       if (submittedModelContextTiers && liveTiers) candidate.modelContextTiers = Object.assign(Object.create(null), liveTiers, candidate.modelContextTiers ?? {});
       else if (!submittedModelContextTiers && liveTiers) candidate.modelContextTiers = { ...liveTiers };
       else if (!submittedModelContextTiers) delete candidate.modelContextTiers;
-      const draft = { ...(registrationDraft ?? config), providers: { ...config.providers, [name]: candidate }, ...(body.setDefault === true ? { defaultProvider: name } : {}) };
-      const validation = validateConfigCandidate(draft); if (!validation.ok) { validationError = validation.error; return; }
+      const draft = {
+        ...(registrationDraft ?? config),
+        providers: { ...config.providers, [name]: candidate },
+        ...(body.setDefault === true ? { defaultProvider: name } : {}),
+      };
+      const validation = validateConfigCandidate(draft);
+      if (!validation.ok) {
+        replayError = validation.error;
+        return;
+      }
+      const previous = Object.getOwnPropertyDescriptor(config.providers, name);
+      const rollback = !existing || pinsOwned
+        ? captureConfigTopLevelRollback(config, ["defaultProvider", "modelDiscovery", "disabledModels"])
+        : undefined;
       try {
         if (registrationDraft) {
           for (const key of ["modelDiscovery", "disabledModels"] as const) {
@@ -1386,7 +1454,8 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         }
         config.providers[name] = candidate;
         if (body.setDefault === true) config.defaultProvider = name;
-        (deps.saveConfigPreservingClaudeCode ?? save)(config);
+        (deps.saveConfigPreservingClaudeCode ?? saveConfigPreservingClaudeCode)(config);
+        savedProvider = candidate;
       } catch (error) {
         if (rollback) {
           if (previous) Object.defineProperty(config.providers, name, previous);
@@ -1396,11 +1465,14 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         throw error;
       }
     });
-    if (validationError !== undefined) return jsonResponse({ error: validationError }, 400);
+    if (replayError !== undefined) {
+      return jsonResponse({ error: replayError, ...(replayCode ? { code: replayCode } : {}) }, replayStatus);
+    }
+    const savedProv = savedProvider!;
     reconcileLiveStateStores();
-    if (prov.apiKey && prov.apiKeyPool) {
+    if (savedProv.apiKey && savedProv.apiKeyPool) {
       const { addProviderApiKey } = await import("../../providers/api-keys");
-      addProviderApiKey(config, name, prov.apiKey);
+      addProviderApiKey(config, name, savedProv.apiKey);
     }
     const { clearModelCache } = await import("../../codex/model-cache");
     clearModelCache(name);
@@ -1878,116 +1950,8 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     });
   }
 
-  if (url.pathname === "/api/provider-context-caps" && req.method === "GET") {
-    return jsonResponse({ cap: DEFAULT_PROVIDER_CONTEXT_CAP, value: globalContextCapValue(config), caps: providerContextCaps(config), values: selectedProviderContextCaps(config) });
-  }
-
-  if (url.pathname === "/api/provider-context-caps" && req.method === "PUT") {
-    let rawBody: unknown;
-    try { rawBody = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
-    // Reject non-object payloads (e.g. `{"provider": true}` or a bare array) before any
-    // property access, with the route's consistent 400 response.
-    if (!isPlainRecord(rawBody)) return jsonResponse({ error: "provider-context-caps body must be a plain object" }, 400);
-    const body = rawBody as { provider?: unknown; enabled?: unknown; value?: unknown; setAll?: unknown };
-    const { saveConfigPreservingClaudeCode: save } = await import("../../config");
-    const { clearModelCache } = await import("../../codex/model-cache");
-    const respond = (catalogRefresh: Awaited<ReturnType<typeof convergeCodexCatalog>>) => jsonResponse({
-      ok: true,
-      cap: DEFAULT_PROVIDER_CONTEXT_CAP,
-      value: globalContextCapValue(config),
-      caps: providerContextCaps(config), values: selectedProviderContextCaps(config),
-      catalogRefresh,
-    });
-
-    // Reject malformed and mixed payloads before branch selection: `provider` and `enabled`
-    // must appear together with their expected types, and provider updates cannot be
-    // combined with `setAll` (which would otherwise be silently ignored).
-    const hasProviderFields = Object.hasOwn(body, "provider") || Object.hasOwn(body, "enabled");
-    if (hasProviderFields) {
-      if (typeof body.provider !== "string" || typeof body.enabled !== "boolean") {
-        return jsonResponse({ error: "provider and enabled are required together" }, 400);
-      }
-      if (Object.hasOwn(body, "setAll")) {
-        return jsonResponse({ error: "setAll cannot be combined with provider updates" }, 400);
-      }
-    }
-
-    // Branch 1: per-provider toggle (checked first: a per-provider request may carry an
-    // explicit `value`, which must never fall through to the global-value branch). Enable
-    // restores the selected provider value, then the global default, unless an explicit
-    // per-provider value is supplied; that value is never copied to other providers.
-    if (typeof body.provider === "string" && typeof body.enabled === "boolean") {
-      const provider = body.provider.trim();
-      if (!isValidProviderName(provider)) {
-        return jsonResponse({ error: "provider name must use letters, numbers, dot, underscore, or hyphen and cannot be a reserved object key" }, 400);
-      }
-      if (!hasOwnProvider(config.providers, provider)) {
-        return jsonResponse({ error: "unknown provider" }, 404);
-      }
-      // Validate a supplied per-provider value before mutating anything: it must be a
-      // finite number, and after flooring it must still be >= 1 — a value like 0.5 would
-      // otherwise floor to 0 and silently fall back to the global default.
-      if (body.value !== undefined && (typeof body.value !== "number" || !Number.isFinite(body.value))) {
-        return jsonResponse({ error: "value must be a positive number" }, 400);
-      }
-      const perProviderValue = typeof body.value === "number" ? Math.floor(body.value) : undefined;
-      if (perProviderValue !== undefined && perProviderValue < 1) {
-        return jsonResponse({ error: "value must be a positive number" }, 400);
-      }
-      setProviderContextCap(config, provider, body.enabled, perProviderValue);
-      save(config);
-      reconcileLiveStateStores();
-      clearModelCache(provider);
-      const catalogRefresh = await convergeCodexCatalog();
-      return respond(catalogRefresh);
-    }
-
-    // Branch 2: set the global cap value. When `setAll` accompanies it (dashboard "apply to
-    // every routed provider" toggle), re-point every enabled provider; otherwise keep each
-    // provider's own cap value and only change the default for future toggles.
-    if (body.value !== undefined) {
-      // Same normalization as the per-provider branch: floor before validating so a value
-      // that floors to zero is rejected rather than silently stored.
-      if (typeof body.value !== "number" || !Number.isFinite(body.value)) {
-        return jsonResponse({ error: "value must be a positive number" }, 400);
-      }
-      const normalizedValue = Math.floor(body.value);
-      if (normalizedValue < 1) {
-        return jsonResponse({ error: "value must be a positive number" }, 400);
-      }
-      if (body.setAll !== undefined && typeof body.setAll !== "boolean") {
-        return jsonResponse({ error: "setAll must be a boolean" }, 400);
-      }
-      const affected = Object.keys(providerContextCaps(config));
-      const applyToAll = body.setAll === true;
-      setGlobalContextCapValue(config, normalizedValue, applyToAll);
-      save(config);
-      reconcileLiveStateStores();
-      if (applyToAll) {
-        for (const provider of affected) clearModelCache(provider);
-      }
-      const catalogRefresh = await convergeCodexCatalog();
-      return respond(catalogRefresh);
-    }
-
-    // Branch 3: enable/clear the cap for every provider at once.
-    if (body.setAll !== undefined) {
-      if (typeof body.setAll !== "boolean") {
-        return jsonResponse({ error: "setAll must be a boolean" }, 400);
-      }
-      const before = Object.keys(providerContextCaps(config));
-      const names = Object.keys(config.providers);
-      setAllProviderContextCaps(config, names, body.setAll);
-      save(config);
-      reconcileLiveStateStores();
-      for (const provider of new Set([...before, ...names])) clearModelCache(provider);
-      const catalogRefresh = await convergeCodexCatalog();
-      return respond(catalogRefresh);
-    }
-
-    // Unrecognized payload: reject rather than silently succeeding.
-    return jsonResponse({ error: "provider string and enabled boolean are required" }, 400);
-  }
+  const contextCapResponse = await handleProviderContextCapRoutes(ctx);
+  if (contextCapResponse !== null) return contextCapResponse;
 
   // Complete GUI picker presets, derived from the canonical provider registry. The GUI is a
   // standalone Vite package, so it consumes this runtime view instead of importing repo-root src.

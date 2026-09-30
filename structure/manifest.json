@@ -6,10 +6,6 @@
   ],
   "absentPaths": [
     {
-      "path": "docs/",
-      "reason": "the root docs/ folder is retired; ops/docs-and-release.md documents where its material went and that no docs/ tree is tracked"
-    },
-    {
       "path": "go/",
       "reason": "the Go native-runtime experiment is retired; ops/docs-and-release.md documents that no go/ tree is tracked"
     }
@@ -120,6 +116,18 @@
       ]
     },
     {
+      "path": "config-capabilities.md",
+      "tier": 2,
+      "title": "Config Capabilities",
+      "scope": "Per-model capability declarations and their catalog-facing configuration.",
+      "documents": [
+        "src/config/",
+        "src/types.ts",
+        "src/codex/",
+        "src/vision/"
+      ]
+    },
+    {
       "path": "codex-home.md",
       "tier": 2,
       "title": "Codex Home",
@@ -196,6 +204,17 @@
         "src/lib/",
         "src/server/",
         "src/codex/"
+      ]
+    },
+    {
+      "path": "transports/responses-reset-replay.md",
+      "tier": 3,
+      "title": "Responses Reset Replay Boundary",
+      "scope": "Ambiguous reset refusals, client retry signals, and replay markers across response surfaces.",
+      "documents": [
+        "src/bridge/",
+        "src/lib/",
+        "src/server/"
       ]
     },
     {
@@ -395,6 +414,15 @@
       "documents": [
         "src/lab/",
         "src/server/index.ts"
+      ]
+    },
+    {
+      "path": "fork-extensions.md",
+      "tier": 4,
+      "title": "Trendymen Fork Extensions",
+      "scope": "Fork-only provider compatibility, Responses repair, diagnostics, and release policy modules.",
+      "documents": [
+        "src/fork/"
       ]
     },
     {
