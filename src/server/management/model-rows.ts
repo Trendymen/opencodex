@@ -344,6 +344,7 @@ export async function listManagementModelRows(
       // full edit state; the GUI has no default-effort control today, but dropping it here
       // would make any future PUT-based edit lose it silently.
       ...(cm.defaultReasoningEffort ? { defaultReasoningEffort: cm.defaultReasoningEffort } : {}),
+      ...(cm.codexToolMode ? { codexToolMode: cm.codexToolMode } : {}),
     };
   });
   const publicModels = uniqueCatalogModelsForPublicList(models);
@@ -357,6 +358,11 @@ export async function listManagementModelRows(
       .filter(model => model.quotaInactiveReason !== undefined)
       .map(model => [catalogModelSlug(model), model.quotaInactiveReason!] as const),
   );
+  const pricingStatusByNamespaced = new Map(
+    publicModels
+      .filter(model => model.pricingStatus !== undefined)
+      .map(model => [catalogModelSlug(model), model.pricingStatus!] as const),
+  );
   const comboNamespaced = new Set(
     publicModels.filter(model => model.provider === "combo").map(catalogModelSlug),
   );
@@ -364,7 +370,12 @@ export async function listManagementModelRows(
     .filter(model => !comboNamespaced.has(model.namespaced))
     .map(model => {
       const quotaInactiveReason = quotaInactiveByNamespaced.get(model.namespaced);
-      return quotaInactiveReason ? { ...model, quotaInactiveReason } : model;
+      const pricingStatus = pricingStatusByNamespaced.get(model.namespaced);
+      return {
+        ...model,
+        ...(quotaInactiveReason ? { quotaInactiveReason } : {}),
+        ...(pricingStatus !== undefined ? { pricingStatus } : {}),
+      };
     });
   // Custom metadata wins when a physical live/static row resolves to the same Codex-facing
   // slug, while a combo keeps the same precedence it has in routing and /v1/models.
