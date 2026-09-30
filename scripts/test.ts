@@ -368,12 +368,31 @@ export const SERIAL_FULL_SUITE_FILES = [
   // The full macOS isolate pool stalled in the structure gate's synchronous Git
   // child after earlier files; fresh-process execution retains the same assertions.
   "ci-workflows/structure-ssot.test.ts",
+  // CI shard 1/2 batch 8 stalled in a shared Bun process; every file passed alone.
+  "ci-workflows/ci-gui-if-changed.test.ts",
   // Synchronous injection subprocesses can wedge the long-lived macOS isolate
   // parent while reaping a history Worker; contain them in a fresh bounded lane.
   "codex-integration/codex-inject-write-lock.test.ts",
   // Its management API import stalled the long-lived macOS isolate pool before
   // any case ran; the complete file finishes in under a second in a fresh process.
   "routing/subagent-roster-retention.test.ts",
+  // Real CLI spawnSync children timed out in the four-worker full pool while the same
+  // file passed alone; run this file in a fresh process without changing its assertions.
+  "cli/cli-help.test.ts",
+  // In the full pool, provider CLI children reached their 40s deadline; the file
+  // passes in a fresh process with the same assertions and child budget.
+  "cli/cli-provider.test.ts",
+  // These CLI subprocess and global-fetch fixtures passed alone but failed in the four-worker pool.
+  "cli/cli-models.test.ts",
+  "cli/cli-headless-parity.test.ts",
+  "clients/client-connect.test.ts",
+  "clients/client-link-connect.test.ts",
+  // Full-pool contention timed out catalog requests and ACL subprocess probes.
+  // Fresh processes keep the same per-test deadlines and main-pool parallelism.
+  "claude-integration/claude-management-api.test.ts",
+  "claude-integration/claude-models-discovery.test.ts",
+  "lib/plugin-loader.test.ts",
+  "cli/cli-connect-readiness.test.ts",
   "update/update-stop-first.test.ts",
   // Relays a 50 MiB WebSocket frame end to end against a 15s deadline, so its result is a
   // measurement of the whole process, not of the relay. On a healthy 3-CPU macOS runner the
@@ -384,13 +403,29 @@ export const SERIAL_FULL_SUITE_FILES = [
   // changing. Quarantining it here is what keeps it a test of the relay instead of a test of
   // its neighbours.
   "server/server-live.test.ts",
+  // Local four-worker pool refused a fixture sideband join; the complete file passed alone.
+  "server/server-live-realtime-fixtures.test.ts",
+  "responses/responses-opaque-blob-recovery.test.ts",
+  "ci-workflows/fork-install-local-staging.test.ts",
+  "ci-workflows/fork-install-local-volta-root.test.ts",
+  "ci-workflows/install-scripts.test.ts",
+  "codex-integration/codex-journal.test.ts",
+  "codex-integration/codex-cli-update-zero-effect.test.ts",
+  "providers/cursor/cursor-native-exec.test.ts",
+  "update/update-npm-cache-preflight.test.ts",
+  "update/fork-update-monotonicity.test.ts",
+  "clients/aside-profile-sync-owner.test.ts",
+  "adapters/translator-budget.test.ts",
+  "codex-integration/doctor.test.ts",
+  "claude-integration/claude-messages-endpoint.test.ts",
+  "server/memory-watchdog.test.ts",
   // These exercise the default-home service authority, shared by parallel Bun workers.
   // A fresh process/home prevents another file's authority from becoming this fixture's input.
+  "service/service-claim.test.ts",
+  "service/service-wsl-home-ownership.test.ts",
   "service/service-ownership-state.test.ts",
   "service/service-sqlite-home.test.ts",
   "service/service.test.ts",
-  "service/service-claim.test.ts",
-  "service/service-wsl-home-ownership.test.ts",
   "codex-integration/native-codex-toggle.test.ts",
   "codex-integration/native-grok-toggle.test.ts",
 ] as const;
