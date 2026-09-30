@@ -493,6 +493,13 @@ describe("canonical ChatGPT transport for non-streaming Responses callers (#6162
     const downstreamObserver = buffered.indexOf("downstreamObserver.noteJsonResponse(client.terminal.response);");
     expect(downstreamObserver).toBeGreaterThan(completedBlock);
     expect(buffered.slice(completedBlock, downstreamObserver)).not.toContain("downstreamObserver.noteJsonResponse");
+    const finalization = buffered.indexOf("commitReasoningReplayServingRoute(nativeExchange.request.headers);");
+    const finalizationCleanup = buffered.indexOf("disposeBufferedState();", finalization);
+    const finalizationTry = buffered.lastIndexOf("try {", finalization);
+    expect(finalizationCleanup).toBeGreaterThan(finalization);
+    expect(finalizationTry).toBeGreaterThan(-1);
+    expect(finalizationTry).toBeLessThan(finalization);
+    expect(buffered.slice(finalizationCleanup - 80, finalizationCleanup + 40)).toContain("finally");
     expect(buffered).not.toContain("rememberPassthroughResponseChecked(client.terminal.response);");
   });
 

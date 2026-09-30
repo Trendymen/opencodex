@@ -1202,17 +1202,20 @@ export async function deliverPassthroughResponse(
           if (!effectInspectionFinished) disposeBufferedState();
         }
         if (signal.aborted) return cancelAfterValidation();
-        commitReasoningReplayServingRoute(nativeExchange.request.headers);
-        rawBytes = undefined;
-        if (client.terminal.status === "completed") {
-          rememberClientVisiblePassthroughResponse(client.terminal.response);
-          nestedExecRepairCoordinator?.markClientCommitted();
+        try {
+          commitReasoningReplayServingRoute(nativeExchange.request.headers);
+          rawBytes = undefined;
+          if (client.terminal.status === "completed") {
+            rememberClientVisiblePassthroughResponse(client.terminal.response);
+            nestedExecRepairCoordinator?.markClientCommitted();
+          }
+          if (downstreamObserver) {
+            downstreamObserver.noteJsonResponse(client.terminal.response);
+            persistDownstreamOnce();
+          }
+        } finally {
+          disposeBufferedState();
         }
-        if (downstreamObserver) {
-          downstreamObserver.noteJsonResponse(client.terminal.response);
-          persistDownstreamOnce();
-        }
-        disposeBufferedState();
 
         const jsonHeaders = sanitizePassthroughHeaders(headers, codexSafetyBufferingOptions);
         jsonHeaders.set("content-type", "application/json");
