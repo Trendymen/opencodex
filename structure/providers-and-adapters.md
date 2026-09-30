@@ -37,6 +37,12 @@ Ordinary structured functions named `exec` do not opt into this compatibility pa
 RunTurn hosted search uses `src/web-search/run-turn-loop.ts`: synthetic calls remain private, progress reaches the bridge during collection, and a validated terminal precedes search execution. Complete search calls remain actionable at a truncated `done`; cancellation prevents subsequent queries and calls. OAuth preflight replay in `src/server/responses/run-turn-execution.ts` retains the synthetic tool while refreshing credential-scoped route state. In `src/server/responses/sidecar-execution.ts`, a search plan takes priority over image/video bridge execution for both transports; only fetch-capable adapters enter the fetch search loop.
 
 Combo preflight allows the private search tool only while a search plan is active; client tool declaration checks and replay-unsafe heartbeat protection remain enforced.
+For a streaming combo, `src/server/responses/run-turn-execution.ts` repairs an admitted nested
+`exec` call before checking the first emitted tool name. The check waits for a complete call up to
+the configured stall interval when it is positive. `stallTimeoutSec: 0` disables that timer;
+caller cancellation still stops the turn and releases retained events without an internal combo
+replay. Buffered turns repair the collected batch before
+the same name check. Search iterations and empty-completion retries are repaired before delivery.
 
 The opt-in `inlineThinkTagModels` list follows static-policy override and model-rename rules;
 shared Kiro/Chat splitting and raw display follow [Chat compatibility](providers/chat-compat.md#inline-think-tag-recovery).
@@ -333,10 +339,11 @@ User-Agent required by that credential surface. The existing registry header mer
 operator-supplied User-Agent authoritative.
 The same registry declares the first-party `deepseek-flash` model with `text` and `image` input,
 so it bypasses the vision sidecar by default; explicit `noVisionModels` or text-only declarations
-remain authoritative. First-party `deepseek-chat`, `deepseek-reasoner`, and `deepseek-v4-flash`
-remain sidecar-backed by default.
+remain authoritative. First-party `deepseek-chat` and `deepseek-reasoner` remain sidecar-backed
+by default. Fork also keeps the measured direct `deepseek-v4-flash` image-capable path. That
+direct model is distinct from OpenCode Go's same-named gateway sibling.
 
-OpenCode Go's `deepseek-v4.1-flash` joined them on 2026-09-19: probed against
+OpenCode Go's `deepseek-v4.1-flash` gained direct image input on 2026-09-19: probed against
 `https://opencode.ai/zen/go/v1/chat/completions` with this proxy's headers, the route accepts an
 `image_url` part and the model reads it, so it left `noVisionModels` and gained a positive
 `modelInputModalities` declaration. Its sibling `deepseek-v4-flash` on the same gateway still
