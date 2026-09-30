@@ -143,10 +143,10 @@ describe("CI review lanes", () => {
     expect(changesJob?.outputs).toMatchObject({
       ci: "${{ steps.scope.outputs.ci }}",
       desktop: "${{ steps.scope.outputs.desktop }}",
-      gui: "${{ steps.scope.outputs.gui }}",
-      packaging: "${{ steps.scope.outputs.packaging }}",
-      docs: "${{ steps.scope.outputs.docs }}",
-      structure: "${{ steps.scope.outputs.structure }}",
+      gui: "${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.gui }}",
+      packaging: "${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.packaging }}",
+      docs: "${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.docs }}",
+      structure: "${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.structure }}",
     });
     expect(scopeStep?.id).toBe("scope");
     expect(scopeStep?.shell).toBe("bash");
