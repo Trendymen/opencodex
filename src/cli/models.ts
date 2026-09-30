@@ -7,6 +7,7 @@ import { createInterface } from "node:readline/promises";
 import { syncModelsToCodex } from "../codex/sync";
 import { configuredContextWindow } from "../codex/catalog/provider-fetch";
 import { hasOwnProvider, isValidProviderName, loadConfig, saveConfig } from "../config";
+import { knownCustomModelProjection } from "../config/custom-models";
 import {
   canonicalizeReasoningEfforts,
   configuredReasoningEfforts,
@@ -19,7 +20,7 @@ import { knownModelIdsForProvider } from "../router";
 import { findLiveProxy } from "../server/proxy-liveness";
 import { modelInList, type OcxConfig, type OcxCustomModel } from "../types";
 
-const ADD_USAGE = "Usage: ocx models add <provider> <modelId> [--display-name <name>] [--context-window <tokens>] [--modalities text,image,audio] [--reasoning-efforts <none,minimal,low,medium,high,xhigh,max,ultra>] [--default-reasoning-effort <level>]";
+const ADD_USAGE = "Usage: ocx models add <provider> <modelId> [--display-name <name>] [--context-window <tokens>] [--modalities text,image,audio] [--reasoning-efforts <none,minimal,low,medium,high,xhigh,max,ultra>] [--default-reasoning-effort <level>] [--tool-mode <code_mode_only|shell|inherit>]";
 const REMOVE_USAGE = "Usage: ocx models remove <customId|provider/modelId> [--yes]";
 const LIST_CUSTOM_USAGE = "Usage: ocx models list-custom [--json]";
 const ALLOWED_MODALITIES = new Set(["text", "image", "audio"]);
@@ -203,6 +204,7 @@ async function handleCustomAdd(args: string[]): Promise<void> {
   const modalitiesValue = consumeFlagValue(rest, "--modalities");
   const reasoningEffortsValue = consumeFlagValue(rest, "--reasoning-efforts");
   const defaultEffortValue = consumeFlagValue(rest, "--default-reasoning-effort");
+  const toolModeValue = consumeFlagValue(rest, "--tool-mode");
   rejectUnexpectedArgs(rest, ADD_USAGE);
 
   if (!provider || !modelId) fail("provider and modelId are required", ADD_USAGE);
@@ -236,6 +238,11 @@ async function handleCustomAdd(args: string[]): Promise<void> {
 
   const parsed = parseReasoningArgs(reasoningEffortsValue, defaultEffortValue);
   if (parsed.error) fail(parsed.error);
+  const codexToolMode = toolModeValue === undefined || toolModeValue === "inherit"
+    ? undefined
+    : toolModeValue === "code_mode_only" || toolModeValue === "shell"
+      ? toolModeValue
+      : fail("tool mode must be code_mode_only, shell, or inherit", ADD_USAGE);
 
   const existing = config.customModels ?? [];
   const slug = routedSlug(provider, modelId);
@@ -256,6 +263,7 @@ async function handleCustomAdd(args: string[]): Promise<void> {
     ...(inputModalities ? { inputModalities } : {}),
     ...(parsed.reasoningEfforts ? { reasoningEfforts: parsed.reasoningEfforts } : {}),
     ...(parsed.defaultReasoningEffort ? { defaultReasoningEffort: parsed.defaultReasoningEffort } : {}),
+    ...(codexToolMode ? { codexToolMode } : {}),
     addedAt: new Date().toISOString(),
   };
   config.customModels = [...existing, entry];
@@ -342,12 +350,13 @@ function customModelCells(model: OcxCustomModel): string[] {
     model.inputModalities?.join(",") ?? "-",
     model.reasoningEfforts?.join(",") ?? "-",
     model.defaultReasoningEffort ?? "-",
+    model.codexToolMode ?? "inherit",
   ];
 }
 
 function printCustomModelGroup(provider: string, models: OcxCustomModel[]): void {
   const rows = models.map(customModelCells);
-  const headers = ["ID", "MODEL", "DISPLAY NAME", "CONTEXT", "MODALITIES", "EFFORTS", "DEFAULT EFFORT"];
+  const headers = ["ID", "MODEL", "DISPLAY NAME", "CONTEXT", "MODALITIES", "EFFORTS", "DEFAULT EFFORT", "TOOL MODE"];
   const widths = headers.map((header, column) => Math.max(header.length, ...rows.map(row => row[column].length)));
   const line = (cells: string[]) => cells.map((cell, column) => cell.padEnd(widths[column])).join("  ");
   console.log(`${provider}:`);
@@ -362,7 +371,7 @@ function handleCustomList(args: string[]): void {
   rejectUnexpectedArgs(rest, LIST_CUSTOM_USAGE);
   const models = loadConfig().customModels ?? [];
   if (wantsJson) {
-    console.log(JSON.stringify(models, null, 2));
+    console.log(JSON.stringify(models.map(knownCustomModelProjection), null, 2));
     return;
   }
   if (models.length === 0) {
