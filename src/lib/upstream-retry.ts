@@ -73,7 +73,7 @@ export const UPSTREAM_CLOSED_BEFORE_RESPONSE_CODE = "upstream_closed_before_resp
  * follows the send-budget precedent and answers 429: the Codex client is configured with
  * `retry_429: false` and `retry_5xx: true` over four attempts, so a 5xx here multiplies
  * the duplicate send the refusal exists to prevent. See
- * structure/transports/responses.md#ambiguous-connection-reset-replay-boundary.
+ * structure/transports/responses-reset-replay.md#ambiguous-connection-reset-replay-boundary.
  */
 export const UPSTREAM_RESET_REPLAY_REFUSED_CODE = "upstream_reset_replay_refused";
 const NON_REPLAYABLE_UPSTREAM_CODES: ReadonlySet<string> = new Set([
@@ -537,6 +537,8 @@ export interface TransientRetryOptions extends ResetRetryOptions {
    * it; a caller that can genuinely wait longer says so and is not cut short.
    */
   retryAfterCeilingMs?: number;
+  /** 配置的发送次数耗尽且最终仍为 transient 状态时通知调用方。 */
+  onTransientExhausted?: () => void;
 }
 
 export type UpstreamSendRecovery = "connection-reset" | "transient-5xx";
@@ -785,6 +787,9 @@ export async function fetchWithTransientRetry(
       if (err instanceof SendBudgetExhaustedError) throw err;
       throw new UpstreamRetryEvidenceError(transientStatuses, err);
     }
+  }
+  if (isTransientUpstreamStatus(res.status) && !opts.abortSignal?.aborted) {
+    opts.onTransientExhausted?.();
   }
   // Budget exhausted: the last response is returned with its body intact.
   return res;
