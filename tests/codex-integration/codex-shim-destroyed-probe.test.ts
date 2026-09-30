@@ -1,11 +1,15 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
+import { setCodexShimProbeObservationMsForTests } from "../../src/codex/shim";
 import { repoPath, repoRoot } from "../helpers/repo-root";
 import { withInstalledShim } from "../helpers/codex-shim-install-fixture";
 import { setCodexShimProbeObservationMsForTests } from "../../src/codex/shim";
 
 afterEach(() => setCodexShimProbeObservationMsForTests(null));
+
+setCodexShimProbeObservationMsForTests(20);
+afterAll(() => setCodexShimProbeObservationMsForTests(null));
 
 describe("version-manager shim destruction (#2412)", () => {
   test("a destroyed shim diagnostic does not open a non-file launcher", () => {
