@@ -177,20 +177,37 @@ Any displayed totals reflect readable records only. If a filter has no readable 
 the warning and guidance instead of total lines; skipped records may contain matches.
 `--json` preserves the response-level `usageIncomplete` diagnostic and reason.
 
-### `ocx debug <provider|usage|injection|claude> <on|off|status|reset|logs [-f]>`
+### `ocx debug <provider|provider-text|usage|injection|claude> <on|off|status|reset|logs [-f]>`
 
 Read or change runtime debug overrides through the running proxy's management API.
 
 ```bash
 ocx debug provider on|off|status|reset
 ocx debug provider logs [-f|--follow]
+ocx debug provider-text on|off|status|reset
 ocx debug usage on|off|status|reset
 ocx debug usage logs [-f|--follow]
 ```
 
 With no scope, `ocx debug` prints usage and, when the proxy is stopped, the next-start environment
 defaults. Provider debug defaults from `OCX_DEBUG=1` (legacy `OCX_DEBUG_FRAMES=1` also works); usage
-debug defaults from `OPENCODEX_USAGE_DEBUG=1`.
+debug defaults from `OPENCODEX_USAGE_DEBUG=1`. Provider debug is structural and text-free by default.
+Persisting bounded response/reasoning samples requires the separate `provider-text` switch or
+`OCX_PROVIDER_TEXT_DEBUG=1`; the dashboard exposes the same independent switch. Samples live below
+`$OPENCODEX_HOME/provider-debug-artifacts`. Provider debug storage retains up to seven days and
+20 GiB (21,474,836,480 bytes) across the journals and their artifacts, with no file-count limit.
+Journals and their artifacts share 4 MiB groups under UTC `YYYY-MM-DD/HH/groups/<group-id>/`
+in the two debug directories. Each group reserves its full allowance against the total, so cleanup
+can start before the files occupy all 20 GiB. When either retention limit is reached, capture continues by
+removing the oldest journal segment together with its referenced text and timeline artifacts,
+including older segments from the current day. Cleanup removes a journal before its artifacts;
+if the journal cannot be removed, its artifacts are retained. Existing daily journals are cleaned
+as a date group, without removing new groups from that date. Artifacts left after an interrupted
+cleanup remain eligible for later cleanup. Unreadable or unsafe unrelated entries are left alone
+and reported; their size cannot be included in the managed-storage bound. Turn the switch off to
+stop capture. For manual removal, stop the proxy and remove
+both `provider-debug` and `provider-debug-artifacts`; deleting only the artifacts leaves broken
+references in retained journals.
 
 ## API access
 
