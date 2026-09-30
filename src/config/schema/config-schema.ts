@@ -67,7 +67,7 @@ import { redactSecretString } from "../../lib/redact";
 import { openRouterRoutingConfigError } from "../../providers/openrouter-routing";
 import { vercelGatewayRoutingConfigError } from "../../providers/vercel-gateway-routing";
 import { type OcxApiKeyEntry, type OcxProviderConfig } from "../../types";
-import { OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
+import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
 import { modelAutoCompactTokenLimitsConfigError } from "../../providers/auto-compact-budget";
 import { hasFastWireCapabilityConflict } from "../../providers/fastwire";
 import { parseDesktopProfile } from "../../claude/desktop-profile";
@@ -328,6 +328,7 @@ export const configSchema = z.object({
   // Degrade malformed hand edits locally; candidate writes reject them before parsing.
   // An invalid native preference retains the legacy route instead of enabling native by default.
   anthropicAccountPool: z.object({ nativeMessages: z.boolean().optional().catch(false) }).passthrough().optional().catch(undefined),
+  customModels: z.unknown().optional(),
   // Same degrade-don't-reject rationale as the fields above: a hand-edited
   // non-string must not trip the backup-and-defaults repair path. Unset then
   // takes the canonical sideband path (src/server/live.ts normalizeSidebandRoot).
@@ -732,14 +733,21 @@ export const configSchema = z.object({
         message: toolReasoningOptOutError,
       });
     }
+    const phaseInferenceError = nonBlankStringArrayConfigError(
+      (provider as { inferResponsesMessagePhaseModels?: unknown }).inferResponsesMessagePhaseModels,
+      "inferResponsesMessagePhaseModels",
+    );
+    if (phaseInferenceError) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["providers", redactSecretString(name), "inferResponsesMessagePhaseModels"],
+        message: phaseInferenceError,
+      });
+    }
     if (Object.hasOwn(provider, "codexAccountMode") && provider.codexAccountMode !== undefined) {
       // Persisted account mode is valid ONLY on the canonical built-in `openai` forward provider.
       // Old openai-multi rows stay parseable (they never carry a mode) so startup can migrate them.
-      const canonicalOpenAiShape = name === "openai"
-        && provider.adapter === "openai-responses"
-        && (provider as { authMode?: unknown }).authMode === "forward"
-        && typeof provider.baseUrl === "string"
-        && provider.baseUrl.replace(/\/+$/, "") === "https://chatgpt.com/backend-api/codex";
+      const canonicalOpenAiShape = name === "openai" && isCanonicalOpenAiForwardProvider(provider);
       if (!canonicalOpenAiShape) {
         ctx.addIssue({
           code: "custom",

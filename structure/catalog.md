@@ -41,7 +41,7 @@ diagnostic/catalog provenance and must be resolved before policy capture. Exact 
 input-modality declarations outrank the registry/config modality map; an empty declaration
 falls through to that map.
 Anthropic numeric point releases inherit the nearest configured family context window before the
-provider-wide fallback. Exact model output limits precede the provider default output limit.
+provider-wide fallback. Exact model output limits precede the provider default output limit. Fork progress-hint eligibility is computed for the final destination in `src/codex/catalog/model-hints.ts` and `routed-gather.ts`, then applied in both instruction paths of `derive-entry.ts`. Custom models replacing discovered rows retain `pricingStatus` and explicit eligibility. The canonical-forward default auth helper lives in `model-hints.ts`; `gather-capture.ts` keeps a compatibility export without a runtime import cycle.
 
 `src/codex/catalog.ts` builds a shared Codex-shaped catalog for CLI, TUI, App, and SDK. It:
 
