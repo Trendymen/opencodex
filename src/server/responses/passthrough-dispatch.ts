@@ -825,44 +825,13 @@ export async function preparePassthroughExchange(
     );
     const configuredTransientSendBudgetExhausted = (): boolean =>
       transientSendPolicy() !== null && transientSendAttempts() === 0;
-    /**
-     * Judged once. The inbound body does not change between legs, and every rebuild this lane
-     * performs only ever REMOVES a hazard -- `previous_response_id` is expanded, hosted tools
-     * are lowered into client execution -- so a body that was replaceable stays replaceable.
-     * Memoized rather than recomputed because it walks the input array, and a provider that
-     * never opted in must not pay for it at all.
-     */
     let selfContainedJudgment: boolean | undefined;
     const requestIsSelfContained = (): boolean =>
       selfContainedJudgment ??= selfContainedResponsesBody(parsed._rawBody);
-    /**
-     * The operator's replacement grant for THIS logical request.
-     *
-     * Read per leg because `route.provider` is reassigned by credential rotation and transport
-     * resolution inside the recovery loop, exactly like `transientSendPolicy`. The counter it
-     * claims from is not per leg: it lives on the request's execution budget, which a combo
-     * child shares, so every ambiguous stage of this request draws on the same grant.
-     */
     const ambiguousResend = () =>
       ambiguousResendAllowanceFor(route.provider, requestIsSelfContained, claimAmbiguousResend);
-    /**
-     * The pre-header row of the stage table, asked through the one gate.
-     *
-     * `fetchWithResetRetry` takes a plain callback because it is a leaf that must not import
-     * the server tree; routing the answer through `authorizeResendForRecovery` here is what
-     * keeps the decision derived from the table rather than restated as a boolean.
-     */
     const claimPreHeaderResend = (): boolean =>
       authorizeResendForRecovery("pre-header", "connection-reset", ambiguousResend()).allowed;
-    /**
-     * The one replacement send the ambiguous rows at the end of the recovery loop may buy: an SSE
-     * body that died before any output, and a Codex WebSocket that died under its create frame
-     * (#4191).
-     *
-     * HTTP-only for both. A replacement HTTP body must not open a fresh WebSocket exchange: the SSE
-     * row replaces an HTTP stream, which a WS create frame is not, and the WebSocket row replaces
-     * the transport that just failed.
-     */
     const sendAmbiguousReplacement = (
       signal: AbortSignal = upstream.signal,
     ): Promise<Response> => fetchWithHeaderTimeout(

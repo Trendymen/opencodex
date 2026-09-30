@@ -1011,10 +1011,16 @@ export async function deliverPassthroughResponse(
           config.stallTimeoutSec,
           { localUpstream: nativeExchange.localUpstream },
         ));
+        const disposeBufferedState = (): void => {
+          reasoningReplayProjection?.dispose();
+          nestedExecInspection?.dispose();
+          nestedExecRepairCoordinator?.dispose();
+        };
         const failBufferedTurn = (
           message: string,
           failure?: BufferedResponsesSseFailure,
         ): Response => {
+          disposeBufferedState();
           upstream.abort(new Error(message));
           const upstreamError = failure?.upstreamError;
           const upstreamRefusalCode = failure?.upstreamRefusalCode;
@@ -1084,6 +1090,7 @@ export async function deliverPassthroughResponse(
           if (raw.kind === "aborted" || signal.aborted) {
             responseEffects.responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
+            disposeBufferedState();
             return clientCancelledResponse();
           }
           const message = raw.kind === "oversized"
@@ -1119,6 +1126,7 @@ export async function deliverPassthroughResponse(
           if (client.kind === "aborted" || signal.aborted) {
             responseEffects.responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
+            disposeBufferedState();
             return clientCancelledResponse();
           }
           const message = client.kind === "oversized"
@@ -1135,6 +1143,7 @@ export async function deliverPassthroughResponse(
         const cancelAfterValidation = (): Response => {
           responseEffects.responseCompletionCancelled = true;
           options.onNativePassthroughCancel?.();
+          disposeBufferedState();
           return clientCancelledResponse();
         };
         if (signal.aborted) return cancelAfterValidation();
@@ -1190,8 +1199,14 @@ export async function deliverPassthroughResponse(
         commitReasoningReplayServingRoute(nativeExchange.request.headers);
         rawBytes = undefined;
         if (client.terminal.status === "completed") {
-          rememberPassthroughResponseChecked(client.terminal.response);
+          rememberClientVisiblePassthroughResponse(client.terminal.response);
+          nestedExecRepairCoordinator?.markClientCommitted();
+          if (downstreamObserver) {
+            downstreamObserver.noteJsonResponse(client.terminal.response);
+            persistDownstreamOnce();
+          }
         }
+        disposeBufferedState();
 
         const jsonHeaders = sanitizePassthroughHeaders(headers, codexSafetyBufferingOptions);
         jsonHeaders.set("content-type", "application/json");

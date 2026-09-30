@@ -476,6 +476,21 @@ describe("canonical ChatGPT transport for non-streaming Responses callers (#6162
     expect(source.slice(branch, deferredCommit)).not.toContain("commitReasoningReplayServingRoute(");
   });
 
+  test("canonical buffered completion uses the client-visible replay and debug finalizers", () => {
+    const source = readFileSync(repoPath("src/server/responses/passthrough-delivery.ts"), "utf8");
+    const branch = source.indexOf("if (canonicalBufferedJson) {");
+    const branchEnd = source.indexOf("\n      const relayPlatform", branch);
+    const buffered = source.slice(branch, branchEnd);
+    expect(buffered).toContain("rememberClientVisiblePassthroughResponse(client.terminal.response);");
+    expect(buffered).toContain("downstreamObserver.noteJsonResponse(client.terminal.response);");
+    expect(buffered).toContain("persistDownstreamOnce();");
+    expect(buffered).toContain("const disposeBufferedState = (): void =>");
+    expect(buffered).toContain("reasoningReplayProjection?.dispose();");
+    expect(buffered).toContain("nestedExecInspection?.dispose();");
+    expect(buffered).toContain("nestedExecRepairCoordinator?.dispose();");
+    expect(buffered).not.toContain("rememberPassthroughResponseChecked(client.terminal.response);");
+  });
+
   test("leaves stream:true callers on the SSE relay", async () => {
     let outbound: Record<string, unknown> | undefined;
     globalThis.fetch = (async (_input, init) => {
