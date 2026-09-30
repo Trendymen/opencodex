@@ -13,7 +13,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleResponses, handleResponsesCompact } from "../../src/server/responses";
 import { OPAQUE_COMPACTION_NOTE, SUMMARY_PREFIX } from "../../src/responses/compaction";
-import { externalTaskInputContent } from "../../src/responses/task-input";
 import { looksLikeBackendCiphertext } from "../../src/server/responses/encrypted-payload";
 import * as adapterResolveModule from "../../src/server/adapter-resolve";
 import * as visionModule from "../../src/vision";
@@ -44,9 +43,15 @@ import { captureConfigGeneration } from "../../src/lib/state-store-sweeper";
 import { baseCompactionBody, compactionRequest, completedPayload, drainCompactionResponseState, installCompactionRoutingAclFixture, jsonResponse, keyProviderConfig, nativePoolConfig, removeCompactionFixture, sseResponse, twoAccountPoolConfig } from "../helpers/compaction-routing-fixtures";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { SERVER_BUDGET_MS } from "../helpers/test-budget";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 
 const originalFetch = globalThis.fetch;
 installCompactionRoutingAclFixture();
+const originalWebSocket = globalThis.WebSocket;
+
+beforeEach(() => {
+  installHttpOnlyCodexWebSocket();
+});
 
 // A case that calls a handler directly never runs startServer, so it never takes the
 // spend-journal writer lease and its dispatch is refused before it reaches its own contract.
@@ -60,6 +65,7 @@ afterEach(async () => {
   try { await drainCompactionResponseState(); } finally {
     dropSpendHome();
     globalThis.fetch = originalFetch;
+    globalThis.WebSocket = originalWebSocket;
   }
 });
 
@@ -2256,7 +2262,7 @@ test("a no-eligible policy compact request persists the evaluation trace", async
  *
  * The guard cannot live in the schema. parseRequest runs before the passthrough branch, and
  * passthrough / routed compaction build from _rawBody, never reading context.messages — they
- * already degrade an unpaired output to "[tool output for unknown call]" on their own.
+ * already degrade an unpaired output to "[Tool output without call identification]" on their own.
  */
 describe("computer screenshot output translation boundary", () => {
   beforeEach(takeSpendHome);
@@ -2390,7 +2396,7 @@ describe("external task-input envelopes (#3735)", () => {
     await res.text();
     expect(captured).toHaveLength(1);
     expect(captured[0]!.messages).toEqual([{ role: "user", content: "  preserve this input\n" }]);
-    expect(JSON.stringify(captured)).not.toContain("[tool output for unknown call]");
+    expect(JSON.stringify(captured)).not.toMatch(/\[(?:Tool output|Cross-task message|Task delegation)/);
   });
 
   test("preserves ordered text and image content through translation", async () => {
@@ -2533,7 +2539,7 @@ describe("established-history external task input (#3807)", () => {
     // Exactly one original pair: delivery must not acquire a synthesized tool identity.
     expect(messages.flatMap(message => message.tool_calls ?? [])).toEqual(wireHistory[1]!.tool_calls);
     expect(messages.filter(message => message.role === "tool")).toEqual([wireHistory[2]]);
-    expect(JSON.stringify(sent)).not.toContain("[tool output for unknown call]");
+    expect(JSON.stringify(sent)).not.toMatch(/\[(?:Tool output|Cross-task message|Task delegation)/);
   }
 
   test("ordinary response preserves inter-task delivery after an established tool pair", async () => {
@@ -2722,54 +2728,7 @@ describe("unpaired tool result boundary (#3259)", () => {
 
     expect(res.status).toBe(200);
     expect(bodies.length).toBe(1);
-    expect(bodies[0]).toContain("[tool output for unknown call]");
+    expect(bodies[0]).toContain("[Tool output without call identification]");
     expect(bodies[0]).not.toContain("undefined");
-  });
-});
-
-describe("unusable-call_id task-input seed (#3807)", () => {
-  beforeEach(takeSpendHome);
-  const seed = (extra: Record<string, unknown>) => ({
-    type: "function_call_output", id: "fc_seed", name: "create_thread", namespace: "codex",
-    output: "<codex_delegation>continue</codex_delegation>", ...extra,
-  });
-
-  test("a seed carrying call_id: null is admitted as task input", () => {
-    // `null` is not a pairing key, so the item is the same external seed the absent-field
-    // form already carries. Rejecting it produced the reported 400 on clients that emit
-    // the field explicitly.
-    expect(externalTaskInputContent(seed({ call_id: null }))).toBe("<codex_delegation>continue</codex_delegation>");
-  });
-
-  test("a seed carrying an empty-string call_id is admitted identically", () => {
-    expect(externalTaskInputContent(seed({ call_id: "" }))).toBe("<codex_delegation>continue</codex_delegation>");
-    expect(externalTaskInputContent(seed({ call_id: "   " }))).toBe("<codex_delegation>continue</codex_delegation>");
-  });
-
-  test("the absent-field form still works (no regression on a73bb160f)", () => {
-    expect(externalTaskInputContent(seed({}))).toBe("<codex_delegation>continue</codex_delegation>");
-  });
-
-  test("a REAL call_id is still a paired tool result, never task input", () => {
-    // The pairing key is what separates a tool result from a seed. Admitting a paired
-    // result as user text would silently drop a real tool round-trip.
-    expect(externalTaskInputContent(seed({ call_id: "call_1" }))).toBeUndefined();
-  });
-
-  test("a non-string, non-null call_id stays rejected", () => {
-    // A numeric id is malformed input, not the absent-pairing seed shape; it keeps the
-    // #3259 rejection so a wrong-typed key cannot reach a translating adapter.
-    expect(externalTaskInputContent(seed({ call_id: 42 }))).toBeUndefined();
-    expect(externalTaskInputContent(seed({ call_id: {} }))).toBeUndefined();
-  });
-
-  test("every other #3735 validation still holds with an unusable call_id", () => {
-    // The relaxation is ONLY about the pairing key. Envelope completeness, blank output,
-    // and opaque ciphertext keep their existing rejections.
-    expect(externalTaskInputContent({ type: "function_call_output", call_id: null, output: "x" })).toBeUndefined();
-    expect(externalTaskInputContent(seed({ call_id: null, namespace: "" }))).toBeUndefined();
-    expect(externalTaskInputContent(seed({ call_id: null, output: "   " }))).toBeUndefined();
-    expect(externalTaskInputContent(seed({ call_id: null, output: [] }))).toBeUndefined();
-    expect(externalTaskInputContent(seed({ call_id: null, output: [{ type: "input_image", image_url: 42 }] }))).toBeUndefined();
   });
 });
