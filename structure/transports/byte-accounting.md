@@ -226,3 +226,10 @@ Dashboard Fast-row persistence and client refresh follow the [Fast selector rows
 The [compaction routing override](responses-failover.md#compaction-routing-overrides) changes model and effort scalars on the already-read request body, before parsing, within the existing body-reader budget.
 
 `src/lib/sse-decoder.ts` recognizes CR, LF and CRLF line endings, including CRLF split between fetch chunks. Delimiters are consumed before field retention; event/comment ordering, EOF dispatch and translator-budget release remain shared across all three forms. The delimiter search keeps native `indexOf` cursors for the next CR and LF in each decoded chunk, so scanning stays linear for every framing.
+### Fork reasoning sequence accounting
+
+`src/server/responses-reasoning-summary-rewrite.ts` deduplicates retained integer sequence numbers
+with a `Set<number>` and charges 32 bytes per unique number to the caller's `translatorBudget`.
+Client delivery and replay projection share that budget. A standalone rewrite creates a default
+32 MiB budget when needed. Terminal, `flush`, and `dispose` release sequence charges; only a
+rewrite that created its own budget destroys it. The [Fork extension contract](../fork-extensions.md#responses-输出与-continuation) owns the projection behavior.
