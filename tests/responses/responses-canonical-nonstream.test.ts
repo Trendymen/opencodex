@@ -488,6 +488,11 @@ describe("canonical ChatGPT transport for non-streaming Responses callers (#6162
     expect(buffered).toContain("reasoningReplayProjection?.dispose();");
     expect(buffered).toContain("nestedExecInspection?.dispose();");
     expect(buffered).toContain("nestedExecRepairCoordinator?.dispose();");
+    expect(buffered).toContain("effectInspector.dispose();\n          if (!effectInspectionFinished) disposeBufferedState();");
+    const completedBlock = buffered.indexOf('if (client.terminal.status === "completed") {');
+    const downstreamObserver = buffered.indexOf("downstreamObserver.noteJsonResponse(client.terminal.response);");
+    expect(downstreamObserver).toBeGreaterThan(completedBlock);
+    expect(buffered.slice(completedBlock, downstreamObserver)).not.toContain("downstreamObserver.noteJsonResponse");
     expect(buffered).not.toContain("rememberPassthroughResponseChecked(client.terminal.response);");
   });
 

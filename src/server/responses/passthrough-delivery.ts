@@ -1011,7 +1011,10 @@ export async function deliverPassthroughResponse(
           config.stallTimeoutSec,
           { localUpstream: nativeExchange.localUpstream },
         ));
+        let bufferedStateDisposed = false;
         const disposeBufferedState = (): void => {
+          if (bufferedStateDisposed) return;
+          bufferedStateDisposed = true;
           reasoningReplayProjection?.dispose();
           nestedExecInspection?.dispose();
           nestedExecRepairCoordinator?.dispose();
@@ -1178,6 +1181,7 @@ export async function deliverPassthroughResponse(
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
         });
+        let effectInspectionFinished = false;
         try {
           // The deferred effects pass must not turn a bounded 32 MiB transcript into one long
           // event-loop monopoly. Keep decoder input small and yield between MiB groups; the
@@ -1192,8 +1196,10 @@ export async function deliverPassthroughResponse(
           }
           if (signal.aborted) return cancelAfterValidation();
           effectInspector.finish();
+          effectInspectionFinished = true;
         } finally {
           effectInspector.dispose();
+          if (!effectInspectionFinished) disposeBufferedState();
         }
         if (signal.aborted) return cancelAfterValidation();
         commitReasoningReplayServingRoute(nativeExchange.request.headers);
@@ -1201,10 +1207,10 @@ export async function deliverPassthroughResponse(
         if (client.terminal.status === "completed") {
           rememberClientVisiblePassthroughResponse(client.terminal.response);
           nestedExecRepairCoordinator?.markClientCommitted();
-          if (downstreamObserver) {
-            downstreamObserver.noteJsonResponse(client.terminal.response);
-            persistDownstreamOnce();
-          }
+        }
+        if (downstreamObserver) {
+          downstreamObserver.noteJsonResponse(client.terminal.response);
+          persistDownstreamOnce();
         }
         disposeBufferedState();
 
