@@ -564,7 +564,7 @@ describe("bun test argv", () => {
     expect(plan.find(lane => lane.label === "codex-shim.test.ts")?.timeoutMs).toBe(3 * 60 * 1000);
   });
 
-  test("a control budget is bounded and changes only the main lane", () => {
+test("a control budget is bounded and changes only the main lane", () => {
     const baseline = resolveBunTestPlan([], undefined, {});
     expect(baseline[0]!.timeoutMs).toBe(900_000);
     const control = resolveBunTestPlan([], undefined, { OCX_TEST_MAIN_TIMEOUT_MS: "3600000" });
@@ -580,6 +580,16 @@ describe("bun test argv", () => {
     expect(plan[0]?.args).toContain("**/active-registry-admission.test.ts");
     expect(plan.find(lane => lane.label === "active-registry-admission.test.ts")?.args).toEqual([
       "--isolate", "--parallel=1", "./tests/codex-integration/active-registry-admission.test.ts",
+    ]);
+  });
+
+  test("the default full suite gives memory watchdog a fresh one-worker process", () => {
+    const plan = resolveBunTestPlan([]);
+    expect(plan[0]?.args).toContain("**/memory-watchdog.test.ts");
+    expect(plan.find(lane => lane.label === "memory-watchdog.test.ts")?.args).toEqual([
+      "--isolate",
+      "--parallel=1",
+      "./tests/server/memory-watchdog.test.ts",
     ]);
   });
 
