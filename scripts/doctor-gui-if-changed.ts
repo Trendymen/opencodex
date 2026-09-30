@@ -12,7 +12,9 @@
  * OCX_DOCTOR_MAX_BUFFER overrides spawnSync maxBuffer (overflow hard-fail testing).
  */
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { forkBaseVersion } from "../src/fork/version-policy.mjs";
 
 /** True when any changed path is the gui directory or inside it (slash-guarded). */
 export function guiPathsChanged(files: string[]): boolean {
@@ -42,9 +44,28 @@ function resolveMaxBuffer(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DOCTOR_MAX_BUFFER;
 }
 
+/** Use the official tag only when it is a commit ancestor of this Fork checkout. */
+export function resolveForkDoctorBase(repoRoot: string): string | null {
+  const packageVersion = (JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as { version?: unknown }).version;
+  const base = forkBaseVersion(packageVersion);
+  if (!base) return null;
+  const tag = `v${base}`;
+  const peeled = spawnSync("git", ["rev-parse", "--verify", `refs/tags/${tag}^{commit}`], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  if (peeled.status !== 0 || !peeled.stdout?.trim()) return null;
+  const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", peeled.stdout.trim(), "HEAD"], {
+    cwd: repoRoot,
+    stdio: "ignore",
+  });
+  return ancestor.status === 0 ? tag : null;
+}
+
 if (import.meta.main) {
   const repoRoot = resolve(import.meta.dirname, "..");
   const guiDir = join(repoRoot, "gui");
+  const forkDoctorBase = resolveForkDoctorBase(repoRoot);
 
   const hasRef = (ref: string): boolean => {
     try {
@@ -80,7 +101,8 @@ if (import.meta.main) {
     files = process.env.DOCTOR_FILES.split(/\r?\n/).map(f => f.trim()).filter(Boolean);
   } else {
     let range: string | null = null;
-    if (hasRef("@{u}")) range = "@{u}...HEAD";
+    if (forkDoctorBase) range = `${forkDoctorBase}...HEAD`;
+    else if (hasRef("@{u}")) range = "@{u}...HEAD";
     else if (hasRef("origin/main")) range = "origin/main...HEAD";
     else if (hasRef("main")) range = "main...HEAD";
     hadBase = range !== null;
@@ -100,10 +122,10 @@ if (import.meta.main) {
     process.exit(0);
   }
 
-  console.log("doctor:gui: gui/ changed — running React Doctor (scope=changed)");
+  console.log(`doctor:gui: gui/ changed — running React Doctor (scope=changed${forkDoctorBase ? `, base=${forkDoctorBase}` : ""})`);
   const [cmd, ...args] = process.env.DOCTOR_CMD
     ? process.env.DOCTOR_CMD.split(" ")
-    : ["bun", "run", "doctor"];
+    : ["bun", "run", "doctor", ...(forkDoctorBase ? ["--base", forkDoctorBase] : [])];
 
   // spawnSync (not execFileSync): explicit maxBuffer + status/error channels so
   // oversized doctor output cannot be mistaken for an offline soft-skip.
