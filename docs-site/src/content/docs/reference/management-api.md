@@ -304,7 +304,7 @@ timing method unknown)** and a visible explanation of the timing method when a r
 | Method and path | Purpose | Notable errors |
 | --- | --- | --- |
 | `GET /api/logs` | Query filtered in-memory request logs | — |
-| `GET, PUT /api/debug` | Read debug flags; set, clear, or reset capture categories | 400 invalid or empty update |
+| `GET, PUT /api/debug` | Read or update `debug`, default-off `providerText`, `usage`, `injection`, and `claude`; `providerText` separately authorizes bounded persisted response/reasoning samples | 400 invalid or empty update |
 | `GET /api/debug/logs` | Read bounded provider/debug log entries | — |
 | `GET /api/debug/usage-logs` | Read bounded usage-debug entries | — |
 | `GET /api/debug/injection-logs` | Read bounded guidance-injection debug entries | — |
@@ -636,6 +636,8 @@ provider caps; disabled providers keep their remembered selections when later en
 In contrast, `{ "setAll": true }` without `value` enables every configured provider at the
 current global value, replacing their remembered selections. Turning a cap off does not
 activate its remembered value or erase the selection.
+If a PUT cannot save the configuration, the running global value, active caps, and remembered
+values stay unchanged; a later GET does not report the unsaved edit.
 
 
 `provider_has_dependent_combos` is a safety barrier: remove or edit the dependent combos before

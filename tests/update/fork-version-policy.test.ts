@@ -76,13 +76,15 @@ describe("Trendymen fork version policy", () => {
 
     const bunUpdate = readRepoFile("src/update/index.ts");
     const nodeLauncher = readRepoFile("bin/ocx.mjs");
-    for (const [source, needle] of [
-      [bunUpdate, "forkUpdateDecision(latest, current, tag)"],
-      [nodeLauncher, "forkUpdateDecision(latest || null, current, tag)"],
+    // bin/ocx.mjs pins the pre-flight-resolved npm cache root (#6288) while
+    // src/update/index.ts keeps the bare call; both must stay after the guard.
+    for (const [source, decisionNeedle, cacheNeedle] of [
+      [bunUpdate, "forkUpdateDecision(latest, current, tag)", "const cachePreflight = runNpmCachePreflight()"],
+      [nodeLauncher, "forkUpdateDecision(latest || null, current, tag)", "runNpmCachePreflight({ cachePath"],
     ] as const) {
-      const guard = source.indexOf(needle);
+      const guard = source.indexOf(decisionNeedle);
       expect(guard).toBeGreaterThan(-1);
-      expect(guard).toBeLessThan(source.indexOf("const cachePreflight = runNpmCachePreflight()"));
+      expect(guard).toBeLessThan(source.indexOf(cacheNeedle));
     }
   });
 
