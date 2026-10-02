@@ -1220,7 +1220,7 @@ export async function deliverPassthroughResponse(
           commitReasoningReplayServingRoute(nativeExchange.request.headers);
           rawBytes = undefined;
           if (client.terminal.status === "completed") {
-            (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked)(client.terminal.response);
+            rememberClientVisiblePassthroughResponse(client.terminal.response);
             nestedExecRepairCoordinator?.markClientCommitted();
           }
           if (downstreamObserver) {
