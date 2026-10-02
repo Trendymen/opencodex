@@ -37,6 +37,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 export function usesVolcengineAgentPlanResponses(provider: OcxProviderConfig): boolean {
   return provider.adapter === "openai-responses"
+    && typeof provider.baseUrl === "string"
     && provider.baseUrl.replace(/\/+$/, "") === ARK_AGENT_PLAN_V3;
 }
 
@@ -46,6 +47,7 @@ export function isVolcengineAgentPlanKimi(provider: OcxProviderConfig, modelId: 
 
 function isZhipuCodexGlmSchemaTarget(provider: OcxProviderConfig, modelId: string): boolean {
   return provider.adapter === "openai-responses"
+    && typeof provider.baseUrl === "string"
     && provider.baseUrl.replace(/\/+$/, "") === ZHIPU_CODEX_RESPONSES
     && (modelId === "glm-5.3" || modelId === "glm-5.3-flash");
 }

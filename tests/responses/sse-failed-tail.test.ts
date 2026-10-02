@@ -747,11 +747,13 @@ describe("upstream refusal terminal mapping (#5176)", () => {
   );
 
   test.each(["tee", "eager"] as const)(
-    "%s treats false empty and null message candidates like the official nullish chain",
+    "%s skips non-string message candidates for the nested typed error",
     async (mode) => {
+      // First-nonblank contract: false/empty/null carry no diagnostic text, so
+      // the nested typed error wins for all three variants alike.
       const variants = [
-        { label: "false", message: false, terminal: "incomplete" },
-        { label: "empty", message: "", terminal: "incomplete" },
+        { label: "false", message: false, terminal: "typed" },
+        { label: "empty", message: "", terminal: "typed" },
         { label: "null", message: null, terminal: "typed" },
       ] as const;
       for (const { label, message, terminal } of variants) {
