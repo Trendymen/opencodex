@@ -1220,7 +1220,7 @@ export async function deliverPassthroughResponse(
           commitReasoningReplayServingRoute(nativeExchange.request.headers);
           rawBytes = undefined;
           if (client.terminal.status === "completed") {
-            rememberClientVisiblePassthroughResponse(client.terminal.response);
+            (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked)(client.terminal.response);
             nestedExecRepairCoordinator?.markClientCommitted();
           }
           if (downstreamObserver) {
@@ -1284,7 +1284,7 @@ export async function deliverPassthroughResponse(
         const inspector = createSseInspector({
           onTerminal: reportNativeTerminal,
           logCtx,
-          onCompletedResponse: rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberClientVisiblePassthroughResponse : undefined,
+          onCompletedResponse: rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked) : undefined,
           onParsedPayload: noteInspectedPayload,
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
@@ -1409,7 +1409,7 @@ export async function deliverPassthroughResponse(
             responseEffects.responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
           },
-          rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberClientVisiblePassthroughResponse : undefined,
+          rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked) : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -1424,7 +1424,7 @@ export async function deliverPassthroughResponse(
             nestedExecInspection?.dispose();
             unregisterTurn(turnAc);
           },
-          rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberClientVisiblePassthroughResponse : undefined,
+          rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked) : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -1562,7 +1562,10 @@ export async function deliverPassthroughResponse(
       commitReasoningReplayServingRoute(nativeExchange.request.headers);
       try {
         const clientVisible = JSON.parse(clientJson) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown };
-        rememberClientVisiblePassthroughResponse(clientVisible);
+        // Dispatch normally provides the client-visible recorder; minimal harnesses
+        // only carry the raw callback, so fall back instead of throwing into the
+        // best-effort catch and leaving downstream waiters hanging.
+        (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked)(clientVisible);
       } catch { /* non-JSON despite content-type; recording is best-effort */ }
       if (isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) {
         const imageDisplay = createHostedImageDisplayRewrite();
