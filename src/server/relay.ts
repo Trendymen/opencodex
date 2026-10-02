@@ -251,9 +251,12 @@ function firstErrorCandidate(
   field: "code" | "message",
 ): UpstreamErrorCandidate | undefined {
   if (field === "message") {
+    // Mirror upstreamErrorMessageFromPayload's first-nonblank contract: a
+    // false/empty/null message carries no diagnostic text, so it must not
+    // shadow a nested typed error the way a real message would.
     return candidates.find(candidate => {
       const value = candidate.record["message"];
-      return value !== null && value !== undefined;
+      return typeof value === "string" && value.trim().length > 0;
     });
   }
   return candidates.find(candidate => stringField(candidate.record, field) !== undefined);
