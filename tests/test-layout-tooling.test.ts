@@ -23,7 +23,12 @@ import {
 // Independent oracle: the basename -> directory table from devlog 001 §2.D, committed as a
 // fixture. The layout guard shares the resolver with the mover, so a resolver defect could move
 // a file to the wrong place and bless it; this fixture is the second opinion that catches it.
-const EXPECTED = JSON.parse(readFileSync(repoPath("tests", "fixtures", "test-layout-expected.json"), "utf8")) as Record<string, string>;
+// The table lives in two fixture files (official entries and Fork-registered entries) that are
+// merged here; layout.explicit must equal the merged table, so a file added to any side
+// cannot silently ride on the regex seeds.
+const EXPECTED_MAIN = JSON.parse(readFileSync(repoPath("tests", "fixtures", "test-layout-expected.json"), "utf8")) as Record<string, string>;
+const EXPECTED_FORK = JSON.parse(readFileSync(repoPath("tests", "fixtures", "test-layout-expected-fork.json"), "utf8")) as Record<string, string>;
+const EXPECTED: Record<string, string> = { ...EXPECTED_MAIN, ...EXPECTED_FORK };
 
 describe("rewriteSpecifier", () => {
   const forms = [
