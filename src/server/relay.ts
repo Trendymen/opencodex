@@ -813,6 +813,12 @@ export function cleanEofUpstreamErrorFromParsed(parsed: unknown): CleanEofUpstre
   try {
     const root = asJsonRecord(parsed);
     if (!root || root.type !== "error" || cyberPolicyTerminalError(parsed)) return null;
+    // The promotion synthesizes a fresh terminal envelope without any `detail`.
+    // When the upstream envelope carries refusal evidence in `detail`, promoting
+    // would destroy the presence signal that blocks nested-detail fallback, so
+    // leave such envelopes on the legacy path untouched.
+    const detailCarrier = asJsonRecord(root.response) ?? root;
+    if (detailCarrier && "detail" in detailCarrier) return null;
     const candidates = upstreamErrorCandidates(root);
     const messageCandidate = firstErrorCandidate(candidates, "message");
     const codeCandidate = firstErrorCandidate(candidates, "code");
