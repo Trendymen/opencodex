@@ -15,6 +15,15 @@ describe("Windows service pending package transaction recovery", () => {
     expect(script).toContain("restored package failed verification");
     expect(script).toContain("[IO.FileAttributes]::ReparsePoint");
     expect(script).toContain("$root.Parent.FullName -ieq $scope");
-    expect(script).not.toContain('dir /b /ad /o-n "%OCX_PKG_DIR%\\..\\.ocx-backup-*"');
+    // The exact-marker hardening runs first inside a sentinel-guarded span; the
+    // official dir-scan survives only as the fallback after it (probe recognition
+    // requires the official bytes, and the probe strips exactly the guarded span).
+    expect(script).toContain("rem OCX-FORK-RESTORE-BEGIN");
+    expect(script).toContain("rem OCX-FORK-RESTORE-END");
+    expect(script).toContain(":fork_official_fallback");
+    const fallback = script.indexOf(":fork_official_fallback");
+    const scan = script.indexOf('dir /b /ad /o-n "%OCX_PKG_DIR%\\..\\.ocx-backup-*"');
+    expect(scan).toBeGreaterThan(fallback);
+    expect(script).toContain("goto backup_restored");
   });
 });
