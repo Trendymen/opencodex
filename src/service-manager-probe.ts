@@ -31,7 +31,7 @@ import { WINSW_SERVICE_ID } from "./lib/winsw";
 import { BUN_RUNTIME_PATH_ENV, BUN_RUNTIME_SOURCE_ENV } from "./lib/bun-runtime";
 import { REAL_BUN_MIN_BYTES } from "./lib/bun-binary-validator.mjs";
 import { WINDOWS_WRAPPER_PROTOCOL_ENV, WINDOWS_WRAPPER_STAY_OUT_EXIT_CODE } from "./service/windows-wrapper-exit";
-import { buildWindowsServiceScript, windowsTaskActionMatches } from "./service/windows-taskxml";
+import { buildWindowsServiceScript, FORK_WINDOWS_RESTORE_BEGIN, FORK_WINDOWS_RESTORE_END, FORK_WINDOWS_RESTORE_GUARDED_SPAN, windowsTaskActionMatches } from "./service/windows-taskxml";
 import { inspectServiceStateEvidence, serviceStatePathsForOpenCodexHome } from "./service/state";
 import { parseSystemdUnitHomes } from "./service/systemd-env";
 
@@ -579,10 +579,34 @@ function matchesGeneratedStandaloneControlFlow(body: string, port: number): bool
     if (lines.at(-1) === "") lines.pop();
     return lines;
   };
-  const lines = scriptLines(body);
-  const expected = scriptLines(buildWindowsServiceScript({
+  // The Fork builder emits an exact-marker restore hardening block wrapped in sentinels
+  // before the official dir-scan block (strict first, official scan as fallback).
+  // Recognition drops a sentinel span if and only if its interior is byte-identical
+  // to the builder's canonical block; forged sentinels or edited hardening stay and
+  // fail closed as unknown.
+  const withoutForkGuardedRestoreSpan = (scriptLines: string[]): string[] => {
+    const out: string[] = [];
+    let index = 0;
+    while (index < scriptLines.length) {
+      if (scriptLines[index] === FORK_WINDOWS_RESTORE_BEGIN) {
+        const end = scriptLines.indexOf(FORK_WINDOWS_RESTORE_END, index + 1);
+        const interior = end < 0 ? [] : scriptLines.slice(index + 1, end);
+        const canonical = FORK_WINDOWS_RESTORE_GUARDED_SPAN.slice(1, -1);
+        if (end > index && interior.length === canonical.length
+          && interior.every((line, offset) => line === canonical[offset])) {
+          index = end + 1;
+          continue;
+        }
+      }
+      out.push(scriptLines[index]!);
+      index += 1;
+    }
+    return out;
+  };
+  const lines = withoutForkGuardedRestoreSpan(scriptLines(body));
+  const expected = withoutForkGuardedRestoreSpan(scriptLines(buildWindowsServiceScript({
     bun: "C:\\OpenCodex\\ocx.exe", bunRuntimeSource: "standalone", cli: null,
-  }, port, []));
+  }, port, [])));
   const tokenBlock = 'if exist "%OCX_API_TOKEN_FILE%" (';
   const boundary = lines.indexOf(tokenBlock);
   const expectedBoundary = expected.indexOf(tokenBlock);

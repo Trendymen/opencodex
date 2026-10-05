@@ -59,6 +59,40 @@ function taskXmlRunLevelAcceptable(principal: string): boolean {
  * Batch wrapper the scheduled task runs: restarts the proxy on exit, restores a transactional-update
  * backup when the install is gone, and waits while bundled Bun is still npm's placeholder.
  */
+/** Sentinel wrapping the Fork exact-marker restore hardening inside :restore_backup. */
+export const FORK_WINDOWS_RESTORE_BEGIN = "rem OCX-FORK-RESTORE-BEGIN";
+export const FORK_WINDOWS_RESTORE_END = "rem OCX-FORK-RESTORE-END";
+/**
+ * Exact emitted lines between the sentinels (order matters). The hardening runs first:
+ * a valid pending-transaction marker restores strictly (reparse points refused),
+ * anything else falls through to the official dir-scan block below. The service
+ * manager probe strips exactly this span (and only if byte-identical) before
+ * recognizing generator output, so official old/new wrappers keep matching.
+ */
+export const FORK_WINDOWS_RESTORE_GUARDED_SPAN: readonly string[] = [
+  FORK_WINDOWS_RESTORE_BEGIN,
+  "rem .ocx-backup-* recovery is allowed only through the exact pending transaction marker",
+  'set "OCX_TRANSACTION=%OCX_PKG_DIR%\\..\\.ocx-transaction.json"',
+  'if not exist "%OCX_TRANSACTION%" goto :fork_official_fallback',
+  'set "OCX_RECOVERY=%OCX_PKG_DIR%\\..\\.ocx-recovery.json"',
+  'if exist "%OCX_RECOVERY%" (',
+  '  >>"%OCX_SERVICE_LOG%" echo [%DATE% %TIME%] automatic restore refused: recovery marker may record a restored package failed verification or another unsafe rollback',
+  '  goto :fork_official_fallback',
+  ')',
+  'set "OCX_BACKUP="',
+  'for /f "usebackq delims=" %%B in (`"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -Command "$ErrorActionPreference=\'Stop\'; $m=Get-Content -Raw -LiteralPath $env:OCX_TRANSACTION ^| ConvertFrom-Json; $b=[IO.Path]::GetFullPath([string]$m.backup); $scope=[IO.Path]::GetFullPath([IO.Path]::Combine($env:OCX_PKG_DIR,\'..\')); $root=[IO.Directory]::GetParent($b); $item=Get-Item -LiteralPath $b -Force; $rootItem=Get-Item -LiteralPath $root.FullName -Force; if($root -and $root.Parent -and $root.Parent.FullName -ieq $scope -and $root.Name -match \'^\\.ocx-backup-[0-9A-Za-z-]+$\' -and [IO.Path]::GetFileName($b) -eq \'opencodex\' -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)){[Console]::Out.Write($b)}" 2^>nul`) do set "OCX_BACKUP=%%B"',
+  'if not defined OCX_BACKUP goto :fork_official_fallback',
+  'if not exist "%OCX_BACKUP%\\package.json" goto :fork_official_fallback',
+  'if exist "%OCX_PKG_DIR%" rmdir /s /q "%OCX_PKG_DIR%" 2>nul',
+  'move "%OCX_BACKUP%" "%OCX_PKG_DIR%" >nul 2>&1',
+  'if exist "%OCX_PKG_DIR%\\package.json" (',
+  '  del /f /q "%OCX_TRANSACTION%" >nul 2>&1',
+  '  >>"%OCX_SERVICE_LOG%" echo [%DATE% %TIME%] restored previous install from pending transaction',
+  '  goto :eof',
+  ')',
+  ':fork_official_fallback',
+  FORK_WINDOWS_RESTORE_END,
+];
 export function buildWindowsServiceScript(
   entry = cliEntry(),
   port = resolveServiceListenPort(),
@@ -148,28 +182,21 @@ export function buildWindowsServiceScript(
     // the package tree, so it can restore when the launcher itself is gone — the exact
     // window the in-launcher boot probe cannot reach.
     ":restore_backup",
-    "rem .ocx-backup-* recovery is allowed only through the exact pending transaction marker",
     '>>"%OCX_SERVICE_LOG%" echo [%DATE% %TIME%] install incomplete - looking for a transactional-update backup to restore',
-    'set "OCX_TRANSACTION=%OCX_PKG_DIR%\\..\\.ocx-transaction.json"',
-    'if not exist "%OCX_TRANSACTION%" goto :no_backup',
-    'set "OCX_RECOVERY=%OCX_PKG_DIR%\\..\\.ocx-recovery.json"',
-    'if exist "%OCX_RECOVERY%" (',
-    '  >>"%OCX_SERVICE_LOG%" echo [%DATE% %TIME%] automatic restore refused: recovery marker may record a restored package failed verification or another unsafe rollback',
-    '  goto :no_backup',
-    ')',
-    'set "OCX_BACKUP="',
-    'for /f "usebackq delims=" %%B in (`"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -Command "$ErrorActionPreference=\'Stop\'; $m=Get-Content -Raw -LiteralPath $env:OCX_TRANSACTION ^| ConvertFrom-Json; $b=[IO.Path]::GetFullPath([string]$m.backup); $scope=[IO.Path]::GetFullPath([IO.Path]::Combine($env:OCX_PKG_DIR,\'..\')); $root=[IO.Directory]::GetParent($b); $item=Get-Item -LiteralPath $b -Force; $rootItem=Get-Item -LiteralPath $root.FullName -Force; if($root -and $root.Parent -and $root.Parent.FullName -ieq $scope -and $root.Name -match \'^\\.ocx-backup-[0-9A-Za-z-]+$\' -and [IO.Path]::GetFileName($b) -eq \'opencodex\' -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)){[Console]::Out.Write($b)}" 2^>nul`) do set "OCX_BACKUP=%%B"',
-    'if not defined OCX_BACKUP goto :no_backup',
-    'if not exist "%OCX_BACKUP%\\package.json" goto :no_backup',
-    'if exist "%OCX_PKG_DIR%" rmdir /s /q "%OCX_PKG_DIR%" 2>nul',
-    'move "%OCX_BACKUP%" "%OCX_PKG_DIR%" >nul 2>&1',
-    'if exist "%OCX_PKG_DIR%\\package.json" (',
-    '  del /f /q "%OCX_TRANSACTION%" >nul 2>&1',
-    '  >>"%OCX_SERVICE_LOG%" echo [%DATE% %TIME%] restored previous install from pending transaction',
-    "  goto :eof",
+    ...FORK_WINDOWS_RESTORE_GUARDED_SPAN,
+    'for /f "delims=" %%B in (\'dir /b /ad /o-n "%OCX_PKG_DIR%\\..\\.ocx-backup-*" 2^>nul\') do (',
+    '  if exist "%OCX_PKG_DIR%\\..\\%%B\\opencodex\\package.json" (',
+    '    if exist "%OCX_PKG_DIR%" rmdir /s /q "%OCX_PKG_DIR%" 2>nul',
+    '    move "%OCX_PKG_DIR%\\..\\%%B\\opencodex" "%OCX_PKG_DIR%" >nul 2>&1',
+    '    if exist "%OCX_PKG_DIR%\\package.json" (',
+    "      goto backup_restored",
+    "    )",
+    "  )",
     ")",
-    ":no_backup",
     '>>"%OCX_SERVICE_LOG%" echo [%DATE% %TIME%] no restorable backup found',
+    "goto :eof",
+    ":backup_restored",
+    '>>"%OCX_SERVICE_LOG%" echo [%DATE% %TIME%] restored previous install from transactional-update backup',
     "goto :eof",
   ].filter((line): line is string => Boolean(line));
   return `${lines.join("\r\n")}\r\n`;
