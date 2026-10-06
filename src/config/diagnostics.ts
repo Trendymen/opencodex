@@ -834,15 +834,13 @@ export function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     // that ignores the error and writes it back preserves what the operator configured.
     const salvaged = salvageConfigCandidate(merged, retryResult.error);
     if (salvaged) {
+      // validFileConfigDiagnostics already folds in degradedListenerWarnings and the
+      // chatgptDesktop block warning; appending the official calls again would duplicate them.
       const diagnostics = validFileConfigDiagnostics(normalizeApiKeyIds(salvaged.parsed), parsed);
-      const warnings = [...(diagnostics.warnings ?? []), ...degradedListenerWarnings(parsed, diagnostics.config)];
-      const chatgptDesktopIssue = chatgptDesktopConfigIssue(parsed);
-      if (chatgptDesktopIssue) warnings.push(`${chatgptDesktopIssue}; the whole chatgptDesktop block is ignored, so the ChatGPT desktop integration reads as off`);
       return {
-        config: diagnostics.config,
+        ...diagnostics,
         source: "fallback",
         error: schemaDiagnosticsError(result.error),
-        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
 
