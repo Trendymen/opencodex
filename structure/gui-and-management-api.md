@@ -575,15 +575,15 @@ origins record no limiter state, and a valid grant redeems even from a throttled
 `src/server/management/provider-routes.ts` commits every provider PATCH variant through
 `src/server/management/provider-patch-transaction.ts`, including standalone default-provider
 and account-mode changes. The synchronous mutation lock encloses snapshot, mutation, save,
-and pre-publication failure restoration. Field masks are replayed against the latest provider under that same
-lock after asynchronous destination validation; rollback retains previously committed siblings.
+and pre-publication failure restoration. POST registration restores live state on pre-publication save failure.
+Field masks replay against the latest provider under that lock after async destination validation; rollback retains committed siblings.
 
 Persistence can rebase the whole live configuration before a write. Rollback therefore restores
 the original plain-object/array graph in place, including property descriptors, symbols, absent
 versus undefined fields, provider key insertion order, container identities and pending deletion provenance. Opaque
 runtime objects and accessor descriptors retain their identity; snapshotting invokes no getters.
 After atomic publication (or an already-identical persisted body), a bookkeeping failure remains
-an error but retains the published live state. `ConfigWritePublishedError` from
+an error but retains the published live state for both PATCH and POST. `ConfigWritePublishedError` from
 the configuration persistence boundary distinguishes that outcome from a refused write; rolling back
 only memory would disagree with disk. Follow-up refresh work may remain pending after this error.
 Reconciliation, model-cache invalidation, quota/thread-cache changes, priming and catalog

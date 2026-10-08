@@ -37,6 +37,7 @@ import {
   upsertOAuthProvider,
 } from "../../oauth";
 import { commitProviderPatch } from "./provider-patch-transaction";
+import { ConfigWritePublishedError } from "../../config/persist-unlocked";
 import { captureConfigTopLevelRollback } from "../../config/rebase-provenance";
 import { canonicalAutoReviewModelKey, mergeModelPinnedEfforts, modelPinnedEffortsConfigError, pinnedReasoningEffortConfigError } from "../../config/provider-validation";
 import { replaceProviderAccountSet } from "../../oauth/store";
@@ -1455,7 +1456,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         (deps.saveConfigPreservingClaudeCode ?? saveConfigPreservingClaudeCode)(config);
         savedProvider = candidate;
       } catch (error) {
-        if (rollback) {
+        if (rollback && !(error instanceof ConfigWritePublishedError)) {
           if (previous) Object.defineProperty(config.providers, name, previous);
           else delete config.providers[name];
           rollback();
