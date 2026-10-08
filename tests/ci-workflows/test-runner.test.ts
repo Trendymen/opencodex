@@ -564,6 +564,24 @@ describe("bun test argv", () => {
     expect(plan.find(lane => lane.label === "codex-shim.test.ts")?.timeoutMs).toBe(3 * 60 * 1000);
   });
 
+  test("the default full suite schedules each isolated test path once", () => {
+    const lanes = resolveBunTestPlan([]).slice(1);
+    const paths = lanes.map(lane => lane.args.at(-1));
+    expect(paths).toEqual([...new Set(paths)]);
+    const referencePath = "./tests/codex-integration/codex-shim.test.ts";
+    const referenceLane = lanes.find(lane => lane.args.includes(referencePath));
+    expect(referenceLane).toBeDefined();
+    for (const path of [
+      "./tests/service/service-claim.test.ts",
+      "./tests/service/service-wsl-home-ownership.test.ts",
+    ]) {
+      const lane = lanes.find(entry => entry.args.includes(path));
+      expect(lane?.args.slice(0, -1)).toEqual(referenceLane!.args.slice(0, -1));
+      expect(lane?.args.at(-1)).toBe(path);
+      expect(lane?.timeoutMs).toBe(referenceLane!.timeoutMs);
+    }
+  });
+
   test("the full suite runs CLI help paths once in a fresh process", () => {
     const plan = resolveBunTestPlan([]);
     const mainArgs = plan[0]!.args;
