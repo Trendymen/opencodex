@@ -294,6 +294,7 @@ Fork Tag 不可变，同基线 revision 单调，官方 Tag 必须保持原 type
 Fork 暂时固定 Bun 与 `@types/bun` 为 `1.4.0`，lockfile、Docker 镜像和显式 workflow 版本同步。官方 `v2.49.0` 固定的 `1.4.2` 在本机默认并发门禁中重复发生 `SIGSEGV`，干净官方基线也复现；用户已授权这一运行时差异。该现象不证明其他平台同样失败，升级前需重新验证。
 
 沿用上游 domain 布局、runner、并发、shard、timeout 与文件大小门禁。超限测试按独立组拆到同 domain，并双登记官方布局；历史长计划按 Task 边界拆页，保留全部原文。Fork 保留 launcher/update 的真实 Node executable 与 PATH 可用性检查，以及 Responses state 的定向回归，不维护旧 runner 拓扑。
+独立进程清单由执行计划回归检查路径唯一性，避免 rebase 后重复登记同一测试；服务测试保留一次执行，新回归从既有 lane 比较参数和预算，不固定官方数值。
 HTTP/SSE fixture 显式隔离 canonical ChatGPT 上游 WebSocket，避免真实外网握手影响本地测试；需要本地 WebSocket 的鉴权与 profile admission 测试保留真实客户端。共享隔离入口为 `tests/helpers/http-only-codex-websocket.ts`，不改变产品的 WS 选择或回退行为。
 `claude-outbound.test.ts` 的 canonical context 用例、`claude-messages-endpoint.test.ts` 的 session 用例、`responses-native-main-refresh.test.ts` 的 Messages combo 用例，以及 `issue-452-empty-503.test.ts` 与 `chat-completions-pool-mode.test.ts` 的 HTTP fixture 局部关闭上游 WS，保留原 context、终态、Retry-After 和凭据选择断言。Chat pool fixture 标明 `openaiProviderTierVersion: 2`，避免启动迁移重建 provider 时丢掉传输设置；这些调整不改产品迁移或 WS 行为。
 `tests/responses/ws-ambiguous-resend.test.ts` 的 Agent 消息 HTTP reset 用例与 `tests/responses/responses-alternate-main-cancellation.test.ts` 显式设置 `upstreamWebsocket: false`，并断言没有 WS 尝试，确保验证的是已模拟的 HTTP 路径。
