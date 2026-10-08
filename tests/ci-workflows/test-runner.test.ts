@@ -599,6 +599,7 @@ describe("bun test argv", () => {
       "./tests/providers/provider-antigravity-wire-snapshot.test.ts",
       "./tests/providers/xai/grok-47-fast-model-wire.test.ts",
       "./tests/server/server-management-auth.test.ts",
+      "./tests/storage/storage-policy-job-responsive.test.ts",
     ]) {
       const ignoreIndex = mainArgs.indexOf(`**/${basename(path)}`);
       expect(mainArgs[ignoreIndex - 1]).toBe("--path-ignore-patterns");

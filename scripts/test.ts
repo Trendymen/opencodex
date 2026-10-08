@@ -440,6 +440,9 @@ export const SERIAL_FULL_SUITE_FILES = [
   // A full-suite local-read timeout preceded owner-home conflicts in this file;
   // the complete file passes alone with its original security assertions and budgets.
   "server/server-management-auth.test.ts",
+  // A full-suite run exceeded this file's policy-run POST response bound;
+  // the complete file passes alone with its original Worker and health checks.
+  "storage/storage-policy-job-responsive.test.ts",
   "responses/responses-opaque-blob-recovery.test.ts",
   "ci-workflows/fork-install-local-staging.test.ts",
   "ci-workflows/fork-install-local-volta-root.test.ts",
