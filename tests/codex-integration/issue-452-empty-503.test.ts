@@ -217,6 +217,7 @@ async function withPoolPassthrough(
         baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "forward",
         codexAccountMode: "pool",
+        upstreamWebsocket: false,
       },
     },
     codexAccounts: [
