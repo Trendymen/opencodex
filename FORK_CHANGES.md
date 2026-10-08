@@ -257,7 +257,7 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 ### 本地源码包安装
 
 Fork 提供 `bun run install:local`，构建 GUI 后安装本地源码包，上游没有等价安装事务。自动化不执行全局安装；每次安装须由用户在当前对话单独明确要求。
-本地安装只在打包产物中把唯一的 `html{background:var(--bg);overflow-x:hidden}` 改为 `html{background:var(--bg);overflow:clip}`；规则缺失、重复或变成其他内容时拒绝打包，已是目标规则时不重复写入。新包验证该规则，旧包回滚不要求具备它；`gui/src/styles.css` 和普通 GUI 构建不受修改。官方已将 Usage 表格的无障碍标题限制在滚动容器内；当前 `v2.80.0` 基线仍未改动根 `html` 规则，因此本地安装补丁继续保留。这项补丁针对本地安装后的页面双重滚动，浏览器实际滚动状态尚未验收。
+本地安装沿用普通 GUI 构建产物的根 `html` 样式，不再改写滚动条相关 CSS，也不要求安装包具备 `overflow:clip`。构建后的 `--font-ui` 字体栈补丁继续保留。当前 `v2.80.0` 基线的根规则是 `overflow-x:hidden`；本次未做浏览器滚动验收。
 官方 `v2.51.0` 新增的 pnpm 全局自更新保持可用：`verifyPnpmInstallTree()` 接受由受信任 pnpm owner 指向 virtual store 的 package-root symlink，同时继续验证解析后的普通目录和依赖树；npm 与本地源码安装仍拒绝 symlink package root。
 根 `package.json` 保持只读，构建前冻结 manifest；后续 staging、pack、验证、替换和 cleanup 比较同一快照。
 owner-only stage 收集完整 runtime dependency closure，校验 tarball 文件、完整性、入口、资源和当前平台 Bun binary；使用隔离 cache 离线验证，关闭 install scripts，不回退联网。

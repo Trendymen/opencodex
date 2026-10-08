@@ -34,8 +34,6 @@ const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)))
 const GUI_FONT_STACK = '--font-ui:"OpenAI Sans", "Noto Sans SC", "Microsoft YaHei UI"';
 const GUI_FONT_DECLARATION = /--font-ui:"OpenAI Sans"[^;}]*/g;
 const ANY_GUI_FONT_DECLARATION = /--font-ui:[^;}]*/g;
-const GUI_HTML_OLD_RULE = "html{background:var(--bg);overflow-x:hidden}";
-const GUI_HTML_CLIP_RULE = "html{background:var(--bg);overflow:clip}";
 
 export function patchBuiltGuiFontStack(
   assetsDir = join(root, "gui", "dist", "assets"),
@@ -86,86 +84,6 @@ export function assertGuiFontStack(assetsDir: string, label = "gui/dist/assets")
     }
   }
   if (declarations === 0) throw new Error(`${label} contains no --font-ui declaration`);
-}
-
-function topLevelHtmlRules(css: string): { start: number; end: number; rule: string }[] {
-  const rules: { start: number; end: number; rule: string }[] = [];
-  let depth = 0;
-  let preludeStart = 0;
-  let htmlStart = -1;
-  let quote = "";
-  let comment = false;
-  for (let i = 0; i < css.length; i += 1) {
-    const char = css[i];
-    if (comment) {
-      if (char === "*" && css[i + 1] === "/") { comment = false; i += 1; }
-      continue;
-    }
-    if (quote) {
-      if (char === "\\") { i += 1; continue; }
-      if (char === quote) quote = "";
-      continue;
-    }
-    if (char === "/" && css[i + 1] === "*") { comment = true; i += 1; continue; }
-    if (char === '"' || char === "'") { quote = char; continue; }
-    if (char === "{") {
-      if (depth === 0 && css.slice(preludeStart, i).replace(/\/\*[\s\S]*?\*\//g, "").trim() === "html") {
-        htmlStart = i - 4;
-      }
-      depth += 1;
-    } else if (char === "}" && depth > 0) {
-      depth -= 1;
-      if (depth === 0) {
-        if (htmlStart >= 0) rules.push({ start: htmlStart, end: i + 1, rule: css.slice(htmlStart, i + 1) });
-        htmlStart = -1;
-        preludeStart = i + 1;
-      }
-    } else if (char === ";" && depth === 0) {
-      preludeStart = i + 1;
-    }
-  }
-  return rules;
-}
-
-function builtGuiHtmlRule(assetsDir: string, label: string): { cssPath: string; css: string; start: number; end: number; rule: string } {
-  if (!existsSync(assetsDir)) throw new Error(`${label} not found`);
-  const assetsStat = lstatSync(assetsDir);
-  if (!assetsStat.isDirectory() || assetsStat.isSymbolicLink()) {
-    throw new Error(`${label} must be a regular directory`);
-  }
-  const rules: { cssPath: string; css: string; start: number; end: number; rule: string }[] = [];
-  for (const entry of readdirSync(assetsDir, { withFileTypes: true })) {
-    if (!entry.name.endsWith(".css")) continue;
-    if (!entry.isFile() || entry.isSymbolicLink()) {
-      throw new Error(`${label} contains a non-regular CSS entry`);
-    }
-    const cssPath = join(assetsDir, entry.name);
-    const css = readFileSync(cssPath, "utf8");
-    for (const rule of topLevelHtmlRules(css)) rules.push({ cssPath, css, ...rule });
-  }
-  if (rules.length !== 1) {
-    throw new Error(`${label} must contain exactly one html overflow rule; found ${rules.length}`);
-  }
-  return rules[0]!;
-}
-
-export function patchBuiltGuiHtmlOverflowClip(
-  assetsDir = join(root, "gui", "dist", "assets"),
-): { files: number; replacements: number } {
-  const { cssPath, css, start, end, rule } = builtGuiHtmlRule(assetsDir, "built gui/dist/assets");
-  if (rule === GUI_HTML_CLIP_RULE) return { files: 1, replacements: 0 };
-  if (rule !== GUI_HTML_OLD_RULE) {
-    throw new Error("built gui/dist/assets contains an unexpected html overflow rule");
-  }
-  writeFileSync(cssPath, `${css.slice(0, start)}${GUI_HTML_CLIP_RULE}${css.slice(end)}`, "utf8");
-  assertGuiHtmlOverflowClip(assetsDir, "built gui/dist/assets");
-  return { files: 1, replacements: 1 };
-}
-
-export function assertGuiHtmlOverflowClip(assetsDir: string, label = "gui/dist/assets"): void {
-  if (builtGuiHtmlRule(assetsDir, label).rule !== GUI_HTML_CLIP_RULE) {
-    throw new Error(`${label} contains a non-canonical html overflow rule`);
-  }
 }
 
 export function localInstallRestartArgs(serviceWasInstalled: boolean): string[] {
@@ -1199,11 +1117,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
     build: () => run(["bun", "run", "build:gui"]),
     patch: () => {
       console.log("==> Patching built GUI font stack...");
-      const fontPatch = patchBuiltGuiFontStack();
-      console.log("==> Patching built GUI html overflow...");
-      const htmlPatch = patchBuiltGuiHtmlOverflowClip();
-      console.log(`    patched ${htmlPatch.replacements} html rule(s) across ${htmlPatch.files} CSS file(s)`);
-      return fontPatch;
+      return patchBuiltGuiFontStack();
     },
     prepare: expectedManifestBytes => {
       console.log("==> Packing immutable local snapshot...");
@@ -1266,7 +1180,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
       },
       replace: () => {
         console.log("==> Replacing global package transactionally...");
-        const verifyLocalTree = (packageDir: string, expectedVersion?: string, requireClip = true) => {
+        const verifyLocalTree = (packageDir: string, expectedVersion?: string) => {
           const base = verifyInstallTree(packageDir, expectedVersion);
           if (!base.ok) return base;
           if (!validatePackageRoot(packageDir, name, expectedVersion)) {
@@ -1274,9 +1188,6 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
           }
           try {
             assertGuiFontStack(join(packageDir, "gui", "dist", "assets"), "installed gui/dist/assets");
-            if (requireClip) {
-              assertGuiHtmlOverflowClip(join(packageDir, "gui", "dist", "assets"), "installed gui/dist/assets");
-            }
             return { ok: true, failures: [] };
           } catch (error) {
             return { ok: false, failures: [error instanceof Error ? error.message : String(error)] };
@@ -1305,7 +1216,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
               return { ok: false, failures: [error instanceof Error ? error.message : String(error)] };
             }
           },
-          verifyRollback: packageDir => verifyLocalTree(packageDir, undefined, false),
+          verifyRollback: packageDir => verifyLocalTree(packageDir),
           deferCommit: true,
           log: (line: string) => console.log(`    ${line}`),
         });
@@ -1319,7 +1230,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
           );
           throw error;
         }
-        console.log("    installed GUI font stack and html overflow verified");
+        console.log("    installed GUI font stack verified");
         if (!transaction.commit || !transaction.rollback) {
           throw Object.assign(new Error("local package transaction did not return a pending commit handle"), {
             localInstallRecoverySafe: false,
