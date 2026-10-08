@@ -176,13 +176,10 @@ jobs:
       # shape-checked by the same validation step as `native`.
       keyring_matrix: ${{ steps.matrices.outputs.keyring_matrix }}
       npm_global_matrix: ${{ steps.matrices.outputs.npm_global_matrix }}
-      # A scheduled run starts from main, so its path filter diffs main and would
-      # scope jobs by the wrong commit. The nightly safety net selects every scope
-      # instead, here and in the validation steps below, so it is the full matrix.
-      gui: ${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.gui }}
-      packaging: ${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.packaging }}
-      docs: ${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.docs }}
-      structure: ${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.structure }}
+      gui: ${{ steps.scope.outputs.gui }}
+      packaging: ${{ steps.scope.outputs.packaging }}
+      docs: ${{ steps.scope.outputs.docs }}
+      structure: ${{ steps.scope.outputs.structure }}
       # Narrow scopes for two paths the ci filter leaves out on purpose. Both are re-emitted by the
       # validation step below, so a malformed filter output fails this job instead of silently
       # skipping the check it selects.
@@ -392,6 +389,12 @@ jobs:
         env:
           CI_SCOPE: ${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.ci }}
           DESKTOP_SCOPE: ${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.desktop }}
+          # A scheduled run starts from main, so its path filter diffs main and
+          # would scope jobs by the wrong commit. Select every scope before validation.
+          GUI_SCOPE: ${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.gui }}
+          PACKAGING_SCOPE: ${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.packaging }}
+          DOCS_SCOPE: ${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.docs }}
+          STRUCTURE_SCOPE: ${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.structure }}
         run: |
           set -euo pipefail
           for scope in ci desktop gui packaging docs structure; do
