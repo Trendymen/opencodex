@@ -295,8 +295,11 @@ Fork 暂时固定 Bun 与 `@types/bun` 为 `1.4.0`，lockfile、Docker 镜像和
 
 沿用上游 domain 布局、runner、并发、shard、timeout 与文件大小门禁。超限测试按独立组拆到同 domain，并双登记官方布局；历史长计划按 Task 边界拆页，保留全部原文。Fork 保留 launcher/update 的真实 Node executable 与 PATH 可用性检查，以及 Responses state 的定向回归，不维护旧 runner 拓扑。
 HTTP/SSE fixture 显式隔离 canonical ChatGPT 上游 WebSocket，避免真实外网握手影响本地测试；需要本地 WebSocket 的鉴权与 profile admission 测试保留真实客户端。共享隔离入口为 `tests/helpers/http-only-codex-websocket.ts`，不改变产品的 WS 选择或回退行为。
+`tests/responses/ws-ambiguous-resend.test.ts` 的 Agent 消息 HTTP reset 用例与 `tests/responses/responses-alternate-main-cancellation.test.ts` 显式设置 `upstreamWebsocket: false`，并断言没有 WS 尝试，确保验证的是已模拟的 HTTP 路径。
 `tests/server/management-provider-verbosity.test.ts` 验证 Provider verbosity 字段保存时使用静态模型目录，并隔离与该字段无关的域名解析；原有 200、400 和持久化断言保留，不依赖外网模型发现的响应时间。
 Codex Auth 的账户 DTO、排序和阈值投影用例先写入有效的本地额度缓存，避免这些不涉及额度刷新的断言向真实 WHAM 端点请求；产品的额度刷新路径不变。
+`tests/codex-integration/doctor.test.ts` 逐例隔离与状态和文件回收断言无关的 WHAM 请求，仅对该 URL 返回即时 503；其他 fetch 及专门的 WHAM 探针断言保留各自输入。native startup 子进程 fixture 对 WHAM 与 OAuth 端点返回即时 503，保留推理 bearer 收据、等待服务停止和子进程自然退出的断言，不让假凭据触发的外网请求拖住退出。生命周期锁 fixture 位于系统临时目录，避免删除时与测试布局扫描竞争。
+`tests/cli/cli-access-audio-live.test.ts` 的非 readiness 用例在本地把测试中的产品等待预算限制在 2 秒内，给 Bun 默认单例时限留出客户端关闭与断言的时间；CI 沿用官方预算。仍用真实本地 WebSocket 验证 `ready: false`、退出码与 `session.update` / `session.close` 帧。
 `tests/server/memory-watchdog.test.ts` 加入 `scripts/test.ts` 的现有独立进程清单，本地完整测试与 macOS CI 都在新的 Bun 进程中执行它，避免内存采样依赖前序测试累积的堆；保留原测试断言、超时预算和全局并发。 HTTP mock 用例通过既有 runtime identity 接缝固定为直接 HTTP，不再发起真实上游 WebSocket 握手。
 `tests/cli/cli-help.test.ts` 也使用该清单中的独立进程：真实 CLI 子进程在完整并发池中出现超时，单文件与官方基线的同一测试能完成；调度改变不放宽断言、子进程时限或主池并发。
 `claude-management-api.test.ts`、`claude-models-discovery.test.ts`、`plugin-loader.test.ts` 和 `cli-connect-readiness.test.ts` 也使用该清单中的独立进程，避免完整并发池中的短时限探针和进程级状态相互干扰；原有断言、用例时限和主池并发保持不变。

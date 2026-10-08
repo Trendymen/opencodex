@@ -49,6 +49,20 @@ let prevHttpsProxy: string | undefined;
 let prevLowerHttpsProxy: string | undefined;
 let prevProxyRef: string | undefined;
 let prevAdminToken: string | undefined;
+let fetchBeforeTest: typeof globalThis.fetch;
+
+beforeEach(() => {
+  fetchBeforeTest = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url === "https://chatgpt.com/backend-api/wham/usage") {
+      return Promise.resolve(new Response(null, { status: 503 }));
+    }
+    return fetchBeforeTest(input, init);
+  }) as typeof globalThis.fetch;
+});
+
+afterEach(() => { globalThis.fetch = fetchBeforeTest; });
 
 describe("doctor", () => {
   beforeEach(() => {
