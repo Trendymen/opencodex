@@ -372,6 +372,10 @@ export function resolveBunTestArgs(
 export const SERIAL_FULL_SUITE_FILES = [
   "codex-integration/codex-shim.test.ts",
   "providers/cursor/cursor-native-exec-shell.test.ts",
+  // Full-suite runs timed out Antigravity subprocesses and Grok local HTTP/WS;
+  // both files pass alone with unchanged assertions and test budgets.
+  "providers/provider-antigravity-wire-snapshot.test.ts",
+  "providers/xai/grok-47-fast-model-wire.test.ts",
   "codex-integration/issue-452-empty-503.test.ts",
   "adapters/openai/openai-provider-option-e2e.test.ts",
   "ci-workflows/release-helper.test.ts",
@@ -396,6 +400,10 @@ export const SERIAL_FULL_SUITE_FILES = [
   // The help-paths CLI children reached their 40s deadline in the full pool;
   // the complete file passes alone with the same assertions and child budget.
   "cli/cli-help-paths.test.ts",
+  // Full-suite runs timed out the real CLI children in these help fixtures;
+  // both files complete alone with the same assertions and child budget.
+  "cli/cli-help-navigation.test.ts",
+  "cli/cli-help-recovery.test.ts",
   // In the full pool, provider CLI children reached their 40s deadline; the file
   // passes in a fresh process with the same assertions and child budget.
   "cli/cli-provider.test.ts",
