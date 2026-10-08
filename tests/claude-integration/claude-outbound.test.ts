@@ -1845,6 +1845,7 @@ describe("Messages ingress context errors", () => {
       } } as OcxConfig;
       if (canonical) {
         config.providers.native!.baseUrl = "https://chatgpt.com/backend-api/codex";
+        config.providers.native!.upstreamWebsocket = false;
         globalThis.fetch = ((input, init) => {
           const url = input instanceof Request ? input.url : String(input);
           if (url === "https://chatgpt.com/backend-api/codex/responses") {
