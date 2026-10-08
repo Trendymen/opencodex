@@ -560,20 +560,43 @@ describe("canonical ChatGPT transport for non-streaming Responses callers (#6162
       totalTimeoutMs: BUFFERED_RESPONSES_TOTAL_TIMEOUT_MS,
     });
 
+    let releaseTerminal!: () => void;
+    const terminalReady = new Promise<void>(resolve => { releaseTerminal = resolve; });
+    let notePull!: () => void;
+    const pullStarted = new Promise<void>(resolve => { notePull = resolve; });
+    let pulls = 0;
+    let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        setTimeout(() => {
-          controller.enqueue(new TextEncoder().encode(sseEvent("response.completed", {
-            response: { id: "resp_delayed", status: "completed", output: [] },
-          })));
-          controller.close();
-        }, 10);
+      async pull(controller) {
+        pulls++;
+        notePull();
+        await terminalReady;
+        if (cancelled) return;
+        controller.enqueue(new TextEncoder().encode(sseEvent("response.completed", {
+          response: { id: "resp_delayed", status: "completed", output: [] },
+        })));
+        controller.close();
       },
-    });
-    const result = await collectBufferedResponsesSse(body, new AbortController(), {
+      cancel() {
+        cancelled = true;
+        releaseTerminal();
+      },
+    }, { highWaterMark: 0 });
+    await Promise.resolve();
+    expect(pulls).toBe(0);
+    const pending = collectBufferedResponsesSse(body, new AbortController(), {
       read: bufferedResponsesReadOptions(0, 100),
     });
-    expect(result).toMatchObject({ ok: true, terminal: { status: "completed" } });
+    try {
+      const readStarted = await Promise.race([pullStarted.then(() => true), pending.then(() => false)]);
+      expect(readStarted).toBe(true);
+      expect(pulls).toBe(1);
+      releaseTerminal();
+      const result = await pending;
+      expect(result).toMatchObject({ ok: true, terminal: { status: "completed" } });
+    } finally {
+      releaseTerminal();
+    }
 
     // A later validation pass must inherit the original absolute deadline instead of receiving
     // a fresh totalTimeoutMs window merely because it constructed a new collector.
