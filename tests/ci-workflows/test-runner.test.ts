@@ -395,6 +395,81 @@ process.exitCode = result.exitCode;
     }
   });
 
+  test.skipIf(process.platform === "win32")("Node selection follows the native OS when a test simulates win32", () => {
+    const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
+    const sourceEnv = {
+      ...process.env,
+      HOME: hostHome,
+      USERPROFILE: hostHome,
+      PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
+      NODE_FIXTURE_HOME: hostHome,
+      NODE_DIRECT_BIN: join(nodeDir, "node"),
+    };
+    const isolated = createIsolatedTestEnvironment(sourceEnv);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    try {
+      Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+      pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+      expect(isolated.env.PATH?.split(delimiter)[0]).toBe(nodeDir);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+      isolated.cleanup();
+      removeTreeWithRetry(fixture);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("repeated preload selection does not grow an already pinned PATH", () => {
+    const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
+    const sourceEnv = {
+      ...process.env,
+      HOME: hostHome,
+      USERPROFILE: hostHome,
+      PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
+      NODE_FIXTURE_HOME: hostHome,
+      NODE_DIRECT_BIN: join(nodeDir, "node"),
+    };
+    const first = createIsolatedTestEnvironment(sourceEnv);
+    let second: ReturnType<typeof createIsolatedTestEnvironment> | undefined;
+    try {
+      pinTestNodePath(first.env, sourceEnv, first.root);
+      second = createIsolatedTestEnvironment(first.env);
+      pinTestNodePath(second.env, first.env, second.root);
+      expect(second.env.PATH).toBe(first.env.PATH);
+    } finally {
+      second?.cleanup();
+      first.cleanup();
+      removeTreeWithRetry(fixture);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("a quoted PATH entry is not treated as a callable Node directory", () => {
+    const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
+    const sourceEnv = {
+      ...process.env,
+      HOME: hostHome,
+      USERPROFILE: hostHome,
+      PATH: `"${nodeDir}"${delimiter}${shimDir}`,
+      NODE_FIXTURE_HOME: hostHome,
+      NODE_DIRECT_BIN: join(nodeDir, "node"),
+    };
+    const isolated = createIsolatedTestEnvironment(sourceEnv);
+    try {
+      pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+      const child = Bun.spawnSync(["node", "-e", "ignored"], {
+        env: isolated.env,
+        cwd: fixture,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 2_000,
+      });
+      expect(child.exitCode).toBe(0);
+      expect(child.stdout.toString()).toBe("direct-node\n");
+    } finally {
+      isolated.cleanup();
+      removeTreeWithRetry(fixture);
+    }
+  });
+
   test.skipIf(process.platform === "win32")("refuses missing, failed, and malformed Node probes", () => {
     const fixture = mkdtempSync(join(tmpdir(), "ocx-test-node-failure-"));
     const bin = join(fixture, "bin");

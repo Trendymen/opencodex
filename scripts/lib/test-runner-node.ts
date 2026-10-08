@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
+import { type as nativeOsType } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 const NODE_PROBE_BUDGET_MS = 5_000;
@@ -12,6 +13,8 @@ export function getTestRunnerNodeDirectory(
   isolatedHome: string,
 ): string {
   const pathKey = Object.keys(env).find(key => key.toLowerCase() === "path") ?? "PATH";
+  const isWindows = nativeOsType() === "Windows_NT";
+  const nodeName = isWindows ? "node.exe" : "node";
   const deadline = Date.now() + NODE_PROBE_BUDGET_MS;
   const probe = (binary: string, probeEnv: Record<string, string | undefined>) => {
     const remaining = deadline - Date.now();
@@ -37,12 +40,12 @@ export function getTestRunnerNodeDirectory(
     if (!entry || Date.now() >= deadline) continue;
     const directory = resolve(entry.replace(/^"(.*)"$/, "$1"));
     if (directory.split(sep).some(segment => segment.toLowerCase() === "node_modules")) continue;
-    const candidate = join(directory, process.platform === "win32" ? "node.exe" : "node");
-    const key = process.platform === "win32" ? candidate.toLowerCase() : candidate;
+    const candidate = join(directory, nodeName);
+    const key = isWindows ? candidate.toLowerCase() : candidate;
     if (seen.has(key)) continue;
     seen.add(key);
     const binary = probe(candidate, { ...env });
-    if (!binary || !isAbsolute(binary) || basename(binary).toLowerCase() !== (process.platform === "win32" ? "node.exe" : "node")) continue;
+    if (!binary || !isAbsolute(binary) || basename(binary).toLowerCase() !== nodeName) continue;
     const sandboxEnv = { ...env, HOME: isolatedHome, USERPROFILE: isolatedHome };
     const direct = probe(binary, sandboxEnv);
     try {
@@ -69,5 +72,10 @@ export function pinTestNodePath(
     [pathKey]: sourceEnv[pathKey],
   };
   const nodeDirectory = getTestRunnerNodeDirectory(probeEnv, isolatedHome);
-  isolatedEnv[pathKey] = `${nodeDirectory}${delimiter}${sourceEnv[pathKey] ?? ""}`;
+  const sourcePath = sourceEnv[pathKey] ?? "";
+  const firstDirectory = sourcePath.split(delimiter, 1)[0];
+  const alreadyFirst = nativeOsType() === "Windows_NT"
+    ? firstDirectory?.toLowerCase() === nodeDirectory.toLowerCase()
+    : firstDirectory === nodeDirectory;
+  isolatedEnv[pathKey] = alreadyFirst ? sourcePath : `${nodeDirectory}${delimiter}${sourcePath}`;
 }
