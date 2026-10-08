@@ -68,6 +68,52 @@ async function relay(
 describe("undeclared tool call guard", () => {
   const declared = ["exec", "wait", "request_user_input"];
 
+  test("sixth false keeps default-name normalization without invoking the seventh reject callback", () => {
+    const rejected: string[] = [];
+    const rewrite = createUndeclaredToolCallGuardBlockRewrite(
+      new Set(["view_image"]), undefined, undefined, new Set(["view_image"]), undefined,
+      false, name => rejected.push(name),
+    );
+    const dotted = frame("response.output_item.added", {
+      output_index: 0,
+      item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "default.view_image", arguments: "{}" },
+    });
+    const bare = frame("response.output_item.added", {
+      output_index: 0,
+      item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "view_image", arguments: "{}" },
+    });
+    const undeclared = frame("response.output_item.added", {
+      output_index: 1,
+      item: { type: "function_call", id: "fc_2", call_id: "call_2", name: "other_tool", arguments: "{}" },
+    });
+
+    expect(rewrite(dotted)).toEqual([bare]);
+    expect(rewrite(undeclared)).toEqual([undeclared]);
+    expect(rejected).toEqual([]);
+  });
+
+  test("sixth true invokes the seventh callback only for an actual undeclared rejection", () => {
+    const rejected: string[] = [];
+    const rewrite = createUndeclaredToolCallGuardBlockRewrite(
+      new Set(["exec"]), undefined, undefined, undefined, undefined,
+      true, name => rejected.push(name),
+    );
+    const declaredCall = frame("response.output_item.added", {
+      output_index: 0,
+      item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "exec", arguments: "{}" },
+    });
+    const undeclared = frame("response.output_item.added", {
+      output_index: 1,
+      item: { type: "function_call", id: "fc_2", call_id: "call_2", name: "other_tool", arguments: "{}" },
+    });
+
+    expect(rewrite(declaredCall)).toEqual([declaredCall]);
+    expect(rejected).toEqual([]);
+    expect(rewrite(undeclared).join("\n")).toContain("response.failed");
+    expect(rewrite(undeclared)).toEqual([]);
+    expect(rejected).toEqual(["other_tool"]);
+  });
+
   test("relays a declared call untouched", async () => {
     const upstream = sse("response.output_item.added", {
       output_index: 0,
