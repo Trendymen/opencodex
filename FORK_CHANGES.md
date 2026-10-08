@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.79.0`（`beba8b7e5e479f3d8b4d404e3e47cf4aaef4d936`）。
+- 上游基线：`v2.80.0`（`250f17afd8ff44c93c620d87c1f346ef56f64fb4`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -257,7 +257,7 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 ### 本地源码包安装
 
 Fork 提供 `bun run install:local`，构建 GUI 后安装本地源码包，上游没有等价安装事务。自动化不执行全局安装；每次安装须由用户在当前对话单独明确要求。
-本地安装只在打包产物中把唯一的 `html{background:var(--bg);overflow-x:hidden}` 改为 `html{background:var(--bg);overflow:clip}`；规则缺失、重复或变成其他内容时拒绝打包，已是目标规则时不重复写入。新包验证该规则，旧包回滚不要求具备它；`gui/src/styles.css` 和普通 GUI 构建不受修改。官方已将 Usage 表格的无障碍标题限制在滚动容器内；当前 `v2.79.0` 基线仍未改动根 `html` 规则，因此本地安装补丁继续保留。这项补丁针对本地安装后的页面双重滚动，浏览器实际滚动状态尚未验收。
+本地安装只在打包产物中把唯一的 `html{background:var(--bg);overflow-x:hidden}` 改为 `html{background:var(--bg);overflow:clip}`；规则缺失、重复或变成其他内容时拒绝打包，已是目标规则时不重复写入。新包验证该规则，旧包回滚不要求具备它；`gui/src/styles.css` 和普通 GUI 构建不受修改。官方已将 Usage 表格的无障碍标题限制在滚动容器内；当前 `v2.80.0` 基线仍未改动根 `html` 规则，因此本地安装补丁继续保留。这项补丁针对本地安装后的页面双重滚动，浏览器实际滚动状态尚未验收。
 官方 `v2.51.0` 新增的 pnpm 全局自更新保持可用：`verifyPnpmInstallTree()` 接受由受信任 pnpm owner 指向 virtual store 的 package-root symlink，同时继续验证解析后的普通目录和依赖树；npm 与本地源码安装仍拒绝 symlink package root。
 根 `package.json` 保持只读，构建前冻结 manifest；后续 staging、pack、验证、替换和 cleanup 比较同一快照。
 owner-only stage 收集完整 runtime dependency closure，校验 tarball 文件、完整性、入口、资源和当前平台 Bun binary；使用隔离 cache 离线验证，关闭 install scripts，不回退联网。
@@ -291,7 +291,7 @@ Fork Tag 不可变，同基线 revision 单调，官方 Tag 必须保持原 type
 
 ### 测试、CI 与维护规则
 
-Fork 暂时固定 Bun 与 `@types/bun` 为 `1.4.0`，lockfile、Docker 镜像和显式 workflow 版本同步。官方 `v2.49.0` 固定的 `1.4.2` 在本机默认并发门禁中重复发生 `SIGSEGV`，干净官方基线也复现；用户已授权这一运行时差异。该现象不证明其他平台同样失败，升级前需重新验证。
+当前官方与 Fork 的 package、`@types/bun`、lockfile 和 Docker 镜像均使用 `1.4.0`，不再将这些配置列为 Fork 差异。剩余版本差异是 `.github/workflows/cleanup-orphaned-workflows.yml`：Fork 保留 `1.4.0`，官方使用 `1.4.2`。早期 `1.4.2` 曾在本机默认并发门禁中重复发生 `SIGSEGV`，当时干净官方基线也复现；该记录不证明当前官方或其他平台仍有同样问题，变更前需重新验证。
 
 沿用上游 domain 布局、runner、并发、shard、timeout 与文件大小门禁。超限测试按独立组拆到同 domain，并双登记官方布局；历史长计划按 Task 边界拆页，保留全部原文。Fork 保留 launcher/update 的真实 Node executable 与 PATH 可用性检查，以及 Responses state 的定向回归，不维护旧 runner 拓扑。
 独立进程清单由执行计划回归检查路径唯一性，避免 rebase 后重复登记同一测试；服务测试保留一次执行，新回归从既有 lane 比较参数和预算，不固定官方数值。
@@ -314,7 +314,7 @@ Codex Auth 的账户 DTO、排序和阈值投影用例先写入有效的本地�
 `tests/server/server-management-auth.test.ts` 使用同一独立进程清单。完整池中首个 local-read 用例超时后，未释放的 spend owner 带出后续 home 冲突；单文件和官方单例对照正常完成。管理与数据面、session、CSRF、Tailscale、令牌文件 ACL 及全部原断言、时限保留，首个全量超时的具体等待点仍未确定。
 `tests/storage/storage-policy-job-responsive.test.ts` 使用同一独立进程清单。完整池中清理启动 POST 的往返耗时超过原 600 ms 门槛，候选和官方单文件对照均通过；测试文件与官方相同，Worker 阻塞、流式响应、healthz 和原时限断言全部保留。同步阻塞负向探针仍在该 600 ms 断言处失败，完整池中延迟发生的具体阶段尚未确定。
 `claude-management-api.test.ts`、`claude-models-discovery.test.ts`、`plugin-loader.test.ts` 和 `cli-connect-readiness.test.ts` 也使用该清单中的独立进程，避免完整并发池中的短时限探针和进程级状态相互干扰；原有断言、用例时限和主池并发保持不变。
-本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；当前基线对应 `v2.79.0`。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
+本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；当前基线对应 `v2.80.0`。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
 CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；官方 Tag verifier 使用完整对象 fetch，避免导入阶段依赖 promisor 懒取。普通稳定版同步在原子发布前以精确 lease 只推最终候选到 `dev`，由该 `push` 触发同 SHA CI；准备步骤先从上游验证并导入官方 Tag，尚未发布的 Fork Tag 不作为版本线测试前置条件。candidate CI 允许旧 `upstream-release` marker 保留，但必须证明它是新官方 Tag 的祖先；该例外由 verifier 在 GitHub dev push 环境中再次核对，合同测试同时覆盖 candidate 与非 candidate 环境，发布后的 verifier 仍要求 marker 与官方 Tag 精确相等。采用上游 Docker job/filter/aggregate，并保留 nightly schedule 的全矩阵选择。changes job 对 `ci`、`desktop`、`gui`、`packaging`、`docs`、`structure` 六个 scope 统一做 `true|false` 校验，并只把校验后的值提供给下游 job，缺失或非法输出直接失败。
 官方 Tag 来源与 ancestry 必须一致；发布后的 marker 必须与官方 Tag 精确相等，candidate CI 的旧 marker 只按祖先关系证明放行；缺失或冲突不能通过放宽测试解决。
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
@@ -347,6 +347,6 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 - Node 缺少通用 `openat`，诊断持久化和安装器的路径防护不能完全排除父目录并发替换。
 - Windows 跳过 package-shaped npm launcher 子进程用例；Bun `runUpdate()` 缺真实 package-shaped smoke。GUI update badge 尚不显示同基线更高 `ben.N`，preview parser 仍是既有单数字形态。
 - 同基线新 Tag 名称无法建立 wildcard lease，发布依赖 single publisher，并在 push 后、Release 前复核；具体规则与结果记录按同步文档执行。
-- 上游 `v2.74.0` 把 catalog auto-refresh 改为默认开启的每小时调度（对每个启用的 Provider 做一次 live `/models` 查询；设 `enabled: false` 可回到显式同步），新增 OAuth 发现的原生模型行、Codex credits 显示开关与 grok-4.7-build-fast 接线；`v2.75.0` 新增管理面模型发现对账、Devin 输出排序、Anthropic 模型级输出上限与 config 注入结构改写；`v2.76.0` 新增 OpenGateway（Sionic AI）预设、JEV 决策路由、hosted-image 本地展示、Anthropic 拒绝凭证绑定与 config 注入 EOL 结构改写；`v2.77.0` 新增 Claude 子代理 force 与 Remote Link 恢复、帮助路径整理、plan-model 拒跳证据保留、Windows cmd 备份名脱敏、standalone 配对与嵌套 HTTP 拒跳语义；`v2.78.0` 新增原生池偏好、管理面工作流可发现性、reset replay grant 跨发送共享、Claude 界面整理与 models 命令 live/json 输出；`v2.79.0` 新增存储账户信用策略经 dispatch 执行、独立配对一次性写意图、API key 表格删除与展示、NTFS 大文件 ID、Windows 本地 CA ACL 迁移、配对意图 ACL 免 PowerShell 预加载、慢冷启动 ensure 等待、客户端创建语音通话归属、web-search 按查询预算结果与 GUI prepush 联动 typecheck。以上是上游行为，不替代本文任何 Fork 条目。
+- 上游 `v2.74.0` 把 catalog auto-refresh 改为默认开启的每小时调度（对每个启用的 Provider 做一次 live `/models` 查询；设 `enabled: false` 可回到显式同步），新增 OAuth 发现的原生模型行、Codex credits 显示开关与 grok-4.7-build-fast 接线；`v2.75.0` 新增管理面模型发现对账、Devin 输出排序、Anthropic 模型级输出上限与 config 注入结构改写；`v2.76.0` 新增 OpenGateway（Sionic AI）预设、JEV 决策路由、hosted-image 本地展示、Anthropic 拒绝凭证绑定与 config 注入 EOL 结构改写；`v2.77.0` 新增 Claude 子代理 force 与 Remote Link 恢复、帮助路径整理、plan-model 拒跳证据保留、Windows cmd 备份名脱敏、standalone 配对与嵌套 HTTP 拒跳语义；`v2.78.0` 新增原生池偏好、管理面工作流可发现性、reset replay grant 跨发送共享、Claude 界面整理与 models 命令 live/json 输出；`v2.79.0` 新增存储账户信用策略经 dispatch 执行、独立配对一次性写意图、API key 表格删除与展示、NTFS 大文件 ID、Windows 本地 CA ACL 迁移、配对意图 ACL 免 PowerShell 预加载、慢冷启动 ensure 等待、客户端创建语音通话归属、web-search 按查询预算结果与 GUI prepush 联动 typecheck。`v2.80.0` 保留 Claude Code 裸工具名和 ToolSearch 引用，扩展 Qwen3.8-27B 的 gateway namespace 匹配，记录 combo effort 的实际切换，修复 restart-drain 重试码与 web-search pacing 的 header deadline，并合入依赖安全更新。这些官方能力与 Fork 的进度契约、消息身份处理和 strict-backend 门禁分别保留；以上是上游行为，不替代本文任何 Fork 条目。
 
 Fork 串行测试清单隔离 npm pack、Volta 和共享服务状态等会争用资源的测试。
