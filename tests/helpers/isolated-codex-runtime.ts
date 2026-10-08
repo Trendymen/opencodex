@@ -13,24 +13,36 @@ export function installIsolatedCodexRuntime(root: string): () => void {
   writeFileSync(join(codexHome, "config.toml"), 'model_catalog_json = "opencodex-catalog.json"\n');
 
   const catalog = JSON.stringify({ models: [deriveEntry(null, "gpt-5.6-sol", "Runtime fixture", 9)] });
-  const script = join(root, "fixture-codex.js");
-  writeFileSync(script, [
-    'if (process.argv.includes("--version")) {',
-    '  process.stdout.write("codex-cli 0.145.0\\n");',
-    '} else if (process.argv.includes("--bundled")) {',
-    `  process.stdout.write(${JSON.stringify(catalog)});`,
-    '} else {',
-    '  process.exitCode = 2;',
-    '}',
-  ].join("\n"));
   let command: string;
   if (process.platform === "win32") {
+    const script = join(root, "fixture-codex.js");
+    writeFileSync(script, [
+      'if (process.argv.includes("--version")) {',
+      '  process.stdout.write("codex-cli 0.145.0\\n");',
+      '} else if (process.argv.includes("--bundled")) {',
+      `  process.stdout.write(${JSON.stringify(catalog)});`,
+      '} else {',
+      '  process.exitCode = 2;',
+      '}',
+    ].join("\n"));
     command = join(root, "fixture-codex.cmd");
     writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
   } else {
     command = join(root, "fixture-codex");
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-    writeFileSync(command, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`);
+    const catalogPath = join(root, "fixture-catalog.json");
+    writeFileSync(catalogPath, catalog);
+    writeFileSync(command, [
+      "#!/bin/sh",
+      'if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then',
+      "  printf '%s\\n' 'codex-cli 0.145.0'",
+      'elif [ "$#" -eq 3 ] && [ "$1" = "debug" ] && [ "$2" = "models" ] && [ "$3" = "--bundled" ]; then',
+      `  exec /bin/cat ${quote(catalogPath)}`,
+      "else",
+      "  exit 2",
+      "fi",
+      "",
+    ].join("\n"));
     chmodSync(command, 0o755);
   }
 
