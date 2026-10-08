@@ -256,8 +256,8 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 
 ### 本地源码包安装
 
-Fork 提供 `bun run install:local`，构建 GUI 后安装本地源码包，上游没有等价安装事务。
-本地安装只在打包产物中把唯一的 `html{background:var(--bg);overflow-x:hidden}` 改为 `html{background:var(--bg);overflow:clip}`；规则缺失、重复或变成其他内容时拒绝打包，已是目标规则时不重复写入。新包验证该规则，旧包回滚不要求具备它；`gui/src/styles.css` 和普通 GUI 构建不受修改。官方已将 Usage 表格的无障碍标题限制在滚动容器内；当前 `v2.78.0` 基线仍未改动根 `html` 规则，因此本地安装补丁继续保留。这项补丁针对本地安装后的页面双重滚动，浏览器实际滚动状态尚未验收。
+Fork 提供 `bun run install:local`，构建 GUI 后安装本地源码包，上游没有等价安装事务。自动化不执行全局安装；每次安装须由用户在当前对话单独明确要求。
+本地安装只在打包产物中把唯一的 `html{background:var(--bg);overflow-x:hidden}` 改为 `html{background:var(--bg);overflow:clip}`；规则缺失、重复或变成其他内容时拒绝打包，已是目标规则时不重复写入。新包验证该规则，旧包回滚不要求具备它；`gui/src/styles.css` 和普通 GUI 构建不受修改。官方已将 Usage 表格的无障碍标题限制在滚动容器内；当前 `v2.79.0` 基线仍未改动根 `html` 规则，因此本地安装补丁继续保留。这项补丁针对本地安装后的页面双重滚动，浏览器实际滚动状态尚未验收。
 官方 `v2.51.0` 新增的 pnpm 全局自更新保持可用：`verifyPnpmInstallTree()` 接受由受信任 pnpm owner 指向 virtual store 的 package-root symlink，同时继续验证解析后的普通目录和依赖树；npm 与本地源码安装仍拒绝 symlink package root。
 根 `package.json` 保持只读，构建前冻结 manifest；后续 staging、pack、验证、替换和 cleanup 比较同一快照。
 owner-only stage 收集完整 runtime dependency closure，校验 tarball 文件、完整性、入口、资源和当前平台 Bun binary；使用隔离 cache 离线验证，关闭 install scripts，不回退联网。
@@ -300,8 +300,8 @@ Codex Auth 的账户 DTO、排序和阈值投影用例先写入有效的本地�
 `tests/server/memory-watchdog.test.ts` 加入 `scripts/test.ts` 的现有独立进程清单，本地完整测试与 macOS CI 都在新的 Bun 进程中执行它，避免内存采样依赖前序测试累积的堆；保留原测试断言、超时预算和全局并发。 HTTP mock 用例通过既有 runtime identity 接缝固定为直接 HTTP，不再发起真实上游 WebSocket 握手。
 `tests/cli/cli-help.test.ts` 也使用该清单中的独立进程：真实 CLI 子进程在完整并发池中出现超时，单文件与官方基线的同一测试能完成；调度改变不放宽断言、子进程时限或主池并发。
 `claude-management-api.test.ts`、`claude-models-discovery.test.ts`、`plugin-loader.test.ts` 和 `cli-connect-readiness.test.ts` 也使用该清单中的独立进程，避免完整并发池中的短时限探针和进程级状态相互干扰；原有断言、用例时限和主池并发保持不变。
-本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；当前基线对应 `v2.78.0`。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
-CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；官方 Tag verifier 使用完整对象 fetch，避免导入阶段依赖 promisor 懒取。普通稳定版同步在原子发布前以精确 lease 只推最终候选到 `dev`，由该 `push` 触发同 SHA CI；准备步骤先从上游验证并导入官方 Tag，尚未发布的 Fork Tag 不作为版本线测试前置条件。candidate CI 允许旧 `upstream-release` marker 保留，但必须证明它是新官方 Tag 的祖先；该例外由 verifier 在 GitHub dev push 环境中再次核对，合同测试同时覆盖 candidate 与非 candidate 环境，发布后的 verifier 仍要求 marker 与官方 Tag 精确相等。采用上游 Docker job/filter/aggregate。changes job 对 `ci`、`gui`、`packaging`、`docs`、`structure` 五个 scope 统一做 `true|false` 校验，并只把校验后的值提供给下游 job，缺失或非法输出直接失败。
+本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；当前基线对应 `v2.79.0`。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
+CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；官方 Tag verifier 使用完整对象 fetch，避免导入阶段依赖 promisor 懒取。普通稳定版同步在原子发布前以精确 lease 只推最终候选到 `dev`，由该 `push` 触发同 SHA CI；准备步骤先从上游验证并导入官方 Tag，尚未发布的 Fork Tag 不作为版本线测试前置条件。candidate CI 允许旧 `upstream-release` marker 保留，但必须证明它是新官方 Tag 的祖先；该例外由 verifier 在 GitHub dev push 环境中再次核对，合同测试同时覆盖 candidate 与非 candidate 环境，发布后的 verifier 仍要求 marker 与官方 Tag 精确相等。采用上游 Docker job/filter/aggregate，并保留 nightly schedule 的全矩阵选择。changes job 对 `ci`、`desktop`、`gui`、`packaging`、`docs`、`structure` 六个 scope 统一做 `true|false` 校验，并只把校验后的值提供给下游 job，缺失或非法输出直接失败。
 官方 Tag 来源与 ancestry 必须一致；发布后的 marker 必须与官方 Tag 精确相等，candidate CI 的旧 marker 只按祖先关系证明放行；缺失或冲突不能通过放宽测试解决。
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
 沿用上游的 `structure/manifest.json`、`structure/INDEX.md` 与 `bun run structure:check` 作为结构 SSOT；Fork 的 `src/fork/` 由 `structure/fork-extensions.md` 描述，不恢复已删除的数字前缀 structure 文件或旧式内联 Decision Log。
