@@ -438,6 +438,9 @@ export const SERIAL_FULL_SUITE_FILES = [
   "server/server-live.test.ts",
   // Local four-worker pool refused a fixture sideband join; the complete file passed alone.
   "server/server-live-realtime-fixtures.test.ts",
+  // A full-suite local-read timeout preceded owner-home conflicts in this file;
+  // the complete file passes alone with its original security assertions and budgets.
+  "server/server-management-auth.test.ts",
   "responses/responses-opaque-blob-recovery.test.ts",
   "ci-workflows/fork-install-local-staging.test.ts",
   "ci-workflows/fork-install-local-volta-root.test.ts",
