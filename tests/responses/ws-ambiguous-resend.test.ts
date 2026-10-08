@@ -571,6 +571,7 @@ describe("handleResponses replaces a dead socket's send once under retryOnReset 
   });
 
   test("an HTTP reset resumes a turn carrying agent_message within two replacements", async () => {
+    installFake(() => {});
     let calls = 0;
     const http = stubHttp(() => {
       calls += 1;
@@ -583,7 +584,7 @@ describe("handleResponses replaces a dead socket's send once under retryOnReset 
         { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] },
         { type: "agent_message", author: "/root/child", recipient: "/root", content: [{ type: "input_text", text: "result" }] },
       ] }),
-      forwardConfig({ retryOnReset: { replacements: 2 } }),
+      forwardConfig({ upstreamWebsocket: false, retryOnReset: { replacements: 2 } }),
       { model: "", provider: "" },
       { sendBudget: createRequestExecutionBudget() },
     );
@@ -592,9 +593,11 @@ describe("handleResponses replaces a dead socket's send once under retryOnReset 
     expect(await response.text()).toContain("response.completed");
     expect(http).toHaveLength(3);
     expect(new Set(http).size).toBe(1);
+    expect(FakeWebSocket.instances).toHaveLength(0);
   });
 
   test("an agent_message turn stops after two failed replacements", async () => {
+    installFake(() => {});
     const http = stubHttp(() => {
       throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
     });
@@ -604,7 +607,7 @@ describe("handleResponses replaces a dead socket's send once under retryOnReset 
         { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] },
         { type: "agent_message", author: "/root/child", recipient: "/root", content: [{ type: "input_text", text: "result" }] },
       ] }),
-      forwardConfig({ retryOnReset: { replacements: 2 } }),
+      forwardConfig({ upstreamWebsocket: false, retryOnReset: { replacements: 2 } }),
       { model: "", provider: "" },
       { sendBudget: createRequestExecutionBudget() },
     );
@@ -612,9 +615,11 @@ describe("handleResponses replaces a dead socket's send once under retryOnReset 
     expect(response.status).toBe(REPLAY_REFUSED_STATUS);
     expect(await response.json()).toMatchObject({ error: { code: UPSTREAM_RESET_REPLAY_REFUSED_CODE } });
     expect(http).toHaveLength(3);
+    expect(FakeWebSocket.instances).toHaveLength(0);
   });
 
   test("an agent_message turn still refuses a reset when retryOnReset is disabled", async () => {
+    installFake(() => {});
     const http = stubHttp(() => {
       throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
     });
@@ -624,13 +629,14 @@ describe("handleResponses replaces a dead socket's send once under retryOnReset 
         { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] },
         { type: "agent_message", author: "/root/child", recipient: "/root", content: [{ type: "input_text", text: "result" }] },
       ] }),
-      forwardConfig({ retryOnReset: { enabled: false } }),
+      forwardConfig({ upstreamWebsocket: false, retryOnReset: { enabled: false } }),
       { model: "", provider: "" },
       { sendBudget: createRequestExecutionBudget() },
     );
 
     expect(response.status).toBe(REPLAY_REFUSED_STATUS);
     expect(http).toHaveLength(1);
+    expect(FakeWebSocket.instances).toHaveLength(0);
   });
 
   test("with one grant, a replacement that resets before its head settles as the refusal", async () => {
