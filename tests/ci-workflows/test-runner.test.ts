@@ -582,6 +582,30 @@ describe("bun test argv", () => {
     expect(helpLanes[0]!.timeoutMs).toBe(existingHelpLane!.timeoutMs);
   });
 
+  test("the full suite isolates CLI help and provider integration files", () => {
+    const plan = resolveBunTestPlan([]);
+    const mainArgs = plan[0]!.args;
+    const referencePath = "./tests/cli/cli-help.test.ts";
+    const referenceLane = plan.slice(1).find(lane => lane.args.includes(referencePath));
+    expect(referenceLane).toBeDefined();
+
+    for (const path of [
+      "./tests/cli/cli-help-navigation.test.ts",
+      "./tests/cli/cli-help-recovery.test.ts",
+      "./tests/providers/provider-antigravity-wire-snapshot.test.ts",
+      "./tests/providers/xai/grok-47-fast-model-wire.test.ts",
+    ]) {
+      const ignoreIndex = mainArgs.indexOf(`**/${basename(path)}`);
+      expect(mainArgs[ignoreIndex - 1]).toBe("--path-ignore-patterns");
+      const lanes = plan.slice(1).filter(lane => lane.args.includes(path));
+      expect(lanes).toHaveLength(1);
+      expect(lanes[0]!.args.map(arg => arg === path ? "<file>" : arg)).toEqual(
+        referenceLane!.args.map(arg => arg === referencePath ? "<file>" : arg),
+      );
+      expect(lanes[0]!.timeoutMs).toBe(referenceLane!.timeoutMs);
+    }
+  });
+
 test("a control budget is bounded and changes only the main lane", () => {
     const baseline = resolveBunTestPlan([], undefined, {});
     expect(baseline[0]!.timeoutMs).toBe(900_000);
