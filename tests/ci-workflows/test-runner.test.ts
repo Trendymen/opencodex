@@ -582,7 +582,7 @@ describe("bun test argv", () => {
     expect(helpLanes[0]!.timeoutMs).toBe(existingHelpLane!.timeoutMs);
   });
 
-  test("the full suite isolates CLI help and provider integration files", () => {
+  test("the full suite isolates selected load-sensitive files", () => {
     const plan = resolveBunTestPlan([]);
     const mainArgs = plan[0]!.args;
     const referencePath = "./tests/cli/cli-help.test.ts";
@@ -598,6 +598,7 @@ describe("bun test argv", () => {
       "./tests/providers/cursor/cursor-local-models-schema.test.ts",
       "./tests/providers/provider-antigravity-wire-snapshot.test.ts",
       "./tests/providers/xai/grok-47-fast-model-wire.test.ts",
+      "./tests/server/server-management-auth.test.ts",
     ]) {
       const ignoreIndex = mainArgs.indexOf(`**/${basename(path)}`);
       expect(mainArgs[ignoreIndex - 1]).toBe("--path-ignore-patterns");
