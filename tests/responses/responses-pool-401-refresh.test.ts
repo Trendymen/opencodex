@@ -582,10 +582,26 @@ describe("ordinary pool 401 refresh and replay (#2887)", () => {
         );
       },
     });
-    const response = await handleResponses(
-      request("/v1/responses", { stream }), config(), { model: "", provider: "" } as RequestLogContext,
-    );
-    const body = await response.text();
+    const cfg = config();
+    cfg.providers.openai.upstreamWebsocket = false;
+    const originalWebSocket = globalThis.WebSocket;
+    let websocketConstructs = 0;
+    globalThis.WebSocket = new Proxy(originalWebSocket, {
+      construct() {
+        websocketConstructs += 1;
+        throw new Error("HTTP fixture rejects upstream WebSocket");
+      },
+    });
+    let response: Response;
+    let body: string;
+    try {
+      response = await handleResponses(
+        request("/v1/responses", { stream }), cfg, { model: "", provider: "" } as RequestLogContext,
+      );
+      body = await response.text();
+    } finally {
+      globalThis.WebSocket = originalWebSocket;
+    }
     expect(harness.sends).toEqual(["Bearer rejected-access"]);
     expect(response.status).toBe(200);
     if (stream) expect(body).toContain("event: response.failed");
@@ -594,6 +610,7 @@ describe("ordinary pool 401 refresh and replay (#2887)", () => {
     expect(body).toContain("[REDACTED]");
     const next = { model: "gpt-5.5", previous_response_id: "resp_failed_pool_echo", input: "retry" };
     expect(expandPreviousResponseInput(next)).toEqual(next);
+    expect(websocketConstructs).toBe(0);
   });
 
   test("bare upstream SSE error masks the selected pool credential in buffered JSON and diagnostics", async () => {
