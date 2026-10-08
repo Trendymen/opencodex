@@ -372,6 +372,9 @@ export function resolveBunTestArgs(
 export const SERIAL_FULL_SUITE_FILES = [
   "codex-integration/codex-shim.test.ts",
   "providers/cursor/cursor-native-exec-shell.test.ts",
+  // The FIFO safety case hit its existing deadline in the full suite;
+  // the file passes alone on candidate and official without changing that budget.
+  "providers/cursor/cursor-effort-table.test.ts",
   // Full-suite runs timed out Antigravity subprocesses and Grok local HTTP/WS;
   // both files pass alone with unchanged assertions and test budgets.
   "providers/provider-antigravity-wire-snapshot.test.ts",

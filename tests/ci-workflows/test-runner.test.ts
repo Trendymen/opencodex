@@ -592,6 +592,7 @@ describe("bun test argv", () => {
     for (const path of [
       "./tests/cli/cli-help-navigation.test.ts",
       "./tests/cli/cli-help-recovery.test.ts",
+      "./tests/providers/cursor/cursor-effort-table.test.ts",
       "./tests/providers/provider-antigravity-wire-snapshot.test.ts",
       "./tests/providers/xai/grok-47-fast-model-wire.test.ts",
     ]) {
