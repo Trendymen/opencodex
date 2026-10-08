@@ -564,6 +564,24 @@ describe("bun test argv", () => {
     expect(plan.find(lane => lane.label === "codex-shim.test.ts")?.timeoutMs).toBe(3 * 60 * 1000);
   });
 
+  test("the full suite runs CLI help paths once in a fresh process", () => {
+    const plan = resolveBunTestPlan([]);
+    const mainArgs = plan[0]!.args;
+    const helpPath = "./tests/cli/cli-help-paths.test.ts";
+    const existingHelpPath = "./tests/cli/cli-help.test.ts";
+
+    const ignoreIndex = mainArgs.indexOf("**/cli-help-paths.test.ts");
+    expect(mainArgs[ignoreIndex - 1]).toBe("--path-ignore-patterns");
+    const helpLanes = plan.slice(1).filter(lane => lane.args.includes(helpPath));
+    const existingHelpLane = plan.slice(1).find(lane => lane.args.includes(existingHelpPath));
+    expect(helpLanes).toHaveLength(1);
+    expect(existingHelpLane).toBeDefined();
+    expect(helpLanes[0]!.args.map(arg => arg === helpPath ? "<file>" : arg)).toEqual(
+      existingHelpLane!.args.map(arg => arg === existingHelpPath ? "<file>" : arg),
+    );
+    expect(helpLanes[0]!.timeoutMs).toBe(existingHelpLane!.timeoutMs);
+  });
+
 test("a control budget is bounded and changes only the main lane", () => {
     const baseline = resolveBunTestPlan([], undefined, {});
     expect(baseline[0]!.timeoutMs).toBe(900_000);
