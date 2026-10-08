@@ -593,6 +593,9 @@ describe("bun test argv", () => {
       "./tests/cli/cli-help-navigation.test.ts",
       "./tests/cli/cli-help-recovery.test.ts",
       "./tests/providers/cursor/cursor-effort-table.test.ts",
+      "./tests/providers/cursor/cursor-effort-rows.test.ts",
+      "./tests/providers/cursor/cursor-integration-status.test.ts",
+      "./tests/providers/cursor/cursor-local-models-schema.test.ts",
       "./tests/providers/provider-antigravity-wire-snapshot.test.ts",
       "./tests/providers/xai/grok-47-fast-model-wire.test.ts",
     ]) {

@@ -374,6 +374,11 @@ export const SERIAL_FULL_SUITE_FILES = [
   // The FIFO safety case hit its existing deadline in the full suite;
   // the file passes alone on candidate and official without changing that budget.
   "providers/cursor/cursor-effort-table.test.ts",
+  // Full-suite Cursor catalog setup failed in these three helper-backed files;
+  // run each in a fresh process with unchanged assertions and test budgets.
+  "providers/cursor/cursor-effort-rows.test.ts",
+  "providers/cursor/cursor-integration-status.test.ts",
+  "providers/cursor/cursor-local-models-schema.test.ts",
   // Full-suite runs timed out Antigravity subprocesses and Grok local HTTP/WS;
   // both files pass alone with unchanged assertions and test budgets.
   "providers/provider-antigravity-wire-snapshot.test.ts",
