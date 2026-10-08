@@ -9,11 +9,12 @@ import {
   realpathSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, posix, win32 } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, posix, win32 } from "node:path";
 import {
   changedSelectionFailure,
   captureTestOutput,
@@ -27,6 +28,7 @@ import {
   selectChangedComparisonRef,
   SERIAL_FULL_SUITE_FILES,
 } from "../../scripts/test";
+import { pinTestNodePath } from "../../scripts/lib/test-runner-node";
 import {
   NESTED_LIVE_LOCK_RECEIPT_KEY,
 } from "../helpers/nested-test-run-lock-controller";
@@ -289,7 +291,143 @@ describe("test runner captured output", () => {
   );
 });
 
+function createHomeDependentNodeShimFixture(): {
+  fixture: string;
+  shimDir: string;
+  nodeDir: string;
+  hostHome: string;
+} {
+  const fixture = mkdtempSync(join(tmpdir(), "ocx-test-node-entry-"));
+  const shimDir = join(fixture, "shim");
+  const nodeDir = join(fixture, "direct");
+  const hostHome = join(fixture, "host-home");
+  mkdirSync(shimDir);
+  mkdirSync(nodeDir);
+  mkdirSync(hostHome);
+  writeFileSync(join(nodeDir, "node"), `#!/bin/sh
+if [ "$1" = "-p" ]; then printf '%s\\n22.0.0\\n' "$0"; exit 0; fi
+printf 'direct-node\\n'
+`, { mode: 0o755 });
+  writeFileSync(join(shimDir, "node"), `#!/bin/sh
+if [ "$HOME" != "$NODE_FIXTURE_HOME" ]; then exit 87; fi
+exec "$NODE_DIRECT_BIN" "$@"
+`, { mode: 0o755 });
+  return { fixture, shimDir, nodeDir, hostHome };
+}
+
 describe("test runner isolation", () => {
+  test.skipIf(process.platform === "win32").each(["bare", "wrapped"] as const)(
+    "%s test entry keeps Node callable after HOME isolation",
+    entry => {
+      const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
+      const testFile = join(fixture, "node-entry.test.ts");
+      writeFileSync(testFile, `import { expect, test } from "bun:test";
+test("Node child", () => {
+  const child = Bun.spawnSync(["node", "-e", "ignored"], { stdout: "pipe", stderr: "pipe" });
+  expect(child.exitCode).toBe(0);
+  expect(child.stdout.toString()).toBe("direct-node\\n");
+});
+`);
+      const driver = join(fixture, "wrapper.ts");
+      writeFileSync(driver, `import { runTestLane } from ${JSON.stringify(repoPath("scripts", "test.ts"))};
+const result = await runTestLane(
+  { label: "node fixture", args: ["--parallel=1", process.env.NODE_FIXTURE_TEST!], timeoutMs: 15_000 },
+  "node-fixture-" + process.pid, undefined, false, undefined, process.execPath,
+);
+process.exitCode = result.exitCode;
+`);
+      try {
+        const command = entry === "bare"
+          ? [process.execPath, "test", "--parallel=1", testFile]
+          : [process.execPath, driver];
+        const result = Bun.spawnSync(command, {
+          cwd: repoRoot(),
+          env: {
+            ...process.env,
+            HOME: hostHome,
+            USERPROFILE: hostHome,
+            OCX_REAL_HOME: hostHome,
+            OCX_TEST_NO_QUEUE: "1",
+            PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
+            NODE_FIXTURE_HOME: hostHome,
+            NODE_DIRECT_BIN: join(nodeDir, "node"),
+            NODE_FIXTURE_TEST: testFile,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 20_000,
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr.toString()).toContain("1 pass");
+      } finally {
+        removeTreeWithRetry(fixture);
+      }
+    },
+    { timeout: 25_000 },
+  );
+
+  test.skipIf(process.platform === "win32")("resolves a HOME-dependent Node shim to a cwd-independent binary", () => {
+    const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
+    const sourceEnv = {
+      ...process.env,
+      HOME: hostHome,
+      USERPROFILE: hostHome,
+      PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
+      NODE_FIXTURE_HOME: hostHome,
+      NODE_DIRECT_BIN: join(nodeDir, "node"),
+    };
+    const isolated = createIsolatedTestEnvironment(sourceEnv);
+    try {
+      pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+      expect(isolated.env.PATH?.split(delimiter)[0]).toBe(nodeDir);
+      const result = Bun.spawnSync(["node", "-e", "ignored"], {
+        cwd: fixture,
+        env: isolated.env,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 2_000,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toBe("direct-node\n");
+    } finally {
+      isolated.cleanup();
+      removeTreeWithRetry(fixture);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("refuses missing, failed, and malformed Node probes", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "ocx-test-node-failure-"));
+    const bin = join(fixture, "bin");
+    mkdirSync(bin);
+    try {
+      for (const body of [
+        null,
+        "exit 9",
+        "printf 'relative/node\\n'",
+        "printf '%s\\nnot-a-version\\n' \"$0\"",
+        "exec /bin/sleep 30",
+      ]) {
+        const node = join(bin, "node");
+        if (body === null) {
+          if (existsSync(node)) unlinkSync(node);
+        } else {
+          writeFileSync(node, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+        }
+        const sourceEnv = { PATH: bin, HOME: fixture };
+        const isolated = createIsolatedTestEnvironment(sourceEnv);
+        try {
+          const startedAt = Date.now();
+          expect(() => pinTestNodePath(isolated.env, sourceEnv, isolated.root)).toThrow("usable Node");
+          expect(Date.now() - startedAt).toBeLessThan(4_000);
+        } finally {
+          isolated.cleanup();
+        }
+      }
+    } finally {
+      removeTreeWithRetry(fixture);
+    }
+  }, { timeout: 8_000 });
+
   test("redirects user homes to a disposable root", () => {
     const isolated = createIsolatedTestEnvironment({ PATH: "/test/bin", HOME: "/real/home" });
     try {

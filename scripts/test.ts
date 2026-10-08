@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { getTestRunnerBun } from "./lib/test-runner-bun";
+import { pinTestNodePath } from "./lib/test-runner-node";
 import {
   acquireTestRunLock,
   resolveWrappedTestRunLockPath,
@@ -615,7 +616,7 @@ export async function runTestLane(
   },
   testRunner = getTestRunnerBun(),
 ): Promise<{ exitCode: number; output: string }> {
-  const isolated = createIsolatedTestEnvironment({
+  const sourceEnv = {
     ...process.env,
     [TEST_RUN_ID_ENV]: runId,
     [TEST_RUN_LOCK_PATH_ENV]: inheritedLock?.lockPath,
@@ -624,7 +625,14 @@ export async function runTestLane(
     // (not its own test timeout) needs headroom for process startup on a busy machine.
     // See tests/helpers/ci-watchdog.ts `isolationBudgetMs`.
     OCX_TEST_FULL_SUITE: "1",
-  });
+  };
+  const isolated = createIsolatedTestEnvironment(sourceEnv);
+  try {
+    pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+  } catch (error) {
+    isolated.cleanup();
+    throw error;
+  }
   const startedAt = Date.now();
   let interrupted: NodeJS.Signals | null = null;
   const child = Bun.spawn([testRunner, "test", ...lane.args], {
