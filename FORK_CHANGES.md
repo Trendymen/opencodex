@@ -332,7 +332,7 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 
 | 旧差异 | 当前处理与证据入口 |
 | --- | --- |
-| Fork 发布规则的独立 Markdown 合同测试 | 已删除 `fork-maintenance-truth.test.ts` 及双布局登记；原测试只检查文档文字，移除后不再对这些文字提供静态漂移报警。发布仍按 `docs/fork-sync-automation.md` 执行双审、精确 lease、同 SHA CI 与原子推送门禁。 |
+| Fork 发布规则的独立静态维护合同测试 | 已删除 `fork-maintenance-truth.test.ts` 及双布局登记；原测试检查文档合同文字、package 与文档基线一致性及引用入口存在性，移除后不再提供这些静态维护报警。发布仍按 `docs/fork-sync-automation.md` 执行双审、精确 lease、同 SHA CI 与原子推送门禁。 |
 | Fork 的 GUI 条件检查重复用例 | `ci-gui-if-changed.test.ts` 保留 Fork candidate 官方 Tag 祖先判断；其余同名同断言用例由官方 `tests/ci-workflows/ci-workflows.test.ts` 覆盖。 |
 | `fork-latest-compat.test.ts` 的混合兼容用例 | 自定义工具输出的纯文本、`null`、未知图片数组与文本／拒绝顺序改由 `tests/responses/fork-custom-tool-output-lowering.test.ts` 的真实 wire 改写断言覆盖；Ark 配额前后空格与原消息保真并入 `tests/providers/fork-ark-weekly-quota.test.ts`。删除混合文件及双布局登记。 |
 | GLM-5.3 assistant-tail 的重复用例 | `tests/providers/fork-glm-kimi-compat.test.ts` 保留 Ark 目的地谓词；Ark 与其他第三方 Responses 的 continuation、原消息及追加项由 `tests/providers/fork-trailing-user-turn-compat.test.ts` 的现有用例覆盖。 |
