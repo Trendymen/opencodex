@@ -408,6 +408,8 @@ export const SERIAL_FULL_SUITE_FILES = [
   // Real CLI spawnSync children timed out in the four-worker full pool while the same
   // file passed alone; run this file in a fresh process without changing its assertions.
   "cli/cli-help.test.ts",
+  // A full-pool run failed this file's version projection; all cases passed alone.
+  "cli/cli-status-json.test.ts",
   // The help-paths CLI children reached their 40s deadline in the full pool;
   // the complete file passes alone with the same assertions and child budget.
   "cli/cli-help-paths.test.ts",
