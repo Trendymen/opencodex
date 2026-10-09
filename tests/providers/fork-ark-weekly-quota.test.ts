@@ -29,6 +29,17 @@ describe("Fork Ark weekly quota compatibility", () => {
         }),
       });
     }
+    const originalMessage = `  You have exceeded the 5-hour usage quota. ${reset} Request id: redacted  `;
+    expect(arkQuotaClientError(body(originalMessage))).toEqual({
+      status: 400,
+      body: JSON.stringify({
+        error: {
+          message: originalMessage,
+          type: "invalid_request_error",
+          code: "volcengine_usage_quota_exhausted",
+        },
+      }),
+    });
   });
 
   test("keeps the accepted window vocabulary closed", () => {

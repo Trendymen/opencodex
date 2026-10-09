@@ -30,10 +30,16 @@ describe("fork trailing-user-turn compatibility for prefill-restricted Responses
       [responsesProvider(ZHIPU_CODEX_URL), "glm-5.3-flash"],
       [responsesProvider("https://example.test/v1"), "deepseek-v4-flash"],
       [responsesProvider("https://example.test/v1"), "glm-5.3-flash"],
+      [responsesProvider("https://example.test/v3"), "glm-5.3"],
     ];
     for (const [provider, modelId] of cases) {
-      const result = applyGlmKimiOutboundCompatibility({ body: assistantTailBody(), provider, modelId });
+      const original = assistantTailBody();
+      const result = applyGlmKimiOutboundCompatibility({ body: original, provider, modelId });
       expect(appendedUserContinuation(result)).toBe(true);
+      expect((result.body as { input: Array<Record<string, unknown>> }).input).toEqual([
+        ...original.input,
+        { type: "message", role: "user", content: [{ type: "input_text", text: "(continue)" }] },
+      ]);
     }
   });
 

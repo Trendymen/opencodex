@@ -18,6 +18,7 @@ import { forkUpdateDecision } from "../../src/fork/version-policy.mjs";
 describe("fork update monotonicity", () => {
   test("compares official bases and same-base Fork revisions on the latest channel", () => {
     const current = "2.40.0-ben.3";
+    expect(forkUpdateDecision("2.39.0", current, "latest")).toBe("older");
     expect(forkUpdateDecision("2.39.0-ben.9", current, "latest")).toBe("older");
     expect(forkUpdateDecision("2.40.0-ben.2", current, "latest")).toBe("older");
     expect(forkUpdateDecision("2.40.0-ben.3", current, "latest")).toBe("same");
@@ -59,7 +60,8 @@ describe("fork update monotonicity", () => {
   test.skipIf(process.platform === "win32")(
     "npm launcher rejects an older Fork revision and malformed registry output before side effects",
     () => {
-      for (const latest of ["2.40.0-ben.2", "garbage"]) {
+      const node = execFileSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).trim();
+      for (const latest of ["2.39.0", "2.40.0-ben.2", "garbage"]) {
         const root = mkdtempSync(join(tmpdir(), "ocx-ben-monotonicity-"));
         const packageRoot = join(root, "node_modules", "@bitkyc08", "opencodex");
         const launcher = join(packageRoot, "bin", "ocx.mjs");
@@ -91,7 +93,6 @@ fs.writeFileSync(${JSON.stringify(sideEffect)}, "called");
 `);
           chmodSync(fakeNpm, 0o755);
 
-          const node = execFileSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).trim();
           const result = Bun.spawnSync([node, launcher, "update"], {
             cwd: root,
             env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },

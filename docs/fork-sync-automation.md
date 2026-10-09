@@ -451,8 +451,7 @@ generic_reviewer_expansion=forbidden
 <!-- rebase-review-escalation:end -->
 
 不自动安装或恢复用户已删除的 `pre-push` hook。若本地安装了 `pre-push` hook，它执行的检查可以作为真实验证证据，
-没有 hook 时按“验证选择与结果复用”显式验证；完整测试已覆盖
-`tests/ci-workflows/fork-maintenance-truth.test.ts` 且相关输入未变时，不再单独重复执行。
+没有 hook 时按“验证选择与结果复用”显式验证；已执行且输入未变的检查不单独重复。
 hook 不是发布状态真源，只能证明它实际执行过的静态契约与测试通过，
 不能证明双审通过，也不能证明 reviewer 真正完成了 SHA 重算、数据流检查或复审。禁止 hook
 自动生成 approval、自动清除 finding、自动移动 ref，自动化也不得用 `--no-verify` 绕过它。

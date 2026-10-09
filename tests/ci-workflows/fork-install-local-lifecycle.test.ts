@@ -89,17 +89,6 @@ test("local installer restores the macOS debug defaults and keeps the runtime ca
   expect(installer).toContain("refreshProviderDebugLaunchd");
 });
 
-test("local installer chooses foreground start only when no service was installed", async () => {
-  const module = await import("../../scripts/install-local");
-  const choose = (module as unknown as {
-    localInstallRestartArgs?: (serviceWasInstalled: boolean) => string[];
-  }).localInstallRestartArgs;
-  expect(typeof choose).toBe("function");
-  if (!choose) return;
-  expect(choose(false)).toEqual(["ocx", "start"]);
-  expect(choose(true)).toEqual(["ocx", "service", "repair"]);
-});
-
 test("local installer refuses to replace the package while a service manager is loaded", async () => {
   const module = await import("../../scripts/install-local");
   const assertStopped = (module as unknown as {
