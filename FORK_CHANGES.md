@@ -287,7 +287,7 @@ latest 的 null、malformed、preview/rc 在下载、停服务或安装前拒绝
 Fork Tag 不可变，同基线 revision 单调，官方 Tag 必须保持原 type/raw/peeled；发布细则统一见同步文档。
 
 代码：`src/fork/version-policy.mjs`、`src/update/index.ts`、`src/update/notify.ts`、`bin/ocx.mjs`、`scripts/bump-dev-version.ts`。
-测试：`tests/update/fork-version-policy.test.ts`、`tests/update/fork-update-downgrade.test.ts`、`tests/update/fork-update-monotonicity.test.ts`、`tests/ci-workflows/bump-dev-version.test.ts`、`tests/ci-workflows/release-version-line.test.ts`。
+测试：`tests/update/fork-version-policy.test.ts`、`tests/update/fork-update-monotonicity.test.ts`、`tests/ci-workflows/bump-dev-version.test.ts`、`tests/ci-workflows/release-version-line.test.ts`。
 
 ### 测试、CI 与维护规则
 
@@ -324,7 +324,7 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
 沿用上游的 `structure/manifest.json`、`structure/INDEX.md` 与 `bun run structure:check` 作为结构 SSOT；Fork 的 `src/fork/` 由 `structure/fork-extensions.md` 描述，不恢复已删除的数字前缀 structure 文件或旧式内联 Decision Log。
 
-测试：`tests/ci-workflows/fork-ci-official-baseline.test.ts`、`tests/ci-workflows/fork-maintenance-truth.test.ts`、`tests/service/shutdown-launcher.test.ts`、`tests/update/update-stop-first.test.ts`、`tests/responses/responses-state.test.ts`。
+测试：`tests/ci-workflows/fork-ci-official-baseline.test.ts`、`tests/service/shutdown-launcher.test.ts`、`tests/update/update-stop-first.test.ts`、`tests/responses/responses-state.test.ts`。
 
 ## 已覆盖或不再恢复的方向
 
@@ -332,6 +332,12 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 
 | 旧差异 | 当前处理与证据入口 |
 | --- | --- |
+| Fork 发布规则的独立 Markdown 合同测试 | 已删除 `fork-maintenance-truth.test.ts` 及双布局登记；原测试只检查文档文字，移除后不再对这些文字提供静态漂移报警。发布仍按 `docs/fork-sync-automation.md` 执行双审、精确 lease、同 SHA CI 与原子推送门禁。 |
+| Fork 的 GUI 条件检查重复用例 | `ci-gui-if-changed.test.ts` 保留 Fork candidate 官方 Tag 祖先判断；其余同名同断言用例由官方 `tests/ci-workflows/ci-workflows.test.ts` 覆盖。 |
+| `fork-latest-compat.test.ts` 的混合兼容用例 | 自定义工具输出的纯文本、`null`、未知图片数组与文本／拒绝顺序改由 `tests/responses/fork-custom-tool-output-lowering.test.ts` 的真实 wire 改写断言覆盖；Ark 配额前后空格与原消息保真并入 `tests/providers/fork-ark-weekly-quota.test.ts`。删除混合文件及双布局登记。 |
+| GLM-5.3 assistant-tail 的重复用例 | `tests/providers/fork-glm-kimi-compat.test.ts` 保留 Ark 目的地谓词；Ark 与其他第三方 Responses 的 continuation、原消息及追加项由 `tests/providers/fork-trailing-user-turn-compat.test.ts` 的现有用例覆盖。 |
+| 更新降级的独立 Fork 测试文件 | `tests/update/fork-update-monotonicity.test.ts` 的现有单元用例覆盖稳定版 `2.39.0`、Fork `2.39.0-ben.9` 与同基线旧修订；Node launcher 用例覆盖稳定版与同基线旧修订，并保留停止安装前的副作用检查。删除重复文件及双布局登记。 |
+| 本地安装的 restart 参数单独用例 | `tests/ci-workflows/install-local.test.ts` 以真实 `restartLocalInstall` 覆盖已安装服务的 repair 和无服务时的 start，且覆盖已验证 CLI 路径；`fork-install-local-lifecycle.test.ts` 保留安装调用与状态安全用例。 |
 | 独立的原生 compact 端点 predicate 测试 | 上游 `tests/responses/responses-compaction-routing.test.ts` 保留相同的两组 `supportsNativeResponsesCompactEndpoint` 断言；删除重复的 Fork 测试文件及双布局登记。 |
 | Responses state 的 Fork watchdog floor | 上游现用 `watchdogMs(8_000)`，覆盖原 Fork 本地全量运行的 5/8 秒下限，并保留 CI 的 30/45 秒预算；采用官方表达式，见 `tests/responses/responses-state.test.ts`。 |
 | 缺失/非法 `call_id` 的独立 Fork 修复与测试 | 上游 passthrough、compaction 和 parser 已覆盖。Fork 会从经过类型和字符校验的 `namespace`、`name` 写入来源提示；无可用来源时采用 `[Tool output without call identification]`。见 `tests/responses/openai-responses-passthrough.test.ts`。 |
