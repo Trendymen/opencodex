@@ -3,7 +3,7 @@
 本文记录 [Trendymen/opencodex](https://github.com/Trendymen/opencodex) 相对已 rebase 的
 [上游](https://github.com/lidge-jun/opencodex)基线仍保留的改动，以当前已提交代码和测试为准。
 
-- 上游基线：`v2.80.0`（`250f17afd8ff44c93c620d87c1f346ef56f64fb4`）。
+- 上游基线：`v2.81.0`（`19bd34a15354ba8c21fca89598fb18467f9cf9ee`）。
 - Fork 包版本以 [package.json](package.json) 为准；发布状态查看对应 Git Tag 和 GitHub Release。
 - rebase 后原地更新基线、能力差异和覆盖结论，不追加版本章节、冲突流水账、候选 SHA 或测试计数。
 - 新增、删除或改变 Fork 能力时更新对应条目。只在上游源码与测试证明等价覆盖后删除补丁；部分覆盖时保留剩余差异。
@@ -104,13 +104,13 @@ Kiro 当前通过已识别的 code-mode `exec` 接收该提示，仅有直接 `a
 ### Nested code-mode 工具修复
 
 上游已将裸 `exec_command` / `apply_patch` 接入统一 exec，并在 `v2.52.0` 增加 `default.` namespace 的请求有界归一化。`v2.69.0` 还支持在明确声明 custom `exec` 且具备 code-mode 来源时将直接 `mcp__*` 调用归一到 `exec`；见 `tests/responses/responses-code-mode-mcp-direct.test.ts`。Fork 额外修复 `functions.exec` / `web__run`，要求当前 turn 的 `functions` namespace 内恰有一个 `custom:exec`，且 lowering 来源一致。归一化只使用调用方明确声明的 bare tool 集；nested-exec 的延迟、拒绝和 continuation cache 门禁继续生效。
-普通 `function:exec`、顶层 `custom:exec`、其他 namespace 或多重声明不授权该修复。碎片事件与 passthrough SSE 原子缓冲；畸形、歧义、重复、超预算调用交给 undeclared-tool guard。
+普通 `function:exec`、顶层 `custom:exec`、其他 namespace 或多重声明不授权该修复。碎片事件与 passthrough SSE 原子缓冲；畸形、歧义、重复、超预算调用交给 undeclared-tool guard。声明名拒绝沿用官方入站协议开关：Responses 启用，Chat/Anthropic 关闭时仍做 namespace 规范化；Fork 的 nested-exec 拒绝回调只在实际拒绝时触发。
 Continuation cache 仅在客户端收到有效 terminal 后提交；有界 JSON 在 inspection 仍有效时完成校验和缓存提交。原生路由在 `passthrough-dispatch.ts` 暂存候选，由 `passthrough-delivery.ts` 的最终客户端终态确认；adapter 流式与有界事件分别在 `run-turn-execution.ts`、`adapter-delivery.ts` 接入同一修复。流式 combo 在首工具名称判定前先修复嵌套调用；正数 stall 时限内无可见事件则返回 504，`stallTimeoutSec: 0` 关闭该计时器，调用方取消仍返回 499。504 和 499 都会停止本轮并禁止内部重放。内部事件队列超限会保留终态错误并返回 502，后续是否重试仍受 `replayUnsafe` 等既有门禁约束。
 code-mode 历史输出另要求字符串 `instructions`、唯一 bare unnamespaced `custom_tool_call(name=exec)` 与对应输出。同一 `call_id` 与 function、local-shell 或 standalone output 碰撞时视为歧义，不改写非 custom exec 输出。
 旧 Chat native 分流探针已移除：Chat 入站的 `tools` 只把 `function`、`web_search` 和 `web_search_preview` 转到 Responses，请求无法由此产生修复所需的 `functions` namespace 下 `custom:exec` 声明。该探针的测试也只有不触发分流的负例；当前输入转换与唯一消费者证明它未提供可达能力。这里没有声称官方完整覆盖 Chat nested exec。
 
 代码：`src/responses/nested-exec-call-repair.ts`、`src/responses/nested-exec-adapter-events.ts`、`src/server/responses-nested-exec-call-repair.ts`、`src/server/responses/combo-adapter-preflight.ts`、`src/adapters/responses-code-mode.ts`、`src/adapters/exec-tool-result-normalize.ts`。
-测试：`tests/responses/nested-exec-repair-context.test.ts`、`tests/responses/nested-exec-repair.test.ts`、`tests/responses/responses-code-mode-exec-output-guard.test.ts`、`tests/responses/responses-run-turn-web-search.test.ts`。
+测试：`tests/responses/nested-exec-repair-context.test.ts`、`tests/responses/nested-exec-repair.test.ts`、`tests/responses/responses-code-mode-exec-output-guard.test.ts`、`tests/responses/responses-run-turn-web-search.test.ts`、`tests/responses/responses-undeclared-tool-guard.test.ts`。
 
 ### Ark quota 在 Codex Desktop 中的展示
 
@@ -132,11 +132,11 @@ Fork 增加 `customModels` schema、stored tool mode 和 API/CLI round trip：
 - `codexToolMode` 创建时省略为 inherit；更新时省略保留、枚举设置、`null` 清除。CLI 支持 `--tool-mode code_mode_only|shell|inherit`，列表展示存储值。
 - 管理 API 按字段是否存在严格验证 provider、modelId、displayName、contextWindow、modalities、reasoning/default effort 和 tool mode；非法输入在持久化与 catalog 更新前返回 400。
 - 自定义模型替换相同 Provider/模型的发现行时，管理 API 保留官方发现得到的 `pricingStatus`；免费、付费和未分类三种状态不互相替换。该字段只用于管理 API、CLI 和 GUI 筛选，不写入 Codex catalog。
-- 新 Provider 注册先在独立 draft 中执行 discovery、disabled selector 和默认 Provider 变更；保存失败时恢复 live config，包含 pins-less 注册路径。
+- 新 Provider 注册先在独立 draft 中执行 discovery、disabled selector 和默认 Provider 变更；发布前保存失败时恢复 live config，包含 pins-less 注册路径。新注册与 `pinsOwned` 覆盖更新遇到 `ConfigWritePublishedError` 时，保留已经发布、与磁盘一致的 live 值，并继续抛出原错误；后续刷新可能尚未完成。
 - 配置进入 salvage fallback 时复用完整文件诊断；`customModels` 规范化警告与官方 `codexPool` 非法值警告会同时保留，不因挽救其他 section 而丢失。
 
 代码：`src/config/custom-models.ts`、`src/config/schema/`、`src/config/diagnostics.ts`、`src/config/persist-unlocked.ts`、`src/config/save.ts`、`src/server/management/model-routes.ts`，router、catalog 的 gather/derive owners 与 CLI 的窄接线。
-测试：`tests/config/fork-custom-model-config-schema.test.ts`、`tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts`、`tests/codex-integration/catalog-free-pricing-status.test.ts`、`tests/server/management-provider-pinsless-validation.test.ts`。
+测试：`tests/config/fork-custom-model-config-schema.test.ts`、`tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts`、`tests/codex-integration/catalog-free-pricing-status.test.ts`、`tests/server/management-provider-pinsless-validation.test.ts`、`tests/server/management-provider-atomicity.test.ts`。
 
 ### Provider 上下文上限的保存失败回滚
 
@@ -257,7 +257,7 @@ Fork 在 `openai-responses` 出站序列化前补写该字段：调用方未提�
 ### 本地源码包安装
 
 Fork 提供 `bun run install:local`，构建 GUI 后安装本地源码包，上游没有等价安装事务。自动化不执行全局安装；每次安装须由用户在当前对话单独明确要求。
-本地安装沿用普通 GUI 构建产物的根 `html` 样式，不再改写滚动条相关 CSS，也不要求安装包具备 `overflow:clip`。构建后的 `--font-ui` 字体栈补丁继续保留。当前 `v2.80.0` 基线的根规则是 `overflow-x:hidden`；本次未做浏览器滚动验收。
+本地安装沿用普通 GUI 构建产物的根 `html` 样式，不再改写滚动条相关 CSS，也不要求安装包具备 `overflow:clip`。构建后的 `--font-ui` 字体栈补丁继续保留。当前 `v2.81.0` 基线的根规则是 `overflow-x:hidden`；本次未做浏览器滚动验收。
 官方 `v2.51.0` 新增的 pnpm 全局自更新保持可用：`verifyPnpmInstallTree()` 接受由受信任 pnpm owner 指向 virtual store 的 package-root symlink，同时继续验证解析后的普通目录和依赖树；npm 与本地源码安装仍拒绝 symlink package root。
 根 `package.json` 保持只读，构建前冻结 manifest；后续 staging、pack、验证、替换和 cleanup 比较同一快照。
 owner-only stage 收集完整 runtime dependency closure，校验 tarball 文件、完整性、入口、资源和当前平台 Bun binary；使用隔离 cache 离线验证，关闭 install scripts，不回退联网。
@@ -291,7 +291,9 @@ Fork Tag 不可变，同基线 revision 单调，官方 Tag 必须保持原 type
 
 ### 测试、CI 与维护规则
 
-当前官方与 Fork 的 package、`@types/bun`、lockfile 和 Docker 镜像均使用 `1.4.0`，不再将这些配置列为 Fork 差异。剩余版本差异是 `.github/workflows/cleanup-orphaned-workflows.yml`：Fork 保留 `1.4.0`，官方使用 `1.4.2`。早期 `1.4.2` 曾在本机默认并发门禁中重复发生 `SIGSEGV`，当时干净官方基线也复现；该记录不证明当前官方或其他平台仍有同样问题，变更前需重新验证。
+沿用官方的 Bun 角色分离：package 运行时依赖、lockfile、Docker 镜像和 cleanup workflow 使用 `1.4.2`，`testRunnerBun` 与 `@types/bun` 保持 `1.4.0`。主测试和 GUI 测试通过 `scripts/lib/test-runner-bun.ts` 选择精确匹配的测试 binary，不使用包内运行时替代测试 runner，也不自动下载。官方分离合同承载了原 Fork 的测试崩溃规避；运行时 `1.4.2` 保留官方 Windows fetch streaming 修复。
+
+包装测试和裸 `bun test` 启动时，由 `scripts/lib/test-runner-node.ts` 在原 HOME 下有界解析 PATH shim 后的真实 Node，验证隔离 HOME 下可调用，再把绝对 bin 目录前置到测试 PATH。选择使用原生 OS，避免测试模拟的 `process.platform` 改变 Node 文件名；已在首项的未加引号目录不重复加入，带引号首项先补可直接调用的绝对目录。裸入口先启用真实 HOME 写入保护；纯环境构造函数不启动子进程。该流程不安装 binary、不注入真实 `VOLTA_HOME`，保留 HOME、配置目录、临时目录和安装凭据隔离。回归见 `tests/ci-workflows/test-runner.test.ts`、`tests/ci-workflows/test-home-guard.test.ts`；原 Bun setup 与 mise launcher 断言保持，Windows 真实运行尚未验证。
 
 沿用上游 domain 布局、runner、并发、shard、timeout 与文件大小门禁。超限测试按独立组拆到同 domain，并双登记官方布局；历史长计划按 Task 边界拆页，保留全部原文。Fork 保留 launcher/update 的真实 Node executable 与 PATH 可用性检查，以及 Responses state 的定向回归，不维护旧 runner 拓扑。
 独立进程清单由执行计划回归检查路径唯一性，避免 rebase 后重复登记同一测试；服务测试保留一次执行，新回归从既有 lane 比较参数和预算，不固定官方数值。
@@ -312,9 +314,11 @@ Codex Auth 的账户 DTO、排序和阈值投影用例先写入有效的本地�
 `tests/providers/provider-antigravity-wire-snapshot.test.ts` 与 `tests/providers/xai/grok-47-fast-model-wire.test.ts` 也使用现有独立进程清单。完整池曾出现子进程与本地 HTTP/WS 超时，候选和官方单文件对照均能完成；保留原 fixture、默认单例时限和全部 wire/receipt 断言。底层等待的具体阶段尚未确定，独立调度不能替代这项诊断结论。
 `tests/providers/cursor/cursor-effort-table.test.ts` 的 FIFO 安全用例在完整池中曾达到原时限，候选和官方单文件对照能完成；该文件使用同一独立清单，保留 `mkfifo`、非阻塞读取和两条安全断言，不改变原 5 秒单例时限。
 `tests/server/server-management-auth.test.ts` 使用同一独立进程清单。完整池中首个 local-read 用例超时后，未释放的 spend owner 带出后续 home 冲突；单文件和官方单例对照正常完成。管理与数据面、session、CSRF、Tailscale、令牌文件 ACL 及全部原断言、时限保留，首个全量超时的具体等待点仍未确定。
+`tests/ci-workflows/fork-ci-official-baseline.test.ts` 使用同一独立进程清单。完整池曾在该文件未完成时达到主池原上限，单文件运行能完成；独立运行继续执行全部 Tag、marker、ancestry 与清理断言，并保留原时限。底层停滞位置仍未确认，隔离运行不提供根因证明。
+`tests/cli/cli-status-json.test.ts` 使用同一独立进程清单。完整池曾在版本投影断言中得到 `proxyVersion: null`，官方与 Fork 的单文件原预算对照均通过。受控身份响应延迟可以复现健康探测成功但版本缺失的投影；实际全量失败没有当时的请求时序，仍不能确认同因。独立运行保留版本、身份和错误投影断言及原时限。
 `tests/storage/storage-policy-job-responsive.test.ts` 使用同一独立进程清单。完整池中清理启动 POST 的往返耗时超过原 600 ms 门槛，候选和官方单文件对照均通过；测试文件与官方相同，Worker 阻塞、流式响应、healthz 和原时限断言全部保留。同步阻塞负向探针仍在该 600 ms 断言处失败，完整池中延迟发生的具体阶段尚未确定。
 `claude-management-api.test.ts`、`claude-models-discovery.test.ts`、`plugin-loader.test.ts` 和 `cli-connect-readiness.test.ts` 也使用该清单中的独立进程，避免完整并发池中的短时限探针和进程级状态相互干扰；原有断言、用例时限和主池并发保持不变。
-本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；当前基线对应 `v2.80.0`。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
+本地 `doctor:gui:if-changed` 仅在 Fork 版本对应的官方 Tag 存在且是当前 HEAD 的祖先时，以该 Tag 同时判断 GUI 变化和运行 React Doctor；当前基线对应 `v2.81.0`。Tag 缺失或不在祖先链时沿用原基准继续检查，不静默跳过。
 CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-fork-official-base.ts` 官方基线验证；官方 Tag verifier 使用完整对象 fetch，避免导入阶段依赖 promisor 懒取。普通稳定版同步在原子发布前以精确 lease 只推最终候选到 `dev`，由该 `push` 触发同 SHA CI；准备步骤先从上游验证并导入官方 Tag，尚未发布的 Fork Tag 不作为版本线测试前置条件。candidate CI 允许旧 `upstream-release` marker 保留，但必须证明它是新官方 Tag 的祖先；该例外由 verifier 在 GitHub dev push 环境中再次核对，合同测试同时覆盖 candidate 与非 candidate 环境，发布后的 verifier 仍要求 marker 与官方 Tag 精确相等。采用上游 Docker job/filter/aggregate，并保留 nightly schedule 的全矩阵选择。changes job 对 `ci`、`desktop`、`gui`、`packaging`、`docs`、`structure` 六个 scope 统一做 `true|false` 校验，并只把校验后的值提供给下游 job，缺失或非法输出直接失败。
 官方 Tag 来源与 ancestry 必须一致；发布后的 marker 必须与官方 Tag 精确相等，candidate CI 的旧 marker 只按祖先关系证明放行；缺失或冲突不能通过放宽测试解决。
 本地实现与审查遵循 `AGENTS.local.md` 的最小修改面要求，优先窄模块和已有官方测试入口。
@@ -331,6 +335,7 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 | 独立的原生 compact 端点 predicate 测试 | 上游 `tests/responses/responses-compaction-routing.test.ts` 保留相同的两组 `supportsNativeResponsesCompactEndpoint` 断言；删除重复的 Fork 测试文件及双布局登记。 |
 | Responses state 的 Fork watchdog floor | 上游现用 `watchdogMs(8_000)`，覆盖原 Fork 本地全量运行的 5/8 秒下限，并保留 CI 的 30/45 秒预算；采用官方表达式，见 `tests/responses/responses-state.test.ts`。 |
 | 缺失/非法 `call_id` 的独立 Fork 修复与测试 | 上游 passthrough、compaction 和 parser 已覆盖。Fork 会从经过类型和字符校验的 `namespace`、`name` 写入来源提示；无可用来源时采用 `[Tool output without call identification]`。见 `tests/responses/openai-responses-passthrough.test.ts`。 |
+| 运行时和测试共用 Bun `1.4.0` 的旧 pin | 官方 `v2.81.0` 把运行时 `1.4.2` 与测试 runner `1.4.0` 分开；采用 `scripts/lib/test-runner-bun.ts`、`scripts/test.ts` 与 GUI pinned wrapper，覆盖证据见 `tests/ci-workflows/install-scripts.test.ts`、`tests/ci-workflows/test-runner-bun.test.ts`。cleanup workflow 不运行测试，已恢复官方运行时 pin；保留其原触发、权限与 action SHA，见 `tests/ci-workflows/cleanup-orphaned-workflows.test.ts`。 |
 | 动态 `scripts/fork-test-runner.ts`、local-only worker group、quarantine list | 已移除，隔离和 serial lane 由上游 `scripts/test.ts` 管理。 |
 | 按工具名过滤 Kimi 工具、automation 专用 lowering | 已由通用 compiler 替代，不恢复 allowlist 或过滤工具目录；见 `src/fork/glm-kimi-compat.ts`。 |
 | Kimi 自动调用 `normalizeResponsesToolResultAdjacency` | 已移除；并行 `call A, call B, output A, output B` 合法。 |
@@ -341,6 +346,7 @@ CI 保留无 workflow 级 `push.paths` 的逐 SHA 触发和 `scripts/prepare-for
 ## 已知缺口与验证边界
 
 - 合成测试和静态断言不替代真实 Provider/Codex App 验收。Standalone web search、真实 minted backend ciphertext + recovery SSE，以及 weekly quota、empty-assistant、custom model 的客户端终态仍需绑定具体实现验证。
+- 完整测试池曾出现 Node 探针、readiness、429 重试和 web-search deadline 的间歇失败。合成场景证明 stdout 继承可使 Node 探针超时但子进程 status 为 0；实际故障的持有者和其他失败的等待阶段仍未确认。Responses deferred 工具交付和 combo reasoning replay 也曾在完整池超时，随后出现 spend-home owner 冲突或释放后访问；定向验证未复现，当时的请求与清理时序仍缺少证据。定向通过不能证明历史故障已解决，原始记录保留在本轮任务材料中。
 - Reasoning 合成事件没有统一分配新的 `sequence_number`；closed-state 到 terminal teardown 才释放。
 - Provider debug 的 ownership manifest 仍可能随 unique artifact 增长到 64 KiB 元数据上限；此后登记静默停止、抓包继续写入，代价是这段时间新建的抓包文件不再单独进入卸载清单（只能靠已登记目录的递归删除覆盖），不承诺自动压缩。旧 home 只有存在已知 OpenCodex 运行时标记时才会被收养；仅含通用 `config.json` 等文件的目录继续拒绝。收养前已存在的 Kimi catalog 目录不会被接管，对应写入会继续拒绝，需由用户迁移或清理该路径。独立 `ocx service repair/install` 可能覆盖本地安装写入的 `OCX_DEBUG=1`。
 - 安装与恢复的 isolated/unit/static 测试不证明 Windows PowerShell/junction、真实全局替换与服务恢复均已验收。PID reuse、断电持久化及路径检查到 rename/remove 的竞态仍是边界；损坏安装下的 launcher 启动仍需动态验证。
