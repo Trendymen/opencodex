@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { getTestRunnerBun } from "./lib/test-runner-bun";
+import { pinTestNodePath } from "./lib/test-runner-node";
 import {
   acquireTestRunLock,
   resolveWrappedTestRunLockPath,
@@ -372,12 +373,28 @@ export function resolveBunTestArgs(
 export const SERIAL_FULL_SUITE_FILES = [
   "codex-integration/codex-shim.test.ts",
   "providers/cursor/cursor-native-exec-shell.test.ts",
+  // The FIFO safety case hit its existing deadline in the full suite;
+  // the file passes alone on candidate and official without changing that budget.
+  "providers/cursor/cursor-effort-table.test.ts",
+  // Full-suite Cursor catalog setup failed in these three helper-backed files;
+  // run each in a fresh process with unchanged assertions and test budgets.
+  "providers/cursor/cursor-effort-rows.test.ts",
+  "providers/cursor/cursor-integration-status.test.ts",
+  "providers/cursor/cursor-local-models-schema.test.ts",
+  // Full-suite runs timed out Antigravity subprocesses and Grok local HTTP/WS;
+  // both files pass alone with unchanged assertions and test budgets.
+  "providers/provider-antigravity-wire-snapshot.test.ts",
+  "providers/xai/grok-47-fast-model-wire.test.ts",
   "codex-integration/issue-452-empty-503.test.ts",
   "adapters/openai/openai-provider-option-e2e.test.ts",
   "ci-workflows/release-helper.test.ts",
   // The full macOS isolate pool stalled in the structure gate's synchronous Git
   // child after earlier files; fresh-process execution retains the same assertions.
   "ci-workflows/structure-ssot.test.ts",
+  // A full pool left this file unfinished; all cases pass alone with unchanged budgets.
+  "ci-workflows/fork-ci-official-baseline.test.ts",
+  // CI shard 1/2 batch 8 stalled in a shared Bun process; every file passed alone.
+  "ci-workflows/ci-gui-if-changed.test.ts",
   // Synchronous injection subprocesses can wedge the long-lived macOS isolate
   // parent while reaping a history Worker; contain them in a fresh bounded lane.
   "codex-integration/codex-inject-write-lock.test.ts",
@@ -388,6 +405,32 @@ export const SERIAL_FULL_SUITE_FILES = [
   // in a multi-file process; all 11 cases completed in the attribution process.
   // Keep its real listener lifecycle in a fresh process on every platform.
   "codex-integration/active-registry-admission.test.ts",
+  // Real CLI spawnSync children timed out in the four-worker full pool while the same
+  // file passed alone; run this file in a fresh process without changing its assertions.
+  "cli/cli-help.test.ts",
+  // A full-pool run failed this file's version projection; all cases passed alone.
+  "cli/cli-status-json.test.ts",
+  // The help-paths CLI children reached their 40s deadline in the full pool;
+  // the complete file passes alone with the same assertions and child budget.
+  "cli/cli-help-paths.test.ts",
+  // Full-suite runs timed out the real CLI children in these help fixtures;
+  // both files complete alone with the same assertions and child budget.
+  "cli/cli-help-navigation.test.ts",
+  "cli/cli-help-recovery.test.ts",
+  // In the full pool, provider CLI children reached their 40s deadline; the file
+  // passes in a fresh process with the same assertions and child budget.
+  "cli/cli-provider.test.ts",
+  // These CLI subprocess and global-fetch fixtures passed alone but failed in the four-worker pool.
+  "cli/cli-models.test.ts",
+  "cli/cli-headless-parity.test.ts",
+  "clients/client-connect.test.ts",
+  "clients/client-link-connect.test.ts",
+  // Full-pool contention timed out catalog requests and ACL subprocess probes.
+  // Fresh processes keep the same per-test deadlines and main-pool parallelism.
+  "claude-integration/claude-management-api.test.ts",
+  "claude-integration/claude-models-discovery.test.ts",
+  "lib/plugin-loader.test.ts",
+  "cli/cli-connect-readiness.test.ts",
   "update/update-stop-first.test.ts",
   // Relays a 50 MiB WebSocket frame end to end against a 15s deadline, so its result is a
   // measurement of the whole process, not of the relay. On a healthy 3-CPU macOS runner the
@@ -398,13 +441,35 @@ export const SERIAL_FULL_SUITE_FILES = [
   // changing. Quarantining it here is what keeps it a test of the relay instead of a test of
   // its neighbours.
   "server/server-live.test.ts",
+  // Local four-worker pool refused a fixture sideband join; the complete file passed alone.
+  "server/server-live-realtime-fixtures.test.ts",
+  // A full-suite local-read timeout preceded owner-home conflicts in this file;
+  // the complete file passes alone with its original security assertions and budgets.
+  "server/server-management-auth.test.ts",
+  // A full-suite run exceeded this file's policy-run POST response bound;
+  // the complete file passes alone with its original Worker and health checks.
+  "storage/storage-policy-job-responsive.test.ts",
+  "responses/responses-opaque-blob-recovery.test.ts",
+  "ci-workflows/fork-install-local-staging.test.ts",
+  "ci-workflows/fork-install-local-volta-root.test.ts",
+  "ci-workflows/install-scripts.test.ts",
+  "codex-integration/codex-journal.test.ts",
+  "codex-integration/codex-cli-update-zero-effect.test.ts",
+  "providers/cursor/cursor-native-exec.test.ts",
+  "update/update-npm-cache-preflight.test.ts",
+  "update/fork-update-monotonicity.test.ts",
+  "clients/aside-profile-sync-owner.test.ts",
+  "adapters/translator-budget.test.ts",
+  "codex-integration/doctor.test.ts",
+  "claude-integration/claude-messages-endpoint.test.ts",
+  "server/memory-watchdog.test.ts",
   // These exercise the default-home service authority, shared by parallel Bun workers.
   // A fresh process/home prevents another file's authority from becoming this fixture's input.
+  "service/service-claim.test.ts",
+  "service/service-wsl-home-ownership.test.ts",
   "service/service-ownership-state.test.ts",
   "service/service-sqlite-home.test.ts",
   "service/service.test.ts",
-  "service/service-claim.test.ts",
-  "service/service-wsl-home-ownership.test.ts",
   "service/launchd-repair.test.ts",
   "cli/cli-update-restart-home.test.ts",
   "codex-integration/native-codex-toggle.test.ts",
@@ -555,7 +620,7 @@ export async function runTestLane(
   },
   testRunner = getTestRunnerBun(),
 ): Promise<{ exitCode: number; output: string }> {
-  const isolated = createIsolatedTestEnvironment({
+  const sourceEnv = {
     ...process.env,
     [TEST_RUN_ID_ENV]: runId,
     [TEST_RUN_LOCK_PATH_ENV]: inheritedLock?.lockPath,
@@ -564,7 +629,14 @@ export async function runTestLane(
     // (not its own test timeout) needs headroom for process startup on a busy machine.
     // See tests/helpers/ci-watchdog.ts `isolationBudgetMs`.
     OCX_TEST_FULL_SUITE: "1",
-  });
+  };
+  const isolated = createIsolatedTestEnvironment(sourceEnv);
+  try {
+    pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+  } catch (error) {
+    isolated.cleanup();
+    throw error;
+  }
   const startedAt = Date.now();
   let interrupted: NodeJS.Signals | null = null;
   const child = Bun.spawn([testRunner, "test", ...lane.args], {

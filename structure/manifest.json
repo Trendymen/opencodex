@@ -6,10 +6,6 @@
   ],
   "absentPaths": [
     {
-      "path": "docs/",
-      "reason": "the root docs/ folder is retired; ops/docs-and-release.md documents where its material went and that no docs/ tree is tracked"
-    },
-    {
       "path": "go/",
       "reason": "the Go native-runtime experiment is retired; ops/docs-and-release.md documents that no go/ tree is tracked"
     }
@@ -120,6 +116,18 @@
       ]
     },
     {
+      "path": "config-capabilities.md",
+      "tier": 2,
+      "title": "Config Capabilities",
+      "scope": "Per-model capability declarations and their catalog-facing configuration.",
+      "documents": [
+        "src/config/",
+        "src/types.ts",
+        "src/codex/",
+        "src/vision/"
+      ]
+    },
+    {
       "path": "codex-home.md",
       "tier": 2,
       "title": "Codex Home",
@@ -209,16 +217,28 @@
       ]
     },
     {
-        "path": "transports/policy-fallback.md",
-        "tier": 3,
-        "title": "Policy Candidate Fallback",
-        "scope": "Original policy authorization, concrete candidate retries and physical destination deduplication.",
-        "documents": [
-          "src/server/"
-        ]
-      },
-      {
-        "path": "transports/responses-spend.md",
+      "path": "transports/policy-fallback.md",
+      "tier": 3,
+      "title": "Policy Candidate Fallback",
+      "scope": "Original policy authorization, concrete candidate retries and physical destination deduplication.",
+      "documents": [
+        "src/server/"
+      ]
+    },
+    {
+      "path": "transports/responses-spend.md",
+      "path": "transports/responses-reset-replay.md",
+      "tier": 3,
+      "title": "Responses Reset Replay Boundary",
+      "scope": "Ambiguous reset refusals, client retry signals, and replay markers across response surfaces.",
+      "documents": [
+        "src/bridge/",
+        "src/lib/",
+        "src/server/"
+      ]
+    },
+    {
+      "path": "transports/responses-spend.md",
       "tier": 3,
       "title": "Responses Spend Reservations",
       "scope": "Credential-hop and durable spend reservations, and what a spent budget tells the client.",
@@ -297,7 +317,7 @@
       "path": "providers-and-adapters.md",
       "tier": 4,
       "title": "Providers And Adapters",
-      "scope": "Provider and adapter selection, the adapter inventory, live model discovery, and the hosted-search continuation bridge.",
+      "scope": "Provider and adapter selection, the adapter inventory, and live model discovery. Hosted-search continuation lives in its own contract.",
       "documents": [
         "src/adapters/",
         "src/chat/",
@@ -332,6 +352,18 @@
         "src/providers/quota/anthropic-account-quota.ts",
         "src/server/management/anthropic-pool-settings.ts",
         "src/sidecar/anthropic-binding.ts"
+      ]
+    },
+    {
+      "path": "providers/hosted-search-continuation.md",
+      "tier": 4,
+      "title": "Hosted-Search Continuation Binding",
+      "scope": "Key-auth hosted-search continuation binding across retries and continuations.",
+      "documents": [
+        "src/adapters/",
+        "src/responses/",
+        "src/server/",
+        "src/web-search/"
       ]
     },
     {
@@ -442,6 +474,15 @@
       ]
     },
     {
+      "path": "fork-extensions.md",
+      "tier": 4,
+      "title": "Trendymen Fork Extensions",
+      "scope": "Fork-only provider compatibility, Responses repair, diagnostics, and release policy modules.",
+      "documents": [
+        "src/fork/"
+      ]
+    },
+    {
       "path": "gui-and-management-api.md",
       "tier": 5,
       "title": "GUI And Management API",
@@ -542,7 +583,7 @@
       "path": "ops/docs-and-release.md",
       "tier": 6,
       "title": "Docs And Release",
-      "scope": "Docs site, workflow map, branch policy, release flow, and cross-platform CI.",
+      "scope": "Docs site, workflow map, branch policy, and cross-platform CI. Release flow lives in its own contract.",
       "documents": [
         ".github/",
         "bin/",
@@ -553,6 +594,19 @@
         "src/codex/",
         "src/lib/",
         "src/service.ts"
+      ]
+    },
+    {
+      "path": "ops/release-workflow.md",
+      "tier": 6,
+      "title": "Release Workflow",
+      "scope": "Npm release flow, notes, metadata invariants, and release gates.",
+      "documents": [
+        "scripts/",
+        "package.json",
+        ".github/",
+        "desktop/",
+        "gui/"
       ]
     },
     {
@@ -642,7 +696,7 @@
           "catalog.md",
           "config.md",
           "dashboard-and-usage.md",
-          "ops/docs-and-release.md",
+          "ops/release-workflow.md",
           "providers/openai-accounts.md",
           "runtime.md",
           "subagents.md"
