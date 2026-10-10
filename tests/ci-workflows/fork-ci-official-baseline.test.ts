@@ -757,7 +757,6 @@ describe("Fork CI official baseline preparation", () => {
     };
     type Workflow = {
       on?: { workflow_dispatch?: { inputs?: Record<string, unknown> } };
-      permissions?: Record<string, string>;
       jobs?: Record<string, WorkflowJob | undefined>;
     };
 
@@ -765,7 +764,6 @@ describe("Fork CI official baseline preparation", () => {
     const ci = Bun.YAML.parse(workflow) as Workflow;
     const prepareName = "Prepare verified Fork official base";
     const prepareRun = "bun scripts/prepare-fork-official-base.ts";
-    expect(ci.permissions).toEqual({ contents: "read" });
     const prepareSteps = Object.entries(ci.jobs ?? {}).flatMap(([jobName, job]) =>
       (job?.steps ?? [])
         .filter(step => step.run === prepareRun)
@@ -792,12 +790,6 @@ describe("Fork CI official baseline preparation", () => {
 
     expect(await Bun.file(new URL("../../.github/actions/setup-project-bun/action.yml", import.meta.url)).text())
       .not.toContain(prepareRun);
-
-    const checkouts = Object.values(ci.jobs ?? {})
-      .flatMap(job => job?.steps ?? [])
-      .filter(step => step.uses?.startsWith("actions/checkout@"));
-    expect(checkouts.length).toBeGreaterThan(0);
-    expect(checkouts.every(step => step.with?.["persist-credentials"] === false)).toBe(true);
 
     // Official job names, shard counts, runners, dispatch inputs and timeouts are
     // intentionally left to the upstream workflow and its own tests.

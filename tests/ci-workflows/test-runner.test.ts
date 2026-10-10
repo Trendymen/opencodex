@@ -758,20 +758,44 @@ describe("bun test argv", () => {
   });
 
   test("the default full suite quarantines load-sensitive files into one-worker lanes", () => {
+    expect(SERIAL_FULL_SUITE_FILES).toEqual(expect.arrayContaining([
+      "cli/cli-help-navigation.test.ts",
+      "cli/cli-help-recovery.test.ts",
+      "providers/cursor/cursor-effort-table.test.ts",
+      "providers/cursor/cursor-effort-rows.test.ts",
+      "providers/cursor/cursor-integration-status.test.ts",
+      "providers/cursor/cursor-local-models-schema.test.ts",
+      "providers/provider-antigravity-wire-snapshot.test.ts",
+      "providers/xai/grok-47-fast-model-wire.test.ts",
+      "server/server-management-auth.test.ts",
+      "storage/storage-policy-job-responsive.test.ts",
+    ]));
     const plan = resolveBunTestPlan([]);
     expect(plan).toHaveLength(SERIAL_FULL_SUITE_FILES.length + 1);
     expect(plan[0]?.label).toBe("parallel suite");
     expect(plan[0]?.args).toContain("--parallel=4");
     expect(plan[0]?.args).toContain("./tests/");
+    const mainArgs = plan[0]!.args;
+    const referencePath = "./tests/cli/cli-help.test.ts";
+    const referenceLane = plan.slice(1).find(lane => lane.args.includes(referencePath));
+    expect(referenceLane).toBeDefined();
     for (const file of SERIAL_FULL_SUITE_FILES) {
       // The ignore glob and the lane label use the basename; only the lane argv carries the
       // path relative to tests/, so an entry can move into a domain directory.
-      expect(plan[0]?.args).toContain(`**/${basename(file)}`);
-      expect(plan.find(lane => lane.label === basename(file))?.args).toEqual([
+      const ignoreIndex = mainArgs.indexOf(`**/${basename(file)}`);
+      expect(mainArgs[ignoreIndex - 1]).toBe("--path-ignore-patterns");
+      const path = `./tests/${file}`;
+      const lanes = plan.slice(1).filter(lane => lane.args.includes(path));
+      expect(lanes).toHaveLength(1);
+      expect(lanes[0]!.label).toBe(basename(file));
+      expect(lanes[0]!.args).toEqual([
         "--isolate",
         "--parallel=1",
-        `./tests/${file}`,
+        path,
       ]);
+      expect(lanes[0]!.args.slice(0, -1)).toEqual(referenceLane!.args.slice(0, -1));
+      expect(lanes[0]!.timeoutMs).toBe(basename(file) === "release-helper.test.ts"
+        ? 5 * 60 * 1000 : referenceLane!.timeoutMs);
     }
     expect(plan.find(lane => lane.label === "release-helper.test.ts")?.timeoutMs).toBe(5 * 60 * 1000);
     expect(plan.find(lane => lane.label === "codex-shim.test.ts")?.timeoutMs).toBe(3 * 60 * 1000);
@@ -811,36 +835,6 @@ describe("bun test argv", () => {
       existingHelpLane!.args.map(arg => arg === existingHelpPath ? "<file>" : arg),
     );
     expect(helpLanes[0]!.timeoutMs).toBe(existingHelpLane!.timeoutMs);
-  });
-
-  test("the full suite isolates selected load-sensitive files", () => {
-    const plan = resolveBunTestPlan([]);
-    const mainArgs = plan[0]!.args;
-    const referencePath = "./tests/cli/cli-help.test.ts";
-    const referenceLane = plan.slice(1).find(lane => lane.args.includes(referencePath));
-    expect(referenceLane).toBeDefined();
-
-    for (const path of [
-      "./tests/cli/cli-help-navigation.test.ts",
-      "./tests/cli/cli-help-recovery.test.ts",
-      "./tests/providers/cursor/cursor-effort-table.test.ts",
-      "./tests/providers/cursor/cursor-effort-rows.test.ts",
-      "./tests/providers/cursor/cursor-integration-status.test.ts",
-      "./tests/providers/cursor/cursor-local-models-schema.test.ts",
-      "./tests/providers/provider-antigravity-wire-snapshot.test.ts",
-      "./tests/providers/xai/grok-47-fast-model-wire.test.ts",
-      "./tests/server/server-management-auth.test.ts",
-      "./tests/storage/storage-policy-job-responsive.test.ts",
-    ]) {
-      const ignoreIndex = mainArgs.indexOf(`**/${basename(path)}`);
-      expect(mainArgs[ignoreIndex - 1]).toBe("--path-ignore-patterns");
-      const lanes = plan.slice(1).filter(lane => lane.args.includes(path));
-      expect(lanes).toHaveLength(1);
-      expect(lanes[0]!.args.map(arg => arg === path ? "<file>" : arg)).toEqual(
-        referenceLane!.args.map(arg => arg === referencePath ? "<file>" : arg),
-      );
-      expect(lanes[0]!.timeoutMs).toBe(referenceLane!.timeoutMs);
-    }
   });
 
 test("a control budget is bounded and changes only the main lane", () => {
