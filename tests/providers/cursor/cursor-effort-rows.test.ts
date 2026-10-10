@@ -22,20 +22,25 @@ import type { RequestLogContext } from "../../../src/server/request-log";
 import type { OcxConfig } from "../../../src/types";
 import { removeTreeWithRetry } from "../../helpers/remove-tree";
 import { acquireOwnedSpendHome } from "../../helpers/owned-spend-home";
+import { installIsolatedCodexRuntime } from "../../helpers/isolated-codex-runtime";
 import { SERVER_BUDGET_MS } from "../../helpers/test-budget";
 
 setDefaultTimeout(SERVER_BUDGET_MS);
 
 const previousHome = process.env.OPENCODEX_HOME;
 let testHome = "";
+let restoreCodexRuntime: (() => void) | undefined;
 
 beforeEach(() => {
   testHome = mkdtempSync(join(tmpdir(), "ocx-cursor-effort-rows-"));
   process.env.OPENCODEX_HOME = testHome;
+  restoreCodexRuntime = installIsolatedCodexRuntime(testHome);
 });
 
 afterEach(() => {
   resetCodexModelEntitlementCacheForTests();
+  restoreCodexRuntime?.();
+  restoreCodexRuntime = undefined;
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
   if (testHome) removeTreeWithRetry(testHome);

@@ -14,10 +14,11 @@
  * observable payload. Pattern mirrors tests/responses/responses-compaction-routing.test.ts
  * and tests/providers/github-copilot/github-copilot-wire-defaults.test.ts.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { CODEX_FORWARD_BASE_URL } from "../../src/providers/openai-tiers";
 import { handleResponses } from "../../src/server/responses";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 function providerConfig(overrides: Partial<OcxProviderConfig> = {}): OcxConfig {
@@ -37,12 +38,17 @@ function providerConfig(overrides: Partial<OcxProviderConfig> = {}): OcxConfig {
 
 describe("/v1/responses defaults store:false only for the canonical forward Codex backend", () => {
   const originalFetch = globalThis.fetch;
+  const originalWebSocket = globalThis.WebSocket;
   let releaseSpendHome: (() => void) | undefined;
+  beforeEach(() => {
+    installHttpOnlyCodexWebSocket();
+  });
   afterEach(() => {
     // Release first so a failed dispatch cannot leak writer ownership into the next case.
     releaseSpendHome?.();
     releaseSpendHome = undefined;
     globalThis.fetch = originalFetch;
+    globalThis.WebSocket = originalWebSocket;
   });
 
   function captureUpstream(): { urls: string[]; bodies: string[] } {
