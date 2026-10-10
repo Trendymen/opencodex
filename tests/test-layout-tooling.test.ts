@@ -315,6 +315,9 @@ describe("membership oracle", () => {
       // Placed under routing/ by its author (#3523, restored by #3530): it exercises the oauth
       // routing quorum, not the Anthropic adapter, so the anthropic- seed is wrong for it.
       "anthropic-quorum-cache.test.ts",
+      // Fork-registered under tests/providers/: it exercises the providers model-identity
+      // module, not the OpenAI adapter, so the openai- seed is wrong for it.
+      "openai-model-identity.test.ts",
     ]);
     const mismatches: string[] = [];
     let resolved = 0;

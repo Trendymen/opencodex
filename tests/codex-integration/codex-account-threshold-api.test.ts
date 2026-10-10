@@ -355,6 +355,8 @@ describe("Codex per-account threshold API", () => {
     });
     seedPoolAccount(config, { id: "work", email: "work@example.test" });
     seedPoolAccount(config, { id: "side", email: "side@example.test" });
+    updateAccountQuota("work", 0);
+    updateAccountQuota("side", 0);
 
     const accounts = await listCodexAuthAccounts(config);
 

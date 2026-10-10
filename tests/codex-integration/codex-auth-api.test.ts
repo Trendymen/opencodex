@@ -1063,6 +1063,7 @@ describe("codex-auth API", () => {
     globalThis.fetch = (async () => new Response(null, { status: 503 })) as typeof fetch; // Metadata assertions do not depend on quota transport.
     const cfg = makeConfig({ codexPool: { excludedPlans: ["free"] } });
     seedPoolAccount(cfg, { id: "plan-row", email: "plan@example.test", plan: "free" });
+    updateAccountQuota("plan-row", 0);
     const read = async () => {
       const request = new Request("http://localhost/api/codex-auth/accounts");
       const response = await handleCodexAuthAPI(request, new URL(request.url), cfg);
@@ -4009,6 +4010,8 @@ describe("codex-auth API", () => {
     const config = makeConfig({ codexAccountPriorities: { work: 2 } });
     seedPoolAccount(config, { id: "work", email: "work@example.test" });
     seedPoolAccount(config, { id: "side", email: "side@example.test" });
+    updateAccountQuota("work", 0);
+    updateAccountQuota("side", 0);
 
     const accounts = await listCodexAuthAccounts(config);
 

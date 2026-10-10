@@ -29,6 +29,7 @@
 import { afterAll } from "bun:test";
 import { isTestHomeGuardArmed, protectedHomeForTests } from "../src/lib/test-home-guard";
 import { createIsolatedTestEnvironment, LIVE_INSTALL_CREDENTIAL_ENV } from "../scripts/test";
+import { pinTestNodePath } from "../scripts/lib/test-runner-node";
 import {
   acquireTestRunLock,
   resolveBareTestRunIdentity,
@@ -43,16 +44,25 @@ import {
 // guard could still see the true home). Isolating again is harmless and deliberate: the
 // alternative — inferring "already isolated" from path shapes — would trust exactly the
 // user-controlled environment state this file exists to distrust.
+// Node selection after sandbox creation can launch a bounded probe. Arm the guard
+// first so a failed or stalled launcher cannot leave this process unprotected.
+process.env.OCX_TEST_HOME_GUARD = "1";
 const isolated = createIsolatedTestEnvironment();
+try {
+  pinTestNodePath(isolated.env, process.env, isolated.root);
+} catch (error) {
+  isolated.cleanup();
+  throw error;
+}
 for (const [key, value] of Object.entries(isolated.env)) {
   if (value !== undefined) process.env[key] = value;
 }
 // The sandbox drops these from its env, but this process started with them, so remove them here.
 for (const name of LIVE_INSTALL_CREDENTIAL_ENV) delete process.env[name];
 
-// Arm the guard once the sandbox is in place, and BEFORE the run lock.
+// Verify the guard after the sandbox is in place, and BEFORE the run lock.
 //
-// The order here is sandbox → arm → lock, and the lock being last is the load-bearing
+// The order here is arm → sandbox → lock, and the lock being last is the load-bearing
 // part. Acquiring the lock resolves a user-scoped path, which on Windows means spawning
 // PowerShell for the effective SID (`scripts/test-run-lock.ts` →
 // `resolveEffectiveUserIdentity`). Under four-shard load that spawn timed out, the
@@ -66,12 +76,10 @@ for (const name of LIVE_INSTALL_CREDENTIAL_ENV) delete process.env[name];
 // reached real scheduler registration on the developer's own machine
 // (`devlog/_plan/260905_admin_token_local_ux/030`).
 //
-// Arming earlier is safe because the guard is a deny-list keyed on a path captured at
-// module import, not a "sandbox is present" flag: the worst case of arming early is
-// refusing a write to the real home, which is the direction that fails closed. The lock
+// Arming before isolation is safe because the guard is a deny-list keyed on a path captured at
+// module import, not a "sandbox is present" flag. The lock
 // error is deliberately NOT swallowed — a run that cannot take the lock must still fail,
 // it just must not fail while unprotected.
-process.env.OCX_TEST_HOME_GUARD = "1";
 // Lets a test assert one preload per process rather than assuming Bun's scheduling.
 process.env.OCX_TEST_PRELOAD_PID = String(process.pid);
 process.env.OCX_DISABLE_UPDATE_CHECK = "1";
