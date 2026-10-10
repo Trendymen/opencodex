@@ -46,6 +46,7 @@ import {
   freshServingPid, hasRestartableServiceManager, readParentPid, readServiceManagerPid, restartServiceManagerJob,
   supervisionVerdict, unsettledManagerWarning, unsupervisedRuntimeWarning,
 } from "./supervised-recovery.mjs";
+import { forkUpdateDecision } from "../fork/version-policy.mjs";
 
 /**
  * A `codex-history-backup-*.json` surviving a stop means the native-history restore was
@@ -452,9 +453,18 @@ export async function runUpdate(): Promise<void> {
   }
   const owner = ownerResult?.ok ? ownerResult.owner : undefined;
   const latest = latestVersion(tag, installer, owner);
-  if (latest && latest === current) {
+  const forkDecision = forkUpdateDecision(latest, current, tag);
+  if (forkDecision === "same") {
     console.log(`Already on the latest ${tag} version (v${latest}).`);
     return;
+  }
+  if (forkDecision === "unresolved") {
+    console.error("⚠️  Could not resolve the registry version for this fork build; aborting before stopping the proxy.");
+    process.exit(1);
+  }
+  if (forkDecision === "older") {
+    console.error(`⚠️  Registry target v${latest} is older than this fork build; refusing to downgrade this fork build.`);
+    process.exit(1);
   }
 
   // Pre-flight integrity metadata check — runs BEFORE the proxy is stopped so an
