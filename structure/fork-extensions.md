@@ -1,109 +1,42 @@
 # Trendymen Fork 扩展
 
-## 边界
+本文件补充同目录的上游结构文档。能力和实现/回归入口统一见 [FORK_CHANGES.md](../FORK_CHANGES.md)，配置用法见 [Fork reference](../docs-site/src/content/docs/reference/fork-extensions.md)。
+`src/fork/` 保存 Fork 专用兼容、诊断和版本模块；共享接线沿用官方 subsystem 边界。
 
-`src/fork/` 保存 Trendymen Fork 相对上游仍需维护的窄模块。共享 adapter、router、server、GUI
-和管理 API 只保留接线；上游已经完整覆盖的行为不在这里复制。当前能力清单和覆盖状态见
-[`FORK_CHANGES.md`](../FORK_CHANGES.md)，本文件只描述这些模块在系统中的职责和运行边界。
+## 文档与登记
 
-Fork 模块不能绕过上游的认证、路由、translator budget、continuation state、工具授权或
-客户端终态。第三方兼容只在目标 Provider、adapter、模型和 auth mode 同时满足条件时启用；
-OpenAI 运营目的地和 ChatGPT forward 继续使用上游原生协议。
+- 上游已有 Markdown 保持当前 rebase 基线原文，包含 `INDEX.md`；Fork 合同写在同目录独立文件。
+- `manifest.json` 登记本文件并标记 `forkOnly: true`。结构门禁仍检查文档/源码归属、链接、路径和行数，官方索引生成视图排除它。
+- `docs/` 只保留 [同步政策](../docs/fork-sync-automation.md)。旧 Spec/Plan 从 Git 历史查阅；过程材料存 Git 忽略的 scratch，当前能力不依赖旧计划执行入口。
 
-`src/server/responses/core.ts` 的 Fork one-shot agent-task recovery 使用官方共享发送预算。
-恢复重放最多发送一次，并通过 final-recovery permit 与 `onSendsConsumed` 记录消耗；
-预算不允许发送时保留原 transient 响应。只有取得替代响应后才取消旧响应。
+## 请求与工具边界
 
-## 模块职责
+- GPT 家族和官方目的地分开判断。官方 Responses 保持原生消息/schema；Lite header 到 WS metadata 的映射只补缺失字段。
+- `agentMessageFormat`、GLM/Kimi lowering 和 `encrypted` 注解清理在出站副本上运行，保持原 input、工具授权和重放状态。可信直接 key-auth relay 的注解例外不扩大到 combo。
+- nested exec 和 `spawn_agent.fork_turns` 修复须由当前工具声明授权，保留 preview、完成项和 continuation 的区别。`fork_turns` 只解包一层合法字段值，重复键/未知 schema 跳过。
+- tool-catalog 提示只使用当前可见工具；代理不合成进度、不执行或自动重试补丁，空成功输出的提示不能覆盖失败输出。
 
-| 模块 | 当前职责 |
-| --- | --- |
-| `src/fork/agent-message-format.ts` | 解析 `preserve` / `user_message`，决定第三方 Responses 的明文 `agent_message` 是否转换。 |
-| `src/fork/passthrough-agent-task-recovery.ts` | 判断原生 Responses 密文子任务在 transient 重试耗尽后能否恢复，并重解析恢复后的输入；物理重发和发送预算仍由 passthrough dispatch 管理。 |
-| `src/fork/glm-kimi-compat.ts` | 为 Ark Agent Plan GLM/Kimi 与 BigModel GLM 降低工具 schema、补尾部 user turn，并保留应用传入对象。 |
-| `src/fork/responses-message-phase.ts` | 对显式列入配置的第三方模型补缺失的 assistant `phase`；宣布阶段（`output_item.added`）自称 `final_answer` 时先降为 `commentary`，最终相位仍由 `done` 与终态快照给出；不生成、复制或摘要文字。 |
-| `src/fork/routed-progress-contract.ts` | 给带工具的第三方请求追加普通 assistant 文本进度约定；不合成进度消息。 |
-| `src/fork/custom-tool-output.ts` | 将 routed `custom_tool_call_output` 降为字符串形式的 `function_call_output`。 |
-| `src/fork/spawn-agent-compat.ts` | 补充 `fork_turns` 工具字段说明，并只修复当前已授权 `spawn_agent` 的一层多余 JSON 字符串编码。 |
-| `src/fork/ark-quota-display.ts` | 将严格匹配的永久 Ark usage quota 429 投影为 Codex 可显示、不可重试的客户端错误。 |
-| `src/fork/outbound-debug.ts`、`src/fork/inbound-response-debug.ts` | 记录请求和响应结构摘要；文本样本要求单独授权。 |
-| `src/fork/debug-persistence.ts` | 校验诊断文件路径和类型，按主日志分段及其引用工件执行 7 天、20 GiB 保留策略。 |
-| `src/fork/version-policy.mjs` | 解析和比较 `X.Y.Z-ben.N`，拒绝非规范 revision、降级和不合法 preview。 |
+## 响应与恢复边界
 
-## 第三方消息与工具兼容
+- `src/server/responses-reasoning-summary-rewrite.ts` 仅在客户端请求 summary 且路由满足条件时投影；已有 summary 不重复投影。保留 raw reasoning、终态字段和原始存储对象，passthrough continuation 记录客户端实际收到的形状。
+- projection 的唯一序号按 32 字节计入共享 `translatorBudget`；EOF、失败和取消完成资源释放，超限沿用 `translation_buffer_limit`。flush 不扩大到 reader error / nested-exec barrier。
+- phase 推断只适用于显式配置的第三方原生 Responses；宣布阶段的 `final_answer` 不足以证明最终相位，已有 phase 和后续工作证据共同决定交付结果。
+- `src/server/responses/encrypted-payload.ts` 和 `src/fork/passthrough-agent-task-recovery.ts` 限定 strict backend envelope；禁用 recovery 时不增加分类、恢复或重放。原生重放使用官方共享发送预算，最多一次；恢复后的请求不再进入其他重试链。
+- strict 密文和恢复 body 不写 continuation cache。父任务 `MESSAGE` 超时提示不含密文，不声称正文已读；`invalid_encrypted_content` 属于 `recovery_unreadable` 终局。
+- key-auth 输出预算由 `src/adapters/openai-responses/passthrough.ts` 补全；显式客户端预算优先，forward 不注入。估算不替代上游计费或超窗判断。
 
-默认策略只转换第三方非 GPT/OpenAI 模型的可读 `agent_message`。显式
-`agentMessageFormat` 可以覆盖第三方模型的明文格式，但不能让 OpenAI 运营目的地进入转换路径。
-密文、未知 part、空内容和无法完整转换的数组保持原样；转换不修改调用方原始 body 或重放缓存。
+## 配置与诊断边界
 
-GLM/Kimi schema lowering 在深度、节点和 variant 预算内处理 `$defs`、`$ref`、`oneOf`、`allOf`
-和根级 `anyOf`。预算耗尽或语义不能安全保留时，沿既有失败边界拒绝或放过，不能产生更宽的
-工具授权。ChatGPT 专用 `encrypted` 注解只从第三方最终 function schema 的注解位置移除；同名
-属性、定义和值保持不变。
+- 官方 customModels 基础类型、CRUD、catalog 和 modality 判定继续使用。`src/config/custom-models.ts` 补校验、salvage、三方合并和公开字段投影，未知 opaque 字段只在内部保留。
+- Provider 注册只在独立 draft 成功持久化后发布；遇到 `ConfigWritePublishedError` 保留已发布且与磁盘一致的 live 值。上下文上限保存失败由 `src/server/management/provider-context-cap-routes.ts` 回滚该路由字段。
+- `src/fork/debug-persistence.ts`、`src/fork/inbound-response-debug.ts`、`src/fork/outbound-debug.ts` 增加结构抓包。普通 debug 不保存正文/key/工具参数；文本样本同时要求 provider debug 和独立 `providerText`，并执行脱敏及预算限制。
+- 主日志与引用工件共用 4 MiB 分组、7 天和 20 GiB 预算；淘汰先删主日志，失败时保留引用工件。unsafe / 不可盘点条目保留并告警，诊断失败不影响 relay。
+- `src/lib/config-ownership.ts` 仅收养带运行时标记的旧 home，收养前路径不登记为自有。debug 登记失败继续捕获，Kimi catalog 仍要求登记成功。
 
-`spawn_agent` 参数修复同时要求工具身份、namespace、当前声明和字段 schema 全部匹配。其他工具、
-重复顶层键、多层编码、非法整数和未知 schema 约束不修复。Nested code-mode 修复位于
-`src/responses/` 与 `src/server/`，但它只由当前 turn 唯一的 `functions.exec` custom tool 声明授权；
-普通同名函数不能扩大 exec、授权或参数边界。
+## 安装与维护边界
 
-## Responses 输出与 continuation
-
-`src/server/responses/passthrough-dispatch.ts` 保留原始 inspection 的首终态和缓存候选；
-`src/server/responses/passthrough-delivery.ts` 完成客户端改写后确认 nested-exec 候选，拒绝的
-调用不能写入 continuation。plaintext inspector 单独记录首终态，重复 completed 不覆盖首份候选。
-上游原始诊断通过 terminal-repair tap 或 hosted-search 的原始 payload 回调读取；客户端诊断
-读取最终发送的 SSE/JSON。两个阶段分别只持久化一次，取消与 EOF 都释放 inspector。
-
-官方拆分后的 `src/bridge/sse.ts` 与 `src/bridge/response-json.ts` 保留注解指令过滤：
-SSE 按 citation、annotation 的顺序处理增量和收尾正文，JSON 使用相同的正文转换。
-`src/adapters/openai-chat/messages.ts` 在工具提示存在时追加进度契约，目的地判断复用
-`src/adapters/openai-chat/wire.ts` 的官方 API host 判定。
-
-phase 推断只处理缺少 phase 的文本 item。后续仍有工作时标为 `commentary`，正常完成的终态文本
-标为 `final_answer`；失败或 incomplete 不合成终态。上游在 `output_item.added` 上自称
-`final_answer` 的宣布不作为证据：它先降为 `commentary`，该 item 的最终相位仍由 `done` 与
-终态快照决定，客户端因此不会先把正文渲染出来、再把它折回工作行。SSE、有界 JSON 和
-continuation replay 使用同一分类，OpenAI/GPT 目的地硬排除。
-
-第三方 reasoning summary 只在客户端显式请求 `reasoning.summary` 时投影；Provider 的
-`showThinkingSummary` 默认值不能把 raw reasoning 改名成 summary。投影保留原始 content、
-opaque terminal 和 replay state，分段、terminal、EOF、重复或迟到事件通过同一有状态 rewrite
-处理。xAI 的 `openai-chat` adapter 流缺少 `content_part.added` 时，会在首个 reasoning delta 立即建立
-摘要项，不等待首句或长度阈值；切回原生 OpenAI GPT 时只删除由第三方 `reasoning_text` 支撑的 opaque token，不删除真实
-OpenAI blob。
-每个 rewrite 用 `Set<number>` 精确去重整数 sequence number。每个唯一序号按 32 字节计入 `translatorBudget`；重复序号不会重放，乱序的未见序号仍会保留。调用方传入的预算由同一请求的 client 与 replay projection 共享；独立 rewrite 在收到首个序号时创建自己的默认 32 MiB 预算，并在 terminal、`flush` 或 `dispose` 时释放和销毁。超限返回 `translation_buffer_limit`。
-
-Routed progress contract 只在非 OpenAI 目的地、请求实际带工具且 `instructions` 为字符串时追加。
-它要求模型在首次工具调用前、重要里程碑后、长操作前、最多四个连续纯工具响应后，以及收到新
-用户消息后输出普通 assistant 文本。compaction、缺失 instructions、ChatGPT forward 和公共 OpenAI
-Responses 保持原样。该合同是提示，不是执行门禁；proxy 不推断仓库进度，也不替模型生成文字。
-
-SSE block rewrite 在正常 EOF 和 eager synthetic failure 前 flush retained block。普通 pull reader
-错误只 dispose；nested-exec barrier 不承诺 flush。高置信 policy terminal 统一为单个失败终态；
-普通顶层 upstream error 若在无 terminal 的干净 EOF 前出现，则保留有界 type、code 和脱敏 message，
-否则生成 `adapter_eof` incomplete。客户端最多收到一个终态和一个 `[DONE]`。
-干净 EOF 时，`src/server/relay.ts` 仅在普通上游错误的首个非空 message 与首个有效 code 来自同一候选时，将其投影为有界、脱敏的 `response.failed`。缺少 code 时可保留带类型的 message；后续候选不能覆盖先前的传输诊断。
-
-## 诊断与持久化
-
-Provider debug 默认只记录结构、字节数、阶段和转换标志，不记录 key、请求正文、工具参数、
-Response 文本或 reasoning 文本。文本样本同时要求 Provider debug 和 `providerText` 授权，经过脱敏、
-UTF-8 安全截断、每轮条数和总预算限制后写入引用型 artifact。
-
-`persistProviderDebugFile()` 对每个诊断根独立检查 canonical containment、symlink、普通文件和清理
-结果。主日志及其引用工件按 4 MiB 分组，两根合计最多保留 20 GiB、7 天，不设文件数上限。
-新组按完整 4 MiB 预留容量，组内追加不得超过该额度；旧版数据按实际大小计入。达到任一限额时
-淘汰最旧的主日志分段及其引用工件，当前日期的旧分段也可淘汰；旧版日志按日期整组处理。
-新分段使用 UTC `YYYY-MM-DD/HH/groups/<group-id>/` 布局，两根中的同名组共享生命周期；
-主日志和 timeline 位于 `provider-debug`，文本工件位于 `provider-debug-artifacts`。
-清理先删除主日志，删除失败时保留其工件；仅剩工件的组仍计入容量并可重试清理。
-无关旁路条目不可安全盘点时保留并告警，不算入可管理数据容量，也不阻断安全主日志写入。
-目标路径自身不安全时拒写。ownership 登记用于卸载
-记账，不是 Provider debug 写入门槛；Kimi schema catalog 仍要求成功登记后才能写入。
-
-## 版本与发布
-
-Fork 稳定修订使用 `X.Y.Z-ben.N`，`N` 从 1 开始且不能有前导零。比较顺序先看官方基线，再看
-同基线 revision；显式 preview 只接受规范 `preview.<identifier...>`。Tag 不可移动，GitHub Release
-必须指向 annotated Fork Tag。完整 rebase、验证、双审、atomic push 和 Release 流程见
-[`docs/fork-sync-automation.md`](../docs/fork-sync-automation.md)。
+- `scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts` 在离线验证后的同卷 stage 上替换包；根 manifest 保持冻结。Volta、服务、readiness、plist 和包字节共用失败回滚边界。
+- 停服、包回滚和 plist 恢复全部确认成功后，才恢复原先已加载的服务；不安全/未知状态拒绝继续 restart。Windows pending transaction 的 wrapper 和 probe 成对维护。
+- macOS `install:local` 补写 `OCX_DEBUG=1` / `OCX_PROVIDER_TEXT_DEBUG=1`，运行安装命令须当前用户明确授权。普通自更新保留官方事务路径，字体补丁不扩展为滚动 CSS 改写。
+- `src/fork/version-policy.mjs` 维护 `ben.N` 单调版本。更新、通知和 launcher 使用同一规则；Tag/Release 见 [Fork 维护补充](../FORK_MAINTAINERS.md) 和同步政策。
+- 原生 Windows 恢复、PID reuse、断电和父目录替换竞态仍需实际环境验证；`src/usage/telemetry-contract.ts` 的恢复类型、GUI 标签及 `src/web-search/passthrough-bridge.ts` 的诊断观察保留各自合同。

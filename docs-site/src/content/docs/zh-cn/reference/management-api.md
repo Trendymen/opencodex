@@ -178,7 +178,7 @@ Aside 配置档的变更在这种情况下仍会保存一件事：确认之后�
 | 方法和路径 | 用途 | 典型错误 |
 | --- | --- | --- |
 | `GET /api/logs` | 查询经过过滤的内存请求日志；`servedModel` 记录上游返回的模型，`wireModel` 记录与客户端模型不同的实际发送模型。两者不同时，仪表板显示 `wire → served`，提示信息保留两者；缺少上游证据时不推断模型。 | — |
-| `GET, PUT /api/debug` | 读取或更新 `debug`、默认关闭的 `providerText`、`usage`、`injection` 与 `claude`；`providerText` 单独授权持久化有界的响应／推理文本样本 | 400 无效或空更新 |
+| `GET, PUT /api/debug` | 读取调试标志；设置、清除或重置捕获类别 | 400 无效或空更新 |
 | `GET /api/debug/logs` | 读取有上限的 provider/debug 日志条目 | — |
 | `GET /api/debug/usage-logs` | 读取有上限的 usage-debug 条目 | — |
 | `GET /api/debug/injection-logs` | 读取有上限的 guidance-injection 调试条目 | — |
@@ -270,7 +270,6 @@ OpenAI 也遵循此规则：开关不会选择特殊的 922k 模式。有效上�
 `{ "value": 600000, "setAll": true }` 修改全局值，并且只更新已开启的上限；上限已关闭的提供商保留
 自己的选择值，供之后开启时恢复。不带 `value` 的 `{ "setAll": true }` 会按当前全局值开启所有
 已配置提供商的上限，并替换保存的选择值。关闭上限不会清除选择值，重新加载后仍保留，但不会将其作为限制应用。
-如果 PUT 保存配置失败，运行中的全局值、当前有效上限和已保存的选择值保持原值；后续 GET 不会返回这次未保存的修改。
 
 `provider_has_dependent_combos` 是一个安全屏障：在删除 provider 之前，先移除或编辑依赖它的 combos。
 
