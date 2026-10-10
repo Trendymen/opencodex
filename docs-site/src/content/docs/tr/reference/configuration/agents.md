@@ -196,10 +196,19 @@ Kabul ve saklama kasıtlı olarak dardır:
   kapsamındadır, 15 dakika sonra sona erer ve hem yapılandırılmış girdi sayısı
   (varsayılan olarak 200, maksimum 512) hem de toplam 8 MiB ile
   sınırlandırılmıştır;
-- hatalı biçimlendirilmiş herhangi bir zarf, başarısız kurtarma, zaman aşımı
-  veya doğrulama hatası mevcut kapalı başarısız olma hatasını korur; istemci
-  iptali 499 döndürür. Hiçbir yol şifreli metni yönlendirilen sağlayıcıya
-  iletmez.
+- kurtarma varsayılan olarak `gpt-5.6-luna` ve `reasoning.effort: "medium"`
+  kullanır. Her deneme 120 saniye sürebilir; yanıt başlıklarından sonra ilk
+  bayt ve boşta kalma durakları 45 saniye ile sınırlıdır. Yalnızca zaman aşımı,
+  ilk denemeden sonra en fazla iki kez yeniden denenir;
+- bu denemeler tükendiğinde, kabul edilmiş ve bir çocuk ajandan üst ajana gelen
+  sıkı bir `MESSAGE` kalıcı olmayan bir bildirimle değiştirilir. Bildirim çocuk
+  ajanı tanımlar, üst ajandan en fazla iki yeniden gönderim istemesini, ardından
+  mevcut sonuç okuma yeteneğiyle nihai yanıtı okumasını veya tamamlanmayı
+  beklemesini ister. Şifreli metni içermez ve mesajın okunduğunu ya da
+  incelendiğini iddia etmez;
+- diğer tüm hatalı zarflar, diğer kurtarma hataları, zaman aşımları ve
+  doğrulama hataları mevcut kapalı başarısız olma hatasını korur; istemci iptali
+  499 döndürür. Hiçbir yol şifreli metni yönlendirilen sağlayıcıya iletmez.
 
 ### Tehdit modeli
 
@@ -224,8 +233,10 @@ değerlendirilmelidir.
 {
   "agentTaskRecovery": {
     "enabled": true,
-    "model": "gpt-5.6-sol",
-    "timeoutMs": 45000,
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "timeoutMs": 120000,
+    "maxRetries": 2,
     "cacheEntries": 200
   }
 }
