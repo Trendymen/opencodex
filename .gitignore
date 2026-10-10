@@ -72,12 +72,11 @@ tests/**/.tmp-*
 # tests/ci-workflows/repo-hygiene.test.ts, which fails if any path here becomes tracked again.
 go/
 
-# Retired upstream docs stay out of the tree. The Fork keeps its sync policy and
-# Superpowers plans/specs here; repo-hygiene.test.ts checks that scope.
+# Retired upstream docs stay out of the tree. Only the current Fork sync policy
+# stays tracked here; plans and execution material use ignored scratch space.
 # PR screenshots belong in the PR description or on the orphan `pr-assets` branch.
 /docs/*
 !/docs/fork-sync-automation.md
-!/docs/superpowers/
 /.github/pr-assets/
 /assets/pr-screenshots/
 /docs-site/public/pr-screenshots/
