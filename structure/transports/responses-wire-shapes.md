@@ -418,7 +418,7 @@ Both shapes carry the inbound caller-abort signal separately from the turn/shutd
 controller. A caller-driven read rejection is 499/client_cancel without pool penalty;
 a genuine upstream reset seen while reading the stream remains synthetic 502; the
 pre-header case is a different verdict and is covered by
-[ambiguous connection-reset replay boundary](responses-failover.md#ambiguous-connection-reset-replay-boundary).
+[ambiguous connection-reset replay boundary](responses-reset-replay.md#ambiguous-connection-reset-replay-boundary).
 An already received terminal, including
 one completed by the error-path parser flush, retains its real outcome. Eager relays
 remove the caller listener when done and close signal-cancelled downstream streams even
@@ -522,10 +522,9 @@ instead emits one `response.incomplete` with `adapter_eof`, followed by one `[DO
 EOF candidates follow the owning repair policy: the native boundary accepts a structurally valid
 terminal tail, while an opted-in terminal repair keeps its unframed suffix tainted and emits
 `missing_terminal_event`. Pull/tee and eager relays therefore agree on terminal, sentinel, and
-request-log accounting without promoting a truncated repair candidate. Terminal repair reconciles one delayed LF after a consumed CR delimiter, preserving its byte without treating it as an unframed EOF suffix; additional suffix bytes remain subject to the same strict check.
+request-log accounting without promoting a truncated repair candidate. Terminal repair reconciles one delayed LF after a consumed CR delimiter, preserving its byte without treating it as an unframed EOF suffix; additional suffix bytes remain subject to the same strict check. The Fork's same-candidate EOF error rule is in [Fork extensions](../fork-extensions.md#responses-输出与-continuation).
 
 > Decision record: [ADR-0044](../decisions/ADR-0044-responses-http-sse.md)
-
 
 ## Inbound history and code-mode shell wire repairs
 
@@ -551,8 +550,9 @@ and neither explicit `default.` nor `default__` identity exists. The custom code
 recovery above is a separate path for undeclared direct MCP names. Neither path can borrow a
 manufactured bare alias. Outside code mode, unknown suffixes fail as undeclared tools; inside
 code mode, the host rejects unknown nested tools. See [ADR-0099](../decisions/ADR-0099-responses-http-sse.md).
-
 > Decision record: [ADR-0099](../decisions/ADR-0099-responses-http-sse.md)
+
+On canonical Console Go Responses routes, `src/adapters/openai-responses/tool-output-recovery.ts` combines repeated function or custom-tool outputs only when their input contains exactly one matching call. Output-only items and call IDs shared by multiple calls remain unchanged. For a bare `exec` custom call, an empty success wrapper is omitted when a later result has content; remaining content fragments keep their order.
 
 ## Mixed encrypted-content slots
 
