@@ -373,8 +373,8 @@ describe("GitHub Actions hardening", () => {
       .flatMap(job => (job as { steps?: { uses?: string; with?: Record<string, unknown> }[] })?.steps ?? [])
       .filter(step => step.uses?.startsWith("actions/checkout@"));
     expect(checkouts.length).toBeGreaterThan(0);
-    for (const [index, step] of checkouts.entries()) {
-      expect(`checkout[${index}]:${step.with?.["persist-credentials"]}`).toBe(`checkout[${index}]:false`);
+    for (const step of checkouts) {
+      expect(step.with?.["persist-credentials"]).toBe(false);
     }
 
     // The self-hosted workspace wipe must not swallow its own failure. A clean
