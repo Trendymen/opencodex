@@ -687,7 +687,7 @@ test("native openai-responses route carries prompt_cache_key + synthesized sessi
     port: 0,
     defaultProvider: "native",
     providers: {
-      native: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" },
+      native: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward", upstreamWebsocket: false },
     },
   } as OcxConfig);
   const server = startServer(0);

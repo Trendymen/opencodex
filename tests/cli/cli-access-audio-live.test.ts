@@ -126,9 +126,11 @@ describe("live audio readiness and bounded closure", () => {
     { type: "session.started", session: { id: " " } },
   ])("native open and non-readiness events cannot claim readiness", async frame => {
     const f = fixture([JSON.stringify(frame)]);
-    // The ready timer starts before the socket opens; a 20 ms budget can expire before the
-    // client sends session.update on a loaded runner (macOS control, run 37457452698).
-    expect(await handleAccessAudioCommand(argv, deps(f.server.port!, { audioReadyTimeoutMs: isolationBudgetMs(20) }))).toBe(1);
+    // CI gives Bun 60 s per test. Locally, leave room below the default 5 s deadline
+    // for the client to send session.close after its readiness timer expires.
+    const readyBudgetMs = isolationBudgetMs(20);
+    const readyTimeoutMs = process.env.CI === "true" ? readyBudgetMs : Math.min(readyBudgetMs, 2_000);
+    expect(await handleAccessAudioCommand(argv, deps(f.server.port!, { audioReadyTimeoutMs: readyTimeoutMs }))).toBe(1);
     expect(JSON.parse(output())).toMatchObject({ ready: false });
     await f.closeObserved;
     expect(f.messages.map((m: unknown) => (m as { type: string }).type)).toEqual(["session.update", "session.close"]);

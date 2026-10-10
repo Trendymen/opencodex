@@ -9,11 +9,12 @@ import {
   realpathSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, posix, win32 } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, posix, win32 } from "node:path";
 import {
   changedSelectionFailure,
   captureTestOutput,
@@ -27,6 +28,7 @@ import {
   selectChangedComparisonRef,
   SERIAL_FULL_SUITE_FILES,
 } from "../../scripts/test";
+import { pinTestNodePath } from "../../scripts/lib/test-runner-node";
 import {
   NESTED_LIVE_LOCK_RECEIPT_KEY,
 } from "../helpers/nested-test-run-lock-controller";
@@ -289,7 +291,218 @@ describe("test runner captured output", () => {
   );
 });
 
+function createHomeDependentNodeShimFixture(): {
+  fixture: string;
+  shimDir: string;
+  nodeDir: string;
+  hostHome: string;
+} {
+  const fixture = mkdtempSync(join(tmpdir(), "ocx-test-node-entry-"));
+  const shimDir = join(fixture, "shim");
+  const nodeDir = join(fixture, "direct");
+  const hostHome = join(fixture, "host-home");
+  mkdirSync(shimDir);
+  mkdirSync(nodeDir);
+  mkdirSync(hostHome);
+  writeFileSync(join(nodeDir, "node"), `#!/bin/sh
+if [ "$1" = "-p" ]; then printf '%s\\n22.0.0\\n' "$0"; exit 0; fi
+printf 'direct-node\\n'
+`, { mode: 0o755 });
+  writeFileSync(join(shimDir, "node"), `#!/bin/sh
+if [ "$HOME" != "$NODE_FIXTURE_HOME" ]; then exit 87; fi
+exec "$NODE_DIRECT_BIN" "$@"
+`, { mode: 0o755 });
+  return { fixture, shimDir, nodeDir, hostHome };
+}
+
 describe("test runner isolation", () => {
+  test.skipIf(process.platform === "win32").each(["bare", "wrapped"] as const)(
+    "%s test entry keeps Node callable after HOME isolation",
+    entry => {
+      const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
+      const testFile = join(fixture, "node-entry.test.ts");
+      writeFileSync(testFile, `import { expect, test } from "bun:test";
+test("Node child", () => {
+  const child = Bun.spawnSync(["node", "-e", "ignored"], { stdout: "pipe", stderr: "pipe" });
+  expect(child.exitCode).toBe(0);
+  expect(child.stdout.toString()).toBe("direct-node\\n");
+});
+`);
+      const driver = join(fixture, "wrapper.ts");
+      writeFileSync(driver, `import { runTestLane } from ${JSON.stringify(repoPath("scripts", "test.ts"))};
+const result = await runTestLane(
+  { label: "node fixture", args: ["--parallel=1", process.env.NODE_FIXTURE_TEST!], timeoutMs: 15_000 },
+  "node-fixture-" + process.pid, undefined, false, undefined, process.execPath,
+);
+process.exitCode = result.exitCode;
+`);
+      try {
+        const command = entry === "bare"
+          ? [process.execPath, "test", "--parallel=1", testFile]
+          : [process.execPath, driver];
+        const result = Bun.spawnSync(command, {
+          cwd: repoRoot(),
+          env: {
+            ...process.env,
+            HOME: hostHome,
+            USERPROFILE: hostHome,
+            OCX_REAL_HOME: hostHome,
+            OCX_TEST_NO_QUEUE: "1",
+            PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
+            NODE_FIXTURE_HOME: hostHome,
+            NODE_DIRECT_BIN: join(nodeDir, "node"),
+            NODE_FIXTURE_TEST: testFile,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 20_000,
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr.toString()).toContain("1 pass");
+      } finally {
+        removeTreeWithRetry(fixture);
+      }
+    },
+    { timeout: 25_000 },
+  );
+
+  test.skipIf(process.platform === "win32")("resolves a HOME-dependent Node shim to a cwd-independent binary", () => {
+    const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
+    const sourceEnv = {
+      ...process.env,
+      HOME: hostHome,
+      USERPROFILE: hostHome,
+      PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
+      NODE_FIXTURE_HOME: hostHome,
+      NODE_DIRECT_BIN: join(nodeDir, "node"),
+    };
+    const isolated = createIsolatedTestEnvironment(sourceEnv);
+    try {
+      pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+      expect(isolated.env.PATH?.split(delimiter)[0]).toBe(nodeDir);
+      const result = Bun.spawnSync(["node", "-e", "ignored"], {
+        cwd: fixture,
+        env: isolated.env,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 2_000,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toBe("direct-node\n");
+    } finally {
+      isolated.cleanup();
+      removeTreeWithRetry(fixture);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("Node selection follows the native OS when a test simulates win32", () => {
+    const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
+    const sourceEnv = {
+      ...process.env,
+      HOME: hostHome,
+      USERPROFILE: hostHome,
+      PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
+      NODE_FIXTURE_HOME: hostHome,
+      NODE_DIRECT_BIN: join(nodeDir, "node"),
+    };
+    const isolated = createIsolatedTestEnvironment(sourceEnv);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    try {
+      Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+      pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+      expect(isolated.env.PATH?.split(delimiter)[0]).toBe(nodeDir);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+      isolated.cleanup();
+      removeTreeWithRetry(fixture);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("repeated preload selection does not grow an already pinned PATH", () => {
+    const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
+    const sourceEnv = {
+      ...process.env,
+      HOME: hostHome,
+      USERPROFILE: hostHome,
+      PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
+      NODE_FIXTURE_HOME: hostHome,
+      NODE_DIRECT_BIN: join(nodeDir, "node"),
+    };
+    const first = createIsolatedTestEnvironment(sourceEnv);
+    let second: ReturnType<typeof createIsolatedTestEnvironment> | undefined;
+    try {
+      pinTestNodePath(first.env, sourceEnv, first.root);
+      second = createIsolatedTestEnvironment(first.env);
+      pinTestNodePath(second.env, first.env, second.root);
+      expect(second.env.PATH).toBe(first.env.PATH);
+    } finally {
+      second?.cleanup();
+      first.cleanup();
+      removeTreeWithRetry(fixture);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("a quoted PATH entry is not treated as a callable Node directory", () => {
+    const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
+    const sourceEnv = {
+      ...process.env,
+      HOME: hostHome,
+      USERPROFILE: hostHome,
+      PATH: `"${nodeDir}"${delimiter}${shimDir}`,
+      NODE_FIXTURE_HOME: hostHome,
+      NODE_DIRECT_BIN: join(nodeDir, "node"),
+    };
+    const isolated = createIsolatedTestEnvironment(sourceEnv);
+    try {
+      pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+      const child = Bun.spawnSync(["node", "-e", "ignored"], {
+        env: isolated.env,
+        cwd: fixture,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 2_000,
+      });
+      expect(child.exitCode).toBe(0);
+      expect(child.stdout.toString()).toBe("direct-node\n");
+    } finally {
+      isolated.cleanup();
+      removeTreeWithRetry(fixture);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("refuses missing, failed, and malformed Node probes", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "ocx-test-node-failure-"));
+    const bin = join(fixture, "bin");
+    mkdirSync(bin);
+    try {
+      for (const body of [
+        null,
+        "exit 9",
+        "printf 'relative/node\\n'",
+        "printf '%s\\nnot-a-version\\n' \"$0\"",
+        "exec /bin/sleep 30",
+      ]) {
+        const node = join(bin, "node");
+        if (body === null) {
+          if (existsSync(node)) unlinkSync(node);
+        } else {
+          writeFileSync(node, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+        }
+        const sourceEnv = { PATH: bin, HOME: fixture };
+        const isolated = createIsolatedTestEnvironment(sourceEnv);
+        try {
+          const startedAt = Date.now();
+          expect(() => pinTestNodePath(isolated.env, sourceEnv, isolated.root)).toThrow("usable Node");
+          expect(Date.now() - startedAt).toBeLessThan(4_000);
+        } finally {
+          isolated.cleanup();
+        }
+      }
+    } finally {
+      removeTreeWithRetry(fixture);
+    }
+  }, { timeout: 8_000 });
+
   test("redirects user homes to a disposable root", () => {
     const isolated = createIsolatedTestEnvironment({ PATH: "/test/bin", HOME: "/real/home" });
     try {
@@ -564,7 +777,73 @@ describe("bun test argv", () => {
     expect(plan.find(lane => lane.label === "codex-shim.test.ts")?.timeoutMs).toBe(3 * 60 * 1000);
   });
 
-  test("a control budget is bounded and changes only the main lane", () => {
+  test("the default full suite schedules each isolated test path once", () => {
+    const lanes = resolveBunTestPlan([]).slice(1);
+    const paths = lanes.map(lane => lane.args.at(-1));
+    expect(paths).toEqual([...new Set(paths)]);
+    const referencePath = "./tests/codex-integration/codex-shim.test.ts";
+    const referenceLane = lanes.find(lane => lane.args.includes(referencePath));
+    expect(referenceLane).toBeDefined();
+    for (const path of [
+      "./tests/service/service-claim.test.ts",
+      "./tests/service/service-wsl-home-ownership.test.ts",
+    ]) {
+      const lane = lanes.find(entry => entry.args.includes(path));
+      expect(lane?.args.slice(0, -1)).toEqual(referenceLane!.args.slice(0, -1));
+      expect(lane?.args.at(-1)).toBe(path);
+      expect(lane?.timeoutMs).toBe(referenceLane!.timeoutMs);
+    }
+  });
+
+  test("the full suite runs CLI help paths once in a fresh process", () => {
+    const plan = resolveBunTestPlan([]);
+    const mainArgs = plan[0]!.args;
+    const helpPath = "./tests/cli/cli-help-paths.test.ts";
+    const existingHelpPath = "./tests/cli/cli-help.test.ts";
+
+    const ignoreIndex = mainArgs.indexOf("**/cli-help-paths.test.ts");
+    expect(mainArgs[ignoreIndex - 1]).toBe("--path-ignore-patterns");
+    const helpLanes = plan.slice(1).filter(lane => lane.args.includes(helpPath));
+    const existingHelpLane = plan.slice(1).find(lane => lane.args.includes(existingHelpPath));
+    expect(helpLanes).toHaveLength(1);
+    expect(existingHelpLane).toBeDefined();
+    expect(helpLanes[0]!.args.map(arg => arg === helpPath ? "<file>" : arg)).toEqual(
+      existingHelpLane!.args.map(arg => arg === existingHelpPath ? "<file>" : arg),
+    );
+    expect(helpLanes[0]!.timeoutMs).toBe(existingHelpLane!.timeoutMs);
+  });
+
+  test("the full suite isolates selected load-sensitive files", () => {
+    const plan = resolveBunTestPlan([]);
+    const mainArgs = plan[0]!.args;
+    const referencePath = "./tests/cli/cli-help.test.ts";
+    const referenceLane = plan.slice(1).find(lane => lane.args.includes(referencePath));
+    expect(referenceLane).toBeDefined();
+
+    for (const path of [
+      "./tests/cli/cli-help-navigation.test.ts",
+      "./tests/cli/cli-help-recovery.test.ts",
+      "./tests/providers/cursor/cursor-effort-table.test.ts",
+      "./tests/providers/cursor/cursor-effort-rows.test.ts",
+      "./tests/providers/cursor/cursor-integration-status.test.ts",
+      "./tests/providers/cursor/cursor-local-models-schema.test.ts",
+      "./tests/providers/provider-antigravity-wire-snapshot.test.ts",
+      "./tests/providers/xai/grok-47-fast-model-wire.test.ts",
+      "./tests/server/server-management-auth.test.ts",
+      "./tests/storage/storage-policy-job-responsive.test.ts",
+    ]) {
+      const ignoreIndex = mainArgs.indexOf(`**/${basename(path)}`);
+      expect(mainArgs[ignoreIndex - 1]).toBe("--path-ignore-patterns");
+      const lanes = plan.slice(1).filter(lane => lane.args.includes(path));
+      expect(lanes).toHaveLength(1);
+      expect(lanes[0]!.args.map(arg => arg === path ? "<file>" : arg)).toEqual(
+        referenceLane!.args.map(arg => arg === referencePath ? "<file>" : arg),
+      );
+      expect(lanes[0]!.timeoutMs).toBe(referenceLane!.timeoutMs);
+    }
+  });
+
+test("a control budget is bounded and changes only the main lane", () => {
     const baseline = resolveBunTestPlan([], undefined, {});
     expect(baseline[0]!.timeoutMs).toBe(900_000);
     const control = resolveBunTestPlan([], undefined, { OCX_TEST_MAIN_TIMEOUT_MS: "3600000" });
@@ -580,6 +859,16 @@ describe("bun test argv", () => {
     expect(plan[0]?.args).toContain("**/active-registry-admission.test.ts");
     expect(plan.find(lane => lane.label === "active-registry-admission.test.ts")?.args).toEqual([
       "--isolate", "--parallel=1", "./tests/codex-integration/active-registry-admission.test.ts",
+    ]);
+  });
+
+  test("the default full suite gives memory watchdog a fresh one-worker process", () => {
+    const plan = resolveBunTestPlan([]);
+    expect(plan[0]?.args).toContain("**/memory-watchdog.test.ts");
+    expect(plan.find(lane => lane.label === "memory-watchdog.test.ts")?.args).toEqual([
+      "--isolate",
+      "--parallel=1",
+      "./tests/server/memory-watchdog.test.ts",
     ]);
   });
 

@@ -370,7 +370,7 @@ describe("routed compaction emergency integration", () => {
     expect(budget.alternateTargetSends).toBe(0);
   });
 
-  test.each(["disabled", "generic-400", "policy", "auth", "partial", "side-effect", "same-model", "opaque", "continuation"])("keeps source failure: %s", async variant => {
+  test.each(["disabled", "generic-400", "policy", "auth", "partial", "side-effect", "same-model", "opaque", "agent-message", "continuation"])("keeps source failure: %s", async variant => {
     const config = settings();
     const payload = body(true);
     if (variant === "disabled") config.compactionRecovery!.allowDevinInvalidArgument = false;
@@ -381,6 +381,7 @@ describe("routed compaction emergency integration", () => {
     if (variant === "side-effect") sourceEvents = [{ type: "heartbeat", replayUnsafe: true }, sourceError];
     if (variant === "same-model") config.compactionRecovery!.model = "source/swe-2";
     if (variant === "opaque") (payload.input as unknown[]).unshift({ type: "compaction", encrypted_content: "native-opaque-fixture" });
+    if (variant === "agent-message") (payload.input as unknown[]).unshift({ type: "agent_message", content: [{ type: "input_text", text: "child result" }] });
     if (variant === "continuation") payload.previous_response_id = "missing-fixture";
     const response = await handleResponses(request(payload), config, { model: "", provider: "" });
     await response.text();

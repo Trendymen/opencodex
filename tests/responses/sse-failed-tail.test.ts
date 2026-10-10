@@ -149,6 +149,21 @@ describe("relaySseWithFailedTail", () => {
     expect(realOut).toBe(withRealDone);
   });
 
+  test.each([
+    ["legacy", (src: ReadableStream<Uint8Array>) => relaySseWithFailedTail(src, new AbortController())],
+    ["eager", (src: ReadableStream<Uint8Array>) => relaySseEagerBounded(src, new AbortController(), parityHooks)],
+  ] as const)("%s relay emits one accepted DONE when a terminal chunk repeats it", async (_kind, relay) => {
+    const terminalThenRepeatedDone =
+      'event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+      + "data: [DONE]\n\n"
+      + "data: [DONE]\n\n";
+
+    const out = await drain(relay(sourceStream([terminalThenRepeatedDone])));
+
+    expect(terminalEvents(out)).toEqual(["response.completed"]);
+    expect(doneEvents(out)).toHaveLength(1);
+  });
+
   test("mid-stream error keeps prior bytes and appends a clean failed terminal", async () => {
     const upstream = new AbortController();
     const src = sourceStream(['data: {"type":"response.output_text.delta","delta":"hel', ""], { failAfter: true });
@@ -686,6 +701,82 @@ describe("upstream refusal terminal mapping (#5176)", () => {
       expect(error.code).toBe("upstream_server_error");
       expect(CODEX_TERMINAL_CODES.has(error.code)).toBe(false);
       expect(out).not.toContain('"retryable":false');
+    },
+  );
+
+  test.each(["tee", "eager"] as const)(
+    "%s keeps first code and first message precedence before typed EOF promotion",
+    async (mode) => {
+      const variants = [
+        {
+          label: "outer code before inner refusal",
+          payload: {
+            type: "error",
+            error: { code: "upstream_reset" },
+            response: {
+              error: { type: "invalid_request_error", code: SAFETY_REFUSAL_CODE, message: "Invalid prompt." },
+            },
+          },
+          message: "Invalid prompt.",
+        },
+        {
+          label: "outer message before inner typed error",
+          payload: {
+            type: "error",
+            error: { message: "outer temporary failure" },
+            response: {
+              error: { type: "vendor_error", code: "vendor_limited", message: "inner" },
+            },
+          },
+          message: "outer temporary failure",
+        },
+      ];
+      for (const { label, payload, message } of variants) {
+        const original = 'data: {"type":"response.in_progress"}\n\n'
+          + "data: " + JSON.stringify(payload) + "\n\n";
+        const out = await drain(relayFor(mode, [original]));
+        const error = synthesizedError(out);
+
+        expect({ label, error }).toEqual({
+          label,
+          error: { type: "upstream_error", code: "upstream_server_error", message },
+        });
+        expect(out).not.toContain('"retryable":false');
+      }
+    },
+  );
+
+  test.each(["tee", "eager"] as const)(
+    "%s skips non-string message candidates for the nested typed error",
+    async (mode) => {
+      // First-nonblank contract: false/empty/null carry no diagnostic text, so
+      // the nested typed error wins for all three variants alike.
+      const variants = [
+        { label: "false", message: false, terminal: "typed" },
+        { label: "empty", message: "", terminal: "typed" },
+        { label: "null", message: null, terminal: "typed" },
+      ] as const;
+      for (const { label, message, terminal } of variants) {
+        const original = 'data: {"type":"response.in_progress"}\n\n'
+          + "data: " + JSON.stringify({
+            type: "error",
+            error: { message },
+            response: {
+              error: { type: "vendor_error", code: "vendor_limited", message: "inner" },
+            },
+          }) + "\n\n";
+        const out = await drain(relayFor(mode, [original]));
+
+        if (terminal === "incomplete") {
+          expect({ label, terminals: terminalEvents(out), adapterEof: out.includes('"reason":"adapter_eof"') })
+            .toEqual({ label, terminals: ["response.incomplete"], adapterEof: true });
+        } else {
+          expect({ label, error: synthesizedError(out) }).toEqual({
+            label,
+            error: { type: "vendor_error", code: "vendor_limited", message: "inner" },
+          });
+        }
+      }
     },
   );
 

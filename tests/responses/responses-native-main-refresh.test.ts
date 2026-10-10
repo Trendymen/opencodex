@@ -642,6 +642,7 @@ describe("native main 401 refresh and replay", () => {
         },
       },
     } as unknown as OcxConfig;
+    comboConfig.providers.openai!.upstreamWebsocket = false;
     const messagesRequest = (): Request => new Request("http://localhost/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json" },

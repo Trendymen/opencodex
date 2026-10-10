@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { repoPath } from "../helpers/repo-root";
@@ -10,6 +10,9 @@ import { repoPath } from "../helpers/repo-root";
 async function readText(path: string): Promise<string> {
   return readFileSync(repoPath(...path.split("/")), "utf8");
 }
+
+const scopeBash = Bun.which("bash") ?? "/bin/bash";
+const scopeBashSupportsUppercase = spawnSync(scopeBash, ["-c", 'scope=ci; [ "${scope^^}" = CI ]']).status === 0;
 
 describe("CI review lanes", () => {
   test("PR checks reach every branch the target gate accepts", async () => {
@@ -61,11 +64,7 @@ describe("CI review lanes", () => {
       }
     }
 
-    // The push trigger stays pinned to the release-relevant lines: main and
-    // preview MUST stay because release.yml requires a successful push-event
-    // run for the exact release SHA and states that a pull-request run does
-    // not qualify. dev is deliberately absent: its integration evidence is
-    // the pull_request run, with workflow_dispatch for anything else.
+    // Every candidate and release SHA needs its own push-event aggregate run.
     const ci = Bun.YAML.parse(await readText(".github/workflows/ci.yml")) as {
       on?: {
         push?: { branches?: string[]; paths?: string[] };
@@ -74,7 +73,8 @@ describe("CI review lanes", () => {
       jobs?: Record<string, Record<string, unknown> | undefined>;
     };
     expect([...(ci.on?.push?.branches ?? [])].sort())
-      .toEqual(["main", "preview"]);
+      .toEqual(["dev", "main", "preview"]);
+    expect(ci.on?.push?.paths).toBeUndefined();
 
     // The PR trigger must carry NO base-branch filter, and the two triggers
     // differ on purpose. GitHub matches `branches:` against the BASE ref, so
@@ -93,10 +93,8 @@ describe("CI review lanes", () => {
     expect(ci.on?.pull_request?.branches).toBeUndefined();
     expect(ci.on?.pull_request?.paths).toBeUndefined();
 
-    // The push trigger and pull-request `changes` job share one expensive-CI
-    // allowlist. PRs always create the workflow and aggregate check; this list
-    // decides whether the costly jobs run. Pin the entire list on both paths,
-    // including every script and workflow used by repository automation.
+    // PRs always create the workflow and aggregate check; this filter selects
+    // their expensive jobs without suppressing push-event evidence.
     const ciPaths = [
       ".dockerignore",
       ".gitattributes",
@@ -123,8 +121,6 @@ describe("CI review lanes", () => {
       "tests/**",
       "tsconfig.json",
     ];
-    expect([...(ci.on?.push?.paths ?? [])].sort()).toEqual(ciPaths);
-
     const filterStep = (ci.jobs?.changes as {
       steps?: { with?: Record<string, string> }[];
     })?.steps?.find(step => step.with?.filters);
@@ -147,14 +143,22 @@ describe("CI review lanes", () => {
     const scopeStep = changesJob?.steps?.find(
       step => step.name === "Assert the scope output is usable",
     );
-    expect(changesJob?.outputs?.ci).toBe("${{ steps.scope.outputs.ci }}");
+    expect(changesJob?.outputs).toMatchObject({
+      ci: "${{ steps.scope.outputs.ci }}",
+      desktop: "${{ steps.scope.outputs.desktop }}",
+      gui: "${{ steps.scope.outputs.gui }}",
+      packaging: "${{ steps.scope.outputs.packaging }}",
+      docs: "${{ steps.scope.outputs.docs }}",
+      structure: "${{ steps.scope.outputs.structure }}",
+    });
     expect(scopeStep?.id).toBe("scope");
     expect(scopeStep?.shell).toBe("bash");
     expect(scopeStep?.env?.CI_SCOPE).toBe("${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.ci }}");
     expect(scopeStep?.run).not.toContain("${{");
-    expect(scopeStep?.run).toContain('case "$CI_SCOPE" in');
+    expect(scopeStep?.run).toContain("for scope in ci desktop gui packaging docs structure; do");
+    expect(scopeStep?.run).toContain('case "$value" in');
     expect(scopeStep?.run).toContain("true|false)");
-    expect(scopeStep?.run).toContain(`printf 'ci=%s\\n' "$CI_SCOPE" >> "$GITHUB_OUTPUT"`);
+    expect(scopeStep?.run).toContain(`printf '%s=%s\\n' "$scope" "$value" >> "$GITHUB_OUTPUT"`);
     expect(scopeStep?.run).toContain("exit 1");
     const filterIndex = changesJob?.steps?.findIndex(step => step.id === "filter") ?? -1;
     const scopeIndex = changesJob?.steps?.findIndex(step => step.id === "scope") ?? -1;
@@ -172,6 +176,53 @@ describe("CI review lanes", () => {
     const macosControlIf = ci.jobs?.["macos-control"] as { needs?: string; if?: string } | undefined;
     expect(macosControlIf?.needs).toBe("changes");
     expect(macosControlIf?.if).toBe("github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && (github.event.inputs.lane == '' || github.event.inputs.lane == 'all' || github.event.inputs.lane == 'macos-control')");
+  });
+
+  test.skipIf(process.platform === "win32" || !scopeBashSupportsUppercase)("scope step emits six validated booleans and rejects missing or invalid inputs", async () => {
+    const ci = Bun.YAML.parse(await readText(".github/workflows/ci.yml")) as {
+      jobs: { changes: { outputs: Record<string, string>; steps: Array<{ id?: string; env?: Record<string, string>; run?: string }> } };
+    };
+    const changes = ci.jobs.changes;
+    const step = changes.steps.find(candidate => candidate.id === "scope");
+    expect(step).toBeDefined();
+    const scopes = ["ci", "desktop", "gui", "packaging", "docs", "structure"] as const;
+    const normal = { ci: "true", desktop: "false", gui: "true", packaging: "false", docs: "true", structure: "false" };
+    const run = (event: string, values: Record<string, string>) => {
+      const directory = mkdtempSync(join(tmpdir(), "ocx-ci-scope-validation-"));
+      try {
+        const output = join(directory, "github-output");
+        const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", GITHUB_OUTPUT: output };
+        for (const scope of scopes) {
+          const raw = step?.env?.[`${scope.toUpperCase()}_SCOPE`];
+          if (raw !== undefined) env[`${scope.toUpperCase()}_SCOPE`] = event === "schedule" ? "true" : values[scope] ?? "";
+        }
+        const result = spawnSync(scopeBash, ["-c", step?.run ?? ""], { cwd: directory, env, encoding: "utf8" });
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr, output: existsSync(output) ? readFileSync(output, "utf8") : "" };
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    };
+    expect(run("pull_request", normal)).toMatchObject({
+      status: 0,
+      output: "ci=true\ndesktop=false\ngui=true\npackaging=false\ndocs=true\nstructure=false\n",
+    });
+    expect(run("schedule", { ...normal, gui: "", docs: "invalid" })).toMatchObject({
+      status: 0,
+      output: "ci=true\ndesktop=true\ngui=true\npackaging=true\ndocs=true\nstructure=true\n",
+    });
+    for (const [index, scope] of scopes.entries()) {
+      for (const invalid of ["", "yes"]) {
+        const result = run("pull_request", { ...normal, [scope]: invalid });
+        expect(result.status).toBe(1);
+        expect(result.stdout).toContain(`changes.outputs.${scope}`);
+        expect(result.output).toBe(scopes.slice(0, index).map(name => `${name}=${normal[name]}\n`).join(""));
+      }
+    }
+    for (const scope of scopes) {
+      expect(changes.outputs[scope]).toBe(`\${{ steps.scope.outputs.${scope} }}`);
+      expect(step?.env?.[`${scope.toUpperCase()}_SCOPE`])
+        .toBe(`\${{ github.event_name == 'schedule' && 'true' || steps.filter.outputs.${scope} }}`);
+    }
   });
 
   test("manual release-gates keeps ordinary jobs and skips only diagnostic suites", async () => {
