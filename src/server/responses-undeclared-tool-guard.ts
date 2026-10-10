@@ -704,6 +704,7 @@ function failedBlocks(name: string, newline: string): readonly string[] {
  * @param declaredBare - Explicitly declared bare tool names without namespace provenance.
  * @param declaredCustom - Current bare custom declarations eligible for code-mode recovery.
  * @param enforceDeclaredToolNames - Refuse undeclared calls; normalization remains active when false.
+ * @param onReject - Called when an undeclared tool call is refused.
  * @returns An SSE block rewrite function.
  */
 export function createUndeclaredToolCallGuardBlockRewrite(
@@ -713,6 +714,7 @@ export function createUndeclaredToolCallGuardBlockRewrite(
   declaredBare?: ReadonlySet<string>,
   declaredCustom?: ReadonlySet<string>,
   enforceDeclaredToolNames = true,
+  onReject?: (name: string) => void,
 ): SseBlockRewrite {
   let tripped = false;
   return (block: string) => {
@@ -729,6 +731,7 @@ export function createUndeclaredToolCallGuardBlockRewrite(
       ? undeclaredToolCallName(parsed, declared, declaredNamelessClientCallTypes, providerExecutedCallTypes, declaredBare, declaredCustom)
       : undefined;
     if (name !== undefined) {
+      onReject?.(name);
       tripped = true;
       return failedBlocks(name, block.includes("\r\n") ? "\r\n" : "\n");
     }

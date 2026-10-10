@@ -174,13 +174,10 @@ opencodex `426 upgrade_required` döndürür; Codex daha sonra bu oturum için
 HTTP'ye geri döner. `"websockets": true` ayarlandığında aynı uç nokta
 yükseltmeyi kabul eder ve WebSocket köprüsünü kullanır.
 
-Son gönderilen model `gpt-5.3-codex-spark` olduğunda, kanonik ChatGPT iletimi HTTP başlığında
-ve yerel WS çerçevesi meta verilerinde Responses Lite'ı açıkça kapatır; Spark bir takma adla
-seçildiğinde de bu geçerlidir — ancak yalnızca giden gövde boş olmayan `tools` dizisine sahip bir `additional_tools` grubu
-taşımıyorsa. Bu grup Lite'ın araç teslim biçiminin kendisidir; onu kullanan bir Spark gövdesi,
-çağıran veya yapılandırılmış başlık ne derse desin Lite'ı AÇIK tutar. Lite kimliği değişince eski soket kullanım dışı bırakılır;
-aynı kimliğe sahip sonraki uygun istekler yeni soketi yeniden kullanabilir. Diğer modeller ve
-ağ geçitleri mevcut Lite politikalarını korur. Bozuk yerel meta verilerde, istek gövdesi
+Kullanımdan kaldırılmış Spark kimliklerinde modele özgü bir Responses Lite override'ı yoktur.
+Çağıranın veya yapılandırmanın verdiği Lite niyeti, canonical forwarding'in normal yolundan
+işlenir. Lite kimliği değişince eski soket kullanım dışı bırakılır; aynı kimliğe sahip sonraki
+uygun istekler yeni soketi yeniden kullanabilir. Bozuk yerel meta verilerde, istek gövdesi
 değiştirilmeden HTTP'ye geri dönülmeye devam edilir.
 
 Codex bağlam sıkıştırması yönlendirilen modeller için çalışır.

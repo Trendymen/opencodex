@@ -137,12 +137,9 @@ thread affinity 位於 `codex/` 下，不會出現在管理 API 回應中。請�
 session 中回退到 HTTP。設定 `"websockets": true` 後，同一 endpoint 會接受 upgrade 並使用
 WebSocket bridge。
 
-當最終傳送的模型為 `gpt-5.3-codex-spark` 時，canonical ChatGPT 轉送會在 HTTP 請求標頭與
-原生 WS 訊框中繼資料中明確關閉 Responses Lite，透過別名選擇 Spark 時也一樣；但僅限於傳送本文
-不含帶有非空 `tools` 陣列的 `additional_tools` 群組的情況。該群組本身就是 Lite 的工具傳遞形態，因此仍使用它的 Spark
-本文會保持 Lite 開啟，無論呼叫端或設定的標頭為何。Lite 識別值
-改變時，舊 socket 會停止使用；後續識別值相同且符合重用條件的請求可以重用新 socket。
-其他模型與閘道保留既有 Lite 政策。原生中繼資料格式不合法時，仍會退回 HTTP，並保持
+已退休的 Spark ID 沒有模型專屬的 Responses Lite override。呼叫端或設定提供的 Lite 意圖會沿
+canonical forwarding 的一般路徑處理。Lite 識別值改變時，舊 socket 會停止使用；後續識別值
+相同且符合重用條件的請求可以重用新 socket。原生中繼資料格式不合法時，仍會退回 HTTP，並保持
 請求本文不變。
 
 Codex context compaction 同樣適用於路由模型。`server/responses/compact.ts` 處理

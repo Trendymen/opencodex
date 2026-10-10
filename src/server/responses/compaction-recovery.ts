@@ -53,6 +53,7 @@ function settlePhysicalSends(log: RequestLogContext, budget: RequestExecutionBud
 
 function portableBody(body: Record<string, unknown>): boolean {
   if (!Array.isArray(body.input) || body.store === true || conversationCarriesUploadedFiles(body)) return false;
+  if (body.input.some(item => record(item) && item.type === "agent_message")) return false;
   // Native ciphertext cannot be summarized by another provider. Never silently replace it with a note.
   if (body.input.some(item => record(item) && ["compaction", "compaction_summary", "context_compaction"].includes(String(item.type))
     && typeof item.encrypted_content === "string" && !item.encrypted_content.startsWith("ocx1:"))) return false;
