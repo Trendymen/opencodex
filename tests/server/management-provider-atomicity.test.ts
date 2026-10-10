@@ -391,3 +391,85 @@ describe("provider PATCH durable atomicity", () => {
     expect(persisted?.providers.relay.modelContextTiers).toEqual(expected);
   });
 });
+
+describe("provider POST publication boundary", () => {
+  const body = {
+    name: "created",
+    provider: { adapter: "openai-chat", baseUrl: "https://created.example/v1", models: ["created-model"] },
+    setDefault: true,
+  };
+  const pinnedOverwrite = {
+    name: "relay",
+    provider: {
+      adapter: "openai-chat", baseUrl: "https://relay.example/v1", models: ["relay-model"],
+      pinnedReasoningEffort: "high",
+    },
+  };
+
+  test("an unpublished registration failure restores live config and leaves disk unchanged", async () => {
+    const config = fixture();
+    saveConfig(config);
+    armClaudeCodeBaseline(config);
+    const originalBytes = readFileSync(join(home, "config.json"), "utf8");
+    const h = harness(config, saveConfigPreservingClaudeCode);
+    const write = spyOn(atomicWrite, "atomicWriteFile").mockImplementation(() => { throw failure; });
+
+    await expect(h.post(body)).rejects.toBe(failure);
+    expect(config.defaultProvider).toBe("fallback");
+    expect(Object.hasOwn(config.providers, "created")).toBe(false);
+    expect(readFileSync(join(home, "config.json"), "utf8")).toBe(originalBytes);
+    expect(h.events).toEqual(["save"]);
+
+    write.mockRestore();
+    expect((await h.post(body))?.status).toBe(200);
+    expect(loadConfig().providers.created.baseUrl).toBe("https://created.example/v1");
+  });
+
+  test("a published registration failure keeps live provider and default aligned with disk", async () => {
+    const config = fixture();
+    saveConfig(config);
+    armClaudeCodeBaseline(config);
+    const h = harness(config, saveConfigPreservingClaudeCode);
+    spyOn(derivedRegistries, "refreshConfigDerivedRegistries").mockImplementation(() => { throw failure; });
+
+    await expect(h.post(body)).rejects.toMatchObject({ name: "ConfigWritePublishedError", cause: failure });
+
+    const disk = JSON.parse(readFileSync(join(home, "config.json"), "utf8")) as OcxConfig;
+    expect(disk.providers.created.baseUrl).toBe("https://created.example/v1");
+    expect(config.providers.created).toEqual(disk.providers.created);
+    expect(config.defaultProvider).toBe("created");
+    expect(config.defaultProvider).toBe(disk.defaultProvider);
+    expect(h.events).toEqual(["save"]);
+  });
+
+  test("an unpublished pinned overwrite restores the existing provider", async () => {
+    const config = fixture();
+    saveConfig(config);
+    armClaudeCodeBaseline(config);
+    const originalProvider = config.providers.relay;
+    const originalBytes = readFileSync(join(home, "config.json"), "utf8");
+    const h = harness(config, saveConfigPreservingClaudeCode);
+    spyOn(atomicWrite, "atomicWriteFile").mockImplementation(() => { throw failure; });
+
+    await expect(h.post(pinnedOverwrite)).rejects.toBe(failure);
+    expect(config.providers.relay).toBe(originalProvider);
+    expect(config.providers.relay.pinnedReasoningEffort).toBeUndefined();
+    expect(readFileSync(join(home, "config.json"), "utf8")).toBe(originalBytes);
+    expect(h.events).toEqual(["save"]);
+  });
+
+  test("a published pinned overwrite keeps the existing provider aligned with disk", async () => {
+    const config = fixture();
+    saveConfig(config);
+    armClaudeCodeBaseline(config);
+    const h = harness(config, saveConfigPreservingClaudeCode);
+    spyOn(derivedRegistries, "refreshConfigDerivedRegistries").mockImplementation(() => { throw failure; });
+
+    await expect(h.post(pinnedOverwrite)).rejects.toMatchObject({ name: "ConfigWritePublishedError", cause: failure });
+
+    const disk = JSON.parse(readFileSync(join(home, "config.json"), "utf8")) as OcxConfig;
+    expect(disk.providers.relay.pinnedReasoningEffort).toBe("high");
+    expect(config.providers.relay).toEqual(disk.providers.relay);
+    expect(h.events).toEqual(["save"]);
+  });
+});

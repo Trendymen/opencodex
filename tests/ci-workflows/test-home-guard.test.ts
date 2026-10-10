@@ -592,15 +592,18 @@ const canSymlink = (() => {
     const assertAt = source.indexOf("test home guard failed to arm");
     const lockAt = source.indexOf("await acquireTestRunLock(");
     const sandboxAt = source.indexOf("createIsolatedTestEnvironment()");
+    const nodeProbeAt = source.indexOf("pinTestNodePath(isolated.env");
 
     expect(armAt).toBeGreaterThan(-1);
     expect(assertAt).toBeGreaterThan(-1);
     expect(lockAt).toBeGreaterThan(-1);
     expect(sandboxAt).toBeGreaterThan(-1);
+    expect(nodeProbeAt).toBeGreaterThan(-1);
 
-    // sandbox -> arm -> assert -> lock. Arming before the sandbox would leave a window that
-    // is merely over-protective, but arming after the lock is the defect above.
-    expect(sandboxAt).toBeLessThan(armAt);
+    // Node selection can start a child process, so arm before the probe and the lock.
+    expect(armAt).toBeLessThan(sandboxAt);
+    expect(sandboxAt).toBeLessThan(nodeProbeAt);
+    expect(nodeProbeAt).toBeLessThan(assertAt);
     expect(armAt).toBeLessThan(assertAt);
     expect(assertAt).toBeLessThan(lockAt);
   });
