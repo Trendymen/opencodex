@@ -43,7 +43,7 @@ const AGENT_SCRATCH_FILENAMES = ["design-debt.md", "_handoff.md"];
  * Moving the images did not help: `docs-site/public/pr-screenshots/` grew the
  * same way and was published to GitHub Pages besides. Evidence images now go in
  * the PR description or on the orphan `pr-assets` branch. This Fork retains only
- * its sync policy and Superpowers plans/specs under `docs/`.
+ * its current sync policy under `docs/`.
  */
 const RETIRED_TRACKED_DIRS = [
   "go",
@@ -63,8 +63,7 @@ const RETIRED_TRACKED_FILES = [
 ];
 
 function isForkOwnedDoc(path: string): boolean {
-  return path === "docs/fork-sync-automation.md"
-    || /^docs\/superpowers\/(?:plans|specs)\/[^/]+\.md$/.test(path);
+  return path === "docs/fork-sync-automation.md";
 }
 
 function trackedFiles(): string[] {

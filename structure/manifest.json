@@ -130,18 +130,6 @@
       "documents": ["src/codex/provider-routing.ts", "src/cli/codex-provider.ts"]
     },
     {
-      "path": "config-capabilities.md",
-      "tier": 2,
-      "title": "Config Capabilities",
-      "scope": "Per-model capability declarations and their catalog-facing configuration.",
-      "documents": [
-        "src/config/",
-        "src/types.ts",
-        "src/codex/",
-        "src/vision/"
-      ]
-    },
-    {
       "path": "codex-home.md",
       "tier": 2,
       "title": "Codex Home",
@@ -330,17 +318,6 @@
       ]
     },
     {
-      "path": "transports/responses-reset-replay.md",
-      "tier": 3,
-      "title": "Responses Reset Replay Boundary",
-      "scope": "Ambiguous reset refusals, client retry signals, and replay markers across response surfaces.",
-      "documents": [
-        "src/bridge/",
-        "src/lib/",
-        "src/server/"
-      ]
-    },
-    {
       "path": "transports/responses-spend.md",
       "tier": 3,
       "title": "Responses Spend Reservations",
@@ -450,7 +427,7 @@
       "path": "providers-and-adapters.md",
       "tier": 4,
       "title": "Providers And Adapters",
-      "scope": "Provider and adapter selection, the adapter inventory, and live model discovery. Hosted-search continuation lives in its own contract.",
+      "scope": "Provider and adapter selection, the adapter inventory, live model discovery, and the hosted-search continuation bridge.",
       "documents": [
         "src/adapters/",
         "src/chat/",
@@ -462,6 +439,14 @@
         "src/types/",
         "src/web-search/"
       ]
+    },
+    {
+      "path": "fork-extensions.md",
+      "tier": 4,
+      "title": "Trendymen Fork Extensions",
+      "scope": "Fork-only runtime, diagnostics and maintenance contracts.",
+      "documents": ["src/fork/"],
+      "forkOnly": true
     },
     {
       "path": "providers/jev-decision.md",
@@ -517,18 +502,6 @@
       "title": "OAuth Code-Display Login",
       "scope": "Headless code-display OAuth login: flow ownership, expiry, unsupported providers, single-operator store.",
       "documents": ["src/oauth/", "src/server/management/"]
-    },
-    {
-      "path": "providers/hosted-search-continuation.md",
-      "tier": 4,
-      "title": "Hosted-Search Continuation Binding",
-      "scope": "Key-auth hosted-search continuation binding across retries and continuations.",
-      "documents": [
-        "src/adapters/",
-        "src/responses/",
-        "src/server/",
-        "src/web-search/"
-      ]
     },
     {
       "path": "providers/openai-tiers.md",
@@ -642,15 +615,6 @@
         "src/cli/",
         "scripts/generate-ocx-skill-surface.ts",
         "skills/ocx/"
-      ]
-    },
-    {
-      "path": "fork-extensions.md",
-      "tier": 4,
-      "title": "Trendymen Fork Extensions",
-      "scope": "Fork-only provider compatibility, Responses repair, diagnostics, and release policy modules.",
-      "documents": [
-        "src/fork/"
       ]
     },
     {
@@ -856,7 +820,7 @@
       "path": "ops/docs-and-release.md",
       "tier": 6,
       "title": "Docs And Release",
-      "scope": "Docs site, workflow map, branch policy, and cross-platform CI. Release flow lives in its own contract.",
+      "scope": "Docs site, workflow map, branch policy, release flow, and cross-platform CI.",
       "documents": [
         ".github/",
         "bin/",
@@ -867,19 +831,6 @@
         "src/codex/",
         "src/lib/",
         "src/service.ts"
-      ]
-    },
-    {
-      "path": "ops/release-workflow.md",
-      "tier": 6,
-      "title": "Release Workflow",
-      "scope": "Npm release flow, notes, metadata invariants, and release gates.",
-      "documents": [
-        "scripts/",
-        "package.json",
-        ".github/",
-        "desktop/",
-        "gui/"
       ]
     },
     {
@@ -969,7 +920,7 @@
           "catalog.md",
           "config.md",
           "dashboard-and-usage.md",
-          "ops/release-workflow.md",
+          "ops/docs-and-release.md",
           "providers/openai-accounts.md",
           "runtime.md",
           "subagents.md"
