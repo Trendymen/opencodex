@@ -1,4 +1,5 @@
 import { canConfigureResponsesReasoningReplay } from "./responses-reasoning-replay";
+import { isCanonicalOpenAiForwardProvider } from "../../src/providers/openai-tiers-destination";
 
 export interface ProviderPayloadForm {
   name: string;
@@ -19,20 +20,6 @@ export interface ProviderPostPreset {
   provider?: ProviderPayload;
 }
 
-/** Mirrors `isCanonicalOpenAiForwardProvider` (src/providers/openai-tiers.ts). */
-const CODEX_FORWARD_BASE_URL = "https://chatgpt.com/backend-api/codex";
-
-function normalizedBaseUrl(value: string): string | undefined {
-  try {
-    const url = new URL(value.trim());
-    if (url.username || url.password || url.search || url.hash) return undefined;
-    const path = url.pathname.replace(/\/+$/, "");
-    return `${url.origin}${path}`;
-  } catch {
-    return undefined;
-  }
-}
-
 export function codexAccountProviderNames(
   providers: Record<string, { authMode?: string }>,
 ): string[] {
@@ -50,10 +37,7 @@ export function openAiAccountProviderState(
   if (!provider) return "absent";
   // Disabled and enabled rows share one canonical gate: adapter + authMode + baseUrl.
   if (
-    provider.adapter !== "openai-responses"
-    || provider.authMode !== "forward"
-    || typeof provider.baseUrl !== "string"
-    || normalizedBaseUrl(provider.baseUrl) !== CODEX_FORWARD_BASE_URL
+    !isCanonicalOpenAiForwardProvider(provider)
   ) {
     return "invalid";
   }
