@@ -83,14 +83,6 @@ export function isRawOfficialOpenAiApiBaseUrl(baseUrl: string | undefined): bool
     && baseUrl.replace(/\/+$/, "") === OPENAI_API_BASE_URL;
 }
 
-export function isOfficialOpenAiApiHost(baseUrl: string | undefined): boolean {
-  try {
-    return new URL(baseUrl ?? "").hostname === "api.openai.com";
-  } catch {
-    return false;
-  }
-}
-
 export function isOpenAiOrChatGptHost(baseUrl: string | undefined): boolean {
   try {
     const hostname = new URL(baseUrl ?? "").hostname.toLowerCase();
