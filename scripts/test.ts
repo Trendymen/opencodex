@@ -4,6 +4,8 @@ import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { getTestRunnerBun } from "./lib/test-runner-bun";
 import { pinTestNodePath } from "./lib/test-runner-node";
+import { saveTestLaneDiagnostics } from "./lib/test-runner-diagnostics";
+import { discoverTestBatchFiles, runChangedTestBatches } from "./lib/test-runner-batches";
 import {
   acquireTestRunLock,
   resolveWrappedTestRunLockPath,
@@ -114,9 +116,20 @@ export function createIsolatedTestEnvironment(
 }
 
 function hasCliFlag(requested: string[], name: string): boolean {
-  const delimiterIndex = requested.indexOf("--");
-  const wrapperArgs = delimiterIndex === -1 ? requested : requested.slice(0, delimiterIndex);
-  return wrapperArgs.some(arg => arg === name || arg.startsWith(`${name}=`));
+  return wrapperOptionIndices(requested).some(index => (
+    requested[index] === name || requested[index]!.startsWith(`${name}=`)
+  ));
+}
+
+function wrapperOptionIndices(requested: string[]): number[] {
+  const indices: number[] = [];
+  for (let index = 0; index < requested.length && requested[index] !== "--"; index++) {
+    const arg = requested[index]!;
+    if (!arg.startsWith("-")) continue;
+    indices.push(index);
+    if (!arg.includes("=") && BUN_TEST_OPTIONS_REQUIRING_VALUES.has(arg)) index++;
+  }
+  return indices;
 }
 
 const DEFAULT_TEST_PARALLELISM = 4;
@@ -214,9 +227,9 @@ function decodeOutput(output: Uint8Array | undefined): string {
 }
 
 function changedComparisonRef(requested: string[]): string | null {
-  const delimiterIndex = requested.indexOf("--");
-  const wrapperArgs = delimiterIndex === -1 ? requested : requested.slice(0, delimiterIndex);
-  const changedArg = wrapperArgs.find(arg => arg === "--changed" || arg.startsWith("--changed="));
+  const changedIndex = wrapperOptionIndices(requested)
+    .find(index => requested[index] === "--changed" || requested[index]!.startsWith("--changed="));
+  const changedArg = changedIndex === undefined ? undefined : requested[changedIndex];
   if (!changedArg) return null;
   if (changedArg === "--changed" || changedArg === "--changed=") {
     throw new Error(
@@ -305,13 +318,13 @@ export function changedSelectionFailure(
   output: string,
 ): string | null {
   if (preflight.changedFiles.length === 0) return null;
-  const summary = output
+  const summaries = [...output
     .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
-    .match(/Ran\s+(\d+)\s+tests?\s+across\s+(\d+)\s+files?\b/i);
-  if (!summary) {
+    .matchAll(/Ran\s+(\d+)\s+tests?\s+across\s+(\d+)\s+files?\b/gi)];
+  if (summaries.length === 0) {
     return `[test] could not validate --changed=${preflight.comparisonCommit} (${preflight.comparisonRef} merge base): Bun did not emit a recognizable selection summary for a diff containing ${preflight.changedFiles.length} changed file(s).`;
   }
-  if (Number(summary[1]) !== 0 || Number(summary[2]) !== 0) return null;
+  if (summaries.some(summary => Number(summary[1]) !== 0 || Number(summary[2]) !== 0)) return null;
   return `[test] --changed=${preflight.comparisonCommit} (${preflight.comparisonRef} merge base) selected 0 tests across 0 files, but the diff contains ${preflight.changedFiles.length} changed file(s). Bun follows only the parsed module graph; run the relevant focused tests for subprocess, read-as-data, or golden-file dependencies, or run the full suite.`;
 }
 
@@ -350,10 +363,10 @@ export function resolveBunTestArgs(
   requested: string[],
   comparisonCommit?: string,
 ): string[] {
-  const delimiterIndex = requested.indexOf("--");
+  const optionIndices = new Set(wrapperOptionIndices(requested));
   const effectiveRequested = comparisonCommit
     ? requested.map((arg, index) => (
-        (delimiterIndex === -1 || index < delimiterIndex)
+        optionIndices.has(index)
           && (arg === "--changed" || arg.startsWith("--changed="))
           ? "--changed=" + comparisonCommit
           : arg
@@ -463,6 +476,21 @@ export const SERIAL_FULL_SUITE_FILES = [
   "codex-integration/doctor.test.ts",
   "claude-integration/claude-messages-endpoint.test.ts",
   "server/memory-watchdog.test.ts",
+  // These files failed in the long-lived changed pool and passed in fresh processes.
+  // Isolate their environment and subprocess lifecycles with unchanged test budgets.
+  "claude-integration/claude-picker-runtime.test.ts",
+  "claude-integration/claude-picker-startup.test.ts",
+  // These writers share an effective OS-user SQLite lifecycle lock across HOME/configDir.
+  // Serial lanes prevent contention between files in the same parallel pool.
+  "claude-integration/claude-desktop-picker-routes.test.ts",
+  "claude-integration/claude-desktop-picker-profile.test.ts",
+  "claude-integration/claude-desktop-first-party.test.ts",
+  "claude-integration/claude-desktop-first-party-guards.test.ts",
+  "cli/cli-config-default-show.test.ts",
+  "lab/lab-live-probe.test.ts",
+  "lab/lab-live-receipt-integrity.test.ts",
+  // This cumulative-deadline fixture failed in the changed pool and passed alone with its original budget.
+  "web-search/web-search-pacing-deadline.test.ts",
   // These exercise the default-home service authority, shared by parallel Bun workers.
   // A fresh process/home prevents another file's authority from becoming this fixture's input.
   "service/service-claim.test.ts",
@@ -489,18 +517,31 @@ export interface BunTestLane {
   label: string;
   args: string[];
   timeoutMs: number;
+  deadlineAt?: number;
 }
 
 function withoutParallelOverride(requested: string[]): string[] {
-  return requested.filter(arg => arg !== "--parallel" && !arg.startsWith("--parallel="));
+  const indices = new Set(wrapperOptionIndices(requested));
+  return requested.filter((arg, index) => !indices.has(index)
+    || (arg !== "--parallel" && !arg.startsWith("--parallel=")));
 }
 
 function canUseSerialLanes(requested: string[]): boolean {
-  if (!isFullSuiteRun(requested)) return false;
-  return !["--changed", "--shard", "--reporter-outfile", "--update-timings"].some(flag => hasCliFlag(requested, flag));
+  if (hasCliFlag(requested, "--changed")
+    && (requested.includes("--") || hasCliFlag(requested, "--path-ignore-patterns"))) return false;
+  const indices = new Set(wrapperOptionIndices(requested));
+  const withoutChanged = requested.filter((arg, index) => !indices.has(index) || !arg.startsWith("--changed="));
+  if (!isFullSuiteRun(withoutChanged)) return false;
+  return !["--shard", "--reporter-outfile", "--update-timings"].some(flag => hasCliFlag(requested, flag));
 }
 
-/** Build the default full-suite plan: one bounded main lane plus isolated risky files. */
+export function canBatchChangedMain(requested: string[]): boolean {
+  return hasCliFlag(requested, "--changed") && canUseSerialLanes(requested)
+    && !["-c", "--config", "--cwd", "--no-isolate", "--watch", "--hot", "--coverage", "--coverage-dir", "--coverage-reporter",
+      "--only-failures", "--bail", "--rerun-each", "--retry"].some(flag => hasCliFlag(requested, flag));
+}
+
+/** Keep sensitive files in fresh processes for full and unfiltered changed runs. */
 export function resolveBunTestPlan(
   requested: string[], comparisonCommit?: string,
   env: Record<string, string | undefined> = process.env,
@@ -516,7 +557,7 @@ export function resolveBunTestPlan(
   }
 
   const mainArgs = resolveBunTestArgs(requested, comparisonCommit);
-  const rootIndex = mainArgs.lastIndexOf("./tests/");
+  const rootIndex = isFullSuiteRun(requested) ? mainArgs.length - 1 : -1;
   const ignores = SERIAL_FULL_SUITE_FILES.flatMap(file => ["--path-ignore-patterns", `**/${basename(file)}`]);
   mainArgs.splice(rootIndex === -1 ? mainArgs.length : rootIndex, 0, ...ignores);
   const serialRequested = withoutParallelOverride(requested);
@@ -524,7 +565,7 @@ export function resolveBunTestPlan(
     { label: "parallel suite", args: mainArgs, timeoutMs: mainTimeout },
     ...SERIAL_FULL_SUITE_FILES.map(file => ({
       label: basename(file),
-      args: resolveBunTestArgs(["--parallel=1", ...serialRequested, `./tests/${file}`]),
+      args: resolveBunTestArgs(["--parallel=1", ...serialRequested, `./tests/${file}`], comparisonCommit),
       timeoutMs: SERIAL_LANE_TIMEOUT_MS[basename(file) as SerialLaneBasename] ?? 3 * 60 * 1000,
     })),
   ];
@@ -632,12 +673,18 @@ export async function runTestLane(
   };
   const isolated = createIsolatedTestEnvironment(sourceEnv);
   try {
-    pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+    await pinTestNodePath(isolated.env, sourceEnv, isolated.root);
   } catch (error) {
     isolated.cleanup();
+    if (lane.deadlineAt !== undefined && Date.now() >= lane.deadlineAt) return { exitCode: 124, output: "" };
     throw error;
   }
   const startedAt = Date.now();
+  if (lane.deadlineAt !== undefined && startedAt >= lane.deadlineAt) {
+    console.error(`[test] ${lane.label} exhausted its shared deadline during setup.`);
+    isolated.cleanup();
+    return { exitCode: 124, output: "" };
+  }
   let interrupted: NodeJS.Signals | null = null;
   const child = Bun.spawn([testRunner, "test", ...lane.args], {
     env: isolated.env,
@@ -657,9 +704,16 @@ export async function runTestLane(
 
   const exited = child.exited;
   try {
-    let exitCode = await waitWithTimeout(exited, lane.timeoutMs);
+    const remainingMs = lane.deadlineAt === undefined ? lane.timeoutMs : Math.max(0, lane.deadlineAt - Date.now());
+    let exitCode = await waitWithTimeout(exited, remainingMs);
     if (exitCode === null) {
-      console.error(`[test] ${lane.label} exceeded ${Math.round(lane.timeoutMs / 1000)}s; terminating pid ${child.pid}.`);
+      console.error(`[test] ${lane.label} exceeded ${Math.round(remainingMs / 1000)}s; terminating pid ${child.pid}.`);
+      try {
+        const diagnostics = saveTestLaneDiagnostics(child.pid);
+        console.error(`[test] deadline diagnostics: ${diagnostics}`);
+      } catch {
+        console.error("[test] deadline diagnostics unavailable; termination will continue.");
+      }
       try { child.kill("SIGTERM"); } catch { /* child already exited */ }
       const graceful = await waitWithTimeout(exited, 5_000);
       if (graceful === null) {
@@ -787,7 +841,15 @@ if (import.meta.main) {
       let exitCode = 0;
       let captured = "";
       for (const lane of resolveBunTestPlan(requestedTests, changedRun?.comparisonCommit)) {
-        const result = await runTestLane(lane, runId, inheritedLock, Boolean(changedRun), undefined, testRunner);
+        const execute = (batch: BunTestLane) => runTestLane(batch, runId, inheritedLock, Boolean(changedRun), undefined, testRunner);
+        let result: Awaited<ReturnType<typeof execute>>;
+        if (lane.label === "parallel suite" && canBatchChangedMain(requestedTests)) {
+          const deadlineAt = Date.now() + lane.timeoutMs;
+          const files = discoverTestBatchFiles(join(process.cwd(), "tests"), SERIAL_FULL_SUITE_FILES);
+          result = await runChangedTestBatches({ ...lane, deadlineAt }, files, execute);
+        } else {
+          result = await execute(lane);
+        }
         captured += result.output;
         if (result.exitCode !== 0 && exitCode === 0) exitCode = result.exitCode;
         if ([124, 130, 143].includes(result.exitCode)) break;
