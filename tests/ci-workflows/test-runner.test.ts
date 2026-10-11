@@ -125,6 +125,111 @@ function initChangedRunFixture(): { cwd: string; base: string } {
   return { cwd, base };
 }
 
+describe("test runner watchdog diagnostics", () => {
+  test.skipIf(process.platform === "win32").each(["SIGINT", "SIGTERM"] as const)(
+    "%s still interrupts a real lane without deadline diagnostics",
+    signal => {
+      const root = mkdtempSync(join(tmpdir(), "ocx-lane-signal-"));
+      const homeFile = join(root, "home.txt");
+      const resultFile = join(root, "result.json");
+      const fixture = join(root, "signal.test.ts");
+      const driver = join(root, "driver.ts");
+      writeFileSync(fixture, `import { test } from "bun:test"; import { writeFileSync } from "node:fs";
+test("signal fixture", async () => { writeFileSync(${JSON.stringify(homeFile)}, process.env.HOME!); await new Promise(() => {}); }, 60_000);`);
+      writeFileSync(driver, `import { runTestLane } from ${JSON.stringify(repoPath("scripts", "test.ts"))}; import { existsSync, writeFileSync } from "node:fs";
+const timer = setInterval(() => { if (existsSync(${JSON.stringify(homeFile)})) { clearInterval(timer); process.kill(process.pid, ${JSON.stringify(signal)}); } }, 20);
+const result = await runTestLane({ label: "signal fixture", args: [${JSON.stringify(fixture)}], timeoutMs: 15_000 }, "signal-fixture", undefined, true, undefined, process.execPath);
+clearInterval(timer); writeFileSync(${JSON.stringify(resultFile)}, JSON.stringify(result));`);
+      try {
+        const child = Bun.spawnSync([process.execPath, driver], {
+          cwd: repoRoot(), env: { ...process.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
+        });
+        expect(child.exitCode).toBe(0);
+        expect(JSON.parse(readFileSync(resultFile, "utf8")).exitCode).toBe(signal === "SIGINT" ? 130 : 143);
+        expect(existsSync(readFileSync(homeFile, "utf8"))).toBe(false);
+        expect(child.stderr.toString()).not.toContain("deadline diagnostics");
+      } finally {
+        removeTreeWithRetry(root);
+      }
+    }, { timeout: 15_000 },
+  );
+
+  test.skipIf(process.platform === "win32").each(["available", "missing", "blocked"] as const)(
+    "a real deadline retains safe diagnostics with %s observer tools and cleans its home",
+    mode => {
+      const root = mkdtempSync(join(tmpdir(), "ocx-watchdog-fixture-"));
+      const infoFile = join(root, "info.json");
+      const resultFile = join(root, "result.json");
+      const testFile = join(root, "timeout.test.ts");
+      const driver = join(root, "driver.ts");
+      const tools = join(root, "tools");
+      mkdirSync(tools);
+      writeFileSync(testFile, `import { test } from "bun:test"; import { writeFileSync } from "node:fs";
+test("watchdog fixture", async () => {
+  const workers = Array.from({ length: 4 }, () => Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdout: "ignore", stderr: "ignore" }));
+  writeFileSync(${JSON.stringify(infoFile)}, JSON.stringify({ pid: process.pid, parent: process.ppid, workers: workers.map(worker => worker.pid), home: process.env.HOME }));
+  process.on("SIGTERM", () => { for (const worker of workers) worker.kill("SIGKILL"); process.exit(0); });
+  await new Promise(() => {});
+}, 60_000);`);
+      writeFileSync(join(tools, "ps"), `#!${process.execPath}
+import { readFileSync } from "node:fs";
+${mode === "blocked" ? 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'
+  : mode === "missing" ? "process.exit(1);"
+  : `const info = JSON.parse(readFileSync(${JSON.stringify(infoFile)}, "utf8")); console.log(info.pid, info.parent, "0.0 4000 /private/fixture/bun"); info.workers.forEach((pid, index) => console.log(pid, info.pid, index === 3 ? "99.0" : "0.0", "2000 /private/fixture/bun"));`}
+`, { mode: 0o755 });
+      writeFileSync(join(tools, "sample"), `#!${process.execPath}
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(join(root, "sample-args.json"))}, JSON.stringify(process.argv.slice(2)));
+if (!process.argv.includes("-file")) writeFileSync(${JSON.stringify(join(root, "raw-sample.txt"))}, "PRIVATE_RAW_HEADER");
+console.log("Command line: SECRET_FIXTURE_ARG");
+console.log("Call graph:\\n + 1 worker_wait (in bun) [0x123] (/Users/Example Person/Private (Debug) App/bun:42)\\n + 2 normal_symbol (in /Users/Example Person/Private (Debug) App/bun) [0x456]\\n + 3 other_symbol /Users/Example Person/Private (Debug) App/bun [0x789]\\nTotal number in stack: 1");
+`, { mode: 0o755 });
+      writeFileSync(driver, `import { runTestLane } from ${JSON.stringify(repoPath("scripts", "test.ts"))}; import { writeFileSync } from "node:fs";
+const result = await runTestLane({ label: "diagnostic fixture", args: [${JSON.stringify(testFile)}], timeoutMs: 2_000 }, "diagnostic-fixture", undefined, true, undefined, process.execPath);
+writeFileSync(${JSON.stringify(resultFile)}, JSON.stringify(result));`);
+      let diagnosticRoot: string | undefined;
+      try {
+        const startedAt = Date.now();
+        const result = Bun.spawnSync([process.execPath, driver], {
+          cwd: repoRoot(), env: { ...process.env, PATH: `${tools}${delimiter}${process.env.PATH ?? ""}`, OCX_TEST_NO_QUEUE: "1" },
+          stdout: "pipe", stderr: "pipe", timeout: 15_000,
+        });
+        expect(result.exitCode).toBe(0);
+        expect(Date.now() - startedAt).toBeLessThan(12_000);
+        expect(JSON.parse(readFileSync(resultFile, "utf8")).exitCode).toBe(124);
+        const info = JSON.parse(readFileSync(infoFile, "utf8"));
+        expect(existsSync(info.home)).toBe(false);
+        diagnosticRoot = result.stderr.toString().match(/diagnostics: ([^\r\n]+)/)?.[1];
+        expect(diagnosticRoot).toBeDefined();
+        const manifest = JSON.parse(readFileSync(join(diagnosticRoot!, "processes.json"), "utf8"));
+        expect(manifest.runnerPid).toBe(info.parent);
+        expect(manifest.childPid).toBe(info.pid);
+        if (mode === "available") {
+          expect(manifest.processes).toContainEqual({ pid: info.workers[3], ppid: info.pid, cpuPercent: 99, rssKb: 2000, executable: "bun" });
+          if (process.platform === "darwin") expect(readFileSync(join(diagnosticRoot!, `sample-${info.pid}.txt`), "utf8")).toContain("worker_wait");
+          if (process.platform === "darwin") expect(readFileSync(join(diagnosticRoot!, `sample-${info.workers[3]}.txt`), "utf8")).toContain("worker_wait");
+          if (process.platform === "darwin") {
+            expect(JSON.parse(readFileSync(join(root, "sample-args.json"), "utf8")).slice(1)).toEqual(["1", "-file", "/dev/stdout"]);
+            expect(existsSync(join(root, "raw-sample.txt"))).toBe(false);
+            const stack = readFileSync(join(diagnosticRoot!, `sample-${info.pid}.txt`), "utf8");
+            expect(stack).toContain("+ 1 worker_wait (in bun) [0x123] ([path])");
+            expect(stack).toContain("+ 2 normal_symbol ([path]) [0x456]");
+            expect(stack).toContain("+ 3 other_symbol [path] [0x789]");
+          }
+        } else expect(manifest.status).toBe("process inventory unavailable");
+        for (const file of readdirSync(diagnosticRoot!)) {
+          expect(readFileSync(join(diagnosticRoot!, file), "utf8")).not.toContain("SECRET_FIXTURE_ARG");
+          expect(readFileSync(join(diagnosticRoot!, file), "utf8")).not.toContain("/private/fixture");
+          expect(readFileSync(join(diagnosticRoot!, file), "utf8")).not.toMatch(/Example|Person|Private|Debug|App/);
+        }
+      } finally {
+        if (diagnosticRoot) removeTreeWithRetry(diagnosticRoot);
+        removeTreeWithRetry(root);
+      }
+    }, { timeout: 20_000 },
+  );
+});
+
 describe("test runner captured output", () => {
   // This describe's first real lane pays Bun's test-runner bootstrap inside its child timeout.
   // Replay one trivial lane in setup because an import scan cannot warm Bun's runner startup.
@@ -223,13 +328,23 @@ describe("test runner captured output", () => {
       cancel() { cancelled = true; },
     });
     const stderr = new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } });
-    const spawn = spyOn(Bun, "spawn").mockReturnValue({
+    const originalSpawn = Bun.spawn;
+    let resolveSpawn!: () => void;
+    const spawned = new Promise<void>(resolve => { resolveSpawn = resolve; });
+    const fixtureChild = {
       pid: 0,
       stdout,
       stderr,
       exited: Promise.resolve(0),
       kill() { throw new Error("the fixture child already exited"); },
-    } as unknown as ReturnType<typeof Bun.spawn>);
+    } as unknown as ReturnType<typeof Bun.spawn>;
+    const spawn = spyOn(Bun, "spawn").mockImplementation((command, options) => {
+      if (Array.isArray(command) && command[1] === "test") {
+        resolveSpawn();
+        return fixtureChild;
+      }
+      return originalSpawn(command, options);
+    });
     const emitted: string[] = [];
     try {
       const pending = runTestLane(
@@ -239,7 +354,8 @@ describe("test runner captured output", () => {
         true,
         { stdout: value => { emitted.push(value); }, stderr: value => { emitted.push(value); } },
       );
-      // Only the synchronous spawn is mocked; no other test or later subprocess uses it.
+      await spawned;
+      // Restore after the lane spawn; Node probes keep their real subprocesses.
       spawn.mockRestore();
       expect(await pending).toEqual({ exitCode: 1, output: "partial output\n\n" });
       expect(emitted).toEqual(["partial output\n"]);
@@ -367,7 +483,7 @@ process.exitCode = result.exitCode;
     { timeout: 25_000 },
   );
 
-  test.skipIf(process.platform === "win32")("resolves a HOME-dependent Node shim to a cwd-independent binary", () => {
+  test.skipIf(process.platform === "win32")("resolves a HOME-dependent Node shim to a cwd-independent binary", async () => {
     const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
     const sourceEnv = {
       ...process.env,
@@ -379,7 +495,7 @@ process.exitCode = result.exitCode;
     };
     const isolated = createIsolatedTestEnvironment(sourceEnv);
     try {
-      pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+      await pinTestNodePath(isolated.env, sourceEnv, isolated.root);
       expect(isolated.env.PATH?.split(delimiter)[0]).toBe(nodeDir);
       const result = Bun.spawnSync(["node", "-e", "ignored"], {
         cwd: fixture,
@@ -396,7 +512,7 @@ process.exitCode = result.exitCode;
     }
   });
 
-  test.skipIf(process.platform === "win32")("Node selection follows the native OS when a test simulates win32", () => {
+  test.skipIf(process.platform === "win32")("Node selection follows the native OS when a test simulates win32", async () => {
     const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
     const sourceEnv = {
       ...process.env,
@@ -410,7 +526,7 @@ process.exitCode = result.exitCode;
     const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
     try {
       Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
-      pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+      await pinTestNodePath(isolated.env, sourceEnv, isolated.root);
       expect(isolated.env.PATH?.split(delimiter)[0]).toBe(nodeDir);
     } finally {
       Object.defineProperty(process, "platform", descriptor);
@@ -419,7 +535,7 @@ process.exitCode = result.exitCode;
     }
   });
 
-  test.skipIf(process.platform === "win32")("repeated preload selection does not grow an already pinned PATH", () => {
+  test.skipIf(process.platform === "win32")("repeated preload selection does not grow an already pinned PATH", async () => {
     const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
     const sourceEnv = {
       ...process.env,
@@ -432,9 +548,9 @@ process.exitCode = result.exitCode;
     const first = createIsolatedTestEnvironment(sourceEnv);
     let second: ReturnType<typeof createIsolatedTestEnvironment> | undefined;
     try {
-      pinTestNodePath(first.env, sourceEnv, first.root);
+      await pinTestNodePath(first.env, sourceEnv, first.root);
       second = createIsolatedTestEnvironment(first.env);
-      pinTestNodePath(second.env, first.env, second.root);
+      await pinTestNodePath(second.env, first.env, second.root);
       expect(second.env.PATH).toBe(first.env.PATH);
     } finally {
       second?.cleanup();
@@ -443,7 +559,7 @@ process.exitCode = result.exitCode;
     }
   });
 
-  test.skipIf(process.platform === "win32")("a quoted PATH entry is not treated as a callable Node directory", () => {
+  test.skipIf(process.platform === "win32")("a quoted PATH entry is not treated as a callable Node directory", async () => {
     const { fixture, shimDir, nodeDir, hostHome } = createHomeDependentNodeShimFixture();
     const sourceEnv = {
       ...process.env,
@@ -455,7 +571,7 @@ process.exitCode = result.exitCode;
     };
     const isolated = createIsolatedTestEnvironment(sourceEnv);
     try {
-      pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+      await pinTestNodePath(isolated.env, sourceEnv, isolated.root);
       const child = Bun.spawnSync(["node", "-e", "ignored"], {
         env: isolated.env,
         cwd: fixture,
@@ -471,7 +587,7 @@ process.exitCode = result.exitCode;
     }
   });
 
-  test.skipIf(process.platform === "win32")("refuses missing, failed, and malformed Node probes", () => {
+  test.skipIf(process.platform === "win32")("refuses missing, failed, and malformed Node probes", async () => {
     const fixture = mkdtempSync(join(tmpdir(), "ocx-test-node-failure-"));
     const bin = join(fixture, "bin");
     mkdirSync(bin);
@@ -493,7 +609,7 @@ process.exitCode = result.exitCode;
         const isolated = createIsolatedTestEnvironment(sourceEnv);
         try {
           const startedAt = Date.now();
-          expect(() => pinTestNodePath(isolated.env, sourceEnv, isolated.root)).toThrow("usable Node");
+          await expect(pinTestNodePath(isolated.env, sourceEnv, isolated.root)).rejects.toThrow("usable Node");
           expect(Date.now() - startedAt).toBeLessThan(4_000);
         } finally {
           isolated.cleanup();
@@ -503,6 +619,57 @@ process.exitCode = result.exitCode;
       removeTreeWithRetry(fixture);
     }
   }, { timeout: 8_000 });
+
+  test.skipIf(process.platform === "win32").each([
+    [null, "source:ENOENT=1"],
+    ["exit 9", "source:exit-nonzero=1"],
+    ["printf 'PRIVATE_PROBE_OUTPUT\\n'", "source:invalid-output=1"],
+    ["if [ \"$HOME\" != \"$NODE_FIXTURE_SOURCE_HOME\" ]; then printf 'PRIVATE_SANDBOX_OUTPUT\\n'; else printf '%s\\n22.0.0\\n' \"$0\"; fi", "sandbox:invalid-output=1"],
+    ["if [ \"$HOME\" != \"$NODE_FIXTURE_SOURCE_HOME\" ]; then printf '/nonexistent-private-fixture/node\\n22.0.0\\n'; else printf '%s\\n22.0.0\\n' \"$0\"; fi", "realpath:ENOENT=1"],
+    ["exec /bin/sleep 30", "source:ETIMEDOUT=1"],
+  ])("a failing Node fixture reports safe bounded categories: %s", async (body, category) => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-node-diagnostic-"));
+    const isolated = createIsolatedTestEnvironment();
+    try {
+      isolated.env.NODE_FIXTURE_SOURCE_HOME = root;
+      if (body !== null) writeFileSync(join(root, "node"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+      let failure: unknown;
+      try { await pinTestNodePath(isolated.env, { PATH: root, HOME: root, NODE_FIXTURE_SOURCE_HOME: root }, isolated.root); }
+      catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(Error);
+      const message = (failure as Error).message;
+      expect(message).toContain("No usable Node executable on PATH for isolated tests.");
+      expect(message).toContain(category!);
+      expect(message).toContain("spawn=function");
+      expect(message).toContain("realpathSync=function");
+      expect(message).not.toContain(root);
+      expect(message).not.toContain(isolated.root);
+      expect(message).not.toMatch(/PRIVATE_|nonexistent-private-fixture/);
+      expect(message.length).toBeLessThan(1_000);
+    } finally { isolated.cleanup(); removeTreeWithRetry(root); }
+  });
+
+  test("a Node probe TypeError reports its category without disclosing its error text", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-node-probe-mock-"));
+    const driver = join(root, "driver.ts");
+    const mockedPlatform = process.platform === "win32" ? "darwin" : "win32";
+    writeFileSync(driver, `
+Object.defineProperty(process, "platform", { value: ${JSON.stringify(mockedPlatform)}, configurable: true });
+const { getTestRunnerNodeDirectory } = await import(${JSON.stringify(repoPath("scripts", "lib", "test-runner-node.ts"))});
+try { await getTestRunnerNodeDirectory({ PATH: "/private/fixture/probe", INVALID_PROBE_ENV: Symbol("PRIVATE_TYPEERROR_MESSAGE") } as any, "/private/fixture/home"); }
+catch (error) { console.log(error.message); }`);
+    try {
+      const child = Bun.spawnSync([process.execPath, driver], {
+        env: { ...process.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 2_000,
+      });
+      expect(child.exitCode).toBe(0);
+      expect(child.stdout.toString()).toContain("source:TypeError=1");
+      expect(child.stdout.toString()).toContain("spawn=function");
+      expect(child.stdout.toString()).toContain(`platform=${mockedPlatform}`);
+      expect(child.stdout.toString()).not.toContain("/private/fixture");
+      expect(child.stdout.toString()).not.toContain("PRIVATE_TYPEERROR_MESSAGE");
+    } finally { removeTreeWithRetry(root); }
+  });
 
   test("redirects user homes to a disposable root", () => {
     const isolated = createIsolatedTestEnvironment({ PATH: "/test/bin", HOME: "/real/home" });
@@ -918,6 +1085,12 @@ describe("bun test argv", () => {
       "providers/xai/grok-47-fast-model-wire.test.ts",
       "server/server-management-auth.test.ts",
       "storage/storage-policy-job-responsive.test.ts",
+      "claude-integration/claude-picker-runtime.test.ts",
+      "claude-integration/claude-picker-startup.test.ts",
+      "cli/cli-config-default-show.test.ts",
+      "lab/lab-live-probe.test.ts",
+      "lab/lab-live-receipt-integrity.test.ts",
+      "web-search/web-search-pacing-deadline.test.ts",
     ]));
     const plan = resolveBunTestPlan([]);
     expect(plan).toHaveLength(SERIAL_FULL_SUITE_FILES.length + 1);
@@ -1092,8 +1265,85 @@ test("a control budget is bounded and changes only the main lane", () => {
     const mergeBase = "0123456789abcdef0123456789abcdef01234567";
     expect(resolveBunTestArgs(["--changed=dev"], mergeBase))
       .toEqual(["--isolate", "--parallel=4", "--changed=" + mergeBase]);
-    expect(resolveBunTestPlan(["--changed=dev"])).toHaveLength(1);
+    const plan = resolveBunTestPlan(["--changed=dev"], mergeBase);
+    expect(plan).toHaveLength(SERIAL_FULL_SUITE_FILES.length + 1);
+    expect(plan[0]!.args).toContain("--parallel=4");
+    for (const file of SERIAL_FULL_SUITE_FILES) {
+      expect(plan[0]!.args).toContain(`**/${basename(file)}`);
+      expect(plan.find(lane => lane.label === basename(file))!.args).toEqual([
+        "--isolate", "--parallel=1", "--changed=" + mergeBase, `./tests/${file}`,
+      ]);
+    }
   });
+
+  test("changed lanes preserve explicit filters and unsupported split options", () => {
+    for (const args of [
+      ["tests/service/"], ["--parallel", "tests/service/service.test.ts"],
+      ["--shard=1/3"], ["--reporter=junit", "--reporter-outfile", "results.xml"],
+      ["--update-timings"], ["--", "--parallel=2"], ["--"],
+      ["--path-ignore-patterns", "**/service-claim.test.ts"], ["--", "--changed=other"],
+    ]) {
+      const requested = ["--changed=HEAD", ...args];
+      expect(resolveBunTestPlan(requested)).toEqual([
+        { label: "suite", args: resolveBunTestArgs(requested), timeoutMs: 900_000 },
+      ]);
+    }
+    expect(resolveBunTestPlan(["--changed"])).toHaveLength(1);
+    const plan = resolveBunTestPlan(["--changed=HEAD", "--parallel=2", "-t", "chosen case"]);
+    expect(plan[0]!.args).toContain("--parallel=2");
+    for (const lane of plan.slice(1)) {
+      expect(lane.args).toContain("--parallel=1");
+      expect(lane.args).not.toContain("--parallel=2");
+      expect(lane.args).toContain("chosen case");
+    }
+  });
+
+  test.each(["--parallel=2", "./tests/"])("changed lanes preserve the literal option value %s", value => {
+    const requested = ["--changed=HEAD", "-t", value];
+    const plan = resolveBunTestPlan(requested, "fixed-sha");
+    expect(plan[0]!.args[plan[0]!.args.indexOf("-t") + 1]).toBe(value);
+    for (const lane of plan.slice(1)) {
+      const index = lane.args.indexOf("-t");
+      expect(lane.args[index + 1]).toBe(value);
+    }
+  });
+
+  test("changed lanes let Bun select only changed sensitive fixtures", () => {
+    const { cwd, base } = initChangedRunFixture();
+    const isolated = createIsolatedTestEnvironment();
+    try {
+      mkdirSync(join(cwd, "tests", "service"), { recursive: true });
+      for (const name of ["service-claim", "service-sqlite-home"]) {
+        commitFixture(cwd, `tests/service/${name}.test.ts`,
+          `import { test } from "bun:test"; test("${name}", () => console.log("EXECUTED_${name}"));\n`, name);
+      }
+      commitFixture(cwd, "tests/ordinary.test.ts",
+        'import { test } from "bun:test"; test("ordinary", () => console.log("UNRELATED_ORDINARY"));\n', "ordinary");
+      const comparisonCommit = runGit(cwd, "rev-parse", "HEAD");
+      writeFileSync(join(cwd, "tests/service/service-claim.test.ts"),
+        readFileSync(join(cwd, "tests/service/service-claim.test.ts"), "utf8") + "// changed\n");
+      const plan = resolveBunTestPlan(["--changed=" + base], comparisonCommit);
+      expect(plan).toHaveLength(SERIAL_FULL_SUITE_FILES.length + 1);
+      const lanes = [plan[0]!, ...plan.filter(lane => ["service-claim.test.ts", "service-sqlite-home.test.ts"].includes(lane.label))];
+      let output = "";
+      for (const lane of lanes) {
+        const result = Bun.spawnSync([process.execPath, "test", ...lane.args], {
+          cwd, env: { ...isolated.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
+        });
+        expect(result.exitCode).toBe(0);
+        const text = result.stdout.toString() + result.stderr.toString();
+        if (lane === plan[0]) expect(text).not.toContain("EXECUTED_service-claim");
+        output += text;
+      }
+      expect(output.match(/^EXECUTED_service-claim$/gm)).toHaveLength(1);
+      expect(output).not.toContain("EXECUTED_service-sqlite-home");
+      expect(output).not.toContain("UNRELATED_ORDINARY");
+      expect(changedSelectionFailure({ comparisonRef: "fixture", comparisonCommit, changedFiles: ["tests/service/service-claim.test.ts"] }, output)).toBeNull();
+    } finally {
+      isolated.cleanup();
+      removeTreeWithRetry(cwd);
+    }
+  }, { timeout: 35_000 });
 
   test("changed-mode prefers the first existing conventional dev ref", () => {
     const selectFrom = (...existing: string[]) => {
@@ -1192,6 +1442,13 @@ test("a control budget is bounded and changes only the main lane", () => {
       { comparisonRef: "dev", comparisonCommit: "base-sha", changedFiles: ["src/router.ts"] },
       "0 pass\n0 fail",
     )).toContain("did not emit a recognizable selection summary");
+  });
+
+  test("changed coverage accepts a later nonempty lane and rejects all empty lanes", () => {
+    const preflight = { comparisonRef: "fixture", comparisonCommit: "base-sha", changedFiles: ["src/router.ts"] };
+    expect(changedSelectionFailure(preflight, "Ran 0 tests across 0 files.\nRan 9 tests across 1 file.")).toBeNull();
+    expect(changedSelectionFailure(preflight, "Ran 0 tests across 0 files.\nRan 0 tests across 0 files.")).toContain("selected 0 tests");
+    expect(changedSelectionFailure(preflight, "lane without summary\nlane without summary")).toContain("recognizable selection summary");
   });
 
   test("the wrapper passes parallel execution through to bun without leaving TEMP roots", () => {

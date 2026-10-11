@@ -49,7 +49,7 @@ import {
 process.env.OCX_TEST_HOME_GUARD = "1";
 const isolated = createIsolatedTestEnvironment();
 try {
-  pinTestNodePath(isolated.env, process.env, isolated.root);
+  await pinTestNodePath(isolated.env, process.env, isolated.root);
 } catch (error) {
   isolated.cleanup();
   throw error;
