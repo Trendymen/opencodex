@@ -10,17 +10,19 @@ import * as diagnostics from "../../scripts/lib/test-runner-diagnostics";
 import { repoPath } from "../helpers/repo-root";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
-function changedFixture(count = 13, unrelatedOrdinary = false) {
+function changedFixture(count = 13, unrelatedOrdinary = false, serialFiles: readonly string[] = []) {
   const root = mkdtempSync(join(tmpdir(), "ocx-changed-batches-"));
   const records = join(root, "executions.jsonl");
   writeFileSync(join(root, "package.json"), '{"type":"module"}');
   writeFileSync(join(root, "bunfig.toml"), '[test]\nroot="tests"\npreload=[]\n');
   mkdirSync(join(root, "src"));
+  mkdirSync(join(root, "tests"));
   writeFileSync(join(root, "src", "shared.ts"), "export const value = 1;\n");
-  for (const file of SERIAL_FULL_SUITE_FILES) {
+  for (const file of serialFiles) {
     const path = join(root, "tests", file);
     mkdirSync(join(path, ".."), { recursive: true });
-    writeFileSync(path, 'import {test} from "bun:test"; test("unrelated serial",()=>{});\n');
+    writeFileSync(path, `import {test} from "bun:test"; import {appendFileSync} from "node:fs";
+test("unrelated serial",()=>{appendFileSync(${JSON.stringify(records)},JSON.stringify({id:"unrelated-serial"})+"\\n");});\n`);
   }
   const names = Array.from({ length: count }, (_, index) => `selected-${String(index).padStart(2, "0")}.test.ts`);
   if (count) names[count - 1] = "selected (space).test.ts";
@@ -46,6 +48,7 @@ const desktopLifecycleFiles = [
   "claude-integration/claude-desktop-first-party.test.ts",
   "claude-integration/claude-desktop-first-party-guards.test.ts",
 ];
+const unrelatedSerialFile = "codex-integration/codex-shim.test.ts";
 
 test.each([false, true])("default desktop lifecycle lanes exclude the main pool and pin changed selection, changed=%s", changed => {
   const sha = "a".repeat(40);
@@ -66,7 +69,7 @@ test.each([false, true])("default desktop lifecycle lanes exclude the main pool 
 });
 
 test.each([false, true])("default desktop lifecycle files execute once without sharing a process, HOME or critical section, changed=%s", changed => {
-  const fixture = changedFixture(1);
+  const fixture = changedFixture(1, false, changed ? [unrelatedSerialFile, ...desktopLifecycleFiles] : SERIAL_FULL_SUITE_FILES);
   const held = join(fixture.root, "shared-lifecycle-held");
   writeFileSync(join(fixture.root, "tests", "aaa-unrelated.test.ts"), 'import {test} from "bun:test"; test("unrelated",()=>{});\n');
   for (const file of desktopLifecycleFiles) {
@@ -76,11 +79,26 @@ test.each([false, true])("default desktop lifecycle files execute once without s
 test("shared lifecycle",async()=>{expect(value).toBe(2);mkdirSync(${JSON.stringify(held)});const start=Date.now();try{await Bun.sleep(50);appendFileSync(${JSON.stringify(fixture.records)},JSON.stringify({file:${JSON.stringify(file)},home:process.env.HOME,pid:process.pid,start,end:Date.now()})+"\\n");}finally{rmSync(${JSON.stringify(held)},{recursive:true});}});\n`);
   }
   try {
+    if (changed) {
+      const driver = join(fixture.root, "plan.ts");
+      writeFileSync(driver, `import {resolveBunTestPlan} from ${JSON.stringify(repoPath("scripts", "test.ts"))};
+console.log(JSON.stringify({changed:resolveBunTestPlan(["--changed=mutable-ref"],${JSON.stringify(fixture.sha)},{}),full:resolveBunTestPlan([],undefined,{})}));\n`);
+      const result = Bun.spawnSync([process.execPath, driver], { cwd: fixture.root, stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).toBe(0);
+      const plan = JSON.parse(result.stdout.toString());
+      expect(plan.changed).toHaveLength(6);
+      expect(plan.changed.slice(1).map((lane: BunTestLane) => lane.args.at(-1))).toEqual([unrelatedSerialFile, ...desktopLifecycleFiles].map(file => `./tests/${file}`));
+      expect(plan.changed[0].args).toContain("--parallel=4");
+      expect(plan.changed[0].args.filter((arg: string) => arg === "--path-ignore-patterns")).toHaveLength(SERIAL_FULL_SUITE_FILES.length);
+      for (const lane of plan.changed) expect(lane.args.filter((arg: string) => arg.startsWith("--changed="))).toEqual([`--changed=${fixture.sha}`]);
+      expect(plan.full).toHaveLength(1 + SERIAL_FULL_SUITE_FILES.length);
+    }
     const result = Bun.spawnSync([process.execPath, repoPath("scripts", "test.ts"), ...(changed ? [`--changed=${fixture.sha}`] : [])], {
       cwd: fixture.root, env: { ...process.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 60_000,
     });
     expect(result.exitCode).toBe(0);
     const rows = readFileSync(fixture.records, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    if (changed) expect(rows.filter(row => row.id === "unrelated-serial")).toHaveLength(0);
     const desktop = rows.filter(row => typeof row.file === "string").sort((a, b) => a.start - b.start);
     expect(desktop.map(row => row.file).sort()).toEqual([...desktopLifecycleFiles].sort());
     expect(new Set(desktop.map(row => row.pid)).size).toBe(4);
@@ -97,7 +115,7 @@ test("shared lifecycle",async()=>{expect(value).toBe(2);mkdirSync(${JSON.stringi
 }, 65_000);
 
 test("default changed executes affected files once across fresh main batch homes", () => {
-  const fixture = changedFixture();
+  const fixture = changedFixture(13, false, [unrelatedSerialFile]);
   try {
     const result = Bun.spawnSync([process.execPath, repoPath("scripts", "test.ts"), `--changed=${fixture.sha}`], {
       cwd: fixture.root, env: { ...process.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 60_000,
@@ -148,7 +166,7 @@ test.each(["-c", "--config", "--cwd", "--no-isolate", "--watch", "--hot", "--cov
 });
 
 test("genuine no-isolate preserves one shared module incarnation across ordinary and serial-roster files", () => {
-  const fixture = changedFixture();
+  const fixture = changedFixture(13, false, [desktopLifecycleFiles[0]!]);
   writeFileSync(join(fixture.root, "src", "shared.ts"), 'import {randomUUID} from "node:crypto"; export const value=2; export const token=randomUUID();\n');
   for (const name of fixture.names) {
     const file = join(fixture.root, "tests", name);
