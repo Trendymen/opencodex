@@ -42,7 +42,7 @@
 - `X.Y.Z-ben.N` 更新保持同基线修订单调，稳定版同基线不覆盖 Fork，Tag 不可变。入口：[version policy](src/fork/version-policy.mjs)；回归：[version](tests/update/fork-version-policy.test.ts)。同步和发布按 [现行政策](docs/fork-sync-automation.md) 执行。
 - 测试沿用官方布局、Bun runtime/test runner 分离和预算；Fork 补 Node shim 解析、异步双探针与 HTTP fixture 外网隔离。默认 `--changed=origin/dev` 沿用敏感文件隔离，默认用户生命周期锁的写入测试串行；主池每批最多 12 个文件，共享主预算与比较 SHA，由 Bun 选择测试。默认 changed 只为当前 tests 中实际存在的名单文件建立串行 lane；现存文件是否被选中仍由 Bun 判断，full 名单不变。changed 模式带真正的 `--no-isolate`、`--watch`、`--hot`、`--coverage` 或自定义配置等状态参数时，回退单个 suite 并保留原参数；`-t` 后的同名字符串仍是过滤条件。同一测试锁的成员写入失败会报错，owner 变化时按原等待策略重试。入口：[runner](scripts/test.ts)、[batches](scripts/lib/test-runner-batches.ts)、[Node probe](scripts/lib/test-runner-node.ts)、[run lock](scripts/test-run-lock.ts)；回归：[test runner](tests/ci-workflows/test-runner.test.ts)、[batches](tests/ci-workflows/test-runner-batches.test.ts)、[Node probe](tests/ci-workflows/test-runner-node-async.test.ts)、[registration](tests/ci-workflows/test-run-lock-registration.test.ts)。
 - watchdog 超时尽力保存进程快照，macOS 补栈采样；观察工具缺失或失败仍继续终止测试。入口：[timeout diagnostics](scripts/lib/test-runner-diagnostics.ts)；回归：[test runner](tests/ci-workflows/test-runner.test.ts)。
-- CI 保留逐 SHA 触发和官方基线/Tag/marker 验证，见 [preparation](scripts/prepare-fork-official-base.ts)、[baseline regression](tests/ci-workflows/fork-ci-official-baseline.test.ts)。
+- CI 保留逐 SHA 触发和官方基线/Tag/marker 验证，见 [preparation](scripts/prepare-fork-official-base.ts)、[baseline regression](tests/ci-workflows/fork-ci-official-baseline.test.ts)。基线回归复用不可变 Git 初态，每个场景保留独立仓库、浅克隆状态和真实验证调用。
 
 ## 保留边界
 
