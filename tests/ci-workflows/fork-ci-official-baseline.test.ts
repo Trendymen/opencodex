@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -22,6 +23,7 @@ import { repoRoot as resolveRepoRoot } from "../helpers/repo-root";
 
 const decoder = new TextDecoder();
 const roots: string[] = [];
+const seedRoots: string[] = [];
 
 function fakeGitEnvironment(fakeBin: string, values: Record<string, string> = {}): Record<string, string> {
   const withoutPathAliases = Object.fromEntries(Object.entries({ ...process.env, ...values, Path: "discarded-path-alias" })
@@ -76,9 +78,11 @@ type Fixture = {
   officialTagCommit: string;
 };
 
-function createFixture(): Fixture {
+let fixtureSeed: Fixture | undefined;
+
+function createFixtureSeed(): Fixture {
   const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-"));
-  roots.push(root);
+  seedRoots.push(root);
   const official = join(root, "official");
   const originBare = join(root, "origin.git");
   const checkout = join(root, "checkout");
@@ -108,6 +112,21 @@ function createFixture(): Fixture {
   requireGit(checkout, ["config", "user.name", "Fixture Checkout"]);
   requireGit(checkout, ["config", "user.email", "fixture-checkout" + "@" + "example.invalid"]);
   return { root, official, originBare, checkout, officialTagCommit };
+}
+
+function createFixture(): Fixture {
+  const seed = fixtureSeed ??= createFixtureSeed();
+  const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-"));
+  roots.push(root);
+  for (const name of ["official", "origin.git", "checkout"]) {
+    cpSync(join(seed.root, name), join(root, name), { recursive: true });
+  }
+  const official = join(root, "official");
+  const originBare = join(root, "origin.git");
+  const checkout = join(root, "checkout");
+  requireGit(originBare, ["remote", "set-url", "origin", pathToFileURL(official).href]);
+  requireGit(checkout, ["remote", "set-url", "origin", pathToFileURL(originBare).href]);
+  return { root, official, originBare, checkout, officialTagCommit: seed.officialTagCommit };
 }
 
 function fetchHeadSnapshot(repo: string): string | undefined {
@@ -204,6 +223,10 @@ function prepare(
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  for (const root of seedRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("Fork CI official baseline preparation", () => {
