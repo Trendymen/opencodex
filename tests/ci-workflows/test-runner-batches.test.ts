@@ -133,31 +133,51 @@ test("discovery includes every CI suffix and dedicated families without dependen
 });
 
 test.each(["-c", "--config", "--cwd", "--no-isolate", "--watch", "--hot", "--coverage", "--coverage-dir", "--coverage-reporter", "--only-failures", "--bail", "--rerun-each", "--retry"])("state option %s keeps the original process while a filter literal does not", flag => {
-  expect(canBatchChangedMain(["--changed=abc", flag])).toBe(false);
+  const values: Record<string, string> = { "-c": "custom.toml", "--config": "custom.toml", "--cwd": "custom-root", "--coverage-dir": "coverage", "--coverage-reporter": "lcov", "--rerun-each": "2", "--retry": "2" };
+  const options = values[flag] === undefined ? [flag] : [flag, values[flag]!];
+  const sha = "a".repeat(40);
+  for (const args of [options, ...(values[flag] !== undefined && flag.startsWith("--") ? [[`${flag}=${values[flag]}`]] : [])]) {
+    expect(canBatchChangedMain(["--changed=abc", ...args])).toBe(false);
+    const plan = resolveBunTestPlan(["--changed=abc", ...args], sha, {});
+    expect(plan).toHaveLength(1);
+    expect(plan[0]!.args).toEqual(["--isolate", "--parallel=4", `--changed=${sha}`, ...args]);
+    expect(resolveBunTestPlan(args, undefined, {})).toHaveLength(1 + SERIAL_FULL_SUITE_FILES.length);
+  }
   expect(canBatchChangedMain(["--changed=abc", "-t", flag])).toBe(true);
+  expect(resolveBunTestPlan(["--changed=abc", "-t", flag], sha, {})).toHaveLength(1 + SERIAL_FULL_SUITE_FILES.length);
 });
 
-test("genuine no-isolate preserves one shared module incarnation across main files", () => {
+test("genuine no-isolate preserves one shared module incarnation across ordinary and serial-roster files", () => {
   const fixture = changedFixture();
   writeFileSync(join(fixture.root, "src", "shared.ts"), 'import {randomUUID} from "node:crypto"; export const value=2; export const token=randomUUID();\n');
   for (const name of fixture.names) {
     const file = join(fixture.root, "tests", name);
     writeFileSync(file, readFileSync(file, "utf8").replace("import {value}", "import {value,token}").replace("home:process.env.HOME", "token,home:process.env.HOME"));
   }
+  const serial = join(fixture.root, "tests", desktopLifecycleFiles[0]!);
+  writeFileSync(serial, `import {test} from "bun:test"; import {appendFileSync} from "node:fs"; import {token} from "../../src/shared.ts";
+test("selected serial",()=>{appendFileSync(${JSON.stringify(fixture.records)},JSON.stringify({id:"serial",token,home:process.env.HOME,pid:process.pid})+"\\n");});\n`);
   try {
     const result = Bun.spawnSync([process.execPath, repoPath("scripts", "test.ts"), "--parallel=1", "--no-isolate", `--changed=${fixture.sha}`], {
       cwd: fixture.root, env: { ...process.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 60_000,
     });
     expect(result.exitCode).toBe(0);
-    const rows = readFileSync(fixture.records, "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(row => row.id < 13);
-    expect(rows.map(row => row.id).sort((a, b) => a - b)).toEqual(Array.from({ length: 13 }, (_, index) => index));
+    const rows = readFileSync(fixture.records, "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(row => row.id < 13 || row.id === "serial");
+    expect(rows.filter(row => row.id !== "serial").map(row => row.id).sort((a, b) => a - b)).toEqual(Array.from({ length: 13 }, (_, index) => index));
+    expect(rows.filter(row => row.id === "serial")).toHaveLength(1);
     expect(new Set(rows.map(row => row.token)).size).toBe(1);
+    expect(new Set(rows.map(row => row.pid)).size).toBe(1);
+    expect(new Set(rows.map(row => row.home)).size).toBe(1);
   } finally { removeTreeWithRetry(fixture.root); }
 }, 65_000);
 
 test("explicit scopes and stateful outputs remain caller controlled", () => {
+  const sha = "a".repeat(40);
   for (const args of [["./tests/a.test.ts"], ["--", "./tests/"], ["--path-ignore-patterns", "**/a.test.ts"], ["--shard=1/2"], ["--reporter-outfile", "report.xml"], ["--update-timings"]]) {
     expect(canBatchChangedMain(["--changed=abc", ...args])).toBe(false);
+    const plan = resolveBunTestPlan(["--changed=abc", ...args], sha, {});
+    expect(plan).toHaveLength(1);
+    expect(plan[0]!.args).toEqual(["--isolate", "--parallel=4", `--changed=${sha}`, ...args]);
   }
   expect(canBatchChangedMain(["--changed=abc", "-t", "./tests/"])).toBe(true);
   expect(canBatchChangedMain(["--changed=abc", "-t", "--parallel=2"])).toBe(true);
