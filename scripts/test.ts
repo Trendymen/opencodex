@@ -541,7 +541,9 @@ function withoutParallelOverride(requested: string[]): string[] {
 
 function canUseSerialLanes(requested: string[]): boolean {
   if (hasCliFlag(requested, "--changed")
-    && (requested.includes("--") || hasCliFlag(requested, "--path-ignore-patterns"))) return false;
+    && (requested.includes("--") || hasCliFlag(requested, "--path-ignore-patterns")
+      || ["-c", "--config", "--cwd", "--no-isolate", "--watch", "--hot", "--coverage", "--coverage-dir", "--coverage-reporter",
+        "--only-failures", "--bail", "--rerun-each", "--retry"].some(flag => hasCliFlag(requested, flag)))) return false;
   const indices = new Set(wrapperOptionIndices(requested));
   const withoutChanged = requested.filter((arg, index) => !indices.has(index) || !arg.startsWith("--changed="));
   if (!isFullSuiteRun(withoutChanged)) return false;
@@ -549,9 +551,7 @@ function canUseSerialLanes(requested: string[]): boolean {
 }
 
 export function canBatchChangedMain(requested: string[]): boolean {
-  return hasCliFlag(requested, "--changed") && canUseSerialLanes(requested)
-    && !["-c", "--config", "--cwd", "--no-isolate", "--watch", "--hot", "--coverage", "--coverage-dir", "--coverage-reporter",
-      "--only-failures", "--bail", "--rerun-each", "--retry"].some(flag => hasCliFlag(requested, flag));
+  return hasCliFlag(requested, "--changed") && canUseSerialLanes(requested);
 }
 
 /** Keep sensitive files in fresh processes for full and unfiltered changed runs. */
