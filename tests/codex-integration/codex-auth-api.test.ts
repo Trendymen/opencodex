@@ -1,3 +1,4 @@
+import { makeConfig } from "../helpers/codex-auth-api-config";
 import { registerWarmupRateLimitCases } from "../helpers/codex-warmup-rate-limit";
 import { registerResetCreditConsumeValidationTests } from "../helpers/reset-credit-consume-validation";
 import { registerPoolReauthCauseCases } from "../helpers/pool-reauth-cause";
@@ -111,16 +112,6 @@ let previousFetch: typeof fetch;
 function jwtWithExp(exp: number): string {
   const enc = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
   return enc({ alg: "RS256", typ: "JWT" }) + "." + enc({ exp }) + ".sig";
-}
-
-function makeConfig(overrides: Partial<OcxConfig> = {}): OcxConfig {
-  return {
-    port: 10100,
-    providers: {},
-    defaultProvider: "openai",
-    codexAccounts: [],
-    ...overrides,
-  };
 }
 
 function enableManualImport(): void {

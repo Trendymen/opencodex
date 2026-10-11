@@ -1,3 +1,4 @@
+import type { PassthroughDispatchInputs } from "./passthrough-dispatch-types";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { requestPacingOverloadResponse } from "./pacing-overload";
 import { recordDistributedResponseFailure } from "../../providers/api-key-response-ownership";
@@ -5,15 +6,7 @@ import { createSteeringSettingsNormalizer } from "./native-steering-policy";
 import { nativeResponseControlEligible } from "./native-response-control";
 import { NativeInjectionReplay } from "./native-injection-replay";
 import { NativeSteeringReplay } from "./native-steering-replay";
-import type {
-  ResponsesRequestContext,
-  ResponsesAdmissionState,
-  PassthroughAdmissionState,
-} from "./core-options";
-import type { PreparedResponsesRequest } from "./request-prepare";
-import { CopilotAutoAdapterHandoff, type ResponsesTransport } from "./request-transport";
-import type { ResponsesEffects } from "./response-effects";
-import type { ResponsesSendBudget } from "./request-send-budget";
+import { CopilotAutoAdapterHandoff } from "./request-transport";
 import { transientSendCapFor } from "./request-send-budget";
 import { renewMainQuotaDispatchForAttempt } from "../../codex/main-account-cache";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
@@ -186,79 +179,13 @@ export interface PassthroughAdapterHandoff { kind: "adapter-handoff" }
 
 /** Prepares and recovers one native Responses exchange before client commitment. */
 export async function preparePassthroughExchange(
-  requestContext: Pick<ResponsesRequestContext, "config" | "logCtx" | "options" | "req">,
-  admissionState: ResponsesAdmissionState,
-  nativeHostState: PassthroughAdmissionState,
-  requestState: Pick<
-    PreparedResponsesRequest,
-    | "route"
-    | "toolBridgeMaps"
-    | "parsed"
-    | "adoptParsedRequest"
-    | "translatorBudget"
-    | "responseStateOptions"
-    | "selectedForwardHeaders"
-    | "clientRequestedStream"
-    | "inboundWire"
-    | "clientDeclaredEmptyToolCatalog"
-    | "substituteMainCredential"
-    | "callerAuthHeaders"
-    | "subagentFallbackAccountId"
-    | "parentThreadId"
-    | "threadSpawn"
-  >,
-  transportState: Pick<
-    ResponsesTransport,
-    | "adapter"
-    | "genericFailoverAccountId"
-    | "passiveQuotaWriterGeneration"
-    | "oauthDispatch"
-    | "resolveSelectionAdapter"
-    | "resolveCopilotSelection"
-    | "copilotRefusalResponse"
-    | "oauth401ReplayAttempted"
-    | "activeAdapter"
-    | "runTurnAdapter"
-    | "invalidateSameTargetRequest"
-    | "isOAuth401ReplayProvider"
-    | "sentOAuthSnapshot"
-    | "refreshResolvedOAuthSelection"
-    | "replayOAuthCredentialSnapshot"
-    | "genericFailovers"
-    | "genericFailoverLimit"
-    | "applyFailoverSnapshot"
-    | "noteRoutedAttemptSend"
-    | "selectionIsCurrent"
-    | "requestBindings"
-  >,
-  responseEffects: Pick<
-    ResponsesEffects,
-    | "refreshRequestToolAliases"
-    | "routedMuseToolNameAliases"
-    | "plaintextV2AgentMessageToolNames"
-    | "routedNamespaceToolAliases"
-    | "plaintextV2AgentMessageAliasedToolNames"
-    | "notifyResponseComplete"
-  >,
-  sendBudgetState: Pick<
-    ResponsesSendBudget,
-    | "remainingTransientSendBudget"
-    | "noteTransientSends"
-    | "transientSendReporter"
-    | "recoverySendAllowance"
-    | "recoveryClassFor"
-    | "sendBudgetExhausted"
-    | "claimAmbiguousResend"
-    | "ambiguousResendSpent"
-    | "reserveCredentialHop"
-    | "pendingHopPermit"
-    | "workflowRootId"
-    | "sendsUsed"
-    | "targetSendsUsed"
-    | "initialSendAllowance"
-    | "noteInitialDispatch"
-    | "adapterSendBudget"
-  >,
+  requestContext: PassthroughDispatchInputs["requestContext"],
+  admissionState: PassthroughDispatchInputs["admissionState"],
+  nativeHostState: PassthroughDispatchInputs["nativeHostState"],
+  requestState: PassthroughDispatchInputs["requestState"],
+  transportState: PassthroughDispatchInputs["transportState"],
+  responseEffects: PassthroughDispatchInputs["responseEffects"],
+  sendBudgetState: PassthroughDispatchInputs["sendBudgetState"],
 ) {
   const { config, logCtx, options, req } = requestContext;
   const {
