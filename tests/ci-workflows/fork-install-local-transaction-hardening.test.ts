@@ -16,26 +16,10 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { bootRestoreProbe, transactionalNpmUpdate, verifyInstallTree } from "../../src/update/transactional-install.mjs";
 import { runLocalInstallLifecycle } from "../../scripts/install-local";
+import { packageTree, version } from "../helpers/install-local-package";
 
 const roots: string[] = [];
 const pkgName = "@bitkyc08/opencodex";
-
-function packageTree(packageDir: string, version: string): void {
-  mkdirSync(join(packageDir, "bin"), { recursive: true });
-  mkdirSync(join(packageDir, "node_modules", "zod"), { recursive: true });
-  writeFileSync(join(packageDir, "package.json"), JSON.stringify({
-    name: pkgName,
-    version,
-    bin: { ocx: "bin/ocx.mjs" },
-    dependencies: { zod: "1" },
-  }));
-  writeFileSync(join(packageDir, "bin", "ocx.mjs"), "x".repeat(2_048));
-  writeFileSync(join(packageDir, "node_modules", "zod", "package.json"), JSON.stringify({ name: "zod" }));
-}
-
-function version(packageDir: string): string {
-  return JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")).version;
-}
 
 function setup() {
   const root = mkdtempSync(join(tmpdir(), "ocx-transaction-hardening-"));
