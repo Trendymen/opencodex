@@ -574,9 +574,12 @@ export function resolveBunTestPlan(
   const ignores = SERIAL_FULL_SUITE_FILES.flatMap(file => ["--path-ignore-patterns", `**/${basename(file)}`]);
   mainArgs.splice(rootIndex === -1 ? mainArgs.length : rootIndex, 0, ...ignores);
   const serialRequested = withoutParallelOverride(requested);
+  const serialFiles = hasCliFlag(requested, "--changed")
+    ? SERIAL_FULL_SUITE_FILES.filter(file => existsSync(join(process.cwd(), "tests", file)))
+    : SERIAL_FULL_SUITE_FILES;
   return [
     { label: "parallel suite", args: mainArgs, timeoutMs: mainTimeout },
-    ...SERIAL_FULL_SUITE_FILES.map(file => ({
+    ...serialFiles.map(file => ({
       label: basename(file),
       args: resolveBunTestArgs(["--parallel=1", ...serialRequested, `./tests/${file}`], comparisonCommit),
       timeoutMs: SERIAL_LANE_TIMEOUT_MS[basename(file) as SerialLaneBasename] ?? 3 * 60 * 1000,
