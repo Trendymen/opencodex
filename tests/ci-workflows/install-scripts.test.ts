@@ -67,8 +67,8 @@ describe("install scripts", () => {
     expect(pkg.exports?.["."]?.bun).toBe("./src/index.ts");
     expect(pkg.exports?.["."]?.default).toBe("./bin/package-main.mjs");
     // Bun 1.4.2 fixes the Windows fetch streaming regression reported in #6684.
-    // CI's testRunnerBun stays on 1.4.0: 1.4.2 segfaults while RE-LOADING the bunfig
-    // preload that `--isolate` re-enters once per test file:
+    // Tests use Bun 1.4.3 for isolate mock graph retention and post-GC subprocess spin fixes.
+    // Bun 1.4.2 segfaults while reloading the bunfig preload under `--isolate`:
     // `load_preloads -> JSModuleLoader::loadModule -> JSPromise::status` dereferences a dead
     // promise and the process dies with "Segmentation fault at address 0x10". It is a crash in
     // the interpreter, not a test result, and no test content avoids it.
@@ -90,7 +90,7 @@ describe("install scripts", () => {
     // Rejoin after the upstream runner crash is fixed and a green `lane=all` dispatch
     // proves the unified version; then delete testRunnerBun and the setup action's role.
     expect(pkg.dependencies?.bun).toBe("1.4.2");
-    expect(pkg.testRunnerBun).toBe("1.4.0");
+    expect(pkg.testRunnerBun).toBe("1.4.3");
     expect(pkg.dependencies?.zod).toBe("4.4.3");
     expect(pkg.devDependencies?.typescript).toBe("7.0.2");
     expect(pkg.devDependencies?.["@types/bun"]).toBe("1.4.0");
