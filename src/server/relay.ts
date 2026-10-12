@@ -358,6 +358,7 @@ export type SseTerminalOutputBoundaryOptions = CodexSafetyBufferingFilterOptions
  */
 export function createSseTerminalOutputBoundary(
   options?: SseTerminalOutputBoundaryOptions,
+  maskCredential?: (text: string) => string,
 ): SseTerminalOutputBoundary {
   const dropSafetyBuffering = options?.dropCodexSafetyBuffering === true;
   const maxInputBytes = options?.maxInputBytes;
@@ -428,7 +429,7 @@ export function createSseTerminalOutputBoundary(
         ? cyberPolicyTerminalError(parsed)
         : undefined;
       const policyPayload = policyError ? policyFailurePayload(policyError, parsed) : undefined;
-      const ordinaryFailure = policyError ? null : cleanEofUpstreamErrorFromParsed(parsed);
+      const ordinaryFailure = policyError ? null : cleanEofUpstreamErrorFromParsed(parsed, maskCredential);
       if (ordinaryFailure) {
         cleanEofFailure = ordinaryFailure;
         if (isTerminalRefusalCode(ordinaryFailure.error.code)) {
@@ -553,7 +554,7 @@ export function relaySseWithFailedTail(
 ): ReadableStream<Uint8Array> {
   const reader = body.getReader();
   const encoder = new TextEncoder();
-  const terminalBoundary = createSseTerminalOutputBoundary(opts?.terminalBoundary);
+  const terminalBoundary = createSseTerminalOutputBoundary(opts?.terminalBoundary, opts?.maskCredential);
   let closed = false;
   const relayChunk = (
     controller: ReadableStreamDefaultController<Uint8Array>,
@@ -815,7 +816,7 @@ export type CleanEofUpstreamError = {
   httpStatus: number;
 };
 
-export function cleanEofUpstreamErrorFromParsed(parsed: unknown): CleanEofUpstreamError | null {
+export function cleanEofUpstreamErrorFromParsed(parsed: unknown, maskCredential?: (text: string) => string): CleanEofUpstreamError | null {
   try {
     const root = asJsonRecord(parsed);
     if (!root || root.type !== "error" || cyberPolicyTerminalError(parsed)) return null;
@@ -844,11 +845,12 @@ export function cleanEofUpstreamErrorFromParsed(parsed: unknown): CleanEofUpstre
     if (explicitType === "upstream_error") return null;
     const refusalCode = explicitCode !== undefined && isTerminalRefusalCode(explicitCode) ? explicitCode : undefined;
     const recognized = recognizedUpstreamError({ type: explicitType, code: explicitCode });
+    const diagnostic = redactSecretString(message);
     const error = {
       type: refusalCode === undefined ? (recognized?.type ?? "upstream_error") : "invalid_request_error",
       code: refusalCode === undefined ? (recognized?.code ?? "upstream_server_error")
         : redactSecretString(refusalCode).slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
-      message: redactSecretString(message).slice(0, MAX_TAIL_ERROR_MESSAGE_CHARS),
+      message: (maskCredential?.(diagnostic) ?? diagnostic).slice(0, MAX_TAIL_ERROR_MESSAGE_CHARS),
     };
     return {
       error,

@@ -125,7 +125,7 @@ export function relaySseEagerBounded(
   const terminalEncoder = new TextEncoder();
   const adapterEofFrame = adapterEofIncompleteFrame(terminalEncoder);
   const terminalSentinel = doneFrame(terminalEncoder);
-  const terminalBoundary = createSseTerminalOutputBoundary(opts?.terminalBoundary);
+  const terminalBoundary = createSseTerminalOutputBoundary(opts?.terminalBoundary, opts?.maskCredential);
   const activeRewrite: SseBlockRewrite | undefined = hooks.rewriteBlocks
     ?? (hooks.rewritePayload ? payloadRewriteAsBlockRewrite(hooks.rewritePayload) : undefined);
   const encodeFailedTail = (error: unknown): Uint8Array | null => {
