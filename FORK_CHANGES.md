@@ -1,7 +1,7 @@
 # Trendymen Fork 差异
 
 记录当前代码相对 [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) 已 rebase 基线的剩余能力。
-基线：`v2.81.0`（`19bd34a15354ba8c21fca89598fb18467f9cf9ee`）；包版本见 [package.json](package.json)，发布状态以 Tag 和 Release 为准。
+基线：`v2.83.0`（`33b321853aff76045617824793cc7cbc1d4084e7`）；包版本见 [package.json](package.json)，发布状态以 Tag 和 Release 为准。
 
 官方文档保留上游原文。Fork 结构约束见 [structure/fork-extensions.md](structure/fork-extensions.md)，配置用法见 [Fork reference](docs-site/src/content/docs/reference/fork-extensions.md)，发布补充见 [FORK_MAINTAINERS.md](FORK_MAINTAINERS.md)。
 能力变化时原地更新本文；历史设计、执行步骤、冲突和验证流水从 Git 历史、任务材料及 Release Notes 查阅。
@@ -28,7 +28,7 @@
 | annotation chip 入站说明改写和输出侧规范指令去反引号，保留代码块及其他正文。 | [instructions](src/server/responses/annotation-instructions.ts)、[directive](src/responses/annotation-directive.ts) | [annotation](tests/responses/annotation-directive.test.ts)、[bridge](tests/adapters/bridge-annotation-directive.test.ts) |
 | 客户端请求 summary 时投影第三方 content-channel reasoning，保留原字段、预算、生命周期及客户端实际收到的 continuation 形状。 | [summary rewrite](src/server/responses-reasoning-summary-rewrite.ts)、[adapter delivery](src/server/responses/adapter-delivery.ts) | [lifecycle](tests/responses/responses-reasoning-summary-lifecycle.test.ts)、[adapter projection](tests/responses/adapter-reasoning-summary-projection.test.ts) |
 | 转向原生 GPT 时清理第三方 reasoning 支撑的 opaque token；`opencode-go` 缺省保留 Responses reasoning 正文，显式 `false` 优先。 | [reasoning](src/adapters/openai-responses/reasoning.ts)、[registry](src/providers/registry/entries-core.ts) | [opaque reasoning](tests/providers/fork-deepseek-opaque-reasoning.test.ts)、[Go wire](tests/providers/opencode-go-luna-wire.test.ts) |
-| SSE 正常 EOF / synthetic failure tail 前 flush，保留错误来源、终态及单枚 `[DONE]`；reader error 和 nested-exec barrier 不承诺 flush。 | [relay](src/server/relay.ts)、[eager relay](src/server/relay-eager.ts)、[rewrite](src/server/sse-payload-rewrite.ts) | [flush](tests/responses/fork-sse-block-rewrite-flush.test.ts)、[error fidelity](tests/server/fork-overload-error-eof-fidelity.test.ts) |
+| SSE 正常 EOF / synthetic failure tail 前 flush，保留有界脱敏后的错误消息、真实 Responses terminal 及单枚 `[DONE]`；裸错误采用官方类别和状态归一化，reader error 和 nested-exec barrier 不承诺 flush。 | [relay](src/server/relay.ts)、[eager relay](src/server/relay-eager.ts)、[rewrite](src/server/sse-payload-rewrite.ts) | [flush](tests/responses/fork-sse-block-rewrite-flush.test.ts)、[error fidelity](tests/server/fork-overload-error-eof-fidelity.test.ts)、[官方分类矩阵](tests/responses/sse-failed-tail.test.ts) |
 | strict backend 子任务恢复、原生 transient 5xx 耗尽后的单次重放、父任务加密 `MESSAGE` 超时通知和 `recovery_unreadable` 分类，沿用官方 admission 与发送预算。 | [encrypted payload](src/server/responses/encrypted-payload.ts)、[task recovery](src/server/responses/agent-task-recovery.ts)、[native gate](src/fork/passthrough-agent-task-recovery.ts) | [envelope](tests/server/fork-agent-message-strict-envelope.test.ts)、[backend](tests/server/fork-agent-task-recovery-backend.test.ts)、[egress](tests/server/fork-tool-call-ciphertext-egress.test.ts) |
 | key-auth Responses 缺省补 `max_output_tokens`，模型级优先并按剩余上下文收紧；客户端显式值优先，forward 不注入。 | [passthrough](src/adapters/openai-responses/passthrough.ts) | [output budget](tests/responses/openai-responses-passthrough.test.ts) |
 | 官方 customModels 上补校验、salvage、并发合并、公开投影、tool-mode API/CLI round trip 和 pricingStatus 保留；Provider 注册及 caps 保存失败恢复未发布 live 值。 | [custom models](src/config/custom-models.ts)、[model routes](src/server/management/model-routes.ts)、[caps](src/server/management/provider-context-cap-routes.ts) | [config](tests/config/fork-custom-model-config-schema.test.ts)、[tool mode](tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts)、[rollback](tests/server/provider-context-cap-rollback.test.ts) |
@@ -46,6 +46,7 @@
 
 ## 保留边界
 
+- 裸上游错误采用官方 [recognizedUpstreamError](src/lib/errors.ts) 与 [分类矩阵](tests/responses/sse-failed-tail.test.ts)：未知 vendor type/code 归一化为 `upstream_error` / `upstream_server_error`，message 继续有界脱敏。真实 `response.failed` 的 type/code/message 保真及显式终态胜出仍由 [EOF 回归](tests/server/fork-overload-error-eof-fidelity.test.ts) 覆盖。
 - 已上游化的通用消息转换、Fernet multipart recovery、direct MCP 归一化、custom tool item type 和 Bun pin 分离继续采用官方实现。删除剩余补丁须证明代码与测试等价；旧 allowlist、Spark 专属规则、动态 Fork runner 和滚动 CSS 补丁不恢复。
 - Provider/App 端到端、真实 backend ciphertext、Windows 全局替换与服务恢复仍有验收缺口。合成回归、文档构建和审查通过不替代这些验收。
 - `opencode-go` 的 Provider 级 reasoning 保留尚未逐模型验证；DeepSeek 400 与清空正文的因果关系未做 live 复现。原生 reasoning 合成事件未统一重分配 `sequence_number`。
