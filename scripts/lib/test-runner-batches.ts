@@ -30,23 +30,56 @@ type LaneResult = { exitCode: number; output: string };
 export async function runChangedTestBatches(
   lane: BunTestLane,
   files: readonly string[],
-  execute: (batch: BunTestLane) => Promise<LaneResult>,
+  execute: (batch: BunTestLane, cancellation: AbortSignal) => Promise<LaneResult>,
+  options: { concurrency?: 1 | 2; onResult?: (result: LaneResult, index: number) => void } = {},
 ): Promise<LaneResult> {
   const deadlineAt = lane.deadlineAt ?? Date.now() + lane.timeoutMs;
   const count = Math.max(1, Math.ceil(files.length / BATCH_SIZE));
-  let exitCode = 0;
-  let output = "";
-  for (let index = 0; index < count; index++) {
-    if (Date.now() >= deadlineAt) return { exitCode: 124, output };
-    const result = await execute({
-      ...lane, deadlineAt,
-      label: `parallel suite batch ${index + 1}/${count}`,
-      args: [...lane.args, ...files.slice(index * BATCH_SIZE, (index + 1) * BATCH_SIZE)],
-    });
-    output += result.output;
-    if ([124, 130, 143].includes(result.exitCode)) return { exitCode: result.exitCode, output };
-    if (Date.now() >= deadlineAt) return { exitCode: 124, output };
-    if (exitCode === 0 && result.exitCode !== 0) exitCode = result.exitCode;
+  const cancellation = new AbortController();
+  const results: LaneResult[] = [];
+  let next = 0;
+  let reported = 0;
+  let failure: { error: unknown } | undefined;
+  const stop = (code: number) => { if (!cancellation.signal.aborted) cancellation.abort(code); };
+  const onInterrupt = () => stop(130);
+  const onTerminate = () => stop(143);
+  process.once("SIGINT", onInterrupt);
+  process.once("SIGTERM", onTerminate);
+  const timer = setTimeout(() => stop(124), Math.max(0, deadlineAt - Date.now()));
+  const worker = async () => {
+    while (!cancellation.signal.aborted && next < count) {
+      if (Date.now() >= deadlineAt) { stop(124); break; }
+      const index = next++;
+      try {
+        const result = await execute({
+          ...lane, deadlineAt,
+          label: `parallel suite batch ${index + 1}/${count}`,
+          args: [...lane.args, ...files.slice(index * BATCH_SIZE, (index + 1) * BATCH_SIZE)],
+        }, cancellation.signal);
+        results[index] = result;
+        while (results[reported] !== undefined) {
+          const ready = reported++;
+          options.onResult?.(results[ready]!, ready);
+        }
+        if ([124, 130, 143].includes(result.exitCode)) stop(result.exitCode);
+        if (Date.now() >= deadlineAt) stop(124);
+      } catch (error) {
+        failure ??= { error };
+        stop(143);
+      }
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: options.concurrency === 2 ? 2 : 1 }, worker));
+    results.forEach((result, index) => { if (index >= reported) options.onResult?.(result, index); });
+    if (failure) throw failure.error;
+    return {
+      exitCode: cancellation.signal.aborted ? cancellation.signal.reason : results.find(result => result.exitCode !== 0)?.exitCode ?? 0,
+      output: results.map(result => result.output).join(""),
+    };
+  } finally {
+    clearTimeout(timer);
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onTerminate);
   }
-  return { exitCode, output };
 }
