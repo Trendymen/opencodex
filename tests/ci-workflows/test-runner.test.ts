@@ -1,3 +1,4 @@
+import * as nodePin from "../../scripts/lib/test-runner-node";
 import { beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
@@ -123,6 +124,105 @@ function initChangedRunFixture(): { cwd: string; base: string } {
   const base = commitFixture(cwd, "base.txt", "base\n", "base");
   return { cwd, base };
 }
+
+const desktopLifecycleFiles = [
+  "claude-integration/claude-desktop-picker-routes.test.ts",
+  "claude-integration/claude-desktop-picker-profile.test.ts",
+  "claude-integration/claude-desktop-first-party.test.ts",
+  "claude-integration/claude-desktop-first-party-guards.test.ts",
+];
+
+test("Node pin failure prevents the child and still removes isolated HOME", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ocx-pin-failure-"));
+  const marker = join(root, "ran");
+  const fixture = join(root, "child.test.ts");
+  writeFileSync(fixture, `import {test} from "bun:test"; import {writeFileSync} from "node:fs"; test("child",()=>writeFileSync(${JSON.stringify(marker)},"ran"));`);
+  let home = "";
+  const pin = spyOn(nodePin, "pinTestNodePath").mockImplementation(async env => { home = env.HOME!; throw new Error("fixture pin failure"); });
+  try {
+    await expect(runTestLane({ label: "pin failure", args: [fixture], timeoutMs: 2_000 }, "pin-failure", undefined, true, undefined, process.execPath)).rejects.toThrow("fixture pin failure");
+    expect(home).not.toBe("");
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(home)).toBe(false);
+  } finally { pin.mockRestore(); removeTreeWithRetry(root); }
+});
+
+test.each([["SIGINT", false], ["SIGTERM", false], ["SIGINT", true], ["SIGTERM", true]] as const)("external %s during Node pin prevents the child and waits for HOME cleanup, pin rejects=%s", async (signal, rejects) => {
+  const root = mkdtempSync(join(tmpdir(), "ocx-pin-signal-"));
+  const marker = join(root, "ran");
+  const fixture = join(root, "child.test.ts");
+  writeFileSync(fixture, `import {test} from "bun:test"; import {writeFileSync} from "node:fs"; test("child",()=>writeFileSync(${JSON.stringify(marker)},"ran"));`);
+  let home = "";
+  const pin = spyOn(nodePin, "pinTestNodePath").mockImplementation(async env => {
+    home = env.HOME!;
+    process.emit(signal);
+    await Bun.sleep(70);
+    expect(existsSync(home)).toBe(true);
+    if (rejects) throw new Error("cancelled pin fixture");
+  });
+  try {
+    const result = await runTestLane({ label: "signal pin", args: [fixture], timeoutMs: 2_000 }, "signal-pin", undefined, true, undefined, process.execPath);
+    expect(result.exitCode).toBe(signal === "SIGINT" ? 130 : 143);
+    expect(home).not.toBe("");
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(home)).toBe(false);
+  } finally { pin.mockRestore(); removeTreeWithRetry(root); }
+});
+
+test.each(["-c", "--config", "--cwd", "--no-isolate", "--watch", "--hot", "--coverage", "--coverage-dir", "--coverage-reporter", "--only-failures", "--bail", "--rerun-each", "--retry"])("state option %s stays in one lane for full and changed while a filter literal does not", flag => {
+  const values: Record<string, string> = { "-c": "custom.toml", "--config": "custom.toml", "--cwd": "custom-root", "--coverage-dir": "coverage", "--coverage-reporter": "lcov", "--rerun-each": "2", "--retry": "2" };
+  const options = values[flag] === undefined ? [flag] : [flag, values[flag]!];
+  for (const prefix of [[], ["--changed=fixture"]]) {
+    const requested = [...prefix, ...options];
+    expect(resolveBunTestPlan(requested, "fixed-sha", {})).toEqual([{ label: "suite", args: resolveBunTestArgs(requested, "fixed-sha"), timeoutMs: 900_000 }]);
+    expect(resolveBunTestPlan([...prefix, "-t", flag], "fixed-sha", {})).toHaveLength(26);
+  }
+});
+
+test.each([false, true])("changed wrapper keeps one main HOME and serializes official and SQLite writers, no-isolate=%s", noIsolate => {
+  const { cwd } = initChangedRunFixture();
+  const records = join(cwd, "executions.jsonl");
+  const held = join(cwd, "sqlite-held");
+  mkdirSync(join(cwd, "src"));
+  mkdirSync(join(cwd, "tests", "claude-integration"), { recursive: true });
+  writeFileSync(join(cwd, "bunfig.toml"), '[test]\nroot="tests"\npreload=[]\n');
+  commitFixture(cwd, "src/shared.ts", 'import {randomUUID} from "node:crypto"; export const value=1; export const token=randomUUID();\n', "shared");
+  for (let index = 0; index < 14; index++) {
+    commitFixture(cwd, `tests/ordinary-${index}.test.ts`, `import {test,expect} from "bun:test"; import {appendFileSync} from "node:fs"; import {value,token} from "../src/shared";
+test("ordinary",()=>{expect(value).toBe(2);appendFileSync(${JSON.stringify(records)},JSON.stringify({id:${index},home:process.env.HOME,token})+"\\n");});`, "ordinary");
+  }
+  const sensitiveFiles = [...desktopLifecycleFiles, "service/service-claim.test.ts", "codex-integration/native-codex-toggle.test.ts"];
+  for (const [index, file] of sensitiveFiles.entries()) {
+    mkdirSync(dirname(join(cwd, "tests", file)), { recursive: true });
+    commitFixture(cwd, "tests/" + file, index === 3
+      ? 'import {test} from "bun:test"; test("unselected",()=>{throw new Error("unrelated SQLite writer executed");});'
+      : `import {test,expect} from "bun:test"; import {appendFileSync,mkdirSync,rmSync} from "node:fs"; import {value,token} from "../../src/shared";
+test("SQLite writer",async()=>{expect(value).toBe(2);mkdirSync(${JSON.stringify(held)});const start=Date.now();try{await Bun.sleep(20);appendFileSync(${JSON.stringify(records)},JSON.stringify({id:${JSON.stringify(file)},home:process.env.HOME,token,start,end:Date.now()})+"\\n");}finally{rmSync(${JSON.stringify(held)},{recursive:true});}});`, "sqlite");
+  }
+  const comparison = runGit(cwd, "rev-parse", "HEAD");
+  writeFileSync(join(cwd, "src/shared.ts"), readFileSync(join(cwd, "src/shared.ts"), "utf8").replace("value=1", "value=2"));
+  try {
+    const result = Bun.spawnSync([process.execPath, repoPath("scripts", "test.ts"), "--changed=" + comparison, ...(noIsolate ? ["--parallel=1", "--no-isolate"] : [])], {
+      cwd, env: { ...process.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 30_000,
+    });
+    expect(result.exitCode).toBe(0);
+    const rows = readFileSync(records, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(rows.filter(row => typeof row.id === "number").map(row => row.id).sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    const mainHomes = new Set<string>(rows.filter(row => typeof row.id === "number").map(row => row.home));
+    expect(mainHomes.size).toBe(1);
+    const desktop = rows.filter(row => typeof row.id === "string").sort((a, b) => a.start - b.start);
+    expect(desktop.map(row => row.id).sort()).toEqual(sensitiveFiles.filter((_, index) => index !== 3).sort());
+    for (const [index, row] of desktop.entries()) {
+      if (index) expect(row.start).toBeGreaterThanOrEqual(desktop[index - 1].end);
+      if (!noIsolate) expect(mainHomes.has(row.home)).toBe(false);
+    }
+    expect(new Set(rows.map(row => row.home)).size).toBe(noIsolate ? 1 : 6);
+    if (noIsolate) expect(new Set(rows.map(row => row.token)).size).toBe(1);
+    for (const home of new Set<string>(rows.map(row => row.home))) expect(existsSync(home)).toBe(false);
+    const output = result.stdout.toString() + result.stderr.toString();
+    expect(changedSelectionFailure({ comparisonRef: "fixture", comparisonCommit: comparison, changedFiles: ["src/shared.ts"] }, output)).toBeNull();
+  } finally { removeTreeWithRetry(cwd); }
+}, { timeout: 40_000 });
 
 describe("test runner watchdog diagnostics", () => {
   test.skipIf(process.platform === "win32").each(["SIGINT", "SIGTERM"] as const)(
@@ -811,54 +911,46 @@ describe("bun test argv", () => {
     expect(resolveBunTestArgs([])).toEqual(["--isolate", "--parallel=4", "./tests/"]);
   });
 
-  test("the default full suite quarantines load-sensitive files into one-worker lanes", () => {
-    expect(SERIAL_FULL_SUITE_FILES).toEqual(expect.arrayContaining([
-      "cli/cli-help-navigation.test.ts",
-      "cli/cli-help-recovery.test.ts",
-      "providers/cursor/cursor-effort-table.test.ts",
-      "providers/cursor/cursor-effort-rows.test.ts",
-      "providers/cursor/cursor-integration-status.test.ts",
-      "providers/cursor/cursor-local-models-schema.test.ts",
-      "providers/provider-antigravity-wire-snapshot.test.ts",
-      "providers/xai/grok-47-fast-model-wire.test.ts",
-      "server/server-management-auth.test.ts",
-      "storage/storage-policy-job-responsive.test.ts",
-      "claude-integration/claude-picker-runtime.test.ts",
-      "claude-integration/claude-picker-startup.test.ts",
-      "cli/cli-config-default-show.test.ts",
-      "lab/lab-live-probe.test.ts",
-      "lab/lab-live-receipt-integrity.test.ts",
-      "web-search/web-search-pacing-deadline.test.ts",
-    ]));
+  test("the full suite keeps official isolation and desktop SQLite writers outside the main pool", () => {
+    const files = [
+      "codex-integration/codex-shim.test.ts",
+      "providers/cursor/cursor-native-exec-shell.test.ts",
+      "codex-integration/issue-452-empty-503.test.ts",
+      "adapters/openai/openai-provider-option-e2e.test.ts",
+      "ci-workflows/ci-gui-typecheck-gate.test.ts",
+      "ci-workflows/release-helper.test.ts",
+      "ci-workflows/structure-ssot.test.ts",
+      "codex-integration/codex-inject-write-lock.test.ts",
+      "routing/subagent-roster-retention.test.ts",
+      "codex-integration/active-registry-admission.test.ts",
+      "update/update-stop-first.test.ts",
+      "server/server-live.test.ts",
+      "service/service-ownership-state.test.ts",
+      "service/service-sqlite-home.test.ts",
+      "service/service.test.ts",
+      "service/service-claim.test.ts",
+      "service/service-wsl-home-ownership.test.ts",
+      "service/launchd-repair.test.ts",
+      "cli/cli-update-restart-home.test.ts",
+      "codex-integration/native-codex-toggle.test.ts",
+      "codex-integration/native-grok-toggle.test.ts",
+      "claude-integration/claude-desktop-picker-routes.test.ts",
+      "claude-integration/claude-desktop-picker-profile.test.ts",
+      "claude-integration/claude-desktop-first-party.test.ts",
+      "claude-integration/claude-desktop-first-party-guards.test.ts",
+    ];
     const plan = resolveBunTestPlan([]);
-    expect(plan).toHaveLength(SERIAL_FULL_SUITE_FILES.length + 1);
-    expect(plan[0]?.label).toBe("parallel suite");
-    expect(plan[0]?.args).toContain("--parallel=4");
-    expect(plan[0]?.args).toContain("./tests/");
-    const mainArgs = plan[0]!.args;
-    const referencePath = "./tests/cli/cli-help.test.ts";
-    const referenceLane = plan.slice(1).find(lane => lane.args.includes(referencePath));
-    expect(referenceLane).toBeDefined();
-    for (const file of SERIAL_FULL_SUITE_FILES) {
-      // The ignore glob and the lane label use the basename; only the lane argv carries the
-      // path relative to tests/, so an entry can move into a domain directory.
-      const ignoreIndex = mainArgs.indexOf(`**/${basename(file)}`);
-      expect(mainArgs[ignoreIndex - 1]).toBe("--path-ignore-patterns");
-      const path = `./tests/${file}`;
-      const lanes = plan.slice(1).filter(lane => lane.args.includes(path));
-      expect(lanes).toHaveLength(1);
-      expect(lanes[0]!.label).toBe(basename(file));
-      expect(lanes[0]!.args).toEqual([
-        "--isolate",
-        "--parallel=1",
-        path,
-      ]);
-      expect(lanes[0]!.args.slice(0, -1)).toEqual(referenceLane!.args.slice(0, -1));
-      expect(lanes[0]!.timeoutMs).toBe(basename(file) === "release-helper.test.ts"
-        ? 5 * 60 * 1000 : referenceLane!.timeoutMs);
+    expect(plan[0]!.args.slice(0, 2)).toEqual(["--isolate", "--parallel=4"]);
+    expect(plan[0]!.args.at(-1)).toBe("./tests/");
+    expect(plan[0]!.timeoutMs).toBe(900_000);
+    expect(plan.slice(1).map(lane => lane.args.at(-1))).toEqual(files.map(file => "./tests/" + file));
+    for (const file of files) {
+      const index = plan[0]!.args.indexOf("**/" + basename(file));
+      expect(plan[0]!.args[index - 1]).toBe("--path-ignore-patterns");
+      const lane = plan.find(entry => entry.label === basename(file))!;
+      expect(lane.args).toEqual(["--isolate", "--parallel=1", "./tests/" + file]);
+      expect(lane.timeoutMs).toBe(basename(file) === "release-helper.test.ts" ? 300_000 : 180_000);
     }
-    expect(plan.find(lane => lane.label === "release-helper.test.ts")?.timeoutMs).toBe(5 * 60 * 1000);
-    expect(plan.find(lane => lane.label === "codex-shim.test.ts")?.timeoutMs).toBe(3 * 60 * 1000);
   });
 
   test("the default full suite schedules each isolated test path once", () => {
@@ -879,25 +971,7 @@ describe("bun test argv", () => {
     }
   });
 
-  test("the full suite runs CLI help paths once in a fresh process", () => {
-    const plan = resolveBunTestPlan([]);
-    const mainArgs = plan[0]!.args;
-    const helpPath = "./tests/cli/cli-help-paths.test.ts";
-    const existingHelpPath = "./tests/cli/cli-help.test.ts";
-
-    const ignoreIndex = mainArgs.indexOf("**/cli-help-paths.test.ts");
-    expect(mainArgs[ignoreIndex - 1]).toBe("--path-ignore-patterns");
-    const helpLanes = plan.slice(1).filter(lane => lane.args.includes(helpPath));
-    const existingHelpLane = plan.slice(1).find(lane => lane.args.includes(existingHelpPath));
-    expect(helpLanes).toHaveLength(1);
-    expect(existingHelpLane).toBeDefined();
-    expect(helpLanes[0]!.args.map(arg => arg === helpPath ? "<file>" : arg)).toEqual(
-      existingHelpLane!.args.map(arg => arg === existingHelpPath ? "<file>" : arg),
-    );
-    expect(helpLanes[0]!.timeoutMs).toBe(existingHelpLane!.timeoutMs);
-  });
-
-test("a control budget is bounded and changes only the main lane", () => {
+  test("a control budget is bounded and changes only the main lane", () => {
     const baseline = resolveBunTestPlan([], undefined, {});
     expect(baseline[0]!.timeoutMs).toBe(900_000);
     const control = resolveBunTestPlan([], undefined, { OCX_TEST_MAIN_TIMEOUT_MS: "3600000" });
@@ -916,23 +990,13 @@ test("a control budget is bounded and changes only the main lane", () => {
     ]);
   });
 
-  test("the default full suite gives memory watchdog a fresh one-worker process", () => {
-    const plan = resolveBunTestPlan([]);
-    expect(plan[0]?.args).toContain("**/memory-watchdog.test.ts");
-    expect(plan.find(lane => lane.label === "memory-watchdog.test.ts")?.args).toEqual([
-      "--isolate",
-      "--parallel=1",
-      "./tests/server/memory-watchdog.test.ts",
-    ]);
-  });
-
   test("serial lanes override caller parallelism without changing the main lane", () => {
-    const plan = resolveBunTestPlan(["--parallel=2", "--only-failures"]);
+    const plan = resolveBunTestPlan(["--parallel=2", "--dots"]);
     expect(plan[0]?.args).toContain("--parallel=2");
     for (const lane of plan.slice(1)) {
       expect(lane.args).toContain("--parallel=1");
       expect(lane.args).not.toContain("--parallel=2");
-      expect(lane.args).toContain("--only-failures");
+      expect(lane.args).toContain("--dots");
     }
   });
 
@@ -1004,8 +1068,9 @@ test("a control budget is bounded and changes only the main lane", () => {
     expect(resolveBunTestArgs(["--changed=dev"], mergeBase))
       .toEqual(["--isolate", "--parallel=4", "--changed=" + mergeBase]);
     const plan = resolveBunTestPlan(["--changed=dev"], mergeBase);
-    expect(plan).toHaveLength(SERIAL_FULL_SUITE_FILES.length + 1);
+    expect(plan).toHaveLength(26);
     expect(plan[0]!.args).toContain("--parallel=4");
+    expect(plan[0]!.timeoutMs).toBe(900_000);
     for (const file of SERIAL_FULL_SUITE_FILES) {
       expect(plan[0]!.args).toContain(`**/${basename(file)}`);
       expect(plan.find(lane => lane.label === basename(file))!.args).toEqual([
@@ -1036,7 +1101,7 @@ test("a control budget is bounded and changes only the main lane", () => {
     }
   });
 
-  test.each(["--parallel=2", "./tests/"])("changed lanes preserve the literal option value %s", value => {
+  test.each(["--parallel=2", "./tests/", "--no-isolate"])("changed lanes preserve the literal option value %s", value => {
     const requested = ["--changed=HEAD", "-t", value];
     const plan = resolveBunTestPlan(requested, "fixed-sha");
     expect(plan[0]!.args[plan[0]!.args.indexOf("-t") + 1]).toBe(value);
@@ -1050,19 +1115,22 @@ test("a control budget is bounded and changes only the main lane", () => {
     const { cwd, base } = initChangedRunFixture();
     const isolated = createIsolatedTestEnvironment();
     try {
-      mkdirSync(join(cwd, "tests", "service"), { recursive: true });
-      for (const name of ["service-claim", "service-sqlite-home"]) {
-        commitFixture(cwd, `tests/service/${name}.test.ts`,
+      mkdirSync(join(cwd, "tests", "claude-integration"), { recursive: true });
+      for (const name of ["claude-desktop-picker-routes", "claude-desktop-first-party-guards"]) {
+        commitFixture(cwd, `tests/claude-integration/${name}.test.ts`,
           `import { test } from "bun:test"; test("${name}", () => console.log("EXECUTED_${name}"));\n`, name);
       }
       commitFixture(cwd, "tests/ordinary.test.ts",
         'import { test } from "bun:test"; test("ordinary", () => console.log("UNRELATED_ORDINARY"));\n', "ordinary");
       const comparisonCommit = runGit(cwd, "rev-parse", "HEAD");
-      writeFileSync(join(cwd, "tests/service/service-claim.test.ts"),
-        readFileSync(join(cwd, "tests/service/service-claim.test.ts"), "utf8") + "// changed\n");
-      const plan = resolveBunTestPlan(["--changed=" + base], comparisonCommit);
-      expect(plan).toHaveLength(SERIAL_FULL_SUITE_FILES.length + 1);
-      const lanes = [plan[0]!, ...plan.filter(lane => ["service-claim.test.ts", "service-sqlite-home.test.ts"].includes(lane.label))];
+      writeFileSync(join(cwd, "tests/claude-integration/claude-desktop-picker-routes.test.ts"),
+        readFileSync(join(cwd, "tests/claude-integration/claude-desktop-picker-routes.test.ts"), "utf8") + "// changed\n");
+      const driver = `import {resolveBunTestPlan} from ${JSON.stringify(repoPath("scripts", "test.ts"))}; console.log(JSON.stringify(resolveBunTestPlan([${JSON.stringify("--changed=" + base)}],${JSON.stringify(comparisonCommit)})));`;
+      const planned = Bun.spawnSync([process.execPath, "-e", driver], { cwd, env: isolated.env, stdout: "pipe", stderr: "pipe" });
+      expect(planned.exitCode).toBe(0);
+      const plan = JSON.parse(planned.stdout.toString()) as ReturnType<typeof resolveBunTestPlan>;
+      expect(plan.map(lane => lane.label)).toEqual(["parallel suite", "claude-desktop-picker-routes.test.ts", "claude-desktop-first-party-guards.test.ts"]);
+      const lanes = plan;
       let output = "";
       for (const lane of lanes) {
         const result = Bun.spawnSync([process.execPath, "test", ...lane.args], {
@@ -1070,13 +1138,13 @@ test("a control budget is bounded and changes only the main lane", () => {
         });
         expect(result.exitCode).toBe(0);
         const text = result.stdout.toString() + result.stderr.toString();
-        if (lane === plan[0]) expect(text).not.toContain("EXECUTED_service-claim");
+        if (lane === plan[0]) expect(text).not.toContain("EXECUTED_claude-desktop-picker-routes");
         output += text;
       }
-      expect(output.match(/^EXECUTED_service-claim$/gm)).toHaveLength(1);
-      expect(output).not.toContain("EXECUTED_service-sqlite-home");
+      expect(output.match(/^EXECUTED_claude-desktop-picker-routes$/gm)).toHaveLength(1);
+      expect(output).not.toContain("EXECUTED_claude-desktop-first-party-guards");
       expect(output).not.toContain("UNRELATED_ORDINARY");
-      expect(changedSelectionFailure({ comparisonRef: "fixture", comparisonCommit, changedFiles: ["tests/service/service-claim.test.ts"] }, output)).toBeNull();
+      expect(changedSelectionFailure({ comparisonRef: "fixture", comparisonCommit, changedFiles: ["tests/claude-integration/claude-desktop-picker-routes.test.ts"] }, output)).toBeNull();
     } finally {
       isolated.cleanup();
       removeTreeWithRetry(cwd);
@@ -1184,7 +1252,7 @@ test("a control budget is bounded and changes only the main lane", () => {
 
   test("changed coverage accepts a later nonempty lane and rejects all empty lanes", () => {
     const preflight = { comparisonRef: "fixture", comparisonCommit: "base-sha", changedFiles: ["src/router.ts"] };
-    expect(changedSelectionFailure(preflight, "Ran 0 tests across 0 files.\nRan 9 tests across 1 file.")).toBeNull();
+    expect(changedSelectionFailure(preflight, "Ran 0 tests across 0 files.\nRan 9 tests across 1 file.\nRan 0 tests across 0 files.")).toBeNull();
     expect(changedSelectionFailure(preflight, "Ran 0 tests across 0 files.\nRan 0 tests across 0 files.")).toContain("selected 0 tests");
     expect(changedSelectionFailure(preflight, "lane without summary\nlane without summary")).toContain("recognizable selection summary");
   });
