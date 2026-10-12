@@ -153,6 +153,7 @@ export async function startPickerListener(options: PickerListenerOptions): Promi
   const cap = options.maxEncodedBytes ?? BOOTSTRAP_MAX_ENCODED_BYTES;
   const maxActiveUpstreams = options.maxActiveUpstreams ?? PICKER_MAX_ACTIVE_UPSTREAMS;
   let activeUpstreams = 0;
+  const stopSplicedUploads = new Map<number, () => Socket>();
   const upgrades = new Set<Duplex>();
   const spliced = new Set<Socket>();
   const h2Sockets = new Set<Duplex>();
@@ -207,14 +208,49 @@ export async function startPickerListener(options: PickerListenerOptions): Promi
     };
     // Refusals answer with an empty response and a fixed log line that carries no request data.
     const refuse = (status: 400 | 503) => {
-      // Do not leave a refused, still-uploading stream behind after delivering its empty reply.
-      if (uploading && !req.complete) {
-        req.once("error", () => res.destroy());
-        responseWritable.once("finish", () => closeInput(true));
+      const unfinished = uploading && !req.complete;
+      const mustClose = !h2 && unfinished;
+      const reply = () => {
+        if (unfinished) {
+          req.once("error", () => res.destroy());
+          responseWritable.once("finish", () => closeInput(true));
+        }
+        res.writeHead(status, { "Content-Length": "0", ...(mustClose ? { Connection: "close" } : {}) });
+        res.end();
+        options.log?.(`picker request refused ${status}`);
+      };
+      const port = req.socket.remotePort;
+      const stopUpload = mustClose && port !== undefined ? stopSplicedUploads.get(port) : undefined;
+      if (!stopUpload) { reply(); return; }
+      const inner = stopUpload();
+      const socket = req.socket;
+      let settled = false;
+      const finish = (error?: Error | null) => {
+        if (settled) return;
+        settled = true;
+        inner.off("error", finish);
+        inner.off("close", cancel);
+        socket.off("close", cancel);
+        req.off("error", finish);
+        req.off("aborted", cancel);
+        res.off("close", cancel);
+        if (error || closing || inner.destroyed || socket.destroyed || res.destroyed) res.destroy();
+        else reply();
+      };
+      const cancel = () => finish(new Error("picker refusal cancelled"));
+      if (closing || inner.destroyed || inner.writableEnded || socket.destroyed || res.destroyed) {
+        cancel(); return;
       }
-      res.writeHead(status, { "Content-Length": "0", ...(!h2 && uploading && !req.complete ? { Connection: "close" } : {}) });
-      res.end();
-      options.log?.(`picker request refused ${status}`);
+      inner.once("error", finish);
+      inner.once("close", cancel);
+      socket.once("close", cancel);
+      req.once("error", finish);
+      req.once("aborted", cancel);
+      res.once("close", cancel);
+      req.resume();
+      // Preserve queued upload writes before the reply closes TLS; body completion is not required.
+      try { inner.write(Buffer.alloc(0), finish); }
+      catch (error) { finish(error instanceof Error ? error : new Error("picker upload bridge write failed")); }
     };
     if (h2 && !isRelayableH2Target(req.method, req.url)) { refuse(400); return; }
     if (activeUpstreams >= maxActiveUpstreams) { refuse(503); return; }
@@ -451,6 +487,14 @@ export async function startPickerListener(options: PickerListenerOptions): Promi
       inner.once("close", () => { spliced.delete(inner); if (!client.writableEnded) client.destroy(); });
       client.once("close", () => { if (!inner.writableEnded) inner.destroy(); });
       inner.once("connect", () => {
+        const port = inner.localPort;
+        if (!offersH2 && port !== undefined) {
+          const stopUpload = () => { client.unpipe(inner); client.resume(); return inner; };
+          stopSplicedUploads.set(port, stopUpload);
+          inner.once("close", () => {
+            if (stopSplicedUploads.get(port) === stopUpload) stopSplicedUploads.delete(port);
+          });
+        }
         inner.setNoDelay(true);
         client.setNoDelay(true);
         // Every byte read during the peek (ClientHello and anything coalesced after it), once.
@@ -472,6 +516,7 @@ export async function startPickerListener(options: PickerListenerOptions): Promi
   const shutdown = () => {
     stopped ??= (async () => {
       closing = true;
+      stopSplicedUploads.clear();
       for (const socket of upgrades) socket.destroy();
       for (const socket of spliced) socket.destroy();
       for (const session of sessions) session.destroy();

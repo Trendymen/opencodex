@@ -15,6 +15,7 @@
 - `agentMessageFormat`、GLM/Kimi lowering 和 `encrypted` 注解清理在出站副本上运行，保持原 input、工具授权和重放状态。可信直接 key-auth relay 的注解例外不扩大到 combo。
 - nested exec 和 `spawn_agent.fork_turns` 修复须由当前工具声明授权，保留 preview、完成项和 continuation 的区别。`fork_turns` 只解包一层合法字段值，重复键/未知 schema 跳过。
 - tool-catalog 提示只使用当前可见工具；代理不合成进度、不执行或自动重试补丁，空成功输出的提示不能覆盖失败输出。
+- `src/claude/intercept/picker-listener.ts` 在 HTTP/1.1 未完成上传的 400/503 响应前，按内部 H1 loopback 连接端口停止对应上传，处理已有写队列后发送响应；连接关闭、出错和 shutdown 取消等待，关闭时清除本连接关联。无 body、已完成上传和 HTTP/2 不执行该步骤。
 
 ## 响应与恢复边界
 
