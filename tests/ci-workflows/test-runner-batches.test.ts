@@ -7,6 +7,8 @@ import { canBatchChangedMain, changedSelectionFailure, resolveBunTestPlan, runTe
 import { discoverTestBatchFiles, runChangedTestBatches } from "../../scripts/lib/test-runner-batches";
 import * as nodePin from "../../scripts/lib/test-runner-node";
 import * as diagnostics from "../../scripts/lib/test-runner-diagnostics";
+import * as runner from "../../scripts/test";
+import * as testTemp from "../../scripts/test-temp";
 import { repoPath } from "../helpers/repo-root";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
@@ -204,6 +206,290 @@ test("explicit scopes and stateful outputs remain caller controlled", () => {
 
 const batchFiles = Array.from({ length: 25 }, (_, index) => `./tests/file-${index}.test.ts`);
 const mainLane = (): BunTestLane => ({ label: "parallel suite", args: ["--isolate", "--parallel=7", "--changed=" + "a".repeat(40), "--path-ignore-patterns", "**/serial.test.ts"], timeoutMs: 5_000 });
+
+test("shared deadline observes an active real child before sending TERM", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ocx-deadline-order-"));
+  const fixture = join(root, "active.test.ts");
+  const marker = join(root, "active");
+  writeFileSync(fixture, `import {test} from "bun:test";import {writeFileSync} from "node:fs";test("active",async()=>{writeFileSync(${JSON.stringify(marker)},"active");await new Promise(()=>{});},10000);`);
+  const events: string[] = [];
+  const originalSpawn = Bun.spawn;
+  let childKill: ReturnType<typeof spyOn> | undefined;
+  const spawn = spyOn(Bun, "spawn").mockImplementation((command, options) => {
+    const child = originalSpawn(command, options);
+    if (Array.isArray(command) && command[1] === "test") {
+      const kill = child.kill.bind(child);
+      childKill = spyOn(child, "kill").mockImplementation(signal => { events.push(`kill:${signal}`); return kill(signal); });
+    }
+    return child;
+  });
+  let activeAtDiagnostic = false;
+  const diagnose = spyOn(diagnostics, "saveTestLaneDiagnostics").mockImplementation(pid => {
+    events.push("diagnostic");
+    try { process.kill(pid, 0); activeAtDiagnostic = existsSync(marker); } catch { activeAtDiagnostic = false; }
+    return root;
+  });
+  try {
+    const result = await runChangedTestBatches({ ...mainLane(), deadlineAt: Date.now() + 600 }, batchFiles.slice(0, 1),
+      (lane, cancellation) => runTestLane({ ...lane, args: [fixture] }, "diagnostic-order", undefined, true,
+        { stdout: () => {}, stderr: () => {} }, process.execPath, cancellation));
+    expect(result.exitCode).toBe(124);
+    expect(activeAtDiagnostic).toBe(true);
+    expect(events[0]).toBe("diagnostic");
+    expect(events[1]).toBe("kill:SIGTERM");
+  } finally { childKill?.mockRestore(); spawn.mockRestore(); diagnose.mockRestore(); removeTreeWithRetry(root); }
+});
+
+test("later batch quarantine diagnostics stay labelled and buffered until the earlier batch completes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ocx-cleanup-report-"));
+  const fixtures = [join(root, "slow.test.ts"), join(root, "fast.test.ts")];
+  const marker = join(root, "slow-started");
+  writeFileSync(fixtures[0]!, `import {test} from "bun:test";import {writeFileSync} from "node:fs";test("child",async()=>{writeFileSync(${JSON.stringify(marker)},"started");await Bun.sleep(200);});`);
+  writeFileSync(fixtures[1]!, `import {test} from "bun:test";import {existsSync} from "node:fs";test("child",async()=>{const until=Date.now()+2000;while(!existsSync(${JSON.stringify(marker)})&&Date.now()<until)await Bun.sleep(10);});`);
+  const originalSpawn = Bun.spawn;
+  const originalRemove = testTemp.removeTestTempTree;
+  const homes: string[] = [];
+  const logs: string[][] = [[], []];
+  const printed: string[] = [];
+  let calls = 0;
+  let laterCleanedFirst = false;
+  const spawn = spyOn(Bun, "spawn").mockImplementation((command, options) => {
+    if (Array.isArray(command) && command[1] === "test") homes[fixtures.findIndex(path => command.includes(path))] = options!.env!.HOME!;
+    return originalSpawn(command, options);
+  });
+  const remove = spyOn(testTemp, "removeTestTempTree").mockImplementation((path, options) => {
+    if (path === homes[1]) {
+      laterCleanedFirst = existsSync(homes[0]!);
+      mkdirSync(join(path, ".trash-locked"));
+      throw new Error("fixture quarantine handle");
+    }
+    return originalRemove(path, options);
+  });
+  const error = spyOn(console, "error").mockImplementation(message => { printed.push(`unbuffered:${message}`); });
+  try {
+    const result = await runChangedTestBatches(mainLane(), batchFiles.slice(0, 13), (lane, cancellation) => {
+      const index = calls++;
+      return runTestLane({ ...lane, args: [fixtures[index]!] }, "cleanup-report", undefined, true,
+        { stdout: () => {}, stderr: () => {} }, process.execPath, cancellation, message => { logs[index]!.push(message); });
+    }, { concurrency: 2, onResult: (_result, index) => { printed.push(...logs[index]!); } });
+    expect(result.exitCode).toBe(1);
+    expect(laterCleanedFirst).toBe(true);
+    expect(printed.some(line => line.startsWith("unbuffered:"))).toBe(false);
+    const first = printed.findIndex(line => line.includes("batch 1/2 finished"));
+    const quarantine = printed.findIndex(line => line.includes("quarantined temp still"));
+    expect(quarantine).toBeGreaterThan(first);
+    expect(printed[quarantine]).toContain("parallel suite batch 2/2");
+    expect(printed.join("\n")).toContain("fixture quarantine handle");
+  } finally {
+    spawn.mockRestore(); remove.mockRestore(); error.mockRestore();
+    for (const home of homes) if (existsSync(home)) removeTreeWithRetry(home);
+    removeTreeWithRetry(root);
+  }
+});
+
+test.each([false, true])("lane metadata stays outside child writers, dedicated reporter=%s", async dedicated => {
+  const root = mkdtempSync(join(tmpdir(), "ocx-lane-metadata-"));
+  const fixture = join(root, "child.test.ts");
+  writeFileSync(fixture, 'import {test} from "bun:test";test("child",()=>{process.stdout.write("child stdout\\n");process.stderr.write("child stderr\\n");});');
+  const stdout: string[] = [], stderr: string[] = [], metadata: string[] = [];
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const result = await runTestLane({ label: "metadata fixture", args: [fixture], timeoutMs: 2_000 }, "metadata-fixture", undefined, true,
+      { stdout: value => { stdout.push(value); }, stderr: value => { stderr.push(value); } }, process.execPath, undefined,
+      dedicated ? message => { metadata.push(message); } : undefined);
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toBe(stdout.join("") + "\n" + stderr.join(""));
+    expect(stdout.join("")).toContain("child stdout\n");
+    expect(stderr.join("")).toContain("child stderr\n");
+    if (dedicated) {
+      expect(metadata).toHaveLength(1);
+      expect(metadata[0]).toMatch(/\[test\] metadata fixture finished in .* \(exit 0\)\./);
+      expect(warn).not.toHaveBeenCalled();
+    } else {
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[test\] metadata fixture finished in .* \(exit 0\)\./));
+    }
+  } finally { warn.mockRestore(); removeTreeWithRetry(root); }
+});
+
+test("changed concurrency respects CPU capacity and real parallel overrides, including filter literals", () => {
+  const concurrency = (args: string[], cpus: number) => runner.resolveChangedBatchConcurrency?.(args, cpus) ?? 1;
+  expect(concurrency(["--changed=abc"], 8)).toBe(2);
+  expect(concurrency(["--changed=abc"], 7)).toBe(1);
+  for (const flag of ["--parallel", "--parallel=7", "--no-isolate"]) expect(concurrency(["--changed=abc", flag], 14)).toBe(1);
+  expect(concurrency(["--changed=abc", "-t", "--parallel=2"], 14)).toBe(2);
+  expect(concurrency(["--changed=abc", "--", "--parallel=2"], 14)).toBe(1);
+  expect(concurrency(["--changed=abc", "./tests/"], 14)).toBe(1);
+});
+
+test.each([[8, [], 2, "--parallel=2"], [7, [], 1, "--parallel=4"], [8, ["--parallel=3"], 1, "--parallel=3"]] as const)(
+  "CLI allocates child workers with CPU=%s and requested=%s", async (cpus, requested, concurrency, workerFlag) => {
+    const fixture = changedFixture(13);
+    const spawns = join(fixture.root, "spawns.jsonl");
+    const preload = join(fixture.root, "observe.ts");
+    writeFileSync(preload, `import {spyOn} from "bun:test"; import * as os from "node:os"; import {appendFileSync} from "node:fs";
+spyOn(os,"availableParallelism").mockReturnValue(${cpus});const spawn=Bun.spawn;Bun.spawn=function(args,options){if(args[1]==="test")appendFileSync(${JSON.stringify(spawns)},JSON.stringify({args,home:options.env.HOME,start:Date.now()})+"\\n");return spawn(args,options);};`);
+    for (const name of fixture.names) {
+      const path = join(fixture.root, "tests", name);
+      writeFileSync(path, readFileSync(path, "utf8").replace('()=>{expect(value)', 'async()=>{await Bun.sleep(120);expect(value)').replace('pid:process.pid', 'pid:process.pid,end:Date.now()'));
+    }
+    try {
+      const child = Bun.spawn([process.execPath, "--preload", preload, repoPath("scripts", "test.ts"), `--changed=${fixture.sha}`, ...requested], {
+        cwd: fixture.root, env: { ...process.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe",
+      });
+      const out = new Response(child.stdout).text(), err = new Response(child.stderr).text();
+      expect(await child.exited).toBe(0);
+      const [, stderr] = await Promise.all([out, err]);
+      expect([...stderr.matchAll(/\[test\] parallel suite batch (\d+)\/2 finished/g)].map(match => Number(match[1]))).toEqual([1, 2]);
+      const rows = readFileSync(spawns, "utf8").trim().split("\n").map(line => JSON.parse(line));
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        expect(row.args).toContain(workerFlag);
+        expect(row.args.filter((arg: string) => arg.startsWith("--changed="))).toEqual([`--changed=${fixture.sha}`]);
+        expect(row.args.filter((arg: string) => arg.startsWith("./tests/")).length).toBeLessThanOrEqual(12);
+        expect(existsSync(row.home)).toBe(false);
+      }
+      const executions = readFileSync(fixture.records, "utf8").trim().split("\n").map(line => JSON.parse(line));
+      expect(executions).toHaveLength(14);
+      const firstEnd = Math.max(...executions.filter(row => row.home === rows[0].home).map(row => row.end ?? 0));
+      expect(concurrency === 2 ? rows[1].start < firstEnd : rows[1].start >= firstEnd).toBe(true);
+    } finally { removeTreeWithRetry(fixture.root); }
+  }, 10_000,
+);
+
+test("an already cancelled lane creates no sandbox or child", async () => {
+  const controller = new AbortController();
+  controller.abort(130);
+  const result = await runTestLane(mainLane(), "already-cancelled", undefined, true, undefined, "/missing/bun", controller.signal);
+  expect(result).toEqual({ exitCode: 130, output: "" });
+});
+
+test("two batches overlap without exceeding the cap and aggregate failures in logical order", async () => {
+  let active = 0, peak = 0;
+  const seen: BunTestLane[] = [];
+  const completed: number[] = [];
+  const reported: number[] = [];
+  const result = await runChangedTestBatches(mainLane(), batchFiles, async lane => {
+    const index = seen.push(lane) - 1;
+    peak = Math.max(peak, ++active);
+    await Bun.sleep(index === 0 ? 100 : 15);
+    active--;
+    completed.push(index);
+    return realExit([7, 9, 0][index]!, `batch-${index + 1}`);
+  }, { concurrency: 2, onResult: (_result, index) => { reported.push(index); } });
+  expect(peak).toBe(2);
+  expect(completed[0]).toBe(1);
+  expect(reported).toEqual([0, 1, 2]);
+  expect(result).toEqual({ exitCode: 7, output: "batch-1\nbatch-2\nbatch-3\n" });
+  expect(seen).toHaveLength(3);
+  expect(new Set(seen.map(lane => lane.deadlineAt)).size).toBe(1);
+  expect(seen.flatMap(lane => lane.args.filter(arg => arg.startsWith("./tests/")))).toEqual(batchFiles);
+});
+
+test("completed contiguous batch logs flush while a later batch is still running", async () => {
+  const reported: number[] = [];
+  let calls = 0;
+  let release: () => void = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const pending = runChangedTestBatches(mainLane(), batchFiles, async () => {
+    const index = calls++;
+    if (index) await gate;
+    return { exitCode: 0, output: `batch-${index}\n` };
+  }, { concurrency: 2, onResult: (_result, index) => { reported.push(index); } });
+  try {
+    await Bun.sleep(20);
+    expect(reported).toEqual([0]);
+  } finally { release(); await pending; }
+  expect(reported).toEqual([0, 1, 2]);
+});
+
+test.each([124, 130, 143, "throw"] as const)("terminal %s cancels and drains the started sibling before returning", async code => {
+  const homes: string[] = [];
+  let calls = 0, drained = false;
+  const failure = new Error("execute fixture failure");
+  const pending = runChangedTestBatches(mainLane(), batchFiles, async (_lane, signal) => {
+    const index = calls++;
+    const home = mkdtempSync(join(tmpdir(), "ocx-batch-cancel-"));
+    homes.push(home);
+    try {
+      if (index === 0) {
+        await Bun.sleep(30);
+        if (code === "throw") throw failure;
+        return { exitCode: code, output: "terminal\n" };
+      }
+      await Promise.race([Bun.sleep(200), new Promise<void>(resolve => signal?.addEventListener("abort", () => resolve(), { once: true }))]);
+      expect(signal?.aborted).toBe(true);
+      await Bun.sleep(20);
+      drained = true;
+      return { exitCode: 143, output: "sibling drained\n" };
+    } finally { removeTreeWithRetry(home); }
+  }, { concurrency: 2 });
+  if (code === "throw") {
+    let caught: unknown;
+    try { await pending; } catch (error) { caught = error; }
+    expect(caught).toBe(failure);
+  } else {
+    expect(await pending).toEqual({ exitCode: code, output: "terminal\nsibling drained\n" });
+  }
+  expect(calls).toBe(2);
+  expect(drained).toBe(true);
+  for (const home of homes) expect(existsSync(home)).toBe(false);
+});
+
+test.each([["SIGINT", false], ["SIGTERM", false], ["SIGINT", true], ["SIGTERM", true]] as const)("external %s during both Node pins prevents children and waits for HOME cleanup, pin rejects=%s", async (signal, rejects) => {
+  const root = mkdtempSync(join(tmpdir(), "ocx-pin-signal-"));
+  const marker = join(root, "ran");
+  const fixture = join(root, "child.test.ts");
+  writeFileSync(fixture, `import {test} from "bun:test"; import {writeFileSync} from "node:fs"; test("child",()=>writeFileSync(${JSON.stringify(marker)},"ran"));`);
+  const homes: string[] = [];
+  const pin = spyOn(nodePin, "pinTestNodePath").mockImplementation(async env => {
+    homes.push(env.HOME!);
+    if (homes.length === 2) setTimeout(() => process.emit(signal), 10);
+    await Bun.sleep(70);
+    expect(existsSync(env.HOME!)).toBe(true);
+    if (rejects) throw new Error("cancelled pin fixture");
+  });
+  try {
+    const result = await runChangedTestBatches(mainLane(), batchFiles, (lane, cancellation) => runTestLane(
+      { ...lane, args: [fixture] }, "signal-pin", undefined, true, undefined, process.execPath, cancellation,
+    ), { concurrency: 2 });
+    expect(result.exitCode).toBe(signal === "SIGINT" ? 130 : 143);
+    expect(homes).toHaveLength(2);
+    expect(existsSync(marker)).toBe(false);
+    for (const home of homes) expect(existsSync(home)).toBe(false);
+  } finally { pin.mockRestore(); removeTreeWithRetry(root); }
+});
+
+test("execute throws only after a real sibling child has exited, drained its pipe and removed HOME", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ocx-real-sibling-"));
+  const marker = join(root, "started.json");
+  const fixture = join(root, "waiting.test.ts");
+  writeFileSync(fixture, `import {test} from "bun:test"; import {writeFileSync} from "node:fs";
+test("waiting",async()=>{writeFileSync(${JSON.stringify(marker)},JSON.stringify({home:process.env.HOME,pid:process.pid}));console.log("sibling pipe marker");await new Promise(()=>{});},10000);`);
+  let calls = 0;
+  const failure = new Error("real sibling fixture failure");
+  const outputs: string[] = [];
+  try {
+    let caught: unknown;
+    try {
+      await runChangedTestBatches(mainLane(), batchFiles, async (lane, cancellation) => {
+        if (calls++ === 0) {
+          const until = Date.now() + 2_000;
+          while (!existsSync(marker) && Date.now() < until) await Bun.sleep(10);
+          if (!existsSync(marker)) throw new Error("sibling never started");
+          throw failure;
+        }
+        return runTestLane({ ...lane, args: [fixture] }, "real-sibling", undefined, true,
+          { stdout: () => {}, stderr: () => {} }, process.execPath, cancellation);
+      }, { concurrency: 2, onResult: result => { outputs.push(result.output); } });
+    } catch (error) { caught = error; }
+    expect(caught).toBe(failure);
+    expect(calls).toBe(2);
+    const child = JSON.parse(readFileSync(marker, "utf8"));
+    expect(existsSync(child.home)).toBe(false);
+    expect(() => process.kill(child.pid, 0)).toThrow();
+    expect(outputs.join("")).toContain("sibling pipe marker");
+  } finally { removeTreeWithRetry(root); }
+});
 
 async function realExit(code: number, text: string) {
   const child = Bun.spawn([process.execPath, "-e", `console.log(${JSON.stringify(text)});process.exit(${code});`], { stdout: "pipe", stderr: "pipe" });
