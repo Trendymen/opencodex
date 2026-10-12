@@ -255,7 +255,7 @@ describe("GitHub Actions hardening", () => {
     // restores the timing-flake class this lane kept surfacing.
     const macosTestStep = macosSteps.find(step => step.name === "Test in fresh-process batches");
     expect(macosTestStep?.env).toMatchObject({
-      TEST_SHARD: "${{ matrix.shard }}/2", BUN_TEST_FILE_SCOPE: "all", BUN_TEST_BATCH_SIZE: "12",
+      TEST_SHARD: "${{ matrix.shard }}/3", BUN_TEST_FILE_SCOPE: "all", BUN_TEST_BATCH_SIZE: "12",
       BUN_TEST_PARALLEL: "1", BUN_TEST_BATCH_TIMEOUT_SECONDS: "300", OCX_TEST_NO_QUEUE: "1", OCX_TEST_FULL_SUITE: "1",
     });
     expect(macosTestStep?.run).toBe('bash scripts/ci/run-bun-test-batches.sh "$TEST_SHARD"');
@@ -264,7 +264,7 @@ describe("GitHub Actions hardening", () => {
       strategy?: { "fail-fast"?: boolean; matrix?: { shard?: number[] } };
     })?.strategy;
     expect(macosShards?.["fail-fast"]).toBe(false);
-    expect(macosShards?.matrix?.shard).toEqual([1, 2]);
+    expect(macosShards?.matrix?.shard).toEqual([1, 2, 3]);
 
     // Failure disposition belongs to the shared runner; the workflow has no recovery loop.
     expect(macosTestStep?.run).not.toContain("for attempt in");

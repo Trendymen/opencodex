@@ -150,7 +150,7 @@ function runShell(directory: string, shard: number, scriptOverride?: string): Pr
         env: {
           PATH: `${join(directory, "bin")}:/usr/bin:/bin`, HOME: directory,
           TMPDIR: join(directory, "tmp"), RUNNER_TEMP: join(directory, "tmp"), CI: "true",
-          TEST_SHARD: `${shard}/2`, BUN_TEST_FILE_SCOPE: "all", BUN_TEST_BATCH_SIZE: "12",
+          TEST_SHARD: `${shard}/3`, BUN_TEST_FILE_SCOPE: "all", BUN_TEST_BATCH_SIZE: "12",
           BUN_TEST_PARALLEL: "1", BUN_TEST_BATCH_TIMEOUT_SECONDS: "300", OCX_TEST_NO_QUEUE: "1",
           MACOS_FIXTURE_CONFIG: join(directory, "config.json"),
           MACOS_FIXTURE_LOG: join(directory, "invocations.jsonl"),
@@ -264,7 +264,7 @@ function optionValues(argv: string[], option: string): string[] {
 
 function selectedFiles(shard: number, collision = false): string[] {
   return [...SERIAL_FILES, ...GENERAL_FILES, ...(collision ? [`collision/${basename(SERIAL_FILES[0]!)}`] : [])]
-    .map(file => `tests/${file}`).sort().filter((_, index) => index % 2 === shard - 1);
+    .map(file => `tests/${file}`).sort().filter((_, index) => index % 3 === shard - 1);
 }
 
 function expectBatchArguments(call: Invocation): void {
@@ -291,8 +291,8 @@ describe.skipIf(process.platform === "win32")("macOS bounded shard shell ownersh
     } finally { removeTreeWithRetry(directory); }
   }, SPAWN_BUDGET_MS);
 
-  test("both actual workflow shards own every file exactly once", async () => {
-    const runs = [await runShard(1), await runShard(2)];
+  test("all actual workflow shards own every file exactly once", async () => {
+    const runs = [await runShard(1), await runShard(2), await runShard(3)];
     for (const [index, run] of runs.entries()) {
       expect(run.status, run.output).toBe(0);
       const calls = testCalls(run);
@@ -310,14 +310,14 @@ describe.skipIf(process.platform === "win32")("macOS bounded shard shell ownersh
   }, SPAWN_BUDGET_MS);
 
   test("same basenames at distinct exact paths are not silently excluded", async () => {
-    const runs = [await runShard(1, { collision: true }), await runShard(2, { collision: true })];
+    const runs = [await runShard(1, { collision: true }), await runShard(2, { collision: true }), await runShard(3, { collision: true })];
     for (const [index, run] of runs.entries()) {
       expect(run.status, run.output).toBe(0);
       expect(testCalls(run).flatMap(testPaths)).toEqual(selectedFiles(index + 1, true));
     }
   }, SPAWN_BUDGET_MS);
 
-  for (const target of ["main", SERIAL_FILES[1]!] as const) {
+  for (const target of ["main", SERIAL_FILES[3]!] as const) {
     const targetPath = target === "main" ? selectedFiles(1)[0]! : `tests/${target}`;
     const primaryCount = selectedFiles(1).indexOf(targetPath) + 1;
     test(`${target}: assertion failure stops all later primary files`, async () => {
@@ -360,7 +360,7 @@ describe.skipIf(process.platform === "win32")("macOS bounded shard shell ownersh
     ["parent traversal", { manifest: ["serial/../serial/falcon.test.ts"] }],
   ];
   test.each(invalidManifests)("rejects %s before any test starts", async (_name, options) => {
-    for (const shard of [1, 2]) {
+    for (const shard of [1, 2, 3]) {
       const run = await runShard(shard, options);
       expect(run.status, run.output).not.toBe(0);
       expect(testCalls(run)).toEqual([]);
