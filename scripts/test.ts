@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { availableParallelism, homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { getTestRunnerBun } from "./lib/test-runner-bun";
 import { pinTestNodePath } from "./lib/test-runner-node";
@@ -554,6 +554,10 @@ export function canBatchChangedMain(requested: string[]): boolean {
   return hasCliFlag(requested, "--changed") && canUseSerialLanes(requested);
 }
 
+export function resolveChangedBatchConcurrency(requested: string[], cpus = availableParallelism()): 1 | 2 {
+  return canBatchChangedMain(requested) && cpus >= 8 && !hasCliFlag(requested, "--parallel") ? 2 : 1;
+}
+
 /** Keep sensitive files in fresh processes for full and unfiltered changed runs. */
 export function resolveBunTestPlan(
   requested: string[], comparisonCommit?: string,
@@ -686,6 +690,7 @@ export function exitCodeAfterTempSweep(
 export function settleIsolatedTestRoot(
   root: string,
   remove: (path: string) => void = removeTestTempTree,
+  report: (message: string) => void = message => { console.error(message); },
 ): "removed" | "deferred" | "quarantine-remains" {
   try {
     remove(root);
@@ -693,11 +698,11 @@ export function settleIsolatedTestRoot(
   } catch (error) {
     const remaining = listQuarantinedTestTemps(root);
     if (remaining.length === 0) {
-      console.error("[test] deferred cleanup of one test root after Windows kept a handle open; a later run will retry it.");
+      report("[test] deferred cleanup of one test root after Windows kept a handle open; a later run will retry it.");
       return "deferred";
     }
-    console.error(`[test] quarantined temp still could not be deleted: ${remaining.join(", ")}`);
-    console.error(error instanceof Error ? error.message : String(error));
+    report(`[test] quarantined temp still could not be deleted: ${remaining.join(", ")}`);
+    report(error instanceof Error ? error.message : String(error));
     return "quarantine-remains";
   }
 }
@@ -712,7 +717,13 @@ export async function runTestLane(
     stderr: (value: string) => { process.stderr.write(value); },
   },
   testRunner = getTestRunnerBun(),
+  cancellation?: AbortSignal,
+  report?: (message: string, level: "warn" | "error") => void,
 ): Promise<{ exitCode: number; output: string }> {
+  const reportLane = report ?? ((message: string, level: "warn" | "error") => { console[level](message); });
+  const reportCleanup = report ? (message: string) => { report(`[test] ${lane.label} cleanup: ${message}`, "error"); } : undefined;
+  const cancellationCode = () => [124, 130, 143].includes(cancellation?.reason) ? cancellation!.reason as number : 143;
+  if (cancellation?.aborted) return { exitCode: cancellationCode(), output: "" };
   const sourceEnv = {
     ...process.env,
     [TEST_RUN_ID_ENV]: runId,
@@ -724,48 +735,56 @@ export async function runTestLane(
     OCX_TEST_FULL_SUITE: "1",
   };
   const isolated = createIsolatedTestEnvironment(sourceEnv);
-  try {
-    await pinTestNodePath(isolated.env, sourceEnv, isolated.root);
-  } catch (error) {
-    isolated.cleanup();
-    if (lane.deadlineAt !== undefined && Date.now() >= lane.deadlineAt) return { exitCode: 124, output: "" };
-    throw error;
-  }
-  const startedAt = Date.now();
-  if (lane.deadlineAt !== undefined && startedAt >= lane.deadlineAt) {
-    console.error(`[test] ${lane.label} exhausted its shared deadline during setup.`);
-    isolated.cleanup();
-    return { exitCode: 124, output: "" };
-  }
-  let interrupted: NodeJS.Signals | null = null;
-  const child = Bun.spawn([testRunner, "test", ...lane.args], {
-    env: isolated.env,
-    stdin: "inherit",
-    stdout: capture ? "pipe" : "inherit",
-    stderr: capture ? "pipe" : "inherit",
-  });
-  const captured = capture ? captureTestOutput(child.stdout!, child.stderr!) : undefined;
-  const forward = (signal: NodeJS.Signals) => {
-    interrupted = signal;
-    try { child.kill(signal); } catch { /* child already exited */ }
+  let interrupted: number | null = null;
+  let terminateChild: ((signal: NodeJS.Signals) => void) | undefined;
+  let wakeCancellation: () => void;
+  const cancelled = new Promise<null>(resolve => { wakeCancellation = () => resolve(null); });
+  const forward = (code: number) => {
+    interrupted ??= code;
+    if (code !== 124) terminateChild?.(code === 130 ? "SIGINT" : "SIGTERM");
+    wakeCancellation();
   };
-  const onInterrupt = () => forward("SIGINT");
-  const onTerminate = () => forward("SIGTERM");
-  process.once("SIGINT", onInterrupt);
-  process.once("SIGTERM", onTerminate);
-
-  const exited = child.exited;
+  const onInterrupt = () => forward(130);
+  const onTerminate = () => forward(143);
+  const onCancellation = () => forward(cancellationCode());
+  if (cancellation) cancellation.addEventListener("abort", onCancellation, { once: true });
+  else {
+    process.once("SIGINT", onInterrupt);
+    process.once("SIGTERM", onTerminate);
+  }
   let laneResult: { exitCode: number; output: string } | undefined;
   try {
+    try {
+      await pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+    } catch (error) {
+      if (interrupted === null && (lane.deadlineAt === undefined || Date.now() < lane.deadlineAt)) throw error;
+    }
+    const startedAt = Date.now();
+    if (interrupted !== null || (lane.deadlineAt !== undefined && startedAt >= lane.deadlineAt)) {
+      if (interrupted === null) reportLane(`[test] ${lane.label} exhausted its shared deadline during setup.`, "error");
+      laneResult = { exitCode: interrupted ?? 124, output: "" };
+      return laneResult;
+    }
+    const child = Bun.spawn([testRunner, "test", ...lane.args], {
+      env: isolated.env,
+      stdin: "inherit",
+      stdout: capture ? "pipe" : "inherit",
+      stderr: capture ? "pipe" : "inherit",
+    });
+    terminateChild = signal => { try { child.kill(signal); } catch { /* child already exited */ } };
+    const captured = capture ? captureTestOutput(child.stdout!, child.stderr!) : undefined;
+    const exited = child.exited;
     const remainingMs = lane.deadlineAt === undefined ? lane.timeoutMs : Math.max(0, lane.deadlineAt - Date.now());
-    let exitCode = await waitWithTimeout(exited, remainingMs);
+    let exitCode = await waitWithTimeout(Promise.race([exited, cancelled]), remainingMs);
     if (exitCode === null) {
-      console.error(`[test] ${lane.label} exceeded ${Math.round(remainingMs / 1000)}s; terminating pid ${child.pid}.`);
-      try {
-        const diagnostics = saveTestLaneDiagnostics(child.pid);
-        console.error(`[test] deadline diagnostics: ${diagnostics}`);
-      } catch {
-        console.error("[test] deadline diagnostics unavailable; termination will continue.");
+      if (interrupted === null || interrupted === 124) {
+        reportLane(`[test] ${lane.label} exceeded ${Math.round(remainingMs / 1000)}s; terminating pid ${child.pid}.`, "error");
+        try {
+          const diagnostics = saveTestLaneDiagnostics(child.pid);
+          reportLane(`[test] deadline diagnostics: ${diagnostics}`, "error");
+        } catch {
+          reportLane("[test] deadline diagnostics unavailable; termination will continue.", "error");
+        }
       }
       try { child.kill("SIGTERM"); } catch { /* child already exited */ }
       const graceful = await waitWithTimeout(exited, 5_000);
@@ -782,32 +801,25 @@ export async function runTestLane(
     if (stderr) writers.stderr(stderr);
     const output = stdout + "\n" + stderr;
     if (result && !result.complete) {
-      console.error("[test] captured output is incomplete; collected output is shown above.");
+      reportLane("[test] captured output is incomplete; collected output is shown above.", "error");
       if (exitCode === 0) exitCode = 1;
     }
-    if (exitCode === null) {
-      laneResult = { exitCode: 124, output };
-      return laneResult;
-    }
-    if (interrupted === "SIGINT") {
-      laneResult = { exitCode: 130, output };
-      return laneResult;
-    }
-    if (interrupted === "SIGTERM") {
-      laneResult = { exitCode: 143, output };
+    if (interrupted !== null || exitCode === null) {
+      laneResult = { exitCode: interrupted ?? 124, output };
       return laneResult;
     }
     const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-    console.warn(`[test] ${lane.label} finished in ${seconds}s (exit ${exitCode}).`);
+    reportLane(`[test] ${lane.label} finished in ${seconds}s (exit ${exitCode}).`, "warn");
     laneResult = { exitCode, output };
     return laneResult;
   } finally {
     process.off("SIGINT", onInterrupt);
     process.off("SIGTERM", onTerminate);
+    cancellation?.removeEventListener("abort", onCancellation);
     if (laneResult) {
-      laneResult.exitCode = exitCodeAfterTempSweep(laneResult.exitCode, settleIsolatedTestRoot(isolated.root));
+      laneResult.exitCode = exitCodeAfterTempSweep(laneResult.exitCode, settleIsolatedTestRoot(isolated.root, undefined, reportCleanup));
     } else {
-      settleIsolatedTestRoot(isolated.root);
+      settleIsolatedTestRoot(isolated.root, undefined, reportCleanup);
     }
   }
 }
@@ -909,7 +921,21 @@ if (import.meta.main) {
         if (lane.label === "parallel suite" && canBatchChangedMain(requestedTests)) {
           const deadlineAt = Date.now() + lane.timeoutMs;
           const files = discoverTestBatchFiles(join(process.cwd(), "tests"), SERIAL_FULL_SUITE_FILES);
-          result = await runChangedTestBatches({ ...lane, deadlineAt }, files, execute);
+          const concurrency = resolveChangedBatchConcurrency(requestedTests);
+          const args = concurrency === 2 ? lane.args.map((arg, index) => index === 1 ? "--parallel=2" : arg) : lane.args;
+          const logs: { stdout: string; stderr: string }[] = [];
+          result = await runChangedTestBatches({ ...lane, args, deadlineAt }, files,
+            (batch, cancellation) => {
+              const log = { stdout: "", stderr: "" };
+              logs.push(log);
+              return runTestLane(batch, runId, inheritedLock, true,
+                { stdout: value => { log.stdout += value; }, stderr: value => { log.stderr += value; } }, testRunner, cancellation,
+                message => { log.stderr += message + "\n"; });
+            }, { concurrency, onResult: (_result, index) => {
+              if (logs[index]!.stdout) process.stdout.write(logs[index]!.stdout);
+              if (logs[index]!.stderr) process.stderr.write(logs[index]!.stderr);
+              logs[index] = { stdout: "", stderr: "" };
+            } });
         } else {
           result = await execute(lane);
         }
