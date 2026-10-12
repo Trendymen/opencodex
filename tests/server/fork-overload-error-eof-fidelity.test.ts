@@ -101,12 +101,12 @@ describe("fork overload error clean-EOF fidelity", () => {
       type: "error",
       error: { type: "vendor_error", code: "vendor_limited", message: "Vendor rejected this turn." },
     })]), new AbortController(), eagerHooks())],
-  ])("%s relay preserves a bounded typed ordinary error at clean EOF", async (_lane, relay) => {
+  ])("%s relay normalizes unrecognized bare error fields at clean EOF", async (_lane, relay) => {
     const payload = failedPayload(await readAll(relay()));
     const response = payload.response as { error?: unknown; last_error?: unknown };
     const expected = {
-      type: "vendor_error",
-      code: "vendor_limited",
+      type: "upstream_error",
+      code: "upstream_server_error",
       message: "Vendor rejected this turn.",
     };
 
@@ -128,8 +128,8 @@ describe("fork overload error clean-EOF fidelity", () => {
   test.each([
     ["pull", "response.completed", () => relaySseWithFailedTail(streamFromChunks([sse("error", OVERLOAD), sse("response.completed", { type: "response.completed", response: { status: "completed", output: [] } })]), new AbortController())],
     ["eager", "response.completed", () => relaySseEagerBounded(streamFromChunks([sse("error", OVERLOAD), sse("response.completed", { type: "response.completed", response: { status: "completed", output: [] } })]), new AbortController(), eagerHooks())],
-    ["pull", "response.failed", () => relaySseWithFailedTail(streamFromChunks([sse("error", OVERLOAD), sse("response.failed", { type: "response.failed", response: { status: "failed", error: { code: "real_failure" } } })]), new AbortController())],
-    ["eager", "response.failed", () => relaySseEagerBounded(streamFromChunks([sse("error", OVERLOAD), sse("response.failed", { type: "response.failed", response: { status: "failed", error: { code: "real_failure" } } })]), new AbortController(), eagerHooks())],
+    ["pull", "response.failed", () => relaySseWithFailedTail(streamFromChunks([sse("error", OVERLOAD), sse("response.failed", { type: "response.failed", response: { status: "failed", error: { type: "vendor_error", code: "real_failure", message: "Real terminal failure." } } })]), new AbortController())],
+    ["eager", "response.failed", () => relaySseEagerBounded(streamFromChunks([sse("error", OVERLOAD), sse("response.failed", { type: "response.failed", response: { status: "failed", error: { type: "vendor_error", code: "real_failure", message: "Real terminal failure." } } })]), new AbortController(), eagerHooks())],
     ["pull", "response.incomplete", () => relaySseWithFailedTail(streamFromChunks([sse("error", OVERLOAD), sse("response.incomplete", { type: "response.incomplete", response: { status: "incomplete" } })]), new AbortController())],
     ["eager", "response.incomplete", () => relaySseEagerBounded(streamFromChunks([sse("error", OVERLOAD), sse("response.incomplete", { type: "response.incomplete", response: { status: "incomplete" } })]), new AbortController(), eagerHooks())],
   ])("%s relay defers to an explicit %s terminal", async (_lane, terminalType, relay) => {
@@ -140,6 +140,12 @@ describe("fork overload error clean-EOF fidelity", () => {
     expect(text).not.toContain('"type":"error"');
     expect(text).not.toContain('"reason":"adapter_eof"');
     expect(count(text, "data: [DONE]")).toBe(1);
+    if (terminalType === "response.failed") {
+      expect(failedPayload(text).response).toEqual({
+        status: "failed",
+        error: { type: "vendor_error", code: "real_failure", message: "Real terminal failure." },
+      });
+    }
   });
 
   test("tee inspection classifies overload clean EOF as failed 503", async () => {
@@ -176,6 +182,7 @@ describe("fork overload error clean-EOF fidelity", () => {
     expect(payload).toEqual({ type: "response.failed", response: expect.any(Object) });
     expect(response.status).toBe("failed");
     expect(response.error).toEqual(response.last_error);
+    expect(response.error).toMatchObject({ type: "upstream_error", code: "upstream_server_error" });
     expect(response.error?.type.length).toBeLessThanOrEqual(128);
     expect(response.error?.code.length).toBeLessThanOrEqual(128);
     expect(response.error?.message.length).toBeLessThanOrEqual(512);
