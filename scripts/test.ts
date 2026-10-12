@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
-import { availableParallelism, homedir, tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { getTestRunnerBun } from "./lib/test-runner-bun";
 import { pinTestNodePath } from "./lib/test-runner-node";
 import { saveTestLaneDiagnostics } from "./lib/test-runner-diagnostics";
-import { discoverTestBatchFiles, runChangedTestBatches } from "./lib/test-runner-batches";
 import {
   acquireTestRunLock,
   resolveWrappedTestRunLockPath,
@@ -392,21 +391,16 @@ export function resolveBunTestArgs(
 
 // Paths relative to tests/. An entry moves with its file (scripts/test-layout/move.ts rewrites
 // it); the lane label, the ignore glob, and the timeout table all key on the basename.
+const SERIAL_DESKTOP_SQLITE_FILES = [
+  "claude-integration/claude-desktop-picker-routes.test.ts",
+  "claude-integration/claude-desktop-picker-profile.test.ts",
+  "claude-integration/claude-desktop-first-party.test.ts",
+  "claude-integration/claude-desktop-first-party-guards.test.ts",
+] as const;
+
 export const SERIAL_FULL_SUITE_FILES = [
   "codex-integration/codex-shim.test.ts",
   "providers/cursor/cursor-native-exec-shell.test.ts",
-  // The FIFO safety case hit its existing deadline in the full suite;
-  // the file passes alone on candidate and official without changing that budget.
-  "providers/cursor/cursor-effort-table.test.ts",
-  // Full-suite Cursor catalog setup failed in these three helper-backed files;
-  // run each in a fresh process with unchanged assertions and test budgets.
-  "providers/cursor/cursor-effort-rows.test.ts",
-  "providers/cursor/cursor-integration-status.test.ts",
-  "providers/cursor/cursor-local-models-schema.test.ts",
-  // Full-suite runs timed out Antigravity subprocesses and Grok local HTTP/WS;
-  // both files pass alone with unchanged assertions and test budgets.
-  "providers/provider-antigravity-wire-snapshot.test.ts",
-  "providers/xai/grok-47-fast-model-wire.test.ts",
   "codex-integration/issue-452-empty-503.test.ts",
   "adapters/openai/openai-provider-option-e2e.test.ts",
   // Three Linux runs in a row timed out mid-file inside a 12-file batch while
@@ -417,10 +411,6 @@ export const SERIAL_FULL_SUITE_FILES = [
   // The full macOS isolate pool stalled in the structure gate's synchronous Git
   // child after earlier files; fresh-process execution retains the same assertions.
   "ci-workflows/structure-ssot.test.ts",
-  // A full pool left this file unfinished; all cases pass alone with unchanged budgets.
-  "ci-workflows/fork-ci-official-baseline.test.ts",
-  // CI shard 1/2 batch 8 stalled in a shared Bun process; every file passed alone.
-  "ci-workflows/ci-gui-if-changed.test.ts",
   // Synchronous injection subprocesses can wedge the long-lived macOS isolate
   // parent while reaping a history Worker; contain them in a fresh bounded lane.
   "codex-integration/codex-inject-write-lock.test.ts",
@@ -431,32 +421,6 @@ export const SERIAL_FULL_SUITE_FILES = [
   // in a multi-file process; all 11 cases completed in the attribution process.
   // Keep its real listener lifecycle in a fresh process on every platform.
   "codex-integration/active-registry-admission.test.ts",
-  // Real CLI spawnSync children timed out in the four-worker full pool while the same
-  // file passed alone; run this file in a fresh process without changing its assertions.
-  "cli/cli-help.test.ts",
-  // A full-pool run failed this file's version projection; all cases passed alone.
-  "cli/cli-status-json.test.ts",
-  // The help-paths CLI children reached their 40s deadline in the full pool;
-  // the complete file passes alone with the same assertions and child budget.
-  "cli/cli-help-paths.test.ts",
-  // Full-suite runs timed out the real CLI children in these help fixtures;
-  // both files complete alone with the same assertions and child budget.
-  "cli/cli-help-navigation.test.ts",
-  "cli/cli-help-recovery.test.ts",
-  // In the full pool, provider CLI children reached their 40s deadline; the file
-  // passes in a fresh process with the same assertions and child budget.
-  "cli/cli-provider.test.ts",
-  // These CLI subprocess and global-fetch fixtures passed alone but failed in the four-worker pool.
-  "cli/cli-models.test.ts",
-  "cli/cli-headless-parity.test.ts",
-  "clients/client-connect.test.ts",
-  "clients/client-link-connect.test.ts",
-  // Full-pool contention timed out catalog requests and ACL subprocess probes.
-  // Fresh processes keep the same per-test deadlines and main-pool parallelism.
-  "claude-integration/claude-management-api.test.ts",
-  "claude-integration/claude-models-discovery.test.ts",
-  "lib/plugin-loader.test.ts",
-  "cli/cli-connect-readiness.test.ts",
   "update/update-stop-first.test.ts",
   // Relays a 50 MiB WebSocket frame end to end against a 15s deadline, so its result is a
   // measurement of the whole process, not of the relay. On a healthy 3-CPU macOS runner the
@@ -467,54 +431,19 @@ export const SERIAL_FULL_SUITE_FILES = [
   // changing. Quarantining it here is what keeps it a test of the relay instead of a test of
   // its neighbours.
   "server/server-live.test.ts",
-  // Local four-worker pool refused a fixture sideband join; the complete file passed alone.
-  "server/server-live-realtime-fixtures.test.ts",
-  // A full-suite local-read timeout preceded owner-home conflicts in this file;
-  // the complete file passes alone with its original security assertions and budgets.
-  "server/server-management-auth.test.ts",
-  // A full-suite run exceeded this file's policy-run POST response bound;
-  // the complete file passes alone with its original Worker and health checks.
-  "storage/storage-policy-job-responsive.test.ts",
-  "responses/responses-opaque-blob-recovery.test.ts",
-  "ci-workflows/fork-install-local-staging.test.ts",
-  "ci-workflows/fork-install-local-volta-root.test.ts",
-  "ci-workflows/install-scripts.test.ts",
-  "codex-integration/codex-journal.test.ts",
-  "codex-integration/codex-cli-update-zero-effect.test.ts",
-  "providers/cursor/cursor-native-exec.test.ts",
-  "update/update-npm-cache-preflight.test.ts",
-  "update/fork-update-monotonicity.test.ts",
-  "clients/aside-profile-sync-owner.test.ts",
-  "adapters/translator-budget.test.ts",
-  "codex-integration/doctor.test.ts",
-  "claude-integration/claude-messages-endpoint.test.ts",
-  "server/memory-watchdog.test.ts",
-  // These files failed in the long-lived changed pool and passed in fresh processes.
-  // Isolate their environment and subprocess lifecycles with unchanged test budgets.
-  "claude-integration/claude-picker-runtime.test.ts",
-  "claude-integration/claude-picker-startup.test.ts",
-  // These writers share an effective OS-user SQLite lifecycle lock across HOME/configDir.
-  // Serial lanes prevent contention between files in the same parallel pool.
-  "claude-integration/claude-desktop-picker-routes.test.ts",
-  "claude-integration/claude-desktop-picker-profile.test.ts",
-  "claude-integration/claude-desktop-first-party.test.ts",
-  "claude-integration/claude-desktop-first-party-guards.test.ts",
-  "cli/cli-config-default-show.test.ts",
-  "lab/lab-live-probe.test.ts",
-  "lab/lab-live-receipt-integrity.test.ts",
-  // This cumulative-deadline fixture failed in the changed pool and passed alone with its original budget.
-  "web-search/web-search-pacing-deadline.test.ts",
   // These exercise the default-home service authority, shared by parallel Bun workers.
   // A fresh process/home prevents another file's authority from becoming this fixture's input.
-  "service/service-claim.test.ts",
-  "service/service-wsl-home-ownership.test.ts",
   "service/service-ownership-state.test.ts",
   "service/service-sqlite-home.test.ts",
   "service/service.test.ts",
+  "service/service-claim.test.ts",
+  "service/service-wsl-home-ownership.test.ts",
   "service/launchd-repair.test.ts",
   "cli/cli-update-restart-home.test.ts",
   "codex-integration/native-codex-toggle.test.ts",
   "codex-integration/native-grok-toggle.test.ts",
+  // These writers share the effective OS-user SQLite lock across HOME/configDir.
+  ...SERIAL_DESKTOP_SQLITE_FILES,
 ] as const;
 
 type SerialLaneBasename = (typeof SERIAL_FULL_SUITE_FILES)[number] extends infer P
@@ -530,7 +459,6 @@ export interface BunTestLane {
   label: string;
   args: string[];
   timeoutMs: number;
-  deadlineAt?: number;
 }
 
 function withoutParallelOverride(requested: string[]): string[] {
@@ -540,22 +468,13 @@ function withoutParallelOverride(requested: string[]): string[] {
 }
 
 function canUseSerialLanes(requested: string[]): boolean {
-  if (hasCliFlag(requested, "--changed")
-    && (requested.includes("--") || hasCliFlag(requested, "--path-ignore-patterns")
+  if (requested.includes("--") || hasCliFlag(requested, "--path-ignore-patterns")
       || ["-c", "--config", "--cwd", "--no-isolate", "--watch", "--hot", "--coverage", "--coverage-dir", "--coverage-reporter",
-        "--only-failures", "--bail", "--rerun-each", "--retry"].some(flag => hasCliFlag(requested, flag)))) return false;
+        "--only-failures", "--bail", "--rerun-each", "--retry"].some(flag => hasCliFlag(requested, flag))) return false;
   const indices = new Set(wrapperOptionIndices(requested));
   const withoutChanged = requested.filter((arg, index) => !indices.has(index) || !arg.startsWith("--changed="));
   if (!isFullSuiteRun(withoutChanged)) return false;
   return !["--shard", "--reporter-outfile", "--update-timings"].some(flag => hasCliFlag(requested, flag));
-}
-
-export function canBatchChangedMain(requested: string[]): boolean {
-  return hasCliFlag(requested, "--changed") && canUseSerialLanes(requested);
-}
-
-export function resolveChangedBatchConcurrency(requested: string[], cpus = availableParallelism()): 1 | 2 {
-  return canBatchChangedMain(requested) && cpus >= 8 && !hasCliFlag(requested, "--parallel") ? 2 : 1;
 }
 
 /** Keep sensitive files in fresh processes for full and unfiltered changed runs. */
@@ -575,12 +494,12 @@ export function resolveBunTestPlan(
 
   const mainArgs = resolveBunTestArgs(requested, comparisonCommit);
   const rootIndex = isFullSuiteRun(requested) ? mainArgs.length - 1 : -1;
-  const ignores = SERIAL_FULL_SUITE_FILES.flatMap(file => ["--path-ignore-patterns", `**/${basename(file)}`]);
+  const serialFiles = hasCliFlag(requested, "--changed")
+    ? SERIAL_FULL_SUITE_FILES.filter(file => existsSync(join("tests", file)))
+    : SERIAL_FULL_SUITE_FILES;
+  const ignores = serialFiles.flatMap(file => ["--path-ignore-patterns", `**/${basename(file)}`]);
   mainArgs.splice(rootIndex === -1 ? mainArgs.length : rootIndex, 0, ...ignores);
   const serialRequested = withoutParallelOverride(requested);
-  const serialFiles = hasCliFlag(requested, "--changed")
-    ? SERIAL_FULL_SUITE_FILES.filter(file => existsSync(join(process.cwd(), "tests", file)))
-    : SERIAL_FULL_SUITE_FILES;
   return [
     { label: "parallel suite", args: mainArgs, timeoutMs: mainTimeout },
     ...serialFiles.map(file => ({
@@ -690,7 +609,6 @@ export function exitCodeAfterTempSweep(
 export function settleIsolatedTestRoot(
   root: string,
   remove: (path: string) => void = removeTestTempTree,
-  report: (message: string) => void = message => { console.error(message); },
 ): "removed" | "deferred" | "quarantine-remains" {
   try {
     remove(root);
@@ -698,11 +616,11 @@ export function settleIsolatedTestRoot(
   } catch (error) {
     const remaining = listQuarantinedTestTemps(root);
     if (remaining.length === 0) {
-      report("[test] deferred cleanup of one test root after Windows kept a handle open; a later run will retry it.");
+      console.error("[test] deferred cleanup of one test root after Windows kept a handle open; a later run will retry it.");
       return "deferred";
     }
-    report(`[test] quarantined temp still could not be deleted: ${remaining.join(", ")}`);
-    report(error instanceof Error ? error.message : String(error));
+    console.error(`[test] quarantined temp still could not be deleted: ${remaining.join(", ")}`);
+    console.error(error instanceof Error ? error.message : String(error));
     return "quarantine-remains";
   }
 }
@@ -717,13 +635,7 @@ export async function runTestLane(
     stderr: (value: string) => { process.stderr.write(value); },
   },
   testRunner = getTestRunnerBun(),
-  cancellation?: AbortSignal,
-  report?: (message: string, level: "warn" | "error") => void,
 ): Promise<{ exitCode: number; output: string }> {
-  const reportLane = report ?? ((message: string, level: "warn" | "error") => { console[level](message); });
-  const reportCleanup = report ? (message: string) => { report(`[test] ${lane.label} cleanup: ${message}`, "error"); } : undefined;
-  const cancellationCode = () => [124, 130, 143].includes(cancellation?.reason) ? cancellation!.reason as number : 143;
-  if (cancellation?.aborted) return { exitCode: cancellationCode(), output: "" };
   const sourceEnv = {
     ...process.env,
     [TEST_RUN_ID_ENV]: runId,
@@ -741,28 +653,23 @@ export async function runTestLane(
   const cancelled = new Promise<null>(resolve => { wakeCancellation = () => resolve(null); });
   const forward = (code: number) => {
     interrupted ??= code;
-    if (code !== 124) terminateChild?.(code === 130 ? "SIGINT" : "SIGTERM");
+    terminateChild?.(code === 130 ? "SIGINT" : "SIGTERM");
     wakeCancellation();
   };
   const onInterrupt = () => forward(130);
   const onTerminate = () => forward(143);
-  const onCancellation = () => forward(cancellationCode());
-  if (cancellation) cancellation.addEventListener("abort", onCancellation, { once: true });
-  else {
-    process.once("SIGINT", onInterrupt);
-    process.once("SIGTERM", onTerminate);
-  }
+  process.once("SIGINT", onInterrupt);
+  process.once("SIGTERM", onTerminate);
   let laneResult: { exitCode: number; output: string } | undefined;
   try {
     try {
       await pinTestNodePath(isolated.env, sourceEnv, isolated.root);
     } catch (error) {
-      if (interrupted === null && (lane.deadlineAt === undefined || Date.now() < lane.deadlineAt)) throw error;
+      if (interrupted === null) throw error;
     }
     const startedAt = Date.now();
-    if (interrupted !== null || (lane.deadlineAt !== undefined && startedAt >= lane.deadlineAt)) {
-      if (interrupted === null) reportLane(`[test] ${lane.label} exhausted its shared deadline during setup.`, "error");
-      laneResult = { exitCode: interrupted ?? 124, output: "" };
+    if (interrupted !== null) {
+      laneResult = { exitCode: interrupted, output: "" };
       return laneResult;
     }
     const child = Bun.spawn([testRunner, "test", ...lane.args], {
@@ -774,16 +681,15 @@ export async function runTestLane(
     terminateChild = signal => { try { child.kill(signal); } catch { /* child already exited */ } };
     const captured = capture ? captureTestOutput(child.stdout!, child.stderr!) : undefined;
     const exited = child.exited;
-    const remainingMs = lane.deadlineAt === undefined ? lane.timeoutMs : Math.max(0, lane.deadlineAt - Date.now());
-    let exitCode = await waitWithTimeout(Promise.race([exited, cancelled]), remainingMs);
+    let exitCode = await waitWithTimeout(Promise.race([exited, cancelled]), lane.timeoutMs);
     if (exitCode === null) {
-      if (interrupted === null || interrupted === 124) {
-        reportLane(`[test] ${lane.label} exceeded ${Math.round(remainingMs / 1000)}s; terminating pid ${child.pid}.`, "error");
+      if (interrupted === null) {
+        console.error(`[test] ${lane.label} exceeded ${Math.round(lane.timeoutMs / 1000)}s; terminating pid ${child.pid}.`);
         try {
           const diagnostics = saveTestLaneDiagnostics(child.pid);
-          reportLane(`[test] deadline diagnostics: ${diagnostics}`, "error");
+          console.error(`[test] deadline diagnostics: ${diagnostics}`);
         } catch {
-          reportLane("[test] deadline diagnostics unavailable; termination will continue.", "error");
+          console.error("[test] deadline diagnostics unavailable; termination will continue.");
         }
       }
       try { child.kill("SIGTERM"); } catch { /* child already exited */ }
@@ -801,7 +707,7 @@ export async function runTestLane(
     if (stderr) writers.stderr(stderr);
     const output = stdout + "\n" + stderr;
     if (result && !result.complete) {
-      reportLane("[test] captured output is incomplete; collected output is shown above.", "error");
+      console.error("[test] captured output is incomplete; collected output is shown above.");
       if (exitCode === 0) exitCode = 1;
     }
     if (interrupted !== null || exitCode === null) {
@@ -809,17 +715,16 @@ export async function runTestLane(
       return laneResult;
     }
     const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-    reportLane(`[test] ${lane.label} finished in ${seconds}s (exit ${exitCode}).`, "warn");
+    console.warn(`[test] ${lane.label} finished in ${seconds}s (exit ${exitCode}).`);
     laneResult = { exitCode, output };
     return laneResult;
   } finally {
     process.off("SIGINT", onInterrupt);
     process.off("SIGTERM", onTerminate);
-    cancellation?.removeEventListener("abort", onCancellation);
     if (laneResult) {
-      laneResult.exitCode = exitCodeAfterTempSweep(laneResult.exitCode, settleIsolatedTestRoot(isolated.root, undefined, reportCleanup));
+      laneResult.exitCode = exitCodeAfterTempSweep(laneResult.exitCode, settleIsolatedTestRoot(isolated.root));
     } else {
-      settleIsolatedTestRoot(isolated.root, undefined, reportCleanup);
+      settleIsolatedTestRoot(isolated.root);
     }
   }
 }
@@ -916,29 +821,7 @@ if (import.meta.main) {
       let exitCode = 0;
       let captured = "";
       for (const lane of resolveBunTestPlan(requestedTests, changedRun?.comparisonCommit)) {
-        const execute = (batch: BunTestLane) => runTestLane(batch, runId, inheritedLock, Boolean(changedRun), undefined, testRunner);
-        let result: Awaited<ReturnType<typeof execute>>;
-        if (lane.label === "parallel suite" && canBatchChangedMain(requestedTests)) {
-          const deadlineAt = Date.now() + lane.timeoutMs;
-          const files = discoverTestBatchFiles(join(process.cwd(), "tests"), SERIAL_FULL_SUITE_FILES);
-          const concurrency = resolveChangedBatchConcurrency(requestedTests);
-          const args = concurrency === 2 ? lane.args.map((arg, index) => index === 1 ? "--parallel=2" : arg) : lane.args;
-          const logs: { stdout: string; stderr: string }[] = [];
-          result = await runChangedTestBatches({ ...lane, args, deadlineAt }, files,
-            (batch, cancellation) => {
-              const log = { stdout: "", stderr: "" };
-              logs.push(log);
-              return runTestLane(batch, runId, inheritedLock, true,
-                { stdout: value => { log.stdout += value; }, stderr: value => { log.stderr += value; } }, testRunner, cancellation,
-                message => { log.stderr += message + "\n"; });
-            }, { concurrency, onResult: (_result, index) => {
-              if (logs[index]!.stdout) process.stdout.write(logs[index]!.stdout);
-              if (logs[index]!.stderr) process.stderr.write(logs[index]!.stderr);
-              logs[index] = { stdout: "", stderr: "" };
-            } });
-        } else {
-          result = await execute(lane);
-        }
+        const result = await runTestLane(lane, runId, inheritedLock, Boolean(changedRun), undefined, testRunner);
         captured += result.output;
         if (result.exitCode !== 0 && exitCode === 0) exitCode = result.exitCode;
         if ([124, 130, 143].includes(result.exitCode)) break;
