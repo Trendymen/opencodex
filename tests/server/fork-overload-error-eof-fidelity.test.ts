@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { consumeForInspection, relaySseWithFailedTail } from "../../src/server/relay";
 import { relaySseEagerBounded, type EagerRelayHooks } from "../../src/server/relay-eager";
+import { createOutboundCredentialMask, createTerminalErrorRedactionBlockRewrite } from "../../src/server/responses/terminal-error-redaction";
 
 const encoder = new TextEncoder();
 
@@ -9,11 +10,12 @@ function sse(event: string, payload: unknown): Uint8Array {
   return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
 }
 
-function streamFromChunks(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
+function streamFromChunks(chunks: Uint8Array[], readError?: Error): ReadableStream<Uint8Array> {
   let index = 0;
   return new ReadableStream<Uint8Array>({
     pull(controller) {
       if (index < chunks.length) controller.enqueue(chunks[index++]!);
+      else if (readError) controller.error(readError);
       else controller.close();
     },
   });
@@ -72,6 +74,123 @@ function assertOverloadFailure(text: string): void {
 }
 
 describe("fork overload error clean-EOF fidelity", () => {
+  for (const lane of ["pull", "eager", "eager-redaction"] as const) {
+    test.each([
+      ["opaque", "fixture-opaque-credential-abcdef-123456", "Rejected "],
+      ["escaped", 'fixture-opaque-"quoted"\\credential-中文', "Rejected "],
+      ["truncation boundary", "fixture-opaque-credential-abcdef-123456", "m".repeat(490)],
+    ])(`${lane} masks the selected %s credential before clean-EOF message truncation`, async (_case, credential, prefix) => {
+      const headers = { authorization: `Bearer ${credential}` };
+      const maskCredential = createOutboundCredentialMask(headers);
+      const source = streamFromChunks([sse("error", {
+        type: "error",
+        error: { ...OVERLOAD.error, message: `${prefix}${credential}${"x".repeat(1024)}` },
+      })]);
+      const hooks = eagerHooks();
+      if (lane === "eager-redaction") hooks.rewriteBlocks = createTerminalErrorRedactionBlockRewrite(headers, maskCredential);
+      const text = await readAll(lane === "pull"
+        ? relaySseWithFailedTail(source, new AbortController(), undefined, { maskCredential })
+        : relaySseEagerBounded(source, new AbortController(), hooks, { maskCredential }));
+      const response = failedPayload(text).response as { error: Record<string, string>; last_error: unknown };
+
+      expect(response.error).toEqual({
+        type: "server_error",
+        code: "server_is_overloaded",
+        message: `${prefix}[REDACTED]${"x".repeat(1024)}`.slice(0, 512),
+      });
+      expect(response.last_error).toEqual(response.error);
+      expect(text).not.toContain(credential);
+      expect(count(text, "event: response.failed")).toBe(1);
+      expect(count(text, "data: [DONE]")).toBe(1);
+      expect(text).not.toContain("event: error");
+    });
+
+    test.each([
+      ["opaque", "fixture-reset-opaque-credential-abcdef-123456", "Rejected "],
+      ["escaped", 'fixture-reset-"quoted"\\credential-中文', "Rejected "],
+      ["truncation boundary", "fixture-reset-opaque-credential-abcdef-123456", "m".repeat(490)],
+    ])(`${lane} masks the retained %s credential before a reader reset`, async (_case, credential, prefix) => {
+      const headers = { authorization: `Bearer ${credential}` };
+      const maskCredential = createOutboundCredentialMask(headers);
+      const source = streamFromChunks([sse("error", {
+        type: "error",
+        error: { ...OVERLOAD.error, message: `${prefix}${credential}${"x".repeat(1024)}` },
+      })], new Error(`Read reset ${credential}`));
+      const hooks = eagerHooks();
+      if (lane === "eager-redaction") hooks.rewriteBlocks = createTerminalErrorRedactionBlockRewrite(headers, maskCredential);
+      const text = await readAll(lane === "pull"
+        ? relaySseWithFailedTail(source, new AbortController(), undefined, { maskCredential })
+        : relaySseEagerBounded(source, new AbortController(), hooks, { maskCredential }));
+      const retainedPayload = text.split("event: error\ndata: ")[1]?.split("\n\n")[0];
+      expect(retainedPayload).toBeDefined();
+      expect(JSON.parse(retainedPayload!)).toEqual({
+        type: "error",
+        error: {
+          type: "server_error",
+          code: "server_is_overloaded",
+          message: `${prefix}[REDACTED]${"x".repeat(1024)}`.slice(0, 512),
+        },
+      });
+      const response = failedPayload(text).response as { error: unknown; last_error: unknown };
+      expect(response.error).toEqual({ type: "upstream_error", code: "upstream_reset", message: "Upstream stream terminated unexpectedly: Read reset [REDACTED]" });
+      expect(response.last_error).toEqual(response.error);
+      expect(text).not.toContain(credential);
+      expect(count(text, "event: error")).toBe(1);
+      expect(count(text, "event: response.failed")).toBe(1);
+      expect(count(text, "data: [DONE]")).toBe(1);
+    });
+
+    test(`${lane} drops credential-bearing unknown error fields during clean-EOF normalization`, async () => {
+      const credential = "fixture-opaque-nonmessage-credential-abcdef";
+      const headers = { "x-api-key": credential };
+      const maskCredential = createOutboundCredentialMask(headers);
+      const source = streamFromChunks([sse("error", {
+        type: "error",
+        error: { type: credential, code: credential, message: "Vendor rejected this turn." },
+      })]);
+      const hooks = eagerHooks();
+      if (lane === "eager-redaction") hooks.rewriteBlocks = createTerminalErrorRedactionBlockRewrite(headers, maskCredential);
+      const text = await readAll(lane === "pull"
+        ? relaySseWithFailedTail(source, new AbortController(), undefined, { maskCredential })
+        : relaySseEagerBounded(source, new AbortController(), hooks, { maskCredential }));
+      const response = failedPayload(text).response as { error: unknown; last_error: unknown };
+
+      expect(response.error).toEqual({ type: "upstream_error", code: "upstream_server_error", message: "Vendor rejected this turn." });
+      expect(response.last_error).toEqual(response.error);
+      expect(text).not.toContain(credential);
+      expect(count(text, "data: [DONE]")).toBe(1);
+    });
+  }
+
+  test("eager redaction preserves the winning real terminal fields while masking all diagnostic strings", async () => {
+    const credential = 'fixture-real-"quoted"\\credential-abcdef';
+    const headers = { authorization: `Bearer ${credential}` };
+    const maskCredential = createOutboundCredentialMask(headers);
+    const hooks = eagerHooks();
+    hooks.rewriteBlocks = createTerminalErrorRedactionBlockRewrite(headers, maskCredential);
+    const text = await readAll(relaySseEagerBounded(streamFromChunks([
+      sse("error", { ...OVERLOAD, error: { ...OVERLOAD.error, message: credential } }),
+      sse("response.failed", {
+        type: "response.failed",
+        response: {
+          status: "failed",
+          error: { type: "vendor_error", code: "real_failure", message: `Real failure: ${credential}`, context: [credential, 7] },
+          metadata: { diagnostic: credential, retained: true },
+        },
+      }),
+    ]), new AbortController(), hooks, { maskCredential }));
+
+    expect(failedPayload(text).response).toEqual({
+      status: "failed",
+      error: { type: "vendor_error", code: "real_failure", message: "Real failure: [REDACTED]", context: ["[REDACTED]", 7] },
+      metadata: { diagnostic: "[REDACTED]", retained: true },
+    });
+    expect(count(text, "event: response.failed")).toBe(1);
+    expect(count(text, "data: [DONE]")).toBe(1);
+    expect(text).not.toContain("server_is_overloaded");
+    expect(text).not.toContain("event: error");
+  });
+
   test("pull relay preserves an upstream overload error as response.failed at clean EOF", async () => {
     const text = await readAll(relaySseWithFailedTail(streamFromChunks([
       sse("response.created", { type: "response.created", response: { id: "resp_pull", status: "in_progress" } }),
