@@ -43,7 +43,7 @@
 - `X.Y.Z-ben.N` 更新保持同基线修订单调，稳定版同基线不覆盖 Fork，Tag 不可变。入口：[version policy](src/fork/version-policy.mjs)；回归：[version](tests/update/fork-version-policy.test.ts)。同步和发布按 [现行政策](docs/fork-sync-automation.md) 执行。
 - 测试沿用官方布局、单主池、默认 4 个 worker 和原预算；测试 pin 使用 Bun `1.4.3`，生产 runtime 保持 `1.4.2`。full 与 changed 共用官方 21 项串行名单及 4 个共用 Desktop SQLite 锁的测试，其余由 Bun 一次选择；changed 基准为 `--changed=origin/dev`。保留 Node shim 双探针、HTTP fixture 外网隔离、输出与 HOME 清理、锁成员登记修复及状态参数的单 suite 生命周期。入口：[runner](scripts/test.ts)、[Node probe](scripts/lib/test-runner-node.ts)、[run lock](scripts/test-run-lock.ts)；回归：[test runner](tests/ci-workflows/test-runner.test.ts)、[Node probe](tests/ci-workflows/test-runner-node-async.test.ts)、[registration](tests/ci-workflows/test-run-lock-registration.test.ts)。
 - watchdog 超时尽力保存进程快照，macOS 补栈采样；观察工具缺失或失败仍继续终止测试。入口：[timeout diagnostics](scripts/lib/test-runner-diagnostics.ts)；回归：[test runner](tests/ci-workflows/test-runner.test.ts)。
-- CI 保留逐 SHA 触发和官方基线/Tag/marker 验证，见 [preparation](scripts/prepare-fork-official-base.ts)、[baseline regression](tests/ci-workflows/fork-ci-official-baseline.test.ts)。基线回归复用不可变 Git 初态，每个场景保留独立仓库、浅克隆状态和真实验证调用。
+- CI 保留逐 SHA 触发和官方基线/Tag/marker 验证，见 [preparation](scripts/prepare-fork-official-base.ts)、[baseline regression](tests/ci-workflows/fork-ci-official-baseline.test.ts)。macOS 使用官方分片工具分为三片，每片 1 个 worker，保持每批 12 文件、批次 300 秒和 job 20 分钟预算；回归见 [macOS serial lanes](tests/ci-workflows/macos-serial-lanes.test.ts)。基线回归复用不可变 Git 初态，每个场景保留独立仓库、浅克隆状态和真实验证调用。
 
 ## 保留边界
 
