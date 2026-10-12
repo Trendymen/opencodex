@@ -3,7 +3,7 @@ title: Trendymen Fork extensions
 description: Compatibility and maintenance differences from the rebased upstream release.
 ---
 
-This appendix describes the Trendymen Fork relative to upstream `v2.81.0`. The other reference pages retain upstream wording; the Fork configuration differences are in [Fork configuration](/reference/configuration/fork-extensions/).
+This appendix describes the Trendymen Fork relative to upstream `v2.83.0`. The other reference pages retain upstream wording; the Fork configuration differences are in [Fork configuration](/reference/configuration/fork-extensions/).
 
 ## Compatibility changes
 
@@ -13,6 +13,7 @@ This appendix describes the Trendymen Fork relative to upstream `v2.81.0`. The o
 - Native Responses phase inference and content-channel reasoning summary projection cover paths outside the upstream bridge. Summary projection requires an explicit client summary request, preserves raw fields, and keeps passthrough continuation aligned with the delivered response.
 - Annotation instructions use bare chip directives. Output repair preserves code blocks, but it is not gated by this turn's annotation count and does not handle multiline code spans; native forwarding only receives the input rewrite.
 - SSE flush and terminal handling preserve usable upstream errors and one final `[DONE]`. Canonical forwarding copies a true Lite header into missing WebSocket metadata without replacing explicit values.
+- With Bun `1.4.3`, the Claude picker listener stops forwarding an unfinished HTTP/1.1 upload and processes queued writes before sending a 400/503 refusal. A closed connection or listener shutdown cancels the wait. Bodyless requests, completed uploads and HTTP/2 retain upstream behavior.
 - Ark quota errors retain the provider's message and reset time while preventing automatic retry. BigModel Codex discovery accepts `models[].slug`; the legacy `deepseek-v4-flash` alias can receive images directly unless operator configuration still excludes it.
 
 ## Recovery and maintenance
