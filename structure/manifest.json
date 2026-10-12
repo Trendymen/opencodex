@@ -354,7 +354,7 @@
       "tier": 4,
       "title": "Trendymen Fork Extensions",
       "scope": "Fork-only runtime, diagnostics and maintenance contracts.",
-      "documents": ["src/fork/"],
+      "documents": ["src/fork/", "src/claude/intercept/picker-listener.ts"],
       "forkOnly": true
     },
     {
