@@ -776,7 +776,7 @@ describe("upstream refusal terminal mapping (#5176)", () => {
         } else {
           expect({ label, error: synthesizedError(out) }).toEqual({
             label,
-            error: { type: "vendor_error", code: "vendor_limited", message: "inner" },
+            error: { type: "upstream_error", code: "upstream_server_error", message: "inner" },
           });
         }
       }

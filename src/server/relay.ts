@@ -842,14 +842,14 @@ export function cleanEofUpstreamErrorFromParsed(parsed: unknown): CleanEofUpstre
     // This is the relay's generic transport envelope, not a typed upstream
     // terminal. Its message wins over later envelopes, so use the bare path.
     if (explicitType === "upstream_error") return null;
+    const refusalCode = explicitCode !== undefined && isTerminalRefusalCode(explicitCode) ? explicitCode : undefined;
+    const recognized = recognizedUpstreamError({ type: explicitType, code: explicitCode });
     const error = {
-      type: redactSecretString(explicitType ?? "upstream_error")
-        .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
-      code: redactSecretString(explicitCode ?? "upstream_error")
-        .slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
+      type: refusalCode === undefined ? (recognized?.type ?? "upstream_error") : "invalid_request_error",
+      code: refusalCode === undefined ? (recognized?.code ?? "upstream_server_error")
+        : redactSecretString(refusalCode).slice(0, MAX_TAIL_ERROR_FIELD_CHARS),
       message: redactSecretString(message).slice(0, MAX_TAIL_ERROR_MESSAGE_CHARS),
     };
-    const terminalRefusal = explicitCode !== undefined && isTerminalRefusalCode(explicitCode);
     return {
       error,
       httpStatus: httpStatusFromTerminalError(error),
@@ -859,7 +859,7 @@ export function cleanEofUpstreamErrorFromParsed(parsed: unknown): CleanEofUpstre
           status: "failed",
           error,
           last_error: error,
-          ...(terminalRefusal ? { retryable: false } : {}),
+          ...(refusalCode === undefined ? {} : { retryable: false }),
         },
       }),
     };
