@@ -1,4 +1,3 @@
-import type { OcxProviderConfig } from "../types";
 import { openaiResponsesUrl } from "../adapters/openai-responses-url";
 import { isOpenAiGptFamilyModel } from "./openai-model-identity";
 
@@ -39,7 +38,7 @@ export function isCanonicalOpenAiForwardProvider<T extends OpenAiDestinationShap
  * known Codex exception (#2558); other destinations may declare their response contract without
  * a gateway-name or URL heuristic. Absence retains the authoritative legacy default.
  */
-export function responseTierAuthorityForProvider(provider: OcxProviderConfig): boolean | undefined {
+export function responseTierAuthorityForProvider<T extends OpenAiDestinationShape & { readonly responseTierAuthoritative?: boolean }>(provider: T): boolean | undefined {
   return isCanonicalOpenAiForwardProvider(provider) ? false : provider.responseTierAuthoritative;
 }
 
