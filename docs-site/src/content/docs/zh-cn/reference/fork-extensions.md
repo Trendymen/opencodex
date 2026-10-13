@@ -3,7 +3,7 @@ title: Trendymen Fork 扩展
 description: 相对已 rebase 上游版本的兼容与维护差异。
 ---
 
-本附录描述 Trendymen Fork 相对上游 `v2.83.0` 的行为。其他参考页保留上游原文；配置差异见 [Fork 配置](/zh-cn/reference/configuration/fork-extensions/)。
+本附录描述 Trendymen Fork 相对上游 `v2.84.0` 的行为。其他参考页保留上游原文；配置差异见 [Fork 配置](/zh-cn/reference/configuration/fork-extensions/)。
 
 ## 兼容差异
 
@@ -13,7 +13,6 @@ description: 相对已 rebase 上游版本的兼容与维护差异。
 - 原生 Responses phase 推断和 content-channel reasoning 摘要投影补充官方 bridge 之外的路径。投影须客户端显式请求 summary，保留原字段，passthrough continuation 与实际交付形状一致。
 - 注解说明使用裸 chip 指令。输出修复保留代码块，但不按本轮注解数量启用，也不处理跨行 code span；native 直通仅改写入站说明。
 - SSE flush 和终态处理保留有效上游错误与单枚 `[DONE]`。Canonical 转发将 true Lite header 补到缺失的 WebSocket metadata，不覆盖显式值。
-- Bun `1.4.3` 下，Claude picker listener 在 HTTP/1.1 未完成上传的 400/503 拒绝响应前停止上传转发，处理已有写队列后发送响应；连接关闭和 listener shutdown 取消等待。无 body、已完成上传和 HTTP/2 沿用官方行为。
 - Ark quota 错误保留原消息和 reset，阻止自动重试。BigModel Codex 发现接受 `models[].slug`；`deepseek-v4-flash` 旧别名可直连图片，用户配置仍显式排除时继续服从配置。
 
 ## 恢复与维护

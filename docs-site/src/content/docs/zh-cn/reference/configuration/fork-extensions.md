@@ -3,7 +3,7 @@ title: Fork 配置
 description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配置补充。
 ---
 
-本页补充上游 `v2.83.0` 配置。兼容行为见 [Fork 扩展](/zh-cn/reference/fork-extensions/)。
+本页补充上游 `v2.84.0` 配置。兼容行为见 [Fork 扩展](/zh-cn/reference/fork-extensions/)。
 
 ## Provider 配置
 
