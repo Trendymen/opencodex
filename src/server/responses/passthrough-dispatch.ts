@@ -167,16 +167,12 @@ import { planReasoningEffortDowngrade } from "../../providers/reasoning-metadata
 import { unboundPoolSpendRefusalResponse } from "../workflow-refusal";
 import { maybeRecoverNativeEncryptedAgentTask } from "../../fork/passthrough-agent-task-recovery";
 import { createPassthroughReasoningSummaryProjection } from "../responses-reasoning-summary-rewrite";
-import {
-  createNestedExecAdapterEventRepair,
-  createNestedExecPassthroughRepair,
-} from "../responses-nested-exec-call-repair";
+import { createNestedExecAdapterEventRepair, createNestedExecPassthroughRepair, } from "../responses-nested-exec-call-repair";
 import { createInboundResponsesDebugObserver } from "../../fork/inbound-response-debug";
 import { isDebugEnabled } from "../../lib/debug-settings";
 
 /** Transfer an uncommitted Copilot exchange to the existing translated pipeline without new admission. */
 export interface PassthroughAdapterHandoff { kind: "adapter-handoff" }
-
 /** Prepares and recovers one native Responses exchange before client commitment. */
 export async function preparePassthroughExchange(
   requestContext: PassthroughDispatchInputs["requestContext"],
@@ -1188,7 +1184,6 @@ export async function preparePassthroughExchange(
         request.releaseBodyObservation?.();
       }
     };
-
     const taskRecovery = await maybeRecoverNativeEncryptedAgentTask({
       transientRetryExhausted, upstreamResponse, inboundWire, threadSpawn,
       comboAttempt: options.comboAttempt, provider: route.provider, parsed, config, req,
