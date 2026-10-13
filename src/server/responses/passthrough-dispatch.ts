@@ -1199,7 +1199,7 @@ export async function preparePassthroughExchange(
         if ("failed" in retried) {
           if (options.abortSignal?.aborted || req.signal.aborted) return retried.failed;
         } else {
-          upstreamResponse = retried;
+          upstreamResponse = preOutputRefusals.restore(retried);
           agentTaskRecoveryReplayTerminal = true;
         }
       } catch {
