@@ -1,7 +1,7 @@
 # Trendymen Fork 差异
 
 记录当前代码相对 [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) 已 rebase 基线的剩余能力。
-基线：`v2.83.0`（`33b321853aff76045617824793cc7cbc1d4084e7`）；包版本见 [package.json](package.json)，发布状态以 Tag 和 Release 为准。
+基线：`v2.84.0`（`6955343008e76e96d1c89bb32a9fc49f50e44fb9`）；包版本见 [package.json](package.json)，发布状态以 Tag 和 Release 为准。
 
 官方文档保留上游原文。Fork 结构约束见 [structure/fork-extensions.md](structure/fork-extensions.md)，配置用法见 [Fork reference](docs-site/src/content/docs/reference/fork-extensions.md)，发布补充见 [FORK_MAINTAINERS.md](FORK_MAINTAINERS.md)。
 能力变化时原地更新本文；历史设计、执行步骤、冲突和验证流水从 Git 历史、任务材料及 Release Notes 查阅。
@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | Canonical ChatGPT 转发把 HTTP Lite header 的 `true` 补到缺失的 WS body metadata，保留已有值和调用方 body。 | [passthrough.ts](src/adapters/openai-responses/passthrough.ts) | [Lite metadata](tests/codex-integration/codex-responses-lite-metadata.test.ts) |
 | 分开判断 GPT 模型族、native 路由、保留别名和官方目的地；第三方托管 GPT 不等于官方服务。 | [model identity](src/providers/openai-model-identity.ts)、[destination](src/providers/openai-tiers-destination.ts) | [model identity](tests/providers/openai-model-identity.test.ts) |
-| Ark GLM/Kimi、BigModel GLM 的 Responses schema lowering、尾部 user turn 和空 assistant 清理，复用官方明文消息转换器。 | [glm-kimi-compat.ts](src/fork/glm-kimi-compat.ts) | [Kimi schema](tests/providers/fork-kimi-schema-compiler.test.ts)、[GLM schema](tests/providers/fork-zhipu-glm-schema-lowering.test.ts)、[user turn](tests/providers/fork-trailing-user-turn-compat.test.ts) |
+| Ark GLM/Kimi、BigModel GLM 的 Responses schema lowering、尾部 user turn 和空 assistant 清理，复用官方明文消息转换器。 | [glm-kimi-compat.ts](src/fork/glm-kimi-compat.ts) | [Kimi schema](tests/providers/fork-kimi-schema-compiler.test.ts)、[GLM schema](tests/providers/fork-zhipu-glm-schema-lowering.test.ts)、[user turn](tests/providers/fork-trailing-user-turn-compat.test.ts)、[Ark 空内容](tests/providers/fork-volcengine-empty-assistant-content.test.ts) |
 | 第三方工具 schema 清理 ChatGPT 专用 `encrypted` 注解；保留同名属性/literal，官方及显式可信直接 relay 保留注解，combo 不继承直接路由例外。 | [tool schema](src/adapters/responses-tool-schema.ts)、[transport](src/server/responses/request-transport.ts) | [passthrough](tests/responses/openai-responses-passthrough.test.ts)、[combo recovery](tests/server/agent-task-recovery-combo.test.ts) |
 | `agentMessageFormat` 选择 `preserve` / `user_message`；官方目的地保留原生格式，密文、未知 part 和空内容不做部分转换。 | [agent-message-format.ts](src/fork/agent-message-format.ts) | [message format](tests/responses/agent-message-format.test.ts) |
 | 第三方工具任务的可见进度、code-mode 工具发现和结果回显要求；可见补丁工具接收顺序及失败恢复提示。 | [progress contract](src/fork/routed-progress-contract.ts)、[tool catalog](src/adapters/tool-catalog-nudge.ts) | [progress](tests/codex-integration/fork-routed-progress-contract.test.ts)、[tool catalog](tests/adapters/tool-catalog-nudge.test.ts) |
@@ -37,7 +37,6 @@
 
 ## 诊断与维护
 
-- Bun `1.4.3` 下，Claude picker 的 HTTP/1.1 未完成上传在 400/503 响应前停止该连接的上传转发，处理已有写队列后发送响应，连接中断或 shutdown 取消等待；无 body、已完成上传和 HTTP/2 沿用官方行为。入口：[picker listener](src/claude/intercept/picker-listener.ts)；回归：[upload](tests/claude-integration/claude-picker-upload.test.ts)、[listener](tests/claude-integration/claude-picker-listener.test.ts)。
 - Provider debug 增加磁盘结构日志、上游/重写后双阶段观察和独立授权的文本样本；按 4 MiB 分组、7 天、20 GiB 管理主日志与引用工件。旧 home 收养不接管预存路径。入口：[persistence](src/fork/debug-persistence.ts)、[observation](src/fork/inbound-response-debug.ts)、[ownership](src/lib/config-ownership.ts)；回归：[persistence](tests/server/fork-debug-persistence.test.ts)、[safety](tests/server/fork-provider-debug-safety.test.ts)。
 - `install:local` 离线 staging 后替换本地包，把 Volta、服务、readiness 和失败回滚纳入事务；macOS 安装补写结构/文本诊断环境，字体栈补丁保留。入口：[installer](scripts/install-local.ts)、[transaction](src/update/transactional-install.mjs)；回归：[lifecycle](tests/ci-workflows/fork-install-local-lifecycle.test.ts)、[transaction](tests/ci-workflows/fork-install-local-deferred-transaction.test.ts)、[rollback](tests/ci-workflows/fork-install-local-transaction-hardening.test.ts)。两组事务回归共用[离线本地包夹具](tests/helpers/install-local-package.ts)。
 - `X.Y.Z-ben.N` 更新保持同基线修订单调，稳定版同基线不覆盖 Fork，Tag 不可变。入口：[version policy](src/fork/version-policy.mjs)；回归：[version](tests/update/fork-version-policy.test.ts)。同步和发布按 [现行政策](docs/fork-sync-automation.md) 执行。
@@ -47,6 +46,8 @@
 
 ## 保留边界
 
+- Claude picker 的上传拒绝与有界 linger 采用官方 [listener](src/claude/intercept/picker-listener.ts) 和 [linger 回归](tests/claude-integration/claude-picker-linger.test.ts)。旧队列写入屏障及其内部测试已移除；Fork 保留无 body 的 H1 400/503 同 socket 复用、其他上传/H2 sibling 和拒绝后重复 shutdown 的[外部回归](tests/claude-integration/claude-picker-upload.test.ts)。linger timer 在 listener shutdown 后取消尚缺专门组合用例。
+- 官方 [Chat 空 assistant 配对](tests/adapters/openai/openai-empty-assistant-history.test.ts)、[Kimi 原生端点清理](src/adapters/openai-responses/empty-assistant.ts) 和 [V1 协作面识别](src/server/responses/code-mode-collab-surface.ts) 继续采用上游实现。Ark 的端点与空白处理、Console Go 重复输出合并、出站工具提示和 nested exec 调用修复仍有不同消费者与回归，不能用上述分类覆盖替代。
 - 裸上游错误采用官方 [recognizedUpstreamError](src/lib/errors.ts) 与 [分类矩阵](tests/responses/sse-failed-tail.test.ts)：未知 vendor type/code 归一化为 `upstream_error` / `upstream_server_error`，message 继续有界脱敏。真实 `response.failed` 的 type/code/message 保真及显式终态胜出仍由 [EOF 回归](tests/server/fork-overload-error-eof-fidelity.test.ts) 覆盖。
 - 已上游化的通用消息转换、Fernet multipart recovery、direct MCP 归一化、custom tool item type 和 Bun pin 分离继续采用官方实现。删除剩余补丁须证明代码与测试等价；旧 allowlist、Spark 专属规则、动态 Fork runner 和滚动 CSS 补丁不恢复。
 - Provider/App 端到端、真实 backend ciphertext、Windows 全局替换与服务恢复仍有验收缺口。合成回归、文档构建和审查通过不替代这些验收。
