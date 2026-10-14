@@ -1,3 +1,4 @@
+import type { CodexPassthroughConfig } from "../fork/codex-passthrough-contract";
 import type { UpstreamHttpVersion, ReasoningSummaryDelivery, CodexAccountMode } from "./wire";
 import type { AnthropicAccountPoolConfig } from "./anthropic-account-pool";
 
@@ -290,6 +291,7 @@ export interface ModelCapabilities {
 }
 
 export interface OcxProviderConfig {
+  codexPassthrough?: CodexPassthroughConfig;
   /** Explicit builtin Pool 2 provenance; endpoints never imply ownership. */
   anthropicOAuthInstance?: "anthropic2";
   /** Independent Anthropic pool settings; valid only on providers.anthropic2. */

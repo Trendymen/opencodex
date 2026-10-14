@@ -12,6 +12,7 @@ export const PROVIDER_MODEL_RENAME_ROLES = {
   codexToolMode: "none",
   projectContext: "none",
   requestPacing: "nested-models",
+  codexPassthrough: "none",
   mcpMaxTools: "none",
   mcpMaxSchemaBytes: "none",
   mcpMaxResultBytes: "none",

@@ -1,3 +1,5 @@
+import { codexPassthroughCandidateError } from "../fork/codex-passthrough-contract";
+import { carryCodexPassthroughResponse } from "../fork/codex-passthrough-turn";
 import { providerRelativeSendPathConfigError } from "../config/provider-relative-send-path";
 import { contextTierRecordConfigError, modelCapabilitiesConfigError } from "../config/provider-validation";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -276,16 +278,17 @@ export function managementCorsHeaders(req?: Request, config?: OcxConfig): Record
   return headers;
 }
 
-export function withCors(response: Response, req: Request, config: RequestPolicyView): Response {
+export function withCors(response: Response, req: Request, config: RequestPolicyView, enabled = true): Response {
+  if (!enabled) return response;
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(corsHeaders(req, config))) {
     headers.set(name, value);
   }
-  return new Response(response.body, {
+  return carryCodexPassthroughResponse(response, new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
-  });
+  }));
 }
 
 export function withManagementCors(response: Response, req: Request, config: OcxConfig): Response {
@@ -786,6 +789,7 @@ export function providerManagementConfigError(
     delete canonicalCandidate.pinnedReasoningEffort;
     delete canonicalCandidate.modelPinnedReasoningEfforts;
     delete canonicalCandidate.agentMessageFormat;
+    delete canonicalCandidate.codexPassthrough;
     delete canonicalCandidate.responsesSnapshotRepair;
     // Explicit history-loss opt-in changes request content, never auth or transport identity.
     delete canonicalCandidate.projectResponsesLiteHostedSearchHistory;
@@ -854,6 +858,8 @@ export function providerManagementConfigError(
   }
   const headersError = providerHeadersConfigError(typed.headers);
   if (headersError) return `provider ${name} ${headersError}`;
+  const passthroughError = codexPassthroughCandidateError(raw.codexPassthrough);
+  if (passthroughError) return passthroughError;
   const forwardClientHeadersError = providerForwardClientHeadersConfigError(raw.forwardClientHeaders);
   if (forwardClientHeadersError) return `provider ${name} ${forwardClientHeadersError}`;
   const retryOn429Error = retryOn429PolicyConfigError(raw.retryOn429);
@@ -1051,6 +1057,7 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   codexToolMode: "editor",
   projectContext: "editor",
   requestPacing: "editor",
+  codexPassthrough: "editor",
   mcpMaxTools: "editor",
   mcpMaxSchemaBytes: "editor",
   mcpMaxResultBytes: "editor",

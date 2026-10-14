@@ -1,3 +1,4 @@
+import { carryCodexPassthroughResponse } from "../../fork/codex-passthrough-turn";
 import { currentServiceHomes, serviceStatePathsForOpenCodexHome } from "../../service";
 import {
   createWindowsTaskListingCache,
@@ -119,7 +120,8 @@ export function withMessagesRequestLogId(response: Response, requestId: string):
   return correlated;
 }
 
-export function withRequestLogId(response: Response, requestId: string): Response {
+export function withRequestLogId(response: Response, requestId: string, enabled = true): Response {
+  if (!enabled) return response;
   const headers = new Headers(response.headers);
   headers.set(REQUEST_LOG_ID_RESPONSE_HEADER, requestId);
   // A custom `x-` header is not CORS-safelisted, so cross-origin JavaScript gets null from
@@ -141,11 +143,11 @@ export function withRequestLogId(response: Response, requestId: string): Respons
       exposed ? `${exposed}, ${REQUEST_LOG_ID_RESPONSE_HEADER}` : REQUEST_LOG_ID_RESPONSE_HEADER,
     );
   }
-  return new Response(response.body, {
+  return carryCodexPassthroughResponse(response, new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
-  });
+  }));
 }
 
 export interface StartServerDeps {

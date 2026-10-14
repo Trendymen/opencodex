@@ -1,4 +1,5 @@
 import { bindAnthropicRejectionResponse } from "../../adapters/anthropic-rejection-memo";
+import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { rotateAnthropicAccountOnResponseForInstance } from "../../oauth/anthropic-account-refusal";
 import type { ResponsesRequestContext } from "./core-options";
 import type { PreparedResponsesRequest } from "./request-prepare";
@@ -255,6 +256,7 @@ export function createAdapterContinuations(
               onRecoveryWithheld: noteAdapterRecoveryWithheld,
               stream: nextParsed.stream,
               executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                 pacingSlotAcquired: true,
                 pacingSlot,
                 dispatchOverride: oauthDispatch(builtContinuationRequest, nextParsed),
@@ -287,6 +289,7 @@ export function createAdapterContinuations(
               connectMs,
               nextParsed.stream,
               providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
               dispatchOverride: oauthDispatch(builtContinuationRequest, nextParsed),
                 providerName: route.providerName,
                 modelId: nextParsed.modelId,

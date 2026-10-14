@@ -1,3 +1,8 @@
+import { prepareCanonicalCodexRequest, CodexContinuationUnavailableError } from "../../fork/codex-passthrough-request";
+import { bindCodexRequestHistory, CodexRecoveredInputUnavailableError } from "../../fork/codex-passthrough-source";
+import { codexPassthroughSourceRequired, retainCodexPassthroughTurnSource, codexPassthroughRequestSource, resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
+import { routedCodexPassthroughPermissions } from "../../fork/codex-passthrough-routing";
+import { codexAccountSoftPrecheckOptions } from "../../fork/codex-passthrough-local-errors";
 import type { HandleResponsesOptions, ResponsesRequestContext, ResponsesAdmissionState, ResponsesDispatchers } from "./core-options";
 import type { PolicyRequestEvidence } from "../../routing/evaluator";
 import type { RequestLogContext } from "../request-log";
@@ -233,7 +238,10 @@ export async function prepareResponsesRequest(
   const agentTaskRecovery = agentTaskRecoveryConfig(config);
   let body: unknown;
   try {
-    body = await readJsonRequestBody(req, translatorBudget, resolveInboundBodyLimitBytes(config.maxInboundBodyBytes));
+    body = await readJsonRequestBody(req, translatorBudget, resolveInboundBodyLimitBytes(config.maxInboundBodyBytes), {
+      onDecodedJson: codexPassthroughSourceRequired(options.codexPassthroughTurn)
+        ? capture => retainCodexPassthroughTurnSource(options.codexPassthroughTurn, capture, translatorBudget, req) : undefined,
+    });
   } catch (err) {
     if (options.abortSignal?.aborted || req.signal.aborted) {
       return clientCancelledResponse();
@@ -409,6 +417,7 @@ export async function prepareResponsesRequest(
   const inboundOwnThreadId = req.headers.get("thread-id")?.trim() || undefined;
   const cursorClientThreadId = codexPoolAffinityKey(req.headers);
   const originalBody = body;
+  let deferredReplayFailure = false;
   if (options.comboReplaySnapshot) {
     copyPreviousResponseReplayProvenance(options.comboReplaySnapshot.sourceBody, body);
   } else {
@@ -419,7 +428,7 @@ export async function prepareResponsesRequest(
       console.warn("[opencodex] refusing continuation because the client task scope does not match replay state");
     }
     // Local replay failures require full client replay.
-    if (replayFailure) {
+    if (replayFailure && (replayFailure.reason === "scope_mismatch" || !codexPassthroughSourceRequired(options.codexPassthroughTurn))) {
       return formatErrorResponse(
         400,
         "previous_response_not_found",
@@ -427,6 +436,8 @@ export async function prepareResponsesRequest(
       );
     }
   }
+  deferredReplayFailure = !!previousResponseReplayFailure(body);
+  bindCodexRequestHistory(codexPassthroughRequestSource(options.codexPassthroughTurn), body);
   const previousResponseInputExpanded = options.comboReplaySnapshot?.previousResponseInputExpanded
     ?? (body !== originalBody
       && typeof (body as { previous_response_id?: unknown }).previous_response_id === "string");
@@ -474,6 +485,7 @@ export async function prepareResponsesRequest(
   let parsed: OcxParsedRequest;
   let toolBridgeMaps: ReturnType<typeof buildToolBridgeMaps>;
   let clientToolCatalogRestriction: ClientToolCatalogRestriction | undefined;
+  let toolBridgeRetainedBytes = 0;
   try {
     parsed = parseRequest(body);
     // Antigravity direct lane: the body carried only the request settings, so the parse above
@@ -529,7 +541,9 @@ export async function prepareResponsesRequest(
     if (options.comboReplaySnapshot?.recoveredPlaintext) {
       markBodyNonPersistable(parsed._rawBody);
     }
+    const beforeToolMaps = translatorBudget.snapshot().currentBytes;
     toolBridgeMaps = buildToolBridgeMaps(parsed, translatorBudget);
+    toolBridgeRetainedBytes = translatorBudget.snapshot().currentBytes - beforeToolMaps;
     if (previousResponseInputExpanded) parsed._previousResponseInputExpanded = true;
     const providerContinuationCandidate = options.comboReplaySnapshot
       ? options.comboReplaySnapshot.providerContinuation
@@ -836,7 +850,7 @@ export async function prepareResponsesRequest(
     return formatErrorResponse(404, "invalid_request_error", err instanceof Error ? err.message : String(err));
   }
 
-  const hasUnexpandedPreviousResponse = !!parsed.previousResponseId
+  let hasUnexpandedPreviousResponse = !!parsed.previousResponseId
     && parsed._previousResponseInputExpanded !== true;
   // Exact account selectors are isolated from Pool-wide quota work. A canonical replay miss must
   // also fail closed without polling quota upstream. Cached fallback state can still select a
@@ -882,6 +896,7 @@ export async function prepareResponsesRequest(
   // as `accountId`. A reserve-authorized request is the one input where the two can differ, and
   // it differs harmlessly: reserve plus a caller bearer is served as main either way, which is
   // the answer this produces.
+  const previewSoftQuotaOptions = codexAccountSoftPrecheckOptions(routedCodexPassthroughPermissions(options.codexPassthroughTurn, route, inboundWire));
   const previewRequestOwnedMainPin = requestOwnedMainPinState(
     previewAuthHeaders,
     config,
@@ -889,6 +904,7 @@ export async function prepareResponsesRequest(
     previewRequestScopedMainCredential,
     route.codexAccountId,
     codexQuotaScopeForModel(route.modelId),
+    previewSoftQuotaOptions,
   ).preserve;
   // Final auth's own liveness answer for a request-owned bearer, from its own shared expression
   // (#5019). Predicting the pin alone dropped main here and handed subagent fallback a different
@@ -904,6 +920,7 @@ export async function prepareResponsesRequest(
   // Deliberately NOT fenced on ownership: final auth derives `nativeMainSelectionOnly` from the
   // drain alone, and adding a term here would diverge from it in the other direction.
   const previewSelectionOptions = {
+    ...previewSoftQuotaOptions,
     nativeMainSelectionOnly: !nativeMainRecoveryBlocked
       && previewSelectionAdmission?.mainProfileDraining === true,
     // Pool eligibility was the last part of preview still outside the fence (#4850). Without
@@ -1174,6 +1191,7 @@ export async function prepareResponsesRequest(
               // to. Reconstructing the options without it is what left pool eligibility outside
               // the fence on the first preview (#4850); recovery re-previews, so it would leave
               // the same two reads on the one path that runs after decryption.
+              const recoverySoftQuotaOptions = codexAccountSoftPrecheckOptions(routedCodexPassthroughPermissions(options.codexPassthroughTurn, route, inboundWire));
               const recoveryRequestOwnedMainPin = requestOwnedMainPinState(
                 recoveryAuthHeaders,
                 config,
@@ -1181,6 +1199,7 @@ export async function prepareResponsesRequest(
                 recoveryRequestScopedMainCredential,
                 route.codexAccountId,
                 codexQuotaScopeForModel(route.modelId),
+                recoverySoftQuotaOptions,
               ).preserve;
               // Same shared expression as the first preview and as final auth (#5019), recomputed
               // against the route recovery may have moved to.
@@ -1192,6 +1211,7 @@ export async function prepareResponsesRequest(
                 callerOwnsCooledPoolSubscription: false,
               });
               const recoverySelectionOptions = {
+                ...recoverySoftQuotaOptions,
                 nativeMainSelectionOnly: !recoveryNativeMainBlocked
                   && recoverySelectionAdmission?.mainProfileDraining === true,
                 requestOwnedMainCredential: recoveryRequestScopedMainCredential,
@@ -1387,6 +1407,85 @@ export async function prepareResponsesRequest(
     }
   }
 
+  // Captured before normalization: whether the CLIENT asked for SSE. The
+  // transport-neutral upstream-streaming policy below may force a bounded JSON
+  // upstream for reliability (#875); the answer must then be reframed to SSE
+  // for streaming clients.
+  const clientRequestedStream = parsed.stream;
+  const admittedPolicyRoute = { providerName: route.providerName, modelId: route.modelId };
+  let deferredGuidanceReasoning: { value: OcxParsedRequest["options"]["reasoning"] } | undefined;
+  // Restore the bridge conversation before normalization can add guidance.
+  leaveDirectLaneIfRerouted(options, route, parsed, logCtx);
+  await applyFinalRouteRequestNormalization({
+    parsed,
+    route,
+    config,
+    req,
+    logCtx,
+    inboundWire,
+    inboundTransport: options.inboundTransport,
+    claudeGoAffinity: options.claudeGoAffinity,
+    droidDefaultEffort: options.droidDefaultEffort,
+    deferMultiAgentGuidance: inboundWire === "responses" && options.codexPassthroughTurn !== undefined,
+    onDeferredGuidanceReasoning: value => { deferredGuidanceReasoning = { value }; },
+  });
+  try {
+    assertPolicyNormalizedRoute(policyScope, admittedPolicyRoute, route);
+  } catch (error) {
+    const policyRefusal = policyCandidateRefusalResponse(error);
+    if (policyRefusal) return policyRefusal;
+    throw error;
+  }
+  const codexPermissions = resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire });
+  admissionState.codexPassthroughPermissions = codexPermissions;
+  let commitCanonicalEffects: (() => void) | undefined;
+  if (inboundWire === "responses" && isCanonicalOpenAiForwardProvider(route.provider)) {
+    if (options.abortSignal?.aborted || req.signal.aborted) return clientCancelledResponse();
+    const source = codexPassthroughRequestSource(options.codexPassthroughTurn);
+    if (!source || !codexPermissions) return formatErrorResponse(503, "codex_request_source_unavailable", "Original Codex request source is unavailable; retry the request.");
+    const previous = parsed;
+    try {
+      const prepared = await prepareCanonicalCodexRequest(source, codexPermissions, { req, config, route, logCtx, translatorBudget,
+        skillsScopeKey: skillsSnapshotScopeKey ?? undefined, modelOverride: parsed._wireModelOverride ?? route.modelId, deferredGuidanceReasoning,
+        adoptParsedRequest(next) {
+          Object.assign(next, { _clientThreadId: previous._clientThreadId, _codexOwnThreadId: previous._codexOwnThreadId,
+            _cursorClientThreadId: previous._cursorClientThreadId, _cursorConversationId: previous._cursorConversationId,
+            _reasoningReplayScope: previous._reasoningReplayScope, _promptCacheKeyIsSharedCohort: previous._promptCacheKeyIsSharedCohort,
+            _cursorIsolateConversation: previous._cursorIsolateConversation, _memoryModelPhase: previous._memoryModelPhase,
+            _stripReasoningEncryptedContent: previous._stripReasoningEncryptedContent, _dropForeignReasoningItemIds: previous._dropForeignReasoningItemIds,
+            _providerContinuationCandidate: previous._providerContinuationCandidate, _providerContinuationOwner: previous._providerContinuationOwner,
+            _responseModelId: previous._responseModelId, _wireModelOverride: previous._wireModelOverride,
+            _openAiVirtualSelectedModelId: previous._openAiVirtualSelectedModelId, _portableCompaction: previous._portableCompaction });
+          next.options.tierDecision = previous.options.tierDecision;
+          next.options.tierObservation = previous.options.tierObservation;
+          next.options.hideThinkingSummary = previous.options.hideThinkingSummary;
+          next.options.hideRawReasoning = previous.options.hideRawReasoning;
+          const raw = next._rawBody as Record<string, unknown>;
+          const normalized = previous._rawBody as Record<string, unknown>;
+          if (codexPermissions.normalizeRequestParameters) {
+            if (raw.store === undefined && normalized.store !== undefined) raw.store = normalized.store;
+            if (normalized.reasoning !== undefined) raw.reasoning = normalized.reasoning;
+            next.options.reasoning = previous.options.reasoning;
+          }
+          if (codexPermissions.normalizeRequestParameters && route.staticPolicy.model.responsesUpstreamStreaming === false) { raw.stream = false; next.stream = false; }
+          adoptParsedRequest(next);
+          body = next._rawBody;
+          translatorBudget.releaseRetained(toolBridgeRetainedBytes, { kind: "retained_collectors" });
+          toolBridgeMaps = buildToolBridgeMaps(next, translatorBudget);
+          rebindCacheDiagnosticBody(body, logCtx.cacheDiagnosticDraft);
+        },
+      });
+      commitCanonicalEffects = prepared.commitPreparedEffects;
+      hasUnexpandedPreviousResponse = codexPermissions.expandRequestHistory && !!parsed.previousResponseId && parsed._previousResponseInputExpanded !== true;
+    } catch (error) {
+      if (error instanceof CodexContinuationUnavailableError) return formatErrorResponse(400, "previous_response_not_found", error.message);
+      if (error instanceof CodexRecoveredInputUnavailableError) return unreadableEncryptedAgentTaskResponse("input_changed");
+      throw error;
+    }
+  }
+  if (deferredReplayFailure && codexPermissions?.expandRequestHistory !== false) {
+    return formatErrorResponse(400, "previous_response_not_found", "Continuation state is unavailable or corrupt; resend the full conversation without previous_response_id.");
+  }
   // The canonical ChatGPT backend rejects previous_response_id, so a local replay miss leaves no
   // safe way to recover the omitted history. Fail before auth, adapter construction, or upstream
   // I/O instead of stripping the id and silently forwarding a context-free delta (#702).
@@ -1430,32 +1529,6 @@ export async function prepareResponsesRequest(
     }
   }
 
-  // Captured before normalization: whether the CLIENT asked for SSE. The
-  // transport-neutral upstream-streaming policy below may force a bounded JSON
-  // upstream for reliability (#875); the answer must then be reframed to SSE
-  // for streaming clients.
-  const clientRequestedStream = parsed.stream;
-  const admittedPolicyRoute = { providerName: route.providerName, modelId: route.modelId };
-  // Final guard before normalization may inject guidance into the raw body.
-  leaveDirectLaneIfRerouted(options, route, parsed, logCtx);
-  await applyFinalRouteRequestNormalization({
-    parsed,
-    route,
-    config,
-    req,
-    logCtx,
-    inboundWire,
-    inboundTransport: options.inboundTransport,
-    claudeGoAffinity: options.claudeGoAffinity,
-    droidDefaultEffort: options.droidDefaultEffort,
-  });
-  try {
-    assertPolicyNormalizedRoute(policyScope, admittedPolicyRoute, route);
-  } catch (error) {
-    const policyRefusal = policyCandidateRefusalResponse(error);
-    if (policyRefusal) return policyRefusal;
-    throw error;
-  }
   // Normalization is the last thing that can move the destination: resolving an
   // OpenAI virtual model rewrites route.modelId to the wire id that will
   // actually be billed. A scope checked only before this would authorize the
@@ -1507,7 +1580,7 @@ export async function prepareResponsesRequest(
   // Compaction turns are exempt: Codex sends compaction_trigger BECAUSE context is full, so
   // refusing the turn that shrinks the context would deadlock the client against the very
   // limit this gate reports — it would be told to compact and then denied the compaction.
-  if (parsed._compactionRequest !== true) {
+  if (parsed._compactionRequest !== true && routedCodexPassthroughPermissions(options.codexPassthroughTurn, route, inboundWire)?.localErrorPolicies.inputAdmissionPrecheck !== false) {
     // A combo child is the one caller that can afford a strict gate: skipping a target it
     // cannot fit is safe before any upstream bytes are sent, and the ladder continues. A
     // direct request has nowhere to go, so it keeps the loose pathological-input gate.
@@ -1568,8 +1641,8 @@ export async function prepareResponsesRequest(
     );
     if (!finalAuth.ok) return finalAuth.response;
     admissionState.authCtx = finalAuth.authCtx;
-    selectedForwardHeaders = withClaudeNativeSession(finalAuth.headers, route.provider, options.claudeNativeSessionId);
-    callerAuthHeaders = withClaudeNativeSession(finalAuth.callerAuthHeaders, route.provider, options.claudeNativeSessionId);
+    selectedForwardHeaders = withClaudeNativeSession(finalAuth.headers, route.provider, options.claudeNativeSessionId, codexPermissions, options.codexSessionIdSynthesized);
+    callerAuthHeaders = withClaudeNativeSession(finalAuth.callerAuthHeaders, route.provider, options.claudeNativeSessionId, codexPermissions, options.codexSessionIdSynthesized);
     substituteMainCredential = finalAuth.substituteMainCredential;
   }
 
@@ -1632,7 +1705,7 @@ export async function prepareResponsesRequest(
     ? admissionState.authCtx.accountId
     : config.activeCodexAccountId ?? null;
 
-  commitSkillsSnapshot?.();
+  if (codexPermissions) commitCanonicalEffects?.(); else commitSkillsSnapshot?.();
   return {
     inboundWire,
     clientDeclaredEmptyToolCatalog: options.clientDeclaredEmptyToolCatalog === true,
@@ -1646,7 +1719,7 @@ export async function prepareResponsesRequest(
       return parsed;
     },
     adoptParsedRequest,
-    toolBridgeMaps,
+    get toolBridgeMaps() { return toolBridgeMaps; },
     responseStateOptions,
     rememberKiroDeliveredFinalAnswer,
     route,

@@ -11,6 +11,7 @@ import { prepareResponsesRequest } from "../../src/server/responses/request-prep
 import { handleComboResponses } from "../../src/server/responses/core";
 import type { ResponsesAdmissionState } from "../../src/server/responses/core-options";
 import { createTranslatorBudget } from "../../src/lib/translator-budget";
+import { captureCodexPassthroughTurn, releaseCodexPassthroughTurnSource } from "../../src/fork/codex-passthrough-turn";
 import {
   canAcquireTransientProbe,
   clearPoolRecoveryState,
@@ -431,12 +432,14 @@ describe("stored-account credit refusal before Responses dispatch (#6606)", () =
 
   async function prepareProbe(req: Request, cfg: OcxConfig, state: ResponsesAdmissionState, abortSignal?: AbortSignal) {
     const translatorBudget = createTranslatorBudget();
+    const codexPassthroughTurn = captureCodexPassthroughTurn(cfg.providers, "responses");
     try {
       return await prepareResponsesRequest({
         req, config: cfg, logCtx: { model: "", provider: "" } as RequestLogContext,
-        options: { translatorBudget, abortSignal },
+        options: { translatorBudget, abortSignal, codexPassthroughTurn },
       }, state, { handleResponses, handleComboResponses });
     } finally {
+      releaseCodexPassthroughTurnSource(codexPassthroughTurn);
       translatorBudget.dispose();
     }
   }

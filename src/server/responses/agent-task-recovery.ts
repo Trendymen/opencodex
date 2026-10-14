@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
+import { recordCodexSourceRecovery } from "../../fork/codex-passthrough-source";
 import { decodeJwtPayload, extractAccountId } from "../../oauth/chatgpt";
 import type { OcxConfig } from "../../types";
 import { boundedBodyDecodeFailure, readBoundedResponseBody } from "../../lib/bounded-body";
@@ -246,6 +247,23 @@ function validateAssignment(assignment: unknown, envelope: AgentEnvelope): strin
   return payload;
 }
 
+function makeRecoveryReplacement(author: string, recipient: string, headerText: string, ciphertexts: readonly string[], text: string) {
+  const tokens = [...ciphertexts];
+  return {
+    retainedBytes: [author, recipient, headerText, text, ...tokens].reduce((bytes, value) => bytes + Buffer.byteLength(value), 0),
+    apply(item: unknown): boolean {
+      const target = findEnvelope([item]);
+      if (!target || target.author !== author || target.recipient !== recipient || target.headerText !== headerText
+        || target.ciphertexts.length !== tokens.length || target.ciphertexts.some((value, index) => value !== tokens[index])) return false;
+      const message = item as Record<string, unknown>;
+      (message.content as unknown[]).splice(target.encryptedStartIndex, tokens.length, { type: "input_text", text });
+      message.type = "message"; message.role = "user";
+      delete message.id; delete message.author; delete message.recipient;
+      return true;
+    },
+  };
+}
+
 function injectUserMessage(input: unknown, envelope: AgentEnvelope, text: string): boolean {
   if (!Array.isArray(input)) return false;
   const item = input[envelope.itemIndex];
@@ -253,13 +271,9 @@ function injectUserMessage(input: unknown, envelope: AgentEnvelope, text: string
   const content = (item as { content?: unknown }).content;
   if (!Array.isArray(content)) return false;
   if (JSON.stringify(item) !== envelope.inputSnapshot) return false;
-  content.splice(envelope.encryptedStartIndex, envelope.ciphertexts.length, { type: "input_text", text });
-  const message = item as Record<string, unknown>;
-  message.type = "message";
-  message.role = "user";
-  delete message.id;
-  delete message.author;
-  delete message.recipient;
+  const replacement = makeRecoveryReplacement(envelope.author, envelope.recipient, envelope.headerText, envelope.ciphertexts, text);
+  if (!replacement.apply(item)) return false;
+  recordCodexSourceRecovery(item, replacement);
   return true;
 }
 

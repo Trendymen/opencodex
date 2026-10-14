@@ -83,3 +83,7 @@ export interface PassthroughDispatchInputs {
     | "adapterSendBudget"
   >;
 }
+
+/** Transfer an uncommitted Copilot exchange to the existing translated pipeline without new admission. */
+export interface PassthroughAdapterHandoff { kind: "adapter-handoff" }
+export type PassthroughExchange = Exclude<Awaited<ReturnType<typeof import("./passthrough-dispatch").preparePassthroughExchange>>, Response | PassthroughAdapterHandoff>;

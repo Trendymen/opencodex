@@ -6,6 +6,8 @@ import { providerConfigSeed } from "../../src/providers/derive";
 import { getProviderRegistryEntry } from "../../src/providers/registry";
 import { providerManagementConfigError } from "../../src/server/auth-cors";
 import type { OcxProviderConfig } from "../../src/types";
+import { resolveCodexPassthroughPermissions } from "../../src/fork/codex-passthrough-contract";
+import { prepareCodexHttpInit, prepareCodexWsRequest } from "../../src/server/responses/codex-ws-request";
 
 function buildHeaders(provider: OcxProviderConfig, incoming: Record<string, string>): Record<string, string> {
   const budget = createTranslatorBudget();
@@ -29,6 +31,40 @@ function buildHeaders(provider: OcxProviderConfig, incoming: Record<string, stri
 }
 
 describe("openai-responses forwardClientHeaders", () => {
+  test("canonical routing hint permission preserves caller and static values when disabled", () => {
+    const budget = createTranslatorBudget();
+    try {
+      for (const staticName of ["x-codex-routing-hint", "X-Codex-Routing-Hint"]) for (const caller of [undefined, "caller-hint"]) {
+        const request = createResponsesPassthroughAdapter({ adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex",
+          headers: { [staticName]: "static-hint" } }).buildRequest({ modelId: "gpt-5.6-sol", context: { messages: [] }, stream: true, options: {},
+          _rawBody: { model: "gpt-5.6-sol", input: "hello", stream: true } }, { translatorBudget: budget,
+          headers: new Headers(caller ? { "x-codex-routing-hint": caller } : {}),
+          codexPassthroughPermissions: resolveCodexPassthroughPermissions({ synthesizeRoutingHint: false }) });
+        const permissions = resolveCodexPassthroughPermissions({ synthesizeRoutingHint: false });
+        expect(new Headers(request.headers).get("x-codex-routing-hint")).toBe("static-hint");
+        const init = { method: "POST", headers: request.headers, body: request.body };
+        expect(new Headers(prepareCodexHttpInit(request.url, init, permissions).headers).get("x-codex-routing-hint")).toBe("static-hint");
+        expect(new Headers(prepareCodexWsRequest(request.url, init, permissions)!.headers).get("x-codex-routing-hint")).toBe("static-hint");
+        request.releaseBodyObservation?.();
+      }
+    } finally { budget.dispose(); }
+  });
+
+  test("noncanonical adapters ignore official permissions even if incoming metadata supplies them", () => {
+    const provider: OcxProviderConfig = { adapter: "openai-responses", authMode: "key", apiKey: "synthetic-key", baseUrl: "https://third.example.test/v1" };
+    const rawBody = { model: "fixture-model", input: "hello", stream: true, metadata: { caller: "keep" }, max_output_tokens: 47 };
+    const budget = createTranslatorBudget();
+    try {
+      const parsed = { modelId: rawBody.model, context: { messages: [] }, stream: true, options: {}, _rawBody: rawBody };
+      const baseline = createResponsesPassthroughAdapter(provider).buildRequest(parsed, { headers: new Headers(), translatorBudget: budget });
+      const supplied = createResponsesPassthroughAdapter({ ...provider, codexPassthrough: { normalizeRequestParameters: false } }).buildRequest(parsed, {
+        headers: new Headers(), translatorBudget: budget,
+        codexPassthroughPermissions: resolveCodexPassthroughPermissions({ normalizeRequestParameters: false, bridgeLiteMetadata: false, synthesizeRoutingHint: false }),
+      });
+      expect(supplied.body).toBe(baseline.body); expect(supplied.headers).toEqual(baseline.headers);
+      baseline.releaseBodyObservation?.(); supplied.releaseBodyObservation?.();
+    } finally { budget.dispose(); }
+  });
   test("copies only selected caller metadata while provider headers remain authoritative", () => {
     const headers = buildHeaders({
       adapter: "openai-responses",

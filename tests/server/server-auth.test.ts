@@ -3385,26 +3385,17 @@ describe("server local API auth", () => {
     }
   }, { timeout: SERVER_BUDGET_MS });
 
-  // #2398 changed what the caller sees here, and this test had to move with it.
-  //
-  // The invariant this test exists for is unchanged and still asserted: an oversized 400
-  // must NOT authorize a pool retry, so exactly one account is dispatched and neither
-  // account is marked unhealthy. What changed is the body. Relaying 65 KiB of
-  // attacker-controlled bytes back to the client is precisely what #2398 stopped, so the
-  // caller now gets #452's bounded status-only JSON instead of the original prefix
-  // (pinned from the other side by "oversized passthrough errors become bounded
-  // status-only JSON" in tests/codex-integration/issue-452-empty-503.test.ts).
-  //
-  // The upstream's own headers still survive, which is what keeps pool-retry diagnostics
-  // honest — that part is still checked below.
+  // An oversized error cannot authorize another account send. With injected Pool
+  // credentials, delivery also requires a bounded, complete body for protection.
   test("oversized 400 body never authorizes a pool retry", async () => {
     const hostileSuffix = "x".repeat(65_536);
     const body = `${unsupportedModelBody()}${hostileSuffix}`;
     const harness = await startPoolRetryHarness(() => rejectionResponse(body));
     try {
       const response = await harness.request();
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(502);
       const text = await response.text();
+      expect(JSON.parse(text).error.code).toBe("upstream_error_protection_failed");
       expect(text).not.toContain(hostileSuffix);
       expect(text.length).toBeLessThan(1_024);
 
@@ -3465,7 +3456,9 @@ describe("server local API auth", () => {
     const body = '{"detail":';
     const harness = await startPoolRetryHarness(() => rejectionResponse(body));
     try {
-      await expectOriginal400(await harness.request(), body);
+      const response = await harness.request();
+      expect(response.status).toBe(502);
+      expect((await response.json()).error.code).toBe("upstream_error_protection_failed");
       expect(harness.dispatches).toEqual(["acct-pool-a"]);
     } finally {
       await stopPoolRetryHarness(harness);
