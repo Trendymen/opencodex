@@ -19,6 +19,112 @@ With a valid window and more than 512 estimated tokens remaining, the injected b
 
 The `opencode-go` preset defaults `preserveResponsesReasoningContent` to `true` only when absent; explicit `false` wins. The refusal sample motivating it came from DeepSeek. Other Responses models on that provider have not all been validated with retained replay.
 
+## GPT subscription processing
+
+`providers.<name>.codexPassthrough` controls 20 existing compatibility operations. Every permission defaults to `true`, including `normalizeEncryptedContent`. An omitted object, `{}`, and all 20 values set to `true` retain the previous behavior. A permission does not enable an otherwise disabled feature: request pacing, task recovery, reset retries, upstream WebSocket transport and skills still require their existing settings and conditions.
+
+The permissions apply only when the final destination uses `openai-responses`, `authMode: "forward"`, and the normalized base URL `https://chatgpt.com/backend-api/codex`, with native Responses ingress over HTTP, SSE or WebSocket. This includes Direct main login and Pool main/added accounts. Provider renaming and model-level adapter selection do not change that test. Key authentication, third-party GPT providers, other models on other destinations, and Chat Completions or Anthropic ingress retain their existing behavior. Each fallback destination is checked separately.
+
+In the dashboard, open the provider's settings and expand **Official GPT subscription processing**. The four groups below support enabling or disabling individual permissions and disabling all permissions. Saving affects the next request or WebSocket turn; an in-progress turn and its fallback attempts retain their captured permissions. Account credential revocation keeps its existing behavior.
+
+The paths in these tables are relative to `codexPassthrough`. All defaults are `true`.
+
+### Request
+
+| Field | Operation permitted when enabled |
+| --- | --- |
+| `normalizeRequestParameters` | Existing official-backend parameter cleanup, defaults and forced streaming where previously required. |
+| `expandRequestHistory` | Expand saved continuation history for `previous_response_id`. |
+| `normalizeEncryptedContent` | Existing encrypted-content normalization; task-recovery failure handling remains separate. |
+| `snapshotSkillsCatalog` | Apply the skills-catalog snapshot when the existing skills settings require it. |
+| `rewriteAnnotationInstructions` | Rewrite recognized Codex annotation instructions to request bare directives. |
+| `bridgeLiteMetadata` | Copy the recognized Lite header into missing request metadata without replacing explicit values. |
+
+### Response
+
+| Field | Operation permitted when enabled |
+| --- | --- |
+| `backfillResponseFields` | Fill missing response item IDs, message status and text annotations. |
+| `repairResponseToolCalls` | Apply existing authorized tool-call repairs, with the original tool-map conditions. |
+| `redactUpstreamErrors` | Apply general upstream-error redaction and normalization. Injected private credentials remain protected when this is off. |
+| `synthesizeTerminalFailure` | Apply existing synthetic terminal-failure handling when no usable terminal event arrives. |
+| `normalizeHostedImages` | Convert supported hosted-image results for the client and clean their display paths from subsequent input. |
+
+### Headers
+
+| Field | Operation permitted when enabled |
+| --- | --- |
+| `synthesizeRoutingHint` | Generate a missing `x-codex-routing-hint`. |
+| `synthesizeSessionId` | Generate a missing `session_id`. |
+| `addResponseRequestId` | Add OCX's `x-opencodex-request-id` response header. |
+| `addResponseBrowserHeaders` | Add OCX's browser CORS/exposed-header fields. Disabling this can prevent cross-origin browser clients from reading responses. |
+
+Disabling header synthesis does not delete explicit caller or provider headers. Authentication, selected-account identity, required HTTP/WebSocket framing and existing transport/security checks still apply.
+
+### Local error policies
+
+| Field | Behavior when disabled |
+| --- | --- |
+| `localErrorPolicies.resetReplayRefusal` | Do not emit the optional Codex replay-refusal explanation or its `x-should-retry: false` header. An ambiguous send still cannot be replayed; a required gateway failure remains 502 or 504. |
+| `localErrorPolicies.requestPacingAdmission` | Bypass optional local request-pacing admission for this attempt. |
+| `localErrorPolicies.inputAdmissionPrecheck` | Bypass the optional local input-size estimate precheck. Hard limits still apply. |
+| `localErrorPolicies.accountSoftPrecheck` | Bypass ordinary cached quota/cooldown prechecks. Explicit pause, account locks, reauthentication, credit/reserve policies and other protected account decisions remain active. |
+| `localErrorPolicies.transportErrorMapping` | Use a plain 502 `Bad Gateway` or 504 `Gateway Timeout` for local transport failures instead of the optional Codex error explanation. |
+
+These settings do not suppress real upstream errors, including OpenAI 429 responses, or task-recovery conversion/decryption failures. Shared send budgets, authentication and identity checks remain enforced. Disabling a refusal or error mapping does not add proxy retries. Without the replay-refusal hint, the Codex client may retry under its own budget; if the upstream already processed the request, that can repeat work or consume more quota.
+
+### Saving and clearing overrides
+
+The configuration file and full JSON configuration accept boolean leaves. To restore a default there, remove the field. For example, this provider fragment disables annotation rewriting and the local soft quota precheck while leaving the other permissions at their defaults:
+
+```json
+{
+  "codexPassthrough": {
+    "rewriteAnnotationInstructions": false,
+    "localErrorPolicies": {
+      "accountSoftPrecheck": false
+    }
+  }
+}
+```
+
+`PATCH /api/providers?name=<name>` merges only the supplied leaves under `codexPassthrough`. PATCH `null` removes an override: a leaf restores that leaf's default, `localErrorPolicies: null` clears that group, and `codexPassthrough: null` clears the whole object. GET returns stored overrides without materializing defaults. Do not use `null` in the configuration file or treat clearing as disabling.
+
+To disable all permissions, use the dashboard action or set all 20 leaves to `false`:
+
+```json
+{
+  "codexPassthrough": {
+    "normalizeRequestParameters": false,
+    "expandRequestHistory": false,
+    "normalizeEncryptedContent": false,
+    "snapshotSkillsCatalog": false,
+    "rewriteAnnotationInstructions": false,
+    "bridgeLiteMetadata": false,
+    "backfillResponseFields": false,
+    "repairResponseToolCalls": false,
+    "redactUpstreamErrors": false,
+    "synthesizeTerminalFailure": false,
+    "normalizeHostedImages": false,
+    "synthesizeRoutingHint": false,
+    "synthesizeSessionId": false,
+    "addResponseRequestId": false,
+    "addResponseBrowserHeaders": false,
+    "localErrorPolicies": {
+      "resetReplayRefusal": false,
+      "requestPacingAdmission": false,
+      "inputAdmissionPrecheck": false,
+      "accountSoftPrecheck": false,
+      "transportErrorMapping": false
+    }
+  }
+}
+```
+
+With all permissions off, request JSON values, field presence, unknown fields and array order are preserved, subject to explicit model/Fast routing, selected-account authentication and required transport rules. JSON can be serialized again. Responses are not guaranteed to be byte-identical when framing or private-credential protection is required. Client WebSocket error frames retain the complete upstream error body in `response` when error rewriting is disabled.
+
+Private credentials actually injected by OCX remain protected before delivery, including Pool/stored-main credentials and sensitive configured header values. If safe delivery cannot be established, the proxy returns `upstream_error_protection_failed` before committing the response, or aborts an already committed stream. It does not invent a successful terminal event.
+
 ## Custom models and context caps
 
 Custom-model types, CRUD and catalog rows already exist upstream. The Fork adds strict writes, per-row salvage, stable-ID concurrent merging and a known-field public projection. Unknown opaque fields remain internal. A custom row replacing a discovered row retains its discovered `pricingStatus`.

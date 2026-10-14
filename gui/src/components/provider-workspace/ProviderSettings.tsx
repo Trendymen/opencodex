@@ -24,6 +24,9 @@ import { providerSupportsLiveModelDiscovery } from "../../provider-workspace/cat
 import type { CatalogPreset } from "../provider-catalog/provider-presets";
 import { authModeLabel } from "./ProviderRail";
 import { ProviderProtocolPanel } from "./ProviderProtocolPanel";
+import { isCanonicalOpenAiForwardProvider } from "../../../../src/providers/openai-tiers-destination";
+import CodexPassthroughSettings from "./CodexPassthroughSettings";
+import { useCodexPassthroughDraft } from "./useCodexPassthroughDraft";
 import type { WorkspaceItem, ProviderUpdatePatch, ProviderUpdateResult } from "./types";
 
 const ADAPTERS = ["openai-responses", "openai-chat", "anthropic", "google", "azure-openai", "cursor"] as const;
@@ -91,6 +94,7 @@ export default function ProviderSettings({
   const [cursorHttpVersion, setCursorHttpVersion] = useState<CursorHttpVersion>(savedCursorHttpVersion);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [codexSaveError, setCodexSaveError] = useState<string | null>(null);
   const [accountMode, setAccountMode] = useState<"pool" | "direct">(item.codexAccountMode ?? "pool");
   const [modeSaving, setModeSaving] = useState(false);
   const [modeMsg, setModeMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -107,6 +111,16 @@ export default function ProviderSettings({
   const [pacingModelDelay, setPacingModelDelay] = useState("");
   const [pacingModelConcurrency, setPacingModelConcurrency] = useState("");
   const [pacingStatus, setPacingStatus] = useState<PacingStatus | null>(null);
+  const codex = useCodexPassthroughDraft(item.codexPassthrough);
+  const displayedMsg = codex.dirty && codexSaveError ? { ok: false, text: codexSaveError } : msg;
+  const codexSaveFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (saving) return;
+    const target = codexSaveFocus.current;
+    codexSaveFocus.current = null;
+    if (displayedMsg?.ok === false && target?.isConnected
+      && (document.activeElement === document.body || document.activeElement === target)) target.focus();
+  }, [saving, displayedMsg?.ok]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- intentional form reset when saved provider fields change */
   useEffect(() => {
@@ -211,7 +225,7 @@ export default function ProviderSettings({
     || liveModels !== savedLiveModels
     || (adapter.trim() === "cursor" && cursorHttpVersion !== savedCursorHttpVersion);
   const pacingDirty = pacingSignature(pacingDraft) !== pacingSignature(item.requestPacing);
-  const formDirty = dirty || pacingDirty;
+  const formDirty = dirty || pacingDirty || codex.dirty;
 
   useEffect(() => { onDirtyChange?.(formDirty); return () => onDirtyChange?.(false); }, [formDirty, onDirtyChange]);
 
@@ -233,6 +247,9 @@ export default function ProviderSettings({
   const supportsApiKeyTransport = adapter.trim() === "anthropic" && authMode === "key";
   const openAiState = item.name === "openai" ? openAiAccountProviderState(item) : "invalid";
   const isCanonicalOpenAi = openAiState === "ready" || openAiState === "disabled";
+  const codexDestination = { adapter: adapter.trim(), baseUrl: baseUrl.trim(), authMode };
+  const supportsCodexPassthrough = isCanonicalOpenAiForwardProvider(codexDestination)
+    || Object.values(item.modelAdapters ?? {}).some(modelAdapter => isCanonicalOpenAiForwardProvider({ ...codexDestination, adapter: modelAdapter }));
   // Lock plain baseUrl for presets while loading or when there is no picker.
   // On fetch error, keep it editable so allowBaseUrlOverride providers are not trapped.
   const plainBaseUrlLocked = isPreset && choicesStatus !== "error";
@@ -244,8 +261,12 @@ export default function ProviderSettings({
       ? resolvedBaseUrlForChoice(baseUrlChoices, endpointChoice, baseUrl)
       : baseUrl.trim();
     if (!adapter.trim() || !nextBaseUrl) { setMsg({ ok: false, text: t("pws.adapterBaseRequired") }); return false; }
+    if (codex.dirty && document.activeElement?.matches("input[data-codex-permission], .pwi-settings-sticky-bar .btn-primary")) {
+      codexSaveFocus.current = document.activeElement as HTMLElement;
+    }
     setSaving(true);
     setMsg(null);
+    setCodexSaveError(null);
     try {
       if (pacingConcurrency.trim() !== "" && positiveInteger(pacingConcurrency) === undefined) {
         setMsg({ ok: false, text: t("pws.pacingCapInvalid") }); return false;
@@ -253,9 +274,9 @@ export default function ProviderSettings({
       if (pacingEnabled && !pacingDraft.requestsPerMinute && !pacingDraft.minIntervalMs && !pacingDraft.maxConcurrentRequests && !pacingDraft.models) {
         setMsg({ ok: false, text: t("pws.pacingRuleRequired") }); return false;
       }
-      const pacingOnly = pacingDirty && !dirty;
-      const patch: ProviderUpdatePatch = pacingOnly
-        ? { requestPacing: pacingDraft }
+      const policyOnly = (pacingDirty || codex.dirty) && !dirty;
+      const patch: ProviderUpdatePatch = policyOnly
+        ? { ...(pacingDirty ? { requestPacing: pacingDraft } : {}) }
         : {
             adapter: adapter.trim(),
             baseUrl: nextBaseUrl,
@@ -265,7 +286,8 @@ export default function ProviderSettings({
             allowPrivateNetwork,
             ...(pacingDirty ? { requestPacing: pacingDraft } : {}),
           };
-      if (!pacingOnly) {
+      if (codex.dirty) patch.codexPassthrough = codex.patch;
+      if (!policyOnly) {
         // Keep omitted legacy values omitted unless the user actually changes this toggle.
         // Otherwise an unrelated settings save manufactures `liveModels: true` provenance.
         if (liveModelDiscoverySupported && liveModels !== (item.liveModels !== false)) patch.liveModels = liveModels;
@@ -277,7 +299,11 @@ export default function ProviderSettings({
         else if (item.apiKeyTransport !== undefined) patch.apiKeyTransport = "";
       }
       const res = await onUpdateProvider(item.name, patch);
-      setMsg(res.ok ? { ok: true, text: t("pws.settingsSaved") } : { ok: false, text: res.error || t("prov.saveFailed") });
+      if (!codex.dirty || res.ok) setMsg(res.ok ? { ok: true, text: t("pws.settingsSaved") } : { ok: false, text: res.error || t("prov.saveFailed") });
+      if (codex.dirty) {
+        if (res.ok) codex.acknowledge();
+        else setCodexSaveError(res.error || t("prov.saveFailed"));
+      }
       return res.ok;
     } finally {
       setSaving(false);
@@ -342,6 +368,8 @@ export default function ProviderSettings({
     setPacingDelay(numberDraft(item.requestPacing?.minIntervalMs));
     setPacingConcurrency(numberDraft(item.requestPacing?.maxConcurrentRequests));
     setPacingModels({ ...(item.requestPacing?.models ?? {}) });
+    codex.discard();
+    setCodexSaveError(null);
     setEndpointChoice(matchChoiceId(baseUrlChoices, item.baseUrl));
   };
 
@@ -524,6 +552,8 @@ export default function ProviderSettings({
           <span className="muted text-label" style={{ display: "block", marginTop: 2 }}>{t("pws.liveModelsDesc")}</span>
         </span>
       </label>
+      {supportsCodexPassthrough && <CodexPassthroughSettings value={codex.value}
+        onChange={patch => { setCodexSaveError(null); codex.change(patch); }} disabled={saving || modeSaving} />}
       <section className="pwi-pacing-card" aria-labelledby="pwi-pacing-title">
         <div className="pwi-pacing-head">
           <div><h3 id="pwi-pacing-title">{t("pws.pacingTitle")}</h3><p>{t("pws.pacingDesc")}</p></div>
@@ -563,9 +593,9 @@ export default function ProviderSettings({
           </div>
         </div>
       )}
-      {msg && (
-        <div role={msg.ok ? "status" : "alert"} className={msg.ok ? "pwi-settings-msg pwi-settings-msg--ok" : "pwi-settings-msg pwi-settings-msg--err"}>
-          {msg.text}
+      {displayedMsg && (
+        <div role={displayedMsg.ok ? "status" : "alert"} className={displayedMsg.ok ? "pwi-settings-msg pwi-settings-msg--ok" : "pwi-settings-msg pwi-settings-msg--err"}>
+          {displayedMsg.text}
         </div>
       )}
     </div>

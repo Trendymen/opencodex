@@ -114,6 +114,7 @@ export interface ProviderAuthHandlers {
 }
 
 export type ProviderUpdatePatch = {
+  codexPassthrough?: import("../../../../src/fork/codex-passthrough-contract").CodexPassthroughPatch | null;
   /** A standalone routing change; the management API rejects combinations with edits. */
   setDefault?: true;
   adapter?: string;
