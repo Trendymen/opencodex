@@ -334,7 +334,7 @@ export async function pumpResponsesSseToWebSocket(
       && isCurrent()
       && ws.readyState === OPEN
       && !(err instanceof WsSendDroppedError)) {
-      reportTerminal("incomplete");
+      reportTerminal(err instanceof CodexPrivateCredentialProtectionError ? "failed" : "incomplete");
       try {
         if (options.synthesizeTerminalFailure !== false && !(err instanceof CodexPrivateCredentialProtectionError)) sendUpstreamError(ws, 502, err);
         else ws.close(1011, "Upstream stream could not be delivered");

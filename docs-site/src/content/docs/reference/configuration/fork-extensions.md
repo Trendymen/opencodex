@@ -21,7 +21,7 @@ The `opencode-go` preset defaults `preserveResponsesReasoningContent` to `true` 
 
 ## GPT subscription processing
 
-`providers.<name>.codexPassthrough` controls 20 existing compatibility operations. Every permission defaults to `true`, including `normalizeEncryptedContent`. An omitted object, `{}`, and all 20 values set to `true` retain the previous behavior. A permission does not enable an otherwise disabled feature: request pacing, task recovery, reset retries, upstream WebSocket transport and skills still require their existing settings and conditions.
+`providers.<name>.codexPassthrough` controls 21 compatibility operations. Every permission defaults to `true`, including `normalizeEncryptedContent`. An omitted object, `{}`, and all 21 values set to `true` retain the previous behavior. A permission does not enable an otherwise disabled feature: request pacing, task recovery, reset retries, upstream WebSocket transport and skills still require their existing settings and conditions.
 
 The permissions apply only when the final destination uses `openai-responses`, `authMode: "forward"`, and the normalized base URL `https://chatgpt.com/backend-api/codex`, with native Responses ingress over HTTP, SSE or WebSocket. This includes Direct main login and Pool main/added accounts. Provider renaming and model-level adapter selection do not change that test. Key authentication, third-party GPT providers, other models on other destinations, and Chat Completions or Anthropic ingress retain their existing behavior. Each fallback destination is checked separately.
 
@@ -47,6 +47,7 @@ The paths in these tables are relative to `codexPassthrough`. All defaults are `
 | `backfillResponseFields` | Fill missing response item IDs, message status and text annotations. |
 | `repairResponseToolCalls` | Apply existing authorized tool-call repairs, with the original tool-map conditions. |
 | `redactUpstreamErrors` | Apply general upstream-error redaction and normalization. Injected private credentials remain protected when this is off. |
+| `privateSseReadDeadline` | Keep the fixed 5-second deadline for the first protected SSE output and incomplete blocks. When disabled, use `stallTimeoutSec` for stream inactivity and preserve cancellation, memory budgets and private-credential masking. |
 | `synthesizeTerminalFailure` | Apply existing synthetic terminal-failure handling when no usable terminal event arrives. |
 | `normalizeHostedImages` | Convert supported hosted-image results for the client and clean their display paths from subsequent input. |
 
@@ -90,7 +91,7 @@ The configuration file and full JSON configuration accept boolean leaves. To res
 
 `PATCH /api/providers?name=<name>` merges only the supplied leaves under `codexPassthrough`. PATCH `null` removes an override: a leaf restores that leaf's default, `localErrorPolicies: null` clears that group, and `codexPassthrough: null` clears the whole object. GET returns stored overrides without materializing defaults. Do not use `null` in the configuration file or treat clearing as disabling.
 
-To disable all permissions, use the dashboard action or set all 20 leaves to `false`:
+To disable all permissions, use the dashboard action or set all 21 leaves to `false`:
 
 ```json
 {
@@ -104,6 +105,7 @@ To disable all permissions, use the dashboard action or set all 20 leaves to `fa
     "backfillResponseFields": false,
     "repairResponseToolCalls": false,
     "redactUpstreamErrors": false,
+    "privateSseReadDeadline": false,
     "synthesizeTerminalFailure": false,
     "normalizeHostedImages": false,
     "synthesizeRoutingHint": false,
@@ -124,6 +126,10 @@ To disable all permissions, use the dashboard action or set all 20 leaves to `fa
 With all permissions off, request JSON values, field presence, unknown fields and array order are preserved, subject to explicit model/Fast routing, selected-account authentication and required transport rules. JSON can be serialized again. Responses are not guaranteed to be byte-identical when framing or private-credential protection is required. Client WebSocket error frames retain the complete upstream error body in `response` when error rewriting is disabled.
 
 Private credentials actually injected by OCX remain protected before delivery, including Pool/stored-main credentials and sensitive configured header values. If safe delivery cannot be established, the proxy returns `upstream_error_protection_failed` before committing the response, or aborts an already committed stream. It does not invent a successful terminal event.
+
+To remove only the fixed 5-second SSE deadline, set `codexPassthrough.privateSseReadDeadline` to `false` or clear **Private SSE fixed 5-second deadline** in the provider's response settings. This does not change the bounded HTTP error-body deadline or allow unsafe output. A longer wait can delay a failure; `stallTimeoutSec` and request cancellation still limit inactive streams.
+
+Logs record private-protection failures with a `private-*` local error code and retain the original response-header status in `upstreamHttpStatus`, including per-attempt rows and persisted usage. The dashboard shows that status separately and labels the protection message as a local reason. For example, upstream HTTP 200 followed by a local deadline failure is recorded separately from the final 502. Historical rows without this field cannot recover the original status.
 
 ## Custom models and context caps
 
