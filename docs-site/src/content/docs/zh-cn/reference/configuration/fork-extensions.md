@@ -21,7 +21,7 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 ## GPT 官方订阅处理
 
-`providers.<name>.codexPassthrough` 控制 21 项兼容处理。每项许可默认都是 `true`，包括 `normalizeEncryptedContent`。省略整个对象、写 `{}` 或把 21 项全部设为 `true`，均沿用之前的行为。许可不会强行启用原本关闭的功能：请求节流、任务恢复、reset 重试、上游 WebSocket 和 skills 仍受各自原配置及条件控制。
+`providers.<name>.codexPassthrough` 控制 23 项兼容处理。每项许可默认都是 `true`，包括 `normalizeEncryptedContent`。省略整个对象、写 `{}` 或把 23 项全部设为 `true`，均沿用之前的行为。许可不会强行启用原本关闭的功能：请求节流、任务恢复、reset 重试、上游 WebSocket 和 skills 仍受各自原配置及条件控制。
 
 开关只在最终目的地满足以下条件时生效：使用 `openai-responses`、`authMode: "forward"`，规范化后的 base URL 为 `https://chatgpt.com/backend-api/codex`，且入站为原生 Responses HTTP、SSE 或 WebSocket。范围包含 Direct 主登录，以及 Pool 主登录和新增池账号。Provider 改名、模型级 adapter 选择都按最终结果判断。key 认证、第三方 GPT、其他目的地的模型，以及 Chat Completions 或 Anthropic 入站沿用既有行为；fallback 的每个目的地分别判断。
 
@@ -48,6 +48,8 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 | `repairResponseToolCalls` | 按原工具映射条件执行既有、已授权的工具调用修复。 |
 | `redactUpstreamErrors` | 通用上游错误脱敏及规范化；关闭后仍保护实际注入的私有凭据。 |
 | `privateSseReadDeadline` | 保留首段受保护 SSE 输出及不完整块的固定 5 秒期限。关闭后使用 `stallTimeoutSec` 控制流式停滞，保留取消、内存预算及私有凭据遮盖。 |
+| `upstreamWsSilenceDeadline` | 等待上游 WebSocket 首次响应时，保留 90 秒静默期限，收到帧或 pong 会重置计时。关闭后保留连接期限、ping、取消和传输预算。 |
+| `privateErrorBodyReadDeadline` | 为使用私有凭据保护的 HTTP 错误正文保留固定 5 秒总期限、首字节及停滞期限。关闭后取消固定总期限，首字节和停滞等待使用 `stallTimeoutSec`；取消、64 KiB 上限和凭据遮盖继续生效。 |
 | `synthesizeTerminalFailure` | 没有可用终态事件时，执行既有合成失败终态处理。 |
 | `normalizeHostedImages` | 为受支持客户端转换 hosted-image 返回，并清理后续输入中的显示路径。 |
 
@@ -91,7 +93,7 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 `PATCH /api/providers?name=<name>` 只合并 `codexPassthrough` 中实际提供的叶子字段。PATCH 的 `null` 用于清除覆盖值：叶子为 `null` 恢复该项默认，`localErrorPolicies: null` 清除整组，`codexPassthrough: null` 清除整个对象。GET 只返回已存储覆盖值，不补写默认字段。配置文件中不要写 `null`；清除不等于关闭。
 
-全部关闭时使用面板操作，或明确把 21 项都设为 `false`：
+全部关闭时使用面板操作，或明确把 23 项都设为 `false`：
 
 ```json
 {
@@ -106,6 +108,8 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
     "repairResponseToolCalls": false,
     "redactUpstreamErrors": false,
     "privateSseReadDeadline": false,
+    "upstreamWsSilenceDeadline": false,
+    "privateErrorBodyReadDeadline": false,
     "synthesizeTerminalFailure": false,
     "normalizeHostedImages": false,
     "synthesizeRoutingHint": false,
@@ -128,6 +132,8 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 OCX 实际注入的私有凭据始终在交付前受保护，包含 Pool/已存主登录凭据及敏感配置头值。无法确认安全交付时，在响应提交前返回 `upstream_error_protection_failed`，已提交的流则中止，不伪造成功终态。
 
 只取消固定 5 秒 SSE 期限时，把 `codexPassthrough.privateSseReadDeadline` 设为 `false`，或在 Provider 的响应设置中关闭“私有 SSE 固定 5 秒期限”。这不改变 HTTP 错误体的有界读取期限，也不允许输出未遮盖的凭据。等待更久可能延迟暴露失败；`stallTimeoutSec` 和请求取消仍限制停滞的流。
+
+另外两个期限在响应设置中独立控制。把 `upstreamWsSilenceDeadline` 设为 `false`，取消上游 WebSocket 额外的 90 秒静默期限；把 `privateErrorBodyReadDeadline` 设为 `false`，取消私有 HTTP 错误正文的固定 5 秒期限。后者使用正常的 `stallTimeoutSec`：默认 300 秒，显式 `0` 关闭该停滞限制。两个开关都不改变断流重发、401 刷新后重发、账号轮换或 `agentTaskRecovery`。主账号额度硬锁仍由已有的 `codexMainAccountHardLock` 单独控制。
 
 私有保护失败在日志中使用 `private-*` 本地错误码，并在 `upstreamHttpStatus` 保留原始响应头状态，包含每次尝试和持久化用量记录。面板单独显示该状态，把保护失败文案标为“本地原因”。例如，上游 HTTP 200 后触发本地等待期限，会与最终 502 分开记录。没有此字段的历史记录无法恢复原始状态。
 

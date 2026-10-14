@@ -89,6 +89,7 @@ export function boundedBodyBufferGrowthsForTests(): number {
 }
 
 function bodyDeadline(ms: number, onTimeout: () => void): { clear: () => void } {
+	if (ms === Infinity) return { clear: () => {} };
 	const timer = setTimeout(onTimeout, Math.max(0, ms));
 	return {
 		clear: () => clearTimeout(timer),

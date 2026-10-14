@@ -2,7 +2,7 @@ import { codexAccountModelRefusal, codexAccountModelRefusalHardStopCode, type Co
 import { parseRetryAfterMs } from "../../combos";
 import type { ConsumedComboFailure, HandleResponsesOptions } from "./core-options";
 import type { OcxUsage } from "../../types";
-import { readBoundedResponseBody } from "../../lib/bounded-body";
+import { readBoundedResponseBody, type BoundedBodyOptions } from "../../lib/bounded-body";
 import { carryAnthropicRefusalCredential } from "../../oauth/anthropic-account-refusal";
 import { codexQuotaFailureMessage, codexQuotaOutcomeMeta } from "./core-codex-account";
 import {
@@ -39,6 +39,7 @@ export async function consumeComboFailure(
   now = Date.now(),
   protectText?: (text: string, displaySafe: boolean) => string,
   protectedHeaders?: Headers,
+  bodyDeadlines?: Pick<BoundedBodyOptions, "totalTimeoutMs" | "inactivityTimeoutMs" | "firstByteTimeoutMs">,
 ): Promise<ConsumedComboFailure> {
   // Read before the body: the marker lives on this Response object, and the failure below is
   // rebuilt as a new one that would otherwise lose it.
@@ -64,7 +65,7 @@ export async function consumeComboFailure(
   // would hide the stable model_not_allowed_for_key type clients branch on.
   let scopeRefusalBody: string | undefined;
   try {
-    const readBody = await readBoundedResponseBody(response, { signal, reportUtf8Validity: serverError || protectText !== undefined, fatalUtf8: protectText !== undefined });
+    const readBody = await readBoundedResponseBody(response, { ...bodyDeadlines, signal, reportUtf8Validity: serverError || protectText !== undefined, fatalUtf8: protectText !== undefined });
     const body = protectText ? { ...readBody, text: protectText(readBody.text, readBody.displaySafe && !readBody.truncated && !readBody.oversized) } : readBody;
     if (body.displaySafe && !body.truncated && (permissions?.redactUpstreamErrors === false || localGateway)) originalErrorText = body.text;
     // A 5xx body counts as quota or classification evidence only when it decoded as valid

@@ -17,6 +17,8 @@ const copy = {
   repairResponseToolCalls: { label: "pws.codex.repairResponseToolCalls", desc: "pws.codex.repairResponseToolCallsDesc" },
   redactUpstreamErrors: { label: "pws.codex.redactUpstreamErrors", desc: "pws.codex.redactUpstreamErrorsDesc" },
   privateSseReadDeadline: { label: "pws.codex.privateSseReadDeadline", desc: "pws.codex.privateSseReadDeadlineDesc" },
+  upstreamWsSilenceDeadline: { label: "pws.codex.upstreamWsSilenceDeadline", desc: "pws.codex.upstreamWsSilenceDeadlineDesc" },
+  privateErrorBodyReadDeadline: { label: "pws.codex.privateErrorBodyReadDeadline", desc: "pws.codex.privateErrorBodyReadDeadlineDesc" },
   synthesizeTerminalFailure: { label: "pws.codex.synthesizeTerminalFailure", desc: "pws.codex.synthesizeTerminalFailureDesc" },
   normalizeHostedImages: { label: "pws.codex.normalizeHostedImages", desc: "pws.codex.normalizeHostedImagesDesc" },
   synthesizeRoutingHint: { label: "pws.codex.synthesizeRoutingHint", desc: "pws.codex.synthesizeRoutingHintDesc" },

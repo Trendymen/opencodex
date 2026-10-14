@@ -38,19 +38,19 @@ async function send(config: OcxConfig, path: string, method = "GET", body?: unkn
   return response;
 }
 
-test("private SSE deadline override persists independently and can be cleared", async () => {
+test.each(["privateSseReadDeadline", "upstreamWsSilenceDeadline", "privateErrorBodyReadDeadline"])("%s override persists independently and can be cleared", async key => {
   const config = setup();
   const response = await send(config, "/api/providers?name=official", "PATCH", {
-    codexPassthrough: { privateSseReadDeadline: false },
+    codexPassthrough: { [key]: false },
   });
   expect(response.status).toBe(200);
   const stored = loadConfig().providers.official!.codexPassthrough;
-  expect(stored).toEqual({ bridgeLiteMetadata: false, privateSseReadDeadline: false,
+  expect(stored).toEqual({ bridgeLiteMetadata: false, [key]: false,
     localErrorPolicies: { resetReplayRefusal: false } });
   const visible = await (await send(config, "/api/config")).json() as OcxConfig;
   expect(visible.providers.official!.codexPassthrough).toEqual(stored);
   expect((await send(config, "/api/providers?name=official", "PATCH", {
-    codexPassthrough: { privateSseReadDeadline: null },
+    codexPassthrough: { [key]: null },
   })).status).toBe(200);
   expect(loadConfig().providers.official!.codexPassthrough).toEqual({ bridgeLiteMetadata: false,
     localErrorPolicies: { resetReplayRefusal: false } });

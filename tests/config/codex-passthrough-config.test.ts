@@ -11,10 +11,10 @@ import {
 import { configDiagnosticsFromRaw, validateConfigCandidate } from "../../src/config/diagnostics";
 
 describe("official Codex compatibility permissions", () => {
-  test("configuration exposes exactly the approved 16 plus 5 keys", () => {
+  test("configuration exposes exactly the approved 18 plus 5 keys", () => {
     const compat = ["normalizeRequestParameters", "expandRequestHistory", "normalizeEncryptedContent", "snapshotSkillsCatalog",
       "rewriteAnnotationInstructions", "bridgeLiteMetadata", "backfillResponseFields", "repairResponseToolCalls", "redactUpstreamErrors",
-      "privateSseReadDeadline", "synthesizeTerminalFailure", "normalizeHostedImages", "synthesizeRoutingHint", "synthesizeSessionId", "addResponseRequestId", "addResponseBrowserHeaders"];
+      "privateSseReadDeadline", "upstreamWsSilenceDeadline", "privateErrorBodyReadDeadline", "synthesizeTerminalFailure", "normalizeHostedImages", "synthesizeRoutingHint", "synthesizeSessionId", "addResponseRequestId", "addResponseBrowserHeaders"];
     const local = ["resetReplayRefusal", "requestPacingAdmission", "inputAdmissionPrecheck", "accountSoftPrecheck", "transportErrorMapping"];
     const resolved = resolveCodexPassthroughPermissions(undefined);
     expect(Object.keys(resolved).filter(key => key !== "localErrorPolicies").sort()).toEqual(compat.sort());
@@ -22,10 +22,10 @@ describe("official Codex compatibility permissions", () => {
     expect(CODEX_PASSTHROUGH_CATALOG.filter(row => row.group !== "localErrors").map(row => row.key).sort()).toEqual(compat);
     expect(CODEX_PASSTHROUGH_CATALOG.filter(row => row.group === "localErrors").map(row => row.key).sort()).toEqual(local);
   });
-  test("unset_and_empty_allow_all_21_permissions", () => {
+  test("unset_and_empty_allow_all_23_permissions", () => {
     const p = resolveCodexPassthroughPermissions(undefined);
     expect([...Object.entries(p).filter(([key]) => key !== "localErrorPolicies").map(([, value]) => value),
-      ...Object.values(p.localErrorPolicies)]).toEqual(Array(21).fill(true));
+      ...Object.values(p.localErrorPolicies)]).toEqual(Array(23).fill(true));
     expect(resolveCodexPassthroughPermissions({})).toEqual(p);
     expect(resolveCodexPassthroughPermissions(CODEX_PASSTHROUGH_DEFAULTS)).toEqual(p);
     expect(resolveCodexPassthroughPermissions({ bridgeLiteMetadata: undefined,
@@ -62,7 +62,7 @@ describe("official Codex compatibility permissions", () => {
     expect(result.warnings.join(" ")).not.toContain("sensitive-input");
     const off = resolveCodexPassthroughPermissions(readCodexPassthroughConfig(null).value);
     expect([...Object.entries(off).filter(([key]) => key !== "localErrorPolicies").map(([, value]) => value),
-      ...Object.values(off.localErrorPolicies)]).toEqual(Array(21).fill(false));
+      ...Object.values(off.localErrorPolicies)]).toEqual(Array(23).fill(false));
     const raw = { port: 10100, defaultProvider: "relay", providers: {
       relay: { adapter: "openai-responses", baseUrl: "https://relay.example.test/v1", authMode: "key", models: ["fixture"],
         codexPassthrough: { bridgeLiteMetadata: "bad" } },
@@ -121,7 +121,7 @@ describe("official Codex compatibility permissions", () => {
         const saved = loadConfig();
         const flags = saved.providers.relay!.codexPassthrough!;
         expect([...Object.entries(flags).filter(([key]) => key !== "localErrorPolicies").map(([, value]) => value),
-          ...Object.values(flags.localErrorPolicies!)]).toEqual(Array(21).fill(false));
+          ...Object.values(flags.localErrorPolicies!)]).toEqual(Array(23).fill(false));
         expect(saved.fastRows).toBe(false);
         expect(saved.providers.other!.models).toEqual(["other-model"]);
       }
