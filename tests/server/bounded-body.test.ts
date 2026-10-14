@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, jest, spyOn, test } from "bun:test";
 import {
 	BOUNDED_BODY_MAX_BYTES,
 	boundedBodyBufferGrowthsForTests,
@@ -22,6 +22,25 @@ function responseFromChunks(...chunks: Uint8Array[]): Response {
 }
 
 describe("readBoundedResponseBody", () => {
+	test("explicit infinite deadlines allow a delayed body to reach EOF", async () => {
+		jest.useFakeTimers(); let output!: ReadableStreamDefaultController<Uint8Array>;
+		const body = new ReadableStream<Uint8Array>({ start(controller) { output = controller; } });
+		try {
+			const pending = readBoundedResponseBody(new Response(body), { totalTimeoutMs: Infinity, inactivityTimeoutMs: Infinity });
+			jest.advanceTimersByTime(360_000); output.enqueue(encoder.encode("safe")); output.close();
+			expect(await pending).toMatchObject({ text: "safe", timedOut: false, truncated: false }); expect(body.locked).toBe(false);
+		} finally { jest.useRealTimers(); }
+	});
+	test("explicit infinite deadlines retain caller abort and release the source reader", async () => {
+		jest.useFakeTimers(); const abort = new AbortController(); const reason = new Error("synthetic caller abort");
+		let cancelled = false;
+		const body = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; return new Promise(() => {}); } });
+		try {
+			const pending = readBoundedResponseBody(new Response(body), { signal: abort.signal, totalTimeoutMs: Infinity, inactivityTimeoutMs: Infinity });
+			void pending.catch(() => {}); jest.advanceTimersByTime(360_000); abort.abort(reason);
+			await expect(pending).rejects.toBe(reason); expect(cancelled).toBe(true); expect(body.locked).toBe(false);
+		} finally { jest.useRealTimers(); }
+	});
 	test("reportUtf8Validity is honoured on the fatal decode path at EOF", async () => {
 		const valid = await readBoundedResponseBody(responseFromChunks(encoder.encode('{"ok":true}')), {
 			fatalUtf8: true,

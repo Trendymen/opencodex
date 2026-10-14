@@ -178,7 +178,7 @@ import { createInboundResponsesDebugObserver, persistInboundResponsesDebugSummar
 import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { codexRawJsonSse } from "../../fork/codex-passthrough-response";
 import { codexPrivateCredentialSources, createCodexPrivateCredentialGuard, readCodexPrivateErrorText,
-  protectCodexPrivateSse, codexPrivateProtectionFailure, CodexPrivateCredentialProtectionError } from "../../fork/codex-passthrough-secrets";
+  protectCodexPrivateSse, codexPrivateProtectionFailure, CodexPrivateCredentialProtectionError, codexPrivateErrorBodyReadDeadlines } from "../../fork/codex-passthrough-secrets";
 
 import { isDebugEnabled } from "../../lib/debug-settings";
 
@@ -494,6 +494,8 @@ export async function deliverPassthroughResponse(
   const codexPermissions = resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire });
   const privateGuard = codexPermissions ? createCodexPrivateCredentialGuard({ outboundHeaders: nativeExchange.request.headers,
     callerHeaders: req.headers, sources: codexPrivateCredentialSources(admissionState.authCtx, requestState.substituteMainCredential, route.provider.headers), translatorBudget }) : undefined;
+  const privateErrorReadOptions = { privateErrorBodyReadDeadline: codexPermissions?.privateErrorBodyReadDeadline,
+    stallTimeoutMs: resolveStallTimeoutMs(config.stallTimeoutSec, { localUpstream: nativeExchange.localUpstream }) };
   let privateFailureNoted = false;
   const notePrivateFailure = (error: CodexPrivateCredentialProtectionError): void => {
     if (privateFailureNoted) return; privateFailureNoted = true;
@@ -730,7 +732,7 @@ export async function deliverPassthroughResponse(
     // The numeric outcome above already classified it neutral — no streak.
     const localFailure = codexLocalFailure(upstreamResponse);
     if (!upstreamResponse.ok && localFailure && decideCodexLocalError(codexPermissions, localFailure).kind === "gateway") {
-      try { return new Response(privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal)
+      try { return new Response(privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal, privateErrorReadOptions)
         : relayWithAbort(upstreamResponse.body, upstream), { status: upstreamResponse.status, statusText: upstreamResponse.statusText, headers }); }
       catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
     }
@@ -739,7 +741,7 @@ export async function deliverPassthroughResponse(
     }
     if (upstreamResponse.status >= 300 && upstreamResponse.status < 400) {
       let body: BodyInit | null;
-      try { body = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal) : upstreamResponse.body; }
+      try { body = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal, privateErrorReadOptions) : upstreamResponse.body; }
       catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
       return new Response(body, {
         status: upstreamResponse.status,
@@ -749,7 +751,7 @@ export async function deliverPassthroughResponse(
     }
     if (!upstreamResponse.ok) {
       if (codexPermissions?.redactUpstreamErrors === false && !(upstreamResponse.status === 413 && codexPermissions.synthesizeTerminalFailure)) {
-        try { return new Response(privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal)
+        try { return new Response(privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal, privateErrorReadOptions)
           : relayWithAbort(upstreamResponse.body, upstream), { status: upstreamResponse.status, statusText: upstreamResponse.statusText, headers }); }
         catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
       }
@@ -759,7 +761,7 @@ export async function deliverPassthroughResponse(
         try { failure = await consumeComboFailure(upstreamResponse, options.abortSignal, undefined, privateGuard ? (text, safe) => {
           if (!safe) throw new CodexPrivateCredentialProtectionError("private-body-unreadable");
           return passthroughCt?.includes("json") ? privateGuard.protectJson(text).text : privateGuard.mask(text);
-        } : undefined, privateGuard ? headers : undefined); }
+        } : undefined, privateGuard ? headers : undefined, privateGuard ? codexPrivateErrorBodyReadDeadlines(privateErrorReadOptions) : undefined); }
         catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
         options.onConsumedComboFailure?.(failure);
         return failure.response;
@@ -767,7 +769,7 @@ export async function deliverPassthroughResponse(
       // The bounded reader owns the original body, deadline, abort settlement, and lock.
       // Unsafe partial data falls back to #452's non-empty status-only JSON.
       let errorText: string;
-      try { errorText = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal)
+      try { errorText = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal, privateErrorReadOptions)
         : await readDisplaySafeErrorText(upstreamResponse, upstream.signal, ""); }
       catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
       if (upstreamResponse.status === 413 && codexPermissions?.synthesizeTerminalFailure !== false) {

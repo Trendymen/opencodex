@@ -372,7 +372,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
     /** (Re)start the silence bound; every inbound frame or pong is proof of life. */
     const armSilence = () => {
       clearTimeout(silenceTimer);
-      if (responseCommitted || terminal) return;
+      if (responseCommitted || terminal || options.permissions?.upstreamWsSilenceDeadline === false) return;
       silenceTimer = setTimeout(
         () => failStream(`codex websocket response prelude timed out${codexWsFailureDetail(failureStage())}`, 504),
         CODEX_WS_RESPONSE_PRELUDE_TIMEOUT_MS,
