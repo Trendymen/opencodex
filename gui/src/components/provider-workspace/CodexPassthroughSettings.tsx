@@ -16,6 +16,7 @@ const copy = {
   backfillResponseFields: { label: "pws.codex.backfillResponseFields", desc: "pws.codex.backfillResponseFieldsDesc" },
   repairResponseToolCalls: { label: "pws.codex.repairResponseToolCalls", desc: "pws.codex.repairResponseToolCallsDesc" },
   redactUpstreamErrors: { label: "pws.codex.redactUpstreamErrors", desc: "pws.codex.redactUpstreamErrorsDesc" },
+  privateSseReadDeadline: { label: "pws.codex.privateSseReadDeadline", desc: "pws.codex.privateSseReadDeadlineDesc" },
   synthesizeTerminalFailure: { label: "pws.codex.synthesizeTerminalFailure", desc: "pws.codex.synthesizeTerminalFailureDesc" },
   normalizeHostedImages: { label: "pws.codex.normalizeHostedImages", desc: "pws.codex.normalizeHostedImagesDesc" },
   synthesizeRoutingHint: { label: "pws.codex.synthesizeRoutingHint", desc: "pws.codex.synthesizeRoutingHintDesc" },

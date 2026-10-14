@@ -10,6 +10,7 @@ export const CODEX_PASSTHROUGH_CATALOG = [
   { key: "backfillResponseFields", group: "response", defaultValue: true },
   { key: "repairResponseToolCalls", group: "response", defaultValue: true },
   { key: "redactUpstreamErrors", group: "response", defaultValue: true },
+  { key: "privateSseReadDeadline", group: "response", defaultValue: true },
   { key: "synthesizeTerminalFailure", group: "response", defaultValue: true },
   { key: "normalizeHostedImages", group: "response", defaultValue: true },
   { key: "synthesizeRoutingHint", group: "headers", defaultValue: true },

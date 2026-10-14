@@ -486,15 +486,31 @@ export async function deliverPassthroughResponse(
   const { openAiSidecar } = sidecarState;
   const { requestBindings } = transportState;
   let upstreamResponse = nativeExchange.upstreamResponse;
+  if (!isReplayRefusalResponse(upstreamResponse) && !codexLocalFailure(upstreamResponse)
+    && !isCodexWsPreludeProjection(upstreamResponse) && !isCodexWsUpstreamResponse(upstreamResponse)) {
+    logCtx.upstreamHttpStatus = upstreamResponse.status;
+    if (logCtx.activeAttempt) logCtx.activeAttempt.upstreamHttpStatus = upstreamResponse.status;
+  } else delete logCtx.upstreamHttpStatus;
   const codexPermissions = resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire });
   const privateGuard = codexPermissions ? createCodexPrivateCredentialGuard({ outboundHeaders: nativeExchange.request.headers,
     callerHeaders: req.headers, sources: codexPrivateCredentialSources(admissionState.authCtx, requestState.substituteMainCredential, route.provider.headers), translatorBudget }) : undefined;
-  const privateFailure = (): Response => {
-    upstream.abort(new CodexPrivateCredentialProtectionError()); releaseCodexAuthContextProbeLease(admissionState.authCtx);
+  let privateFailureNoted = false;
+  const notePrivateFailure = (error: CodexPrivateCredentialProtectionError): void => {
+    if (privateFailureNoted) return; privateFailureNoted = true;
+    logCtx.errorCode = error.code; logCtx.causeHint = "local-refusal"; logCtx.terminalSource = "synthetic";
+    logCtx.terminalHttpStatus = 502; logCtx.upstreamError = error.message;
+    options.onNativePassthroughTerminal?.("failed");
+  };
+  const privateFailure = (error: CodexPrivateCredentialProtectionError): Response => {
+    notePrivateFailure(error); upstream.abort(error); releaseCodexAuthContextProbeLease(admissionState.authCtx);
     reasoningReplayProjection?.dispose(); nestedExecInspection?.dispose(); nestedExecRepairCoordinator?.dispose();
     const response = codexPrivateProtectionFailure(); markResponseNonReplayable(response); return response;
   };
-  const protectSse = async (body: ReadableStream<Uint8Array>) => privateGuard ? protectCodexPrivateSse(body, privateGuard, translatorBudget) : body;
+  const protectSse = async (body: ReadableStream<Uint8Array>) => privateGuard ? protectCodexPrivateSse(body, privateGuard, translatorBudget, {
+    privateSseReadDeadline: codexPermissions?.privateSseReadDeadline,
+    stallTimeoutMs: resolveStallTimeoutMs(config.stallTimeoutSec, { localUpstream: nativeExchange.localUpstream }),
+    signal: AbortSignal.any([upstream.signal, options.abortSignal ?? req.signal]), onProtectionFailure: notePrivateFailure,
+  }) : body;
   const canonicalBufferedJson = clientRequestedStream !== true
     && isCanonicalOpenAiForwardProvider(route.provider)
     && codexPermissions?.normalizeRequestParameters !== false;
@@ -598,7 +614,7 @@ export async function deliverPassthroughResponse(
     const sanitizedHeaders = sanitizePassthroughHeaders(upstreamResponse.headers, codexSafetyBufferingOptions);
     let headers: Headers;
     try { headers = privateGuard ? privateGuard.protectHeaders(sanitizedHeaders) : sanitizedHeaders; }
-    catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) { void upstreamResponse.body?.cancel(error).catch(() => {}); return privateFailure(); } throw error; }
+    catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) { void upstreamResponse.body?.cancel(error).catch(() => {}); return privateFailure(error); } throw error; }
     if (!upstreamResponse.ok) noteUpstreamRequestId(logCtx, headers);
     const resolvedModel = headers.get("openai-model")?.trim();
     if (resolvedModel) {
@@ -716,7 +732,7 @@ export async function deliverPassthroughResponse(
     if (!upstreamResponse.ok && localFailure && decideCodexLocalError(codexPermissions, localFailure).kind === "gateway") {
       try { return new Response(privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal)
         : relayWithAbort(upstreamResponse.body, upstream), { status: upstreamResponse.status, statusText: upstreamResponse.statusText, headers }); }
-      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
     }
     if (isNonReplayableResponse(upstreamResponse) && !isReplayRefusalResponse(upstreamResponse) && codexPermissions?.redactUpstreamErrors !== false) {
       return await sanitizeNonReplayableUpstreamError(upstreamResponse, upstream.signal);
@@ -724,7 +740,7 @@ export async function deliverPassthroughResponse(
     if (upstreamResponse.status >= 300 && upstreamResponse.status < 400) {
       let body: BodyInit | null;
       try { body = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal) : upstreamResponse.body; }
-      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
       return new Response(body, {
         status: upstreamResponse.status,
         statusText: upstreamResponse.statusText,
@@ -735,16 +751,16 @@ export async function deliverPassthroughResponse(
       if (codexPermissions?.redactUpstreamErrors === false && !(upstreamResponse.status === 413 && codexPermissions.synthesizeTerminalFailure)) {
         try { return new Response(privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal)
           : relayWithAbort(upstreamResponse.body, upstream), { status: upstreamResponse.status, statusText: upstreamResponse.statusText, headers }); }
-        catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+        catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
       }
       if (options.comboAttempt) {
         // Protect the same bounded read before classification; no extra body access.
         let failure: Awaited<ReturnType<typeof consumeComboFailure>>;
         try { failure = await consumeComboFailure(upstreamResponse, options.abortSignal, undefined, privateGuard ? (text, safe) => {
-          if (!safe) throw new CodexPrivateCredentialProtectionError();
+          if (!safe) throw new CodexPrivateCredentialProtectionError("private-body-unreadable");
           return passthroughCt?.includes("json") ? privateGuard.protectJson(text).text : privateGuard.mask(text);
         } : undefined, privateGuard ? headers : undefined); }
-        catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+        catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
         options.onConsumedComboFailure?.(failure);
         return failure.response;
       }
@@ -753,7 +769,7 @@ export async function deliverPassthroughResponse(
       let errorText: string;
       try { errorText = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal)
         : await readDisplaySafeErrorText(upstreamResponse, upstream.signal, ""); }
-      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
       if (upstreamResponse.status === 413 && codexPermissions?.synthesizeTerminalFailure !== false) {
         return clientRequestedStream
           ? streamingContextOverflowResponse(parsed._responseModelId ?? parsed.modelId, translatorBudget)
@@ -788,7 +804,7 @@ export async function deliverPassthroughResponse(
       commitReasoningReplayServingRoute(nativeExchange.request.headers);
       let protectedBody: ReadableStream<Uint8Array>;
       try { protectedBody = await protectSse(upstreamResponse.body); }
-      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
       const body = trackStreamLifetime(protectedBody, upstream, undefined, options.turnAdmissionLease);
       return new Response(body, { status: upstreamResponse.status, headers });
     }
@@ -853,7 +869,7 @@ export async function deliverPassthroughResponse(
         && (!!terminalRepairPolicy || webSearchBridgePlan !== undefined);
       let protectedBody: ReadableStream<Uint8Array>;
       try { protectedBody = await protectSse(upstreamResponse.body); }
-      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
       let passthroughSseBody = terminalRepairPolicy
         ? relayResponsesSseWithTerminalRepair(
           protectedBody,
@@ -1535,7 +1551,7 @@ export async function deliverPassthroughResponse(
       }
       let text = bounded.text;
       try { if (privateGuard) text = privateGuard.protectJson(text).text; }
-      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
       try { inboundDebugObserver?.noteJsonResponse(JSON.parse(text)); } catch { inboundDebugObserver?.noteJsonResponse({}); }
       persistInboundDebug();
       inspectResponseLogJson(logCtx, text);
