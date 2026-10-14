@@ -7,12 +7,13 @@ This appendix describes the Trendymen Fork relative to upstream `v2.84.0`. The o
 
 ## Compatibility changes
 
+- Native GPT subscription Responses requests have 20 provider-level processing permissions, all enabled by default. They cover request/response compatibility, generated headers and optional local errors, including Direct and Pool accounts. Existing feature conditions still apply; other destinations and translated ingress keep their behavior. See [GPT subscription processing](/reference/configuration/fork-extensions/#gpt-subscription-processing) for individual controls and retained recovery, budget and credential protections.
 - Ark GLM/Kimi and BigModel GLM Responses routes lower unsupported tool schemas and handle assistant-prefill restrictions. Ordinary third-party tools drop ChatGPT-only `encrypted` annotations while preserving properties and literal values with that name. OpenAI-operated destinations and explicitly trusted direct relays retain the annotations; combo members do not inherit that direct-route exception.
 - Third-party tool tasks receive progress, code-mode result-display and patch-order guidance. The proxy does not synthesize progress or execute or retry patches.
 - Declared nested `functions.exec` / `web__run` calls and supported `spawn_agent.fork_turns` completions receive bounded repair. Custom tool outputs become strings; Console Go's strict destination deduplicates repeated call outputs. Current tool declarations remain the authority.
 - Native Responses phase inference and content-channel reasoning summary projection cover paths outside the upstream bridge. Summary projection requires an explicit client summary request, preserves raw fields, and keeps passthrough continuation aligned with the delivered response.
-- Annotation instructions use bare chip directives. Output repair preserves code blocks, but it is not gated by this turn's annotation count and does not handle multiline code spans; native forwarding only receives the input rewrite.
-- SSE flush and terminal handling preserve usable upstream errors and one final `[DONE]`. Canonical forwarding copies a true Lite header into missing WebSocket metadata without replacing explicit values.
+- Annotation instructions use bare chip directives. Output repair preserves code blocks, but it is not gated by this turn's annotation count and does not handle multiline code spans; native forwarding receives the input rewrite only when its permission allows it.
+- With the corresponding processing permissions enabled, SSE flush and terminal handling preserve usable upstream errors and one final `[DONE]`. Canonical forwarding copies a true Lite header into missing WebSocket metadata without replacing explicit values.
 - Ark quota errors retain the provider's message and reset time while preventing automatic retry. BigModel Codex discovery accepts `models[].slug`; the legacy `deepseek-v4-flash` alias can receive images directly unless operator configuration still excludes it.
 
 ## Recovery and maintenance

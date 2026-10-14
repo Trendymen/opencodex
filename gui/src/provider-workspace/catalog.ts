@@ -26,6 +26,7 @@ import { CODEX_FORWARD_BASE_URL, isCanonicalOpenAiForwardProvider, normalizedOpe
  * over free.
  */
 
+import type { CodexPassthroughConfig } from "../../../src/fork/codex-passthrough-contract";
 import { isSubscriptionCliProvider } from "./subscription-cli";
 
 /**
@@ -42,6 +43,7 @@ export interface WorkspaceProvider {
   apiKeyTransport?: "x-api-key" | "bearer";
   /** Static/configured model ids from provider config (offline fallback). */
   models?: string[];
+  modelAdapters?: Record<string, string>;
   /** Whether the proxy fetches the provider's live model catalog (default true). */
   liveModels?: boolean;
   /** Optional upstream HTTP version pin. Cursor defaults to HTTP/2 when omitted. */
@@ -63,6 +65,7 @@ export interface WorkspaceProvider {
     keySelection?: "active" | "round-robin";
     keys?: { requestsPerMinute?: number; minIntervalMs?: number; maxConcurrentRequests?: number };
   };
+  codexPassthrough?: CodexPassthroughConfig;
   /** Codex account routing mode for the canonical `openai` forward provider. */
   codexAccountMode?: "direct" | "pool";
   /** Derived state of the two xAI Grok Responses model-adapter entries. */
