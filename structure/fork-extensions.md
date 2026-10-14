@@ -11,11 +11,22 @@
 
 ## 请求与工具边界
 
-- GPT 家族和官方目的地分开判断。官方 Responses 保持原生消息/schema；Lite header 到 WS metadata 的映射只补缺失字段。
+- GPT 家族和官方目的地分开判断。官方 Responses 保持原生消息/schema；Lite header 到 WS metadata 的映射在对应许可允许时只补缺失字段。
 - `agentMessageFormat`、GLM/Kimi lowering 和 `encrypted` 注解清理在出站副本上运行，保持原 input、工具授权和重放状态。可信直接 key-auth relay 的注解例外不扩大到 combo。
 - nested exec 和 `spawn_agent.fork_turns` 修复须由当前工具声明授权，保留 preview、完成项和 continuation 的区别。`fork_turns` 只解包一层合法字段值，重复键/未知 schema 跳过。
 - tool-catalog 提示只使用当前可见工具；代理不合成进度、不执行或自动重试补丁，空成功输出的提示不能覆盖失败输出。
 - `src/claude/intercept/picker-listener.ts` 的上传拒绝与有界 linger 沿用[官方 picker 合同](clients/claude-desktop.md#picker-mode-the-desktop-egress-proxy)。`tests/claude-integration/claude-picker-upload.test.ts` 补充无 body 的 HTTP/1.1 400/503 同 socket 复用、其他上传与 HTTP/2 sibling 不受拒绝影响、拒绝后重复 shutdown 的外部回归。
+
+## 官方订阅逐项许可
+
+- `src/fork/codex-passthrough-contract.ts` 是配置、面板和运行时共用的纯 20 项目录。默认 `true` 只允许既有处理，仍受原功能开关约束；配置说明统一见 [Fork 配置](../docs-site/src/content/docs/reference/configuration/fork-extensions.md#gpt-subscription-processing)。
+- `codex-passthrough-turn.ts` 按 turn 冻结 Provider 覆盖值，最终 native Responses + canonical forward 目的地才解析许可；Direct、Pool、模型级 adapter 和 fallback 使用同一判断。响应携带实际尝试的许可，非官方目的地不能继承父目标许可。
+- `codex-passthrough-source.ts` 在既有解压/读入点持有原始 JSON 文本，按共享 translator budget 管理副本；`codex-passthrough-request.ts` 在最终路由后按许可准备请求，提交选中尝试的 skills 副作用。EOF、错误、取消和 abort 释放来源，不增加独立硬上限。
+- 已获准的 agent-task-recovery 替换按原始/历史 item 来源登记，canonical 重建只重放这些替换，不回灌整份旧输入，也不再次恢复或查询缓存。Combo 序列化转移实际 child item 的来源；关闭历史展开不带回历史替换。新副本保留禁止持久化标记，替换字符串记入既有观察预算并随来源释放。
+- `codex-passthrough-response.ts` 和 `codex-passthrough-snapshot.ts` 接入已有 JSON/SSE/WS 交付点；关闭改写时保留业务字段，WS 仍需协议 framing，错误体保存在 `response`。缓存记录实际交付形状，不把无终态 EOF 记作成功。
+- `codex-passthrough-secrets.ts` 仅按本次真实出站值保护实际注入的私有凭据，覆盖 header、JSON 转义和跨 chunk 文本；一般脱敏关闭不取消这项保护。保护失败在提交前返回错误、提交后中止，受既有取消和有界读取约束。
+- `codex-passthrough-local-errors.ts` 按已分类来源决定五项可选策略；`codex-passthrough-routing.ts` 将本次普通额度预检许可传给既有账号选择。真实上游错误、恢复失败、硬预算、认证/身份和明确账号政策保留，关闭拒绝说明不增加重放。
+- `src/server/responses/fetch-helpers.ts` 仅调用该错误模块的预发送失败标记，不在传输层执行路由或认证决策。WS 错误重组仍使用既有 64 KiB 有界 reader、读取期限及取消，关闭通用脱敏不关闭这些资源限制。
 
 ## 响应与恢复边界
 

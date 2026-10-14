@@ -11,6 +11,11 @@ import { BoundedSseFrameBuffer } from "./sse-frame-buffer";
 import { sseDataPayload as parseSseBlock } from "./sse-payload-rewrite";
 import { safeResponseHeaders } from "./safe-response-headers";
 import type { AudioSocketTarget } from "./audio-dictation";
+import { codexDoneTerminalStatus, codexRawErrorBody, codexRawJsonTerminal } from "../fork/codex-passthrough-response";
+import { codexPassthroughResponsePermissions } from "../fork/codex-passthrough-turn";
+import { CodexPrivateCredentialProtectionError } from "../fork/codex-passthrough-secrets";
+import { codexLocalFailure, decideCodexLocalError } from "../fork/codex-passthrough-local-errors";
+import { readBoundedResponseBody } from "../lib/bounded-body";
 
 export { safeResponseHeaders } from "./safe-response-headers";
 
@@ -240,6 +245,7 @@ export async function pumpResponsesSseToWebSocket(
   options: {
     isCurrent?: () => boolean;
     untilEof?: boolean;
+    synthesizeTerminalFailure?: boolean;
     onTerminal?: ResponsesTerminalReporter;
     onSsePayload?: ResponsesPayloadObserver;
   } = {},
@@ -275,7 +281,8 @@ export async function pumpResponsesSseToWebSocket(
     const type = payloadType(payload);
     if (!type) {
       reportTerminal("incomplete");
-      sendProtocolError(ws, 502, "Invalid JSON payload in upstream SSE frame");
+      if (options.synthesizeTerminalFailure !== false) sendProtocolError(ws, 502, "Invalid JSON payload in upstream SSE frame");
+      else ws.close(1011, "Upstream stream could not be delivered");
       terminalSeen = true;
       void reader.cancel().catch(() => {});
       return true;
@@ -283,7 +290,8 @@ export async function pumpResponsesSseToWebSocket(
     if (terminalSeen) return true;
     sendTextFrame(ws, payload);
     if (options.untilEof && type === "response.created") lastTerminal = undefined;
-    const terminalStatus = type === "error" && options.untilEof ? "failed" : terminalStatusFromType(type);
+    const terminalStatus = type === "error" && options.untilEof ? "failed" : terminalStatusFromType(type)
+      ?? (options.synthesizeTerminalFailure === false ? codexDoneTerminalStatus(JSON.parse(payload)) : null);
     if (terminalStatus) {
       if (options.untilEof) { lastTerminal = terminalStatus; return false; }
       reportTerminal(terminalStatus);
@@ -314,7 +322,8 @@ export async function pumpResponsesSseToWebSocket(
     }
     if (!terminalSeen && isCurrent() && !clientCancelled) {
       reportTerminal("incomplete");
-      sendProtocolError(ws, 502, "Upstream stream ended before response terminal event");
+      if (options.synthesizeTerminalFailure !== false) sendProtocolError(ws, 502, "Upstream stream ended before response terminal event");
+      else ws.close(1011, "Upstream stream ended before response terminal event");
     }
   } catch (err) {
     framer.dispose();
@@ -325,7 +334,8 @@ export async function pumpResponsesSseToWebSocket(
       && !(err instanceof WsSendDroppedError)) {
       reportTerminal("incomplete");
       try {
-        sendUpstreamError(ws, 502, err);
+        if (options.synthesizeTerminalFailure !== false && !(err instanceof CodexPrivateCredentialProtectionError)) sendUpstreamError(ws, 502, err);
+        else ws.close(1011, "Upstream stream could not be delivered");
       } catch (sendErr) {
         // If delivery is already dropped, there is no useful error frame left
         // to send. Swallow only that expected transport signal; other failures
@@ -337,7 +347,7 @@ export async function pumpResponsesSseToWebSocket(
     framer.dispose();
     // Framing errors can occur while the upstream body is still live. Always
     // release the reader, even when terminal/send paths already cancelled it.
-    void reader.cancel().catch(() => {});
+    void reader.cancel().finally(() => { try { reader.releaseLock(); } catch { /* pending read */ } }).catch(() => {});
     if (ws.data.cancel === cancel) ws.data.cancel = undefined;
   }
 }
@@ -347,6 +357,7 @@ export function sendResponsesJsonAsEvents(
   response: Record<string, unknown>,
   onTerminal?: ResponsesTerminalReporter,
   onPayload?: ResponsesPayloadObserver,
+  permissions?: Parameters<typeof codexRawJsonTerminal>[1],
 ): void {
   const sendObservedFrame = (payload: Record<string, unknown>) => {
     const text = JSON.stringify(payload);
@@ -357,6 +368,8 @@ export function sendResponsesJsonAsEvents(
     }
     sendTextFrame(ws, text);
   };
+  const rawTerminal = codexRawJsonTerminal(response, permissions);
+  if (rawTerminal) { sendObservedFrame(rawTerminal.payload); onTerminal?.(rawTerminal.status); return; }
   const finalStatus = response.status === "failed" || response.status === "incomplete"
     ? response.status
     : "completed";
@@ -391,21 +404,35 @@ export async function sendResponseToWebSocket(
     onSsePayload?: ResponsesPayloadObserver;
   } = {},
 ): Promise<void> {
+  const permissions = codexPassthroughResponsePermissions(response);
   if (!isCurrent()) {
     await response.body?.cancel().catch(() => {});
     return;
   }
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    if (!isCurrent()) return;
-    sendJsonFrame(ws, buildWsErrorFrame(response.status, errorPayloadFromText(text), response.headers));
+    const failure = codexLocalFailure(response);
+    if (failure && permissions?.localErrorPolicies.transportErrorMapping === false && decideCodexLocalError(permissions, failure).kind === "gateway") {
+      void response.body?.cancel().catch(() => {}); ws.close(1011, "Upstream connection failed"); options.onTerminal?.("failed"); return;
+    }
+    const abort = new AbortController();
+    const cancel = () => abort.abort();
+    ws.data.cancel = cancel;
+    try {
+      const result = await readBoundedResponseBody(response, { signal: abort.signal }).catch(() => undefined);
+      if (abort.signal.aborted || !isCurrent()) return;
+      if (!result?.displaySafe || result.truncated || result.oversized) {
+        ws.close(1011, "Upstream error body could not be read safely"); options.onTerminal?.("failed"); return;
+      }
+      sendJsonFrame(ws, { ...buildWsErrorFrame(response.status, errorPayloadFromText(result.text), response.headers), ...codexRawErrorBody(result.text, permissions) });
+    } finally { if (ws.data.cancel === cancel) ws.data.cancel = undefined; }
     return;
   }
 
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   if (!response.body) {
     options.onTerminal?.("incomplete");
+    if (permissions?.synthesizeTerminalFailure === false) { ws.close(1011, "Upstream response has no body"); return; }
     sendJsonFrame(ws, buildWsErrorFrame(502, {
       type: "protocol_error",
       code: "websocket_protocol_error",
@@ -418,6 +445,7 @@ export async function sendResponseToWebSocket(
     await pumpResponsesSseToWebSocket(ws, response.body, {
       isCurrent,
       untilEof: options.untilEof,
+      synthesizeTerminalFailure: permissions?.synthesizeTerminalFailure,
       onTerminal: options.onTerminal,
       onSsePayload: options.onSsePayload,
     });
@@ -428,7 +456,7 @@ export async function sendResponseToWebSocket(
     const text = await response.text();
     if (!isCurrent()) return;
     const json = JSON.parse(text) as Record<string, unknown>;
-    sendResponsesJsonAsEvents(ws, json, options.onTerminal, options.onSsePayload);
+    sendResponsesJsonAsEvents(ws, json, options.onTerminal, options.onSsePayload, permissions);
     return;
   }
 
@@ -441,6 +469,7 @@ export async function sendResponseToWebSocket(
     await pumpResponsesSseToWebSocket(ws, stream, {
       isCurrent,
       untilEof: options.untilEof,
+      synthesizeTerminalFailure: permissions?.synthesizeTerminalFailure,
       onTerminal: options.onTerminal,
       onSsePayload: options.onSsePayload,
     });
@@ -452,7 +481,7 @@ export async function sendResponseToWebSocket(
   const trimmed = text.trim();
   if (trimmed.startsWith("{")) {
     const json = JSON.parse(trimmed) as Record<string, unknown>;
-    sendResponsesJsonAsEvents(ws, json, options.onTerminal, options.onSsePayload);
+    sendResponsesJsonAsEvents(ws, json, options.onTerminal, options.onSsePayload, permissions);
     return;
   }
 

@@ -18,7 +18,7 @@ import {
   relayWithAbort,
 } from "../relay";
 import { isUsageDebugEnabled } from "../../usage/debug";
-import { isNonReplayableResponse, isReplayRefusalResponse } from "../../lib/upstream-retry";
+import { isNonReplayableResponse, isReplayRefusalResponse, markResponseNonReplayable } from "../../lib/upstream-retry";
 import { sanitizeNonReplayableUpstreamError } from "./non-replayable-error";
 import { teeWithBoundedInspection } from "../inspection-tee";
 import {
@@ -41,6 +41,7 @@ import { consumeComboFailure } from "./core-combo-failure";
 import { clientCancelledResponse, readDisplaySafeErrorText } from "./core-errors";
 import { streamingContextOverflowResponse, jsonContextOverflowResponse } from "./context-overflow";
 import { formatPassthroughUpstreamError } from "./passthrough-error";
+import { codexLocalFailure, decideCodexLocalError } from "../../fork/codex-passthrough-local-errors";
 import { rewriteUpstreamPolicyRefusal } from "./policy-refusal";
 import {
   resolvePassthroughWebSearchBridgeAuth,
@@ -175,6 +176,10 @@ import {
 } from "../responses-nested-exec-call-repair";
 import { repairNestedExecCallsInJson } from "../../responses/nested-exec-call-repair";
 import { createInboundResponsesDebugObserver, persistInboundResponsesDebugSummary } from "../../fork/inbound-response-debug";
+import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
+import { codexRawJsonSse } from "../../fork/codex-passthrough-response";
+import { codexPrivateCredentialSources, createCodexPrivateCredentialGuard, readCodexPrivateErrorText,
+  protectCodexPrivateSse, codexPrivateProtectionFailure, CodexPrivateCredentialProtectionError } from "../../fork/codex-passthrough-secrets";
 
 import { isDebugEnabled } from "../../lib/debug-settings";
 
@@ -391,6 +396,7 @@ export async function deliverPassthroughResponse(
     | "subagentFallbackAccountId"
     | "clientRequestedStream"
     | "translatorBudget"
+    | "substituteMainCredential"
     | "inboundWire"
   >,
   transportState: Pick<ResponsesTransport, "requestBindings">,
@@ -481,8 +487,18 @@ export async function deliverPassthroughResponse(
   const { openAiSidecar } = sidecarState;
   const { requestBindings } = transportState;
   let upstreamResponse = nativeExchange.upstreamResponse;
+  const codexPermissions = resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire });
+  const privateGuard = codexPermissions ? createCodexPrivateCredentialGuard({ outboundHeaders: nativeExchange.request.headers,
+    callerHeaders: req.headers, sources: codexPrivateCredentialSources(admissionState.authCtx, requestState.substituteMainCredential, route.provider.headers), translatorBudget }) : undefined;
+  const privateFailure = (): Response => {
+    upstream.abort(new CodexPrivateCredentialProtectionError()); releaseCodexAuthContextProbeLease(admissionState.authCtx);
+    reasoningReplayProjection?.dispose(); nestedExecInspection?.dispose(); nestedExecRepairCoordinator?.dispose();
+    const response = codexPrivateProtectionFailure(); markResponseNonReplayable(response); return response;
+  };
+  const protectSse = async (body: ReadableStream<Uint8Array>) => privateGuard ? protectCodexPrivateSse(body, privateGuard, translatorBudget) : body;
   const canonicalBufferedJson = clientRequestedStream !== true
-    && isCanonicalOpenAiForwardProvider(route.provider);
+    && isCanonicalOpenAiForwardProvider(route.provider)
+    && codexPermissions?.normalizeRequestParameters !== false;
   let inboundDebugPersisted = false;
   const persistInboundDebug = (): void => {
     if (inboundDebugPersisted || !inboundDebugObserver) return;
@@ -580,7 +596,10 @@ export async function deliverPassthroughResponse(
     });
   }
 
-    const headers = sanitizePassthroughHeaders(upstreamResponse.headers, codexSafetyBufferingOptions);
+    const sanitizedHeaders = sanitizePassthroughHeaders(upstreamResponse.headers, codexSafetyBufferingOptions);
+    let headers: Headers;
+    try { headers = privateGuard ? privateGuard.protectHeaders(sanitizedHeaders) : sanitizedHeaders; }
+    catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) { void upstreamResponse.body?.cancel(error).catch(() => {}); return privateFailure(); } throw error; }
     if (!upstreamResponse.ok) noteUpstreamRequestId(logCtx, headers);
     const resolvedModel = headers.get("openai-model")?.trim();
     if (resolvedModel) {
@@ -597,7 +616,7 @@ export async function deliverPassthroughResponse(
         && !passthroughCt
         && (parsed.stream || canonicalBufferedJson));
     nativeExchange.isEventStream = !!isEventStream;
-    const inferResponsesMessagePhases = routeUsesResponsesMessagePhaseInference(route.provider, route.modelId);
+    const inferResponsesMessagePhases = codexPermissions?.backfillResponseFields !== false && routeUsesResponsesMessagePhaseInference(route.provider, route.modelId);
     const recordTerminalOutcome = codexForwardTerminalOutcomeRecorder(
       config,
       admissionState.authCtx,
@@ -694,32 +713,49 @@ export async function deliverPassthroughResponse(
     // through sanitizePassthroughHeaders) so a redirect to a dead host can never
     // masquerade as a pre-connection failure after the credential was seen.
     // The numeric outcome above already classified it neutral — no streak.
-    if (isNonReplayableResponse(upstreamResponse) && !isReplayRefusalResponse(upstreamResponse)) {
+    const localFailure = codexLocalFailure(upstreamResponse);
+    if (!upstreamResponse.ok && localFailure && decideCodexLocalError(codexPermissions, localFailure).kind === "gateway") {
+      try { return new Response(privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal)
+        : relayWithAbort(upstreamResponse.body, upstream), { status: upstreamResponse.status, statusText: upstreamResponse.statusText, headers }); }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+    }
+    if (isNonReplayableResponse(upstreamResponse) && !isReplayRefusalResponse(upstreamResponse) && codexPermissions?.redactUpstreamErrors !== false) {
       return await sanitizeNonReplayableUpstreamError(upstreamResponse, upstream.signal);
     }
     if (upstreamResponse.status >= 300 && upstreamResponse.status < 400) {
-      return new Response(upstreamResponse.body, {
+      let body: BodyInit | null;
+      try { body = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal) : upstreamResponse.body; }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+      return new Response(body, {
         status: upstreamResponse.status,
         statusText: upstreamResponse.statusText,
-        headers: sanitizePassthroughHeaders(upstreamResponse.headers, codexSafetyBufferingOptions),
+        headers,
       });
     }
     if (!upstreamResponse.ok) {
+      if (codexPermissions?.redactUpstreamErrors === false && !(upstreamResponse.status === 413 && codexPermissions.synthesizeTerminalFailure)) {
+        try { return new Response(privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal)
+          : relayWithAbort(upstreamResponse.body, upstream), { status: upstreamResponse.status, statusText: upstreamResponse.statusText, headers }); }
+        catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+      }
       if (options.comboAttempt) {
-        // No pre-read guard here: `consumeComboFailure` -> `readBoundedResponseBody` reads
-        // `response.body` itself and already threads the abort signal through its own read,
-        // and the combo contract is that this body's getter is touched exactly once (pinned by
-        // "captures passthrough failed usage from its original bounded body exactly once").
-        // Attaching a guard would be a second `.body` access and break that contract for no
-        // gain, since the bounded reader owns settlement on this path.
-        const failure = await consumeComboFailure(upstreamResponse, options.abortSignal);
+        // Protect the same bounded read before classification; no extra body access.
+        let failure: Awaited<ReturnType<typeof consumeComboFailure>>;
+        try { failure = await consumeComboFailure(upstreamResponse, options.abortSignal, undefined, privateGuard ? (text, safe) => {
+          if (!safe) throw new CodexPrivateCredentialProtectionError();
+          return passthroughCt?.includes("json") ? privateGuard.protectJson(text).text : privateGuard.mask(text);
+        } : undefined, privateGuard ? headers : undefined); }
+        catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
         options.onConsumedComboFailure?.(failure);
         return failure.response;
       }
       // The bounded reader owns the original body, deadline, abort settlement, and lock.
       // Unsafe partial data falls back to #452's non-empty status-only JSON.
-      const errorText = await readDisplaySafeErrorText(upstreamResponse, upstream.signal, "");
-      if (upstreamResponse.status === 413) {
+      let errorText: string;
+      try { errorText = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal)
+        : await readDisplaySafeErrorText(upstreamResponse, upstream.signal, ""); }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+      if (upstreamResponse.status === 413 && codexPermissions?.synthesizeTerminalFailure !== false) {
         return clientRequestedStream
           ? streamingContextOverflowResponse(parsed._responseModelId ?? parsed.modelId, translatorBudget)
           : jsonContextOverflowResponse();
@@ -740,6 +776,7 @@ export async function deliverPassthroughResponse(
         // Provenance, not inference: `errorText` is empty when the bounded read finds nothing
         // display-safe, and an empty body is exactly what the retryable-429 default fires on.
         replayRefusal: isReplayRefusalResponse(upstreamResponse),
+        authoritativeOrigin: codexPermissions !== undefined,
         renderQuotaAsClientError: rendersArkQuotaAsClientError(route.providerName),
       });
     }
@@ -750,7 +787,10 @@ export async function deliverPassthroughResponse(
       // contracts and would truncate it. Keep the bounded upstream as the sole reader.
       options.nativeControl.relayActive = true;
       commitReasoningReplayServingRoute(nativeExchange.request.headers);
-      const body = trackStreamLifetime(upstreamResponse.body, upstream, undefined, options.turnAdmissionLease);
+      let protectedBody: ReadableStream<Uint8Array>;
+      try { protectedBody = await protectSse(upstreamResponse.body); }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
+      const body = trackStreamLifetime(protectedBody, upstream, undefined, options.turnAdmissionLease);
       return new Response(body, { status: upstreamResponse.status, headers });
     }
 
@@ -775,7 +815,7 @@ export async function deliverPassthroughResponse(
       if (!canonicalBufferedJson) {
         commitReasoningReplayServingRoute(nativeExchange.request.headers);
       }
-      const terminalRepairPolicy = route.staticPolicy.model.responsesTerminalRepair;
+      const terminalRepairPolicy = codexPermissions?.synthesizeTerminalFailure === false ? undefined : route.staticPolicy.model.responsesTerminalRepair;
       // #3761: opt-in hosted-web-search bridge. Codex always declares the hosted web_search tool,
       // and this branch relays that declaration on the assumption the destination executes it.
       // A KEY-auth gateway that does not (Ollama Cloud GLM) answers with a function_call named
@@ -812,16 +852,19 @@ export async function deliverPassthroughResponse(
       };
       nativeExchange.inboundDebugUsesRawTerminalRepairTap = !!inboundDebugObserver
         && (!!terminalRepairPolicy || webSearchBridgePlan !== undefined);
+      let protectedBody: ReadableStream<Uint8Array>;
+      try { protectedBody = await protectSse(upstreamResponse.body); }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
       let passthroughSseBody = terminalRepairPolicy
         ? relayResponsesSseWithTerminalRepair(
-          upstreamResponse.body,
+          protectedBody,
           upstream,
           terminalRepairPolicy,
           translatorBudget,
           options.responsesTerminalRepairScheduler,
           rawInboundSseTap(),
         )
-        : upstreamResponse.body;
+        : protectedBody;
       passthroughSseBody = webSearchBridgePlan
         ? createPassthroughWebSearchBridgeStream({
           plan: webSearchBridgePlan,
@@ -898,7 +941,7 @@ export async function deliverPassthroughResponse(
       // explicit Grok compatibility marker enables strict client compatibility rewrites.
       // The provider's broader snapshot/lifecycle repair remains opt-in.
       const grokClientCompatibilityEnabled = logCtx.surface === "grok";
-      const snapshotRepairEnabled = route.provider.responsesSnapshotRepair !== false
+      const snapshotRepairEnabled = codexPermissions?.backfillResponseFields !== false && route.provider.responsesSnapshotRepair !== false
         && (hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair)
           || usesVolcengineAgentPlanResponses(route.provider));
       const githubCopilotRepairEnabled = route.providerName === "github-copilot";
@@ -912,19 +955,19 @@ export async function deliverPassthroughResponse(
       // Compose opt-in payload rewrites into one parse/stringify pass (image-gen restore first).
       const payloadRewrites = [
         rewriteResponsesIncompleteReasonJson,
-        createImageGenCallRestoreRewrite(imageGenCallAliases),
+        codexPermissions?.repairResponseToolCalls === false ? undefined : createImageGenCallRestoreRewrite(imageGenCallAliases),
         // #3217: a call whose namespace repeats its own name is unroutable in codex-rs.
-        createSelfNamedToolCallNamespaceScrubRewrite(selfNamedNamespaceScrubAuthorization),
-        responseEffects.routedMuseToolNameAliases.size > 0
+        codexPermissions?.repairResponseToolCalls === false ? undefined : createSelfNamedToolCallNamespaceScrubRewrite(selfNamedNamespaceScrubAuthorization),
+        codexPermissions?.repairResponseToolCalls !== false && responseEffects.routedMuseToolNameAliases.size > 0
           ? createMuseToolNameRestoreRewrite(responseEffects.routedMuseToolNameAliases)
           : undefined,
-        responseEffects.routedNamespaceToolAliases.size > 0
+        codexPermissions?.repairResponseToolCalls !== false && responseEffects.routedNamespaceToolAliases.size > 0
           ? createRoutedNamespaceCallRestoreRewrite(responseEffects.routedNamespaceToolAliases)
           : undefined,
-        authorizedBareNamespaceToolAliases.size > 0
+        codexPermissions?.repairResponseToolCalls !== false && authorizedBareNamespaceToolAliases.size > 0
           ? createRoutedNamespaceCallRestoreRewrite(authorizedBareNamespaceToolAliases)
           : undefined,
-        hasResponsesItemIdRepair(repairConfig)
+        codexPermissions?.backfillResponseFields !== false && hasResponsesItemIdRepair(repairConfig)
           ? createResponsesItemIdPayloadRewrite(repairConfig!, translatorBudget)
           : undefined,
         responseModelRewrite,
@@ -933,23 +976,6 @@ export async function deliverPassthroughResponse(
       // injection at the block level, after payload rewrites. Defaults come
       // from the finalized OUTBOUND body — the normalized internal tool shapes
       // are not the Responses wire shapes the snapshot must mirror.
-      // Only validated client blocks may publish plaintext continuation state.
-      // Raw inspection precedes rewriting on eager relays, so it cannot own this write.
-      const plaintextInspector = !canonicalBufferedJson
-        && !grokUpstreamEchoEnabled
-        && responseEffects.plaintextV2AgentMessageToolNames.size > 0
-        ? createSseInspector({
-          onTerminal: nativeExchange.notePlaintextClientTerminal,
-          onCompletedResponse: rememberPassthroughResponseChecked,
-        })
-        : undefined;
-      const plaintextEncoder = plaintextInspector ? new TextEncoder() : undefined;
-      const rememberPlaintextBlock = plaintextInspector
-        ? Object.assign((block: string): readonly string[] => {
-          plaintextInspector.feed(plaintextEncoder!.encode(`${block}\n\n`));
-          return [block];
-        }, { dispose: () => plaintextInspector.dispose() })
-        : undefined;
       const maskCredential = createOutboundCredentialMask(nativeExchange.request.headers);
       const blockRewrites = [
         payloadRewrites.length > 0
@@ -959,14 +985,14 @@ export async function deliverPassthroughResponse(
         inferResponsesMessagePhases
           ? createResponsesMessagePhaseBlockRewrite(translatorBudget)
           : undefined,
-        nestedExecRepairPlan && nestedExecRepairCoordinator
+        codexPermissions?.repairResponseToolCalls !== false && nestedExecRepairPlan && nestedExecRepairCoordinator
           ? createNestedExecCallRepairBlockRewrite(
             nestedExecRepairPlan,
             nestedExecRepairCoordinator,
             translatorBudget,
           )
           : undefined,
-        routedCustomToolNames.size > 0 || routedCustomToolRepairNames.size > 0
+        codexPermissions?.repairResponseToolCalls !== false && (routedCustomToolNames.size > 0 || routedCustomToolRepairNames.size > 0)
           ? createRoutedCustomToolRestoreBlockRewrite(
             routedCustomToolNames,
             translatorBudget,
@@ -974,7 +1000,7 @@ export async function deliverPassthroughResponse(
             declaredWireToolNames,
           )
           : undefined,
-        routedToolSearchNames.size > 0
+        codexPermissions?.repairResponseToolCalls !== false && routedToolSearchNames.size > 0
           ? createRoutedToolSearchRestoreBlockRewrite(routedToolSearchNames, translatorBudget)
           : undefined,
         githubCopilotRepairEnabled
@@ -1004,13 +1030,13 @@ export async function deliverPassthroughResponse(
         snapshotRepairEnabled
           ? createResponsesSnapshotBlockRewrite(nativeExchange.outboundRequestBody, translatorBudget)
           : undefined,
-        responseEffects.plaintextV2AgentMessageToolNames.size > 0
+        codexPermissions?.repairResponseToolCalls !== false && responseEffects.plaintextV2AgentMessageToolNames.size > 0
           ? payloadRewriteAsBlockRewrite(createPlaintextV2AgentMessageCallRestoreRewrite(
             responseEffects.plaintextV2AgentMessageToolNames, responseEffects.plaintextV2AgentMessageAliasedToolNames,
           ))
           : undefined,
-        createResponsesFieldBackfillBlockRewrite(),
-        functionRepairSchemas.size > 0
+        codexPermissions?.backfillResponseFields === false ? undefined : createResponsesFieldBackfillBlockRewrite(),
+        codexPermissions?.repairResponseToolCalls !== false && functionRepairSchemas.size > 0
           ? createResponsesFunctionToolRepairBlockRewrite(functionRepairSchemas, translatorBudget)
           : undefined,
         // Last: every rewrite above can still rename or reshape a call item, so the guard must
@@ -1034,16 +1060,24 @@ export async function deliverPassthroughResponse(
             rememberPassthroughResponse ? rememberPassthroughResponseChecked : undefined,
           )
           : undefined,
-        createTerminalErrorRedactionBlockRewrite(nativeExchange.request.headers, maskCredential),
+        codexPermissions?.redactUpstreamErrors === false ? undefined : createTerminalErrorRedactionBlockRewrite(nativeExchange.request.headers, maskCredential),
         nestedExecRepairCoordinator
           ? createNestedExecClientOutcomeBlockRewrite(nestedExecRepairCoordinator)
           : undefined,
-        rememberPlaintextBlock,
-        // Display-only projection must follow every continuation-cache observer.
-        isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)
-          ? createHostedImageDisplayRewrite()
-          : undefined,
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
+      // Publish validated continuation items after wire repairs and before image display projection.
+      const clientCacheInspector = !canonicalBufferedJson && !grokUpstreamEchoEnabled
+        && (responseEffects.plaintextV2AgentMessageToolNames.size > 0 || !!codexPermissions && !!rememberPassthroughResponse && blockRewrites.length > 0)
+        ? createSseInspector({ allowResponseDone: codexPermissions?.synthesizeTerminalFailure === false,
+          onTerminal: nativeExchange.notePlaintextClientTerminal,
+          onCompletedResponse: codexPermissions ? rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked : rememberPassthroughResponseChecked }) : undefined;
+      if (clientCacheInspector) {
+        const encoder = new TextEncoder();
+        blockRewrites.push(Object.assign((block: string): readonly string[] => {
+          clientCacheInspector.feed(encoder.encode(`${block}\n\n`)); return [block];
+        }, { dispose: () => clientCacheInspector.dispose() }));
+      }
+      if (codexPermissions?.normalizeHostedImages !== false && isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) blockRewrites.push(createHostedImageDisplayRewrite());
       const clientBlockRewrite = blockRewrites.length > 0
         ? composeSseBlockRewrites(...blockRewrites)
         : undefined;
@@ -1312,9 +1346,10 @@ export async function deliverPassthroughResponse(
           }
           : undefined;
         const inspector = createSseInspector({
+          allowResponseDone: codexPermissions?.synthesizeTerminalFailure === false,
           onTerminal: reportNativeTerminal,
           logCtx,
-          onCompletedResponse: rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked) : undefined,
+          onCompletedResponse: !clientCacheInspector && rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked) : undefined,
           onParsedPayload: noteInspectedPayload,
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
@@ -1367,6 +1402,7 @@ export async function deliverPassthroughResponse(
             unregisterTurn(turnAc);
           },
         }, {
+          synthesizeTerminalFailure: codexPermissions?.synthesizeTerminalFailure,
           clientGoneSignal: options.abortSignal,
           terminalBoundary: codexSafetyBufferingOptions,
           maskCredential,
@@ -1395,6 +1431,7 @@ export async function deliverPassthroughResponse(
       linkAbortSignal(upstream, turnAc.signal);
       registerTurn(turnAc, options.turnAdmissionLease);
       const inspectionConsumerOptions = {
+        inspectorFactory: (handlers: Parameters<typeof createSseInspector>[0]) => createSseInspector({ ...handlers, allowResponseDone: codexPermissions?.synthesizeTerminalFailure === false }),
         // Request abort can reject the fetch body before the response cancel hook runs.
         clientGoneSignal,
         drainBounds: { ms: 15_000, bytes: 32 * 1024 * 1024 },
@@ -1439,7 +1476,7 @@ export async function deliverPassthroughResponse(
             responseEffects.responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
           },
-          rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked) : undefined,
+          !clientCacheInspector && rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked) : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -1454,7 +1491,7 @@ export async function deliverPassthroughResponse(
             nestedExecInspection?.dispose();
             unregisterTurn(turnAc);
           },
-          rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked) : undefined,
+          !clientCacheInspector && rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked) : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -1473,7 +1510,7 @@ export async function deliverPassthroughResponse(
           responseEffects.responseCompletionCancelled = true;
           clientGone.abort(reason);
         },
-        { upstreamError: logCtx.upstreamError, terminalBoundary: codexSafetyBufferingOptions, maskCredential },
+        { upstreamError: logCtx.upstreamError, terminalBoundary: codexSafetyBufferingOptions, maskCredential, synthesizeTerminalFailure: codexPermissions?.synthesizeTerminalFailure },
       ));
       return markNativePassthroughSseResponse(new Response(clientBody, {
         status: upstreamResponse.status,
@@ -1498,16 +1535,18 @@ export async function deliverPassthroughResponse(
         persistInboundDebug();
         return formatErrorResponse(502, "upstream_error", "upstream JSON response stalled before completing");
       }
-      const text = bounded.text;
+      let text = bounded.text;
+      try { if (privateGuard) text = privateGuard.protectJson(text).text; }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(); throw error; }
       try { inboundDebugObserver?.noteJsonResponse(JSON.parse(text)); } catch { inboundDebugObserver?.noteJsonResponse({}); }
       persistInboundDebug();
       inspectResponseLogJson(logCtx, text);
       let plaintextV2RestoreFailed = false;
-      const nestedUpstreamJson = nestedExecRepairPlan
+      const nestedUpstreamJson = codexPermissions?.repairResponseToolCalls !== false && nestedExecRepairPlan
         ? repairNestedExecCallsInJson(text, nestedExecRepairPlan)
         : text;
       let clientJson = (() => {
-        const restoredNamespace = restoreRoutedNamespaceCallsInJson(
+        const restoredNamespace = codexPermissions?.repairResponseToolCalls === false ? nestedUpstreamJson : restoreRoutedNamespaceCallsInJson(
           scrubSelfNamedToolCallNamespaceInJson(
             restoreMuseToolNamesInJson(
               restoreImageGenCallsInJson(nestedUpstreamJson, imageGenCallAliases),
@@ -1517,17 +1556,17 @@ export async function deliverPassthroughResponse(
           ),
           responseEffects.routedNamespaceToolAliases,
         );
-        const restoredAuthorizedBareNamespace = restoreRoutedNamespaceCallsInJson(
+        const restoredAuthorizedBareNamespace = codexPermissions?.repairResponseToolCalls === false ? restoredNamespace : restoreRoutedNamespaceCallsInJson(
           restoredNamespace,
           authorizedBareNamespaceToolAliases,
         );
-        const restored = restoreRoutedCustomCallsInJson(
+        const restored = codexPermissions?.repairResponseToolCalls === false ? restoredAuthorizedBareNamespace : restoreRoutedCustomCallsInJson(
           restoredAuthorizedBareNamespace,
           routedCustomToolNames,
           routedCustomToolRepairNames,
           declaredWireToolNames,
         );
-        const restoredToolSearch = restoreRoutedToolSearchCallsInJson(
+        const restoredToolSearch = codexPermissions?.repairResponseToolCalls === false ? restored : restoreRoutedToolSearchCallsInJson(
           restored,
           routedToolSearchNames,
         );
@@ -1535,19 +1574,17 @@ export async function deliverPassthroughResponse(
           ? rewriteResponsesMessagePhasesInJsonString(restoredToolSearch)
           : restoredToolSearch;
         const normalizedJson = normalizeFunctionCompletionJson(phaseRepaired);
-        const plaintextRestore = restorePlaintextV2AgentMessageCallsInJsonResult(
+        const plaintextRestore = codexPermissions?.repairResponseToolCalls === false ? { value: normalizedJson, overflowed: false } : restorePlaintextV2AgentMessageCallsInJsonResult(
           normalizedJson, responseEffects.plaintextV2AgentMessageToolNames, responseEffects.plaintextV2AgentMessageAliasedToolNames,
         );
         plaintextV2RestoreFailed = plaintextRestore.overflowed;
-        const snapshotRepaired = (route.provider.responsesSnapshotRepair !== false
+        const snapshotRepaired = (codexPermissions?.backfillResponseFields !== false && route.provider.responsesSnapshotRepair !== false
           && (hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair)
             || usesVolcengineAgentPlanResponses(route.provider)))
           ? repairResponsesSnapshotJson(plaintextRestore.value, nativeExchange.outboundRequestBody)
           : plaintextRestore.value;
-        const repaired = repairFunctionCallsInJson(
-          backfillResponsesFieldsJson(snapshotRepaired),
-          functionRepairSchemas,
-        );
+        const fields = codexPermissions?.backfillResponseFields === false ? snapshotRepaired : backfillResponsesFieldsJson(snapshotRepaired);
+        const repaired = codexPermissions?.repairResponseToolCalls === false ? fields : repairFunctionCallsInJson(fields, functionRepairSchemas);
         const modelRewritten = parsed._responseModelId !== undefined && parsed._responseModelId !== parsed.modelId
           ? rewriteResponsesModelJson(repaired, parsed._responseModelId)
           : repaired;
@@ -1600,7 +1637,7 @@ export async function deliverPassthroughResponse(
         // best-effort catch and leaving downstream waiters hanging.
         (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked)(clientVisible);
       } catch { /* non-JSON despite content-type; recording is best-effort */ }
-      if (isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) {
+      if (codexPermissions?.normalizeHostedImages !== false && isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) {
         const imageDisplay = createHostedImageDisplayRewrite();
         try {
           clientJson = imageDisplay.json(clientJson);
@@ -1634,7 +1671,7 @@ export async function deliverPassthroughResponse(
           // the SSE item-id rewrite. Apply the same client-facing normalization
           // here or this policy would silently disable id repair for the very
           // providers that need it (raw record already happened above).
-          if (hasResponsesItemIdRepair(route.provider.responsesItemIdRepair)) {
+          if (codexPermissions?.backfillResponseFields !== false && hasResponsesItemIdRepair(route.provider.responsesItemIdRepair)) {
             candidate = repairResponsesJsonItemIds(candidate, route.provider.responsesItemIdRepair!, translatorBudget);
           }
           completed = candidate;
@@ -1644,7 +1681,7 @@ export async function deliverPassthroughResponse(
         if (completed) {
           let stream: ReadableStream<Uint8Array>;
           try {
-            stream = responsesJsonToSseStream(completed);
+            stream = codexRawJsonSse(completed, codexPermissions) ?? responsesJsonToSseStream(completed);
           } catch (error) {
             if (error instanceof RangeError) {
               return formatErrorResponse(
@@ -1669,6 +1706,7 @@ export async function deliverPassthroughResponse(
       // other relay-free path — normalize ids so both bounded-JSON paths agree.
       const outboundJson = options.inboundTransport === "websocket"
         && route.staticPolicy.model.responsesUpstreamStreaming === false
+        && codexPermissions?.backfillResponseFields !== false
         && hasResponsesItemIdRepair(route.provider.responsesItemIdRepair)
         ? (() => {
           try {

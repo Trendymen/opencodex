@@ -826,7 +826,7 @@ function applyProviderPatchFields(
   // routing eligibility, not the provider shape. Re-enabling `openai` is different — a
   // malformed disabled row must not come back online unchanged, so canonicalize/reject
   // against the same built-in gate used by mode PATCH and POST.
-  const editorTouched = keys.some(key => key !== "disabled");
+  const editorTouched = keys.some(key => key !== "disabled" && key !== "codexPassthrough");
   const enablingOpenAi = name === "openai"
     && Object.hasOwn(rawBody, "disabled")
     && rawBody.disabled === false
@@ -935,6 +935,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       preserveResponsesReasoningContent: p.preserveResponsesReasoningContent,
       liveModels: p.liveModels !== false,
       requestPacing: p.requestPacing,
+      codexPassthrough: p.codexPassthrough,
       models: p.models ?? [],
       contextWindow: p.contextWindow,
       inferContextWindow: p.inferContextWindow,

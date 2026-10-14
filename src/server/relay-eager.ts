@@ -79,6 +79,7 @@ export type EagerRelayHooks = {
 };
 
 export type EagerRelayOptions = {
+  synthesizeTerminalFailure?: boolean;
   /** Caller cancellation, independent of the turn/shutdown controller. */
   clientGoneSignal?: AbortSignal;
   /** Bounded client queue in bytes; producer pauses above it. Default 8 MiB. */
@@ -120,6 +121,7 @@ export function relaySseEagerBounded(
   const drainBytes = opts?.postCancelDrainBytes ?? DEFAULT_DRAIN_BYTES;
   const now = opts?.now ?? Date.now;
   const clientGoneSignal = opts?.clientGoneSignal;
+  const synthesizeTerminalFailure = opts?.synthesizeTerminalFailure !== false;
 
   const reader = body.getReader();
   const terminalEncoder = new TextEncoder();
@@ -305,7 +307,7 @@ export function relaySseEagerBounded(
         if (upstream.signal.aborted) break;
         if (upstreamDone) {
           hooks.finishInspection();
-          const boundedTail = terminalBoundary.finish();
+          const boundedTail = synthesizeTerminalFailure ? terminalBoundary.finish() : new Uint8Array(0);
           let clientTail = boundedTail;
           let rewriteFailed = false;
           let rewriteError: unknown;
@@ -320,6 +322,9 @@ export function relaySseEagerBounded(
             }
           }
           if (rewriteFailed) {
+            if (!synthesizeTerminalFailure || rewriteError instanceof CodexPrivateCredentialProtectionError) {
+              controllerRef?.error(rewriteError); deliveryFallbackSent = true; if (!hooks.sawTerminal()) syntheticKind = "failed"; break;
+            }
             const safeTail = encodeFailedTail(rewriteError);
             if (safeTail && canDeliver()) {
               if (!hooks.sawTerminal()) syntheticKind = "failed";
@@ -335,7 +340,8 @@ export function relaySseEagerBounded(
             queuedBytes += clientTail.byteLength;
             try { controllerRef?.enqueue(clientTail); } catch { /* client already gone */ }
           }
-          if (terminalBoundary.terminalSeen()) {
+          if (!synthesizeTerminalFailure) { if (!hooks.sawTerminal()) syntheticKind = "incomplete"; }
+          else if (terminalBoundary.terminalSeen()) {
             if (!terminalBoundary.doneSeen() && canDeliver()) {
               observeClientBytes(terminalSentinel);
               queuedBytes += terminalSentinel.byteLength;
@@ -381,7 +387,7 @@ export function relaySseEagerBounded(
           }
           continue;
         }
-        const terminalBounded = terminalBoundary.feed(value);
+        const terminalBounded = synthesizeTerminalFailure ? terminalBoundary.feed(value) : value;
         let outbound: Uint8Array;
         if (activeRewrite) {
           try {
@@ -408,11 +414,11 @@ export function relaySseEagerBounded(
             continue;
           }
         }
-        if (terminalBoundary.terminalSeen()) {
+        if (terminalBoundary.terminalSeen() || !synthesizeTerminalFailure && hooks.sawTerminal()) {
           // The Responses terminal event ends the turn even when a compatible
           // gateway keeps its HTTP connection alive. Add the conventional
           // sentinel and stop the single-reader relay at that protocol boundary.
-          if (!terminalBoundary.doneSeen()) {
+          if (synthesizeTerminalFailure && !terminalBoundary.doneSeen()) {
             observeClientBytes(terminalSentinel);
             queuedBytes += terminalSentinel.byteLength;
             try { controllerRef?.enqueue(terminalSentinel); } catch { /* client already gone */ }
@@ -426,6 +432,12 @@ export function relaySseEagerBounded(
       }
     } catch (err) {
       if (clientGoneSignal?.aborted) markClientGone();
+      if (!synthesizeTerminalFailure || err instanceof CodexPrivateCredentialProtectionError) {
+        try { hooks.finishInspection(); } catch { /* preserve the read failure */ }
+        if (canDeliver()) controllerRef?.error(err);
+        if (!hooks.sawTerminal()) syntheticKind = "failed";
+        deliveryFallbackSent = true; return;
+      }
       // Upstream read failure. Distinguish genuine mid-stream reset from
       // abort-driven teardown (shutdown/cancel-expiry) — audit M3.
       // A read can fail after delivering an unterminated terminal block. Flush
@@ -577,3 +589,4 @@ function joinUint8Arrays(first: Uint8Array, second: Uint8Array): Uint8Array {
   joined.set(second, first.byteLength);
   return joined;
 }
+import { CodexPrivateCredentialProtectionError } from "../fork/codex-passthrough-secrets";

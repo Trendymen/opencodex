@@ -93,6 +93,8 @@ export interface DirectRequestOption {
 }
 
 export interface HandleResponsesOptions {
+  codexPassthroughTurn?: import("../../fork/codex-passthrough-turn").CodexPassthroughTurn;
+  codexSessionIdSynthesized?: boolean;
   /** Internal request-owned policy authorization; never read from client headers or body. */
   policyRequestScope?: PolicyRequestScope;
   /** Internal concrete selector chosen from the original policy evaluation. */
@@ -273,6 +275,7 @@ export interface ResponsesRequestContext {
 
 /** Admission leases remain owned by the outer finally until explicitly transferred. */
 export interface ResponsesAdmissionState {
+  codexPassthroughPermissions?: import("../../fork/codex-passthrough-contract").CodexPassthroughPermissions;
   pendingHostAdmissionLease: UpstreamHostAdmissionLease | null;
   authCtx: CodexAuthContext;
 }

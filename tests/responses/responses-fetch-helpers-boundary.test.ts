@@ -180,6 +180,7 @@ function expectRuntimeImportBoundary(source: string): string[] {
 describe("Responses fetch-helper import boundary", () => {
   test("loads only transport-owned runtime dependencies", () => {
     expect(expectRuntimeImportBoundary(readFileSync(helperPath, "utf8"))).toEqual([
+      "../../fork/codex-passthrough-local-errors",
       // Import-free sent-header registry read by the request log (#6911).
       "../../lib/outbound-credential-registry",
       "../../lib/provider-egress",

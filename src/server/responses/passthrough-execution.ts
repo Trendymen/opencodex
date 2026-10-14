@@ -14,6 +14,7 @@ import { guardDirectPassthroughBodyInactivity } from "../../lib/response-body-in
 import { resolveStallTimeoutMs } from "../../stall-timeout";
 import { releaseUpstreamHostAdmission } from "../../codex/upstream-host-health";
 import { releaseCodexAuthContextProbeLease } from "../../codex/auth-context";
+import { carryCodexPassthroughResponse } from "../../fork/codex-passthrough-turn";
 
 /** Owns the native host lease across dispatch, recovery, and response construction. */
 export async function executePassthroughResponse(
@@ -38,7 +39,7 @@ export async function executePassthroughResponse(
       sendBudgetState,
     );
     if (nativeExchange instanceof Response || nativeExchange.kind === "adapter-handoff") return nativeExchange;
-    const response = await deliverPassthroughResponse(
+    const response = carryCodexPassthroughResponse(nativeExchange.upstreamResponse, await deliverPassthroughResponse(
       requestContext,
       admissionState,
       requestState,
@@ -46,7 +47,7 @@ export async function executePassthroughResponse(
       sidecarState,
       responseEffects,
       nativeExchange,
-    );
+    ));
     // Delivery has already classified SSE (including a missing upstream content type)
     // and consumed bounded JSON/errors. Guard only its remaining direct body, outside
     // the relay/lifetime wrappers so their prefetch cannot arm our inactivity clock.

@@ -1,3 +1,4 @@
+import { readCodexPassthroughConfig } from "../fork/codex-passthrough-contract";
 import { setCodexWsReuseAcrossTurns } from "./codex-ws-reuse-setting";
 import { isSubagentModelEntry, rawSubagentModelForce } from "./subagent-models";
 import { chmodSync, existsSync } from "node:fs";
@@ -53,6 +54,20 @@ import {
   chatgptDesktopConfigIssue,
 } from "./schema/leaf-validators";
 import { hasWarnedInheritedFastWireConflict, markWarnedInheritedFastWireConflict } from "./warn-memo";
+
+export function sanitizeCodexPassthroughForLoad(parsed: unknown): string[] {
+  const root = rawConfigRecord(parsed);
+  const providers = rawConfigRecord(root?.providers);
+  const warnings: string[] = [];
+  for (const value of Object.values(providers ?? {})) {
+    const provider = rawConfigRecord(value);
+    if (!provider || provider.codexPassthrough === undefined) continue;
+    const result = readCodexPassthroughConfig(provider.codexPassthrough);
+    provider.codexPassthrough = result.value;
+    warnings.push(...result.warnings);
+  }
+  return warnings;
+}
 
 export function hardenExistingSecret(path: string): void {
   if (existsSync(path) && !isPassiveRead()) {

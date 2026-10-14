@@ -7,6 +7,7 @@ import type { ProviderRequestSlot } from "../providers/request-pacing";
 
 /** Metadata about the caller's incoming request, for auth-forwarding adapters. */
 export interface IncomingMeta {
+  codexPassthroughPermissions?: import("../fork/codex-passthrough-contract").CodexPassthroughPermissions;
   headers: Headers;
   /** Canonical routed provider identity for provider-specific wire fields. */
   providerName?: string;

@@ -171,7 +171,7 @@ import {
   normalizeClaudeSubagentEffort,
   normalizeNativeSubagentSync,
   sanitizeAliasesForLoad,
-  sanitizeReasoningPinsForLoad,
+  sanitizeReasoningPinsForLoad, sanitizeCodexPassthroughForLoad,
   sanitizeModelDisplayNamesForLoad,
   sanitizeAutoReviewForLoad,
   sanitizeRetryOn429ForLoad,
@@ -205,7 +205,6 @@ import {
   warnDroppedConfigSections,
   warnAndBackupInvalidConfig,
 } from "./config/salvage";
-
 /**
  * Load and validate config.json into an OcxConfig. Missing files reset to
  * defaults and clear stale overlays. Broken existing files also fall back to
@@ -227,6 +226,7 @@ export function loadConfig(): OcxConfig {
     const parsed = JSON.parse(raw);
     sanitizeOpenCodeOverridesForLoad(parsed);
     sanitizeAliasesForLoad(parsed);
+    for (const warning of sanitizeCodexPassthroughForLoad(parsed)) console.warn(warning);
     sanitizeReasoningPinsForLoad(parsed);
     sanitizeModelDisplayNamesForLoad(parsed);
     sanitizeAutoReviewForLoad(parsed);

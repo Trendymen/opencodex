@@ -143,6 +143,8 @@ export async function applyFinalRouteRequestNormalization(args: {
   inboundTransport?: "websocket";
   claudeGoAffinity?: HandleResponsesOptions["claudeGoAffinity"];
   droidDefaultEffort?: HandleResponsesOptions["droidDefaultEffort"];
+  deferMultiAgentGuidance?: boolean;
+  onDeferredGuidanceReasoning?: (reasoning: OcxParsedRequest["options"]["reasoning"]) => void;
 }): Promise<void> {
   const { parsed, route, config, req, logCtx, inboundWire, inboundTransport } = args;
   const effortSelector = prepareEffortNormalization(parsed, route);
@@ -293,25 +295,9 @@ export async function applyFinalRouteRequestNormalization(args: {
     logCtx.requestedSpeedLabel = undefined;
   }
 
-  {
-    const guidance = await multiAgentGuidanceText(parsed, {
-      multiAgentGuidanceEnabled: config.multiAgentGuidanceEnabled,
-      codexAccountNamespace: route.codexAccountNamespace,
-      injectionModel: config.injectionModel,
-      injectionEffort: config.injectionEffort,
-      subagentModels: config.subagentModels,
-      subagentModelFallback: config.subagentModelFallback,
-      injectionPrompt: config.injectionPrompt,
-    });
-    if (guidance) {
-      injectDeveloperMessage(parsed, guidance);
-      if (isInjectionDebugEnabled()) {
-        injectionDebugLog(`[opencodex] ${route.modelId}: multi-agent guidance injected (surface=${collabSurface(parsed)}, guidanceEnabled=${multiAgentGuidanceEnabled(config)}, ${guidance.length} chars)`);
-      }
-    } else if (isInjectionDebugEnabled() && collabSurface(parsed) !== null) {
-      injectionDebugLog(`[opencodex] ${route.modelId}: collab surface=${collabSurface(parsed)}, guidance silent (effort=${parsed.options.reasoning ?? "unset"}, injectionModel=${config.injectionModel ?? "unset"})`);
-    }
-  }
+  if (args.deferMultiAgentGuidance && isCanonicalOpenAiForwardProvider(route.provider)) {
+    args.onDeferredGuidanceReasoning?.(parsed.options.reasoning);
+  } else await applyRoutedMultiAgentGuidance(parsed, route, config);
 
   {
     const { applyPinnedEffort } = await import("../effort-policy");
@@ -384,6 +370,28 @@ export async function applyFinalRouteRequestNormalization(args: {
   logCtx.modelSupportsServiceTier = SERVICE_TIER_ADAPTERS.has(route.provider.adapter)
     ? modelServiceTierSupport
     : undefined;
+}
+
+export async function applyRoutedMultiAgentGuidance(parsed: OcxParsedRequest, route: RouteResult, config: OcxConfig,
+  deferredReasoning?: { value: OcxParsedRequest["options"]["reasoning"] }): Promise<void> {
+  const selected = deferredReasoning ? { ...parsed, options: { ...parsed.options, reasoning: deferredReasoning.value } } : parsed;
+  const guidance = await multiAgentGuidanceText(selected, {
+    multiAgentGuidanceEnabled: config.multiAgentGuidanceEnabled,
+    codexAccountNamespace: route.codexAccountNamespace,
+    injectionModel: config.injectionModel,
+    injectionEffort: config.injectionEffort,
+    subagentModels: config.subagentModels,
+    subagentModelFallback: config.subagentModelFallback,
+    injectionPrompt: config.injectionPrompt,
+  });
+  if (guidance) {
+    injectDeveloperMessage(parsed, guidance);
+    if (isInjectionDebugEnabled()) {
+      injectionDebugLog(`[opencodex] ${route.modelId}: multi-agent guidance injected (surface=${collabSurface(selected)}, guidanceEnabled=${multiAgentGuidanceEnabled(config)}, ${guidance.length} chars)`);
+    }
+  } else if (isInjectionDebugEnabled() && collabSurface(selected) !== null) {
+    injectionDebugLog(`[opencodex] ${route.modelId}: collab surface=${collabSurface(selected)}, guidance silent (effort=${selected.options.reasoning ?? "unset"}, injectionModel=${config.injectionModel ?? "unset"})`);
+  }
 }
 
 

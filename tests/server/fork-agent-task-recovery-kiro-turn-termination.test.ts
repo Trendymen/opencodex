@@ -196,6 +196,7 @@ describe("recovered Kiro turn termination scope", () => {
     expect(postBindSource).not.toContain("parsed = reparsed;");
     expect(postBindSource).not.toContain("parsed = { ...parsed, context: reparsed.context");
     expect((postBindSource.match(/const\s+adoptParsedRequest\s*=\s*\(/g) ?? []).length).toBe(1);
-    expect((postBindSource.match(/adoptParsedRequest\(/g) ?? []).length).toBe(2);
+    expect((postBindSource.match(/adoptParsedRequest\([^;\n]+\);/g) ?? []).length).toBe(3);
+    expect(postBindSource).toContain("adoptParsedRequest(next) {");
   });
 });
