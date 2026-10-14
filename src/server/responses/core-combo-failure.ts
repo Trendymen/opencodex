@@ -94,7 +94,7 @@ export async function consumeComboFailure(
   } catch (error) {
     if (error instanceof CodexPrivateCredentialProtectionError) throw error;
     if (signal?.aborted) throw error;
-    if (protectText) throw new CodexPrivateCredentialProtectionError();
+    if (protectText) throw new CodexPrivateCredentialProtectionError("private-body-unreadable");
     classificationText = fallback;
   }
   const cyberFailure = isCyberPolicyCode(upstreamCode) || isCyberPolicyMessage(classificationText);

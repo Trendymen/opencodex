@@ -480,6 +480,7 @@ export async function executeComboResponses(
   const adoptFailedChildLog = (childLog: RequestLogContext): void => {
     // Attempts remain the complete physical history; the logical row mirrors the failed
     // target whose response is returned, including an earlier quota refusal on exhaustion.
+    delete logCtx.upstreamHttpStatus;
     Object.assign(logCtx, childLog, {
       requestedModel,
       model: requestedModel,
@@ -945,6 +946,10 @@ export async function executeComboResponses(
         if (childLog.terminalIncompleteReason !== undefined) logCtx.terminalIncompleteReason = childLog.terminalIncompleteReason;
         if (childLog.terminalErrorCode !== undefined) logCtx.terminalErrorCode = childLog.terminalErrorCode;
         if (childLog.upstreamError !== undefined) logCtx.upstreamError = childLog.upstreamError;
+        if (childLog.errorCode !== undefined) logCtx.errorCode = childLog.errorCode;
+        if (childLog.causeHint !== undefined) logCtx.causeHint = childLog.causeHint;
+        if (childLog.terminalSource !== undefined) logCtx.terminalSource = childLog.terminalSource;
+        if (childLog.upstreamHttpStatus !== undefined) logCtx.upstreamHttpStatus = childLog.upstreamHttpStatus;
         options.onNativePassthroughTerminal?.(status);
       },
     });
@@ -1066,6 +1071,7 @@ export async function executeComboResponses(
       );
       attemptRetained = true;
       noteComboSuccess(comboId, combo, pick.target, pick.writerGeneration);
+      delete logCtx.upstreamHttpStatus;
       Object.assign(logCtx, childLog, {
         requestedModel,
         model: requestedModel,

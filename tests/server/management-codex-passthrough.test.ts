@@ -38,6 +38,24 @@ async function send(config: OcxConfig, path: string, method = "GET", body?: unkn
   return response;
 }
 
+test("private SSE deadline override persists independently and can be cleared", async () => {
+  const config = setup();
+  const response = await send(config, "/api/providers?name=official", "PATCH", {
+    codexPassthrough: { privateSseReadDeadline: false },
+  });
+  expect(response.status).toBe(200);
+  const stored = loadConfig().providers.official!.codexPassthrough;
+  expect(stored).toEqual({ bridgeLiteMetadata: false, privateSseReadDeadline: false,
+    localErrorPolicies: { resetReplayRefusal: false } });
+  const visible = await (await send(config, "/api/config")).json() as OcxConfig;
+  expect(visible.providers.official!.codexPassthrough).toEqual(stored);
+  expect((await send(config, "/api/providers?name=official", "PATCH", {
+    codexPassthrough: { privateSseReadDeadline: null },
+  })).status).toBe(200);
+  expect(loadConfig().providers.official!.codexPassthrough).toEqual({ bridgeLiteMetadata: false,
+    localErrorPolicies: { resetReplayRefusal: false } });
+});
+
 test("provider GETs and nested PATCH preserve optional overrides", async () => {
   const config = setup();
   const before = readFileSync(join(home, "config.json"), "utf8");
