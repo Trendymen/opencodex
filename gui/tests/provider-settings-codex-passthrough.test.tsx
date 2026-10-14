@@ -103,6 +103,18 @@ test("private SSE deadline starts enabled and saves only its override", async ()
   expect(patches).toEqual([{ codexPassthrough: { privateSseReadDeadline: false } }]);
 });
 
+for (const path of ["upstreamWsSilenceDeadline", "privateErrorBodyReadDeadline"] as const) {
+  test(`${path} starts enabled and saves only its override`, async () => {
+    const { container, patches } = await render();
+    expect(permission(container, path).checked).toBe(true);
+    await click(permission(container, path));
+    await click(save(container));
+    expect(patches).toEqual([{ codexPassthrough: { [path]: false } }]);
+    expect(permission(container, "normalizeEncryptedContent").checked).toBe(true);
+    expect(permission(container, "privateSseReadDeadline").checked).toBe(true);
+  });
+}
+
 test("pacing and permission edits share one save without rewriting general settings", async () => {
   const { container, patches } = await render({ ...official, requestPacing: { enabled: true, requestsPerMinute: 20 } });
   await click(permission(container, "bridgeLiteMetadata"));
@@ -117,7 +129,7 @@ test("a renamed provider saves permissions under its own name", async () => {
   expect(names).toEqual(["renamed-official"]);
 });
 
-test("turning every permission off saves all twenty-one fields without account or pacing changes", async () => {
+test("turning every permission off saves the catalog without account or pacing changes", async () => {
   const { container, patches } = await render();
   const button = container.querySelector<HTMLButtonElement>("[data-codex-passthrough-all-off]"); expect(button).not.toBeNull();
   await click(button!); expect(patches).toEqual([]); await click(save(container));

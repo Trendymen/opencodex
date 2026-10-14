@@ -11,6 +11,8 @@ export const CODEX_PASSTHROUGH_CATALOG = [
   { key: "repairResponseToolCalls", group: "response", defaultValue: true },
   { key: "redactUpstreamErrors", group: "response", defaultValue: true },
   { key: "privateSseReadDeadline", group: "response", defaultValue: true },
+  { key: "upstreamWsSilenceDeadline", group: "response", defaultValue: true },
+  { key: "privateErrorBodyReadDeadline", group: "response", defaultValue: true },
   { key: "synthesizeTerminalFailure", group: "response", defaultValue: true },
   { key: "normalizeHostedImages", group: "response", defaultValue: true },
   { key: "synthesizeRoutingHint", group: "headers", defaultValue: true },

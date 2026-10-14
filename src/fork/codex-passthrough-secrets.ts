@@ -1,5 +1,5 @@
 import { SENSITIVE_KEY_PATTERN } from "../lib/redact";
-import { readBoundedResponseBody, boundedBodyDecodeFailure, BOUNDED_BODY_MAX_BYTES, BOUNDED_BODY_TIMEOUT_MS } from "../lib/bounded-body";
+import { readBoundedResponseBody, boundedBodyDecodeFailure, BOUNDED_BODY_MAX_BYTES, BOUNDED_BODY_TIMEOUT_MS, type BoundedBodyOptions } from "../lib/bounded-body";
 import { TranslatorBudgetExceededError, type TranslatorBudget } from "../lib/translator-budget";
 import { guardResponseBodyInactivity } from "../lib/response-body-inactivity";
 import type { CodexAuthContext } from "../codex/auth-context";
@@ -119,9 +119,18 @@ export function createCodexPrivateCredentialGuard(input: {
   } };
 }
 
-export async function readCodexPrivateErrorText(response: Response, guard: CodexPrivateCredentialGuard, signal?: AbortSignal): Promise<string> {
+export function codexPrivateErrorBodyReadDeadlines(options: { privateErrorBodyReadDeadline?: boolean; stallTimeoutMs?: number } = {})
+  : Pick<BoundedBodyOptions, "totalTimeoutMs" | "inactivityTimeoutMs" | "firstByteTimeoutMs"> {
+  if (options.privateErrorBodyReadDeadline !== false) return {};
+  const stallTimeoutMs = options.stallTimeoutMs ?? 300_000;
+  const silence = stallTimeoutMs > 0 ? stallTimeoutMs : Infinity;
+  return { totalTimeoutMs: Infinity, inactivityTimeoutMs: silence, firstByteTimeoutMs: silence };
+}
+
+export async function readCodexPrivateErrorText(response: Response, guard: CodexPrivateCredentialGuard, signal?: AbortSignal,
+  options: { privateErrorBodyReadDeadline?: boolean; stallTimeoutMs?: number } = {}): Promise<string> {
   try {
-    const bounded = await readBoundedResponseBody(response, { signal, fatalUtf8: true });
+    const bounded = await readBoundedResponseBody(response, { signal, fatalUtf8: true, ...codexPrivateErrorBodyReadDeadlines(options) });
     if (bounded.oversized) throw new CodexPrivateCredentialProtectionError("private-oversized");
     if (bounded.timedOut) throw new CodexPrivateCredentialProtectionError("private-body-timeout");
     if (!bounded.displaySafe || bounded.truncated) throw new CodexPrivateCredentialProtectionError("private-body-unreadable");
