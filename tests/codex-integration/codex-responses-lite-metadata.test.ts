@@ -4,6 +4,7 @@ import { handleResponses } from "../../src/server/responses";
 import type { OcxConfig } from "../../src/types";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
+import { resolveCodexPassthroughPermissions } from "../../src/fork/codex-passthrough-contract";
 
 const createResponsesPassthroughAdapter = (...args: Parameters<typeof createResponsesPassthroughAdapterProduction>) =>
   withTestTranslatorBudget(createResponsesPassthroughAdapterProduction(...args));
@@ -29,6 +30,15 @@ function buildCanonicalRequest(
 }
 
 describe("canonical forward responses-lite metadata", () => {
+  test("disabled Lite bridge preserves the HTTP header and existing metadata", () => {
+    const rawBody = { model: "gpt-5.6-sol", input: "ping", client_metadata: { caller: "keep" } };
+    const request = createResponsesPassthroughAdapter(canonicalProvider).buildRequest({
+      modelId: "gpt-5.6-sol", context: { messages: [] }, stream: true, options: {}, _rawBody: rawBody,
+    }, { headers: new Headers({ "x-openai-internal-codex-responses-lite": "true" }),
+      codexPassthroughPermissions: resolveCodexPassthroughPermissions({ bridgeLiteMetadata: false }) });
+    expect(JSON.parse(request.body).client_metadata).toEqual(rawBody.client_metadata);
+    expect(request.headers["x-openai-internal-codex-responses-lite"]).toBe("true");
+  });
   test("copies a true HTTP responses-lite header into client metadata without mutating the caller body", () => {
     const rawBody = {
       model: "gpt-5.6-sol",

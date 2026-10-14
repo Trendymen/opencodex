@@ -10,7 +10,7 @@ import { desktopCompatibilityConfigError } from "./schema/desktop-compatibility"
 import { blockedModelRedirectsError } from "./schema/blocked-model-redirects";
 import type { OcxConfig } from "../types";
 import { anthropicAccountPoolConfigError, anthropicOAuthInstanceConfigError, anthropicSidecarConfigError } from "./schema/anthropic-account-pool";
-import { configReasoningPinsConfigError } from "./provider-validation";
+import { configCodexPassthroughCandidateError, configReasoningPinsConfigError } from "./provider-validation";
 import { customModelsCandidateError, salvageCustomModelsForLoad } from "./custom-models";
 import { hasOwnProvider, isValidProviderName } from "./provider-name";
 import { knownStaticModelIdsForProvider } from "../providers/known-model-ids";
@@ -24,7 +24,7 @@ import { getConfigDir, getConfigPath } from "./paths";
 import { getDefaultConfig } from "./proxy-env";
 import { salvageConfigCandidate } from "./salvage";
 import {
-  sanitizeReasoningPinsForLoad,
+  sanitizeReasoningPinsForLoad, sanitizeCodexPassthroughForLoad,
   sanitizeRetryOn429ForLoad,
   sanitizeCapabilityDeclarationsForLoad,
   sanitizeModelCostsForLoad,
@@ -193,7 +193,7 @@ export function configAgentMessageFormatError(value: unknown): string | null {
   return null;
 }
 
-function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): ConfigDiagnostics {
+function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown, extraWarnings: readonly string[] = []): ConfigDiagnostics {
   // Unsafe hand-edited optional values are disabled in memory instead of rejecting
   // the entire config, which would hide unrelated providers/accounts. The next
   // ordinary save persists the normalized absence.
@@ -201,7 +201,7 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   const rawForce = rawSubagentModelForce(rawParsed);
   const rawEffort = rawClaudeSubagentEffort(rawParsed);
   const normalized = normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed);
-  const warnings = configPlaceholderWarnings(normalized);
+  const warnings = [...extraWarnings, ...configPlaceholderWarnings(normalized)];
   if (rawForce !== undefined && !isSubagentModelEntry(rawForce)) warnings.push("claudeCode.subagentModelForce ignored: expected a safe roster-style model id");
   if (normalized.chatgptDesktop?.appServerShim === true && process.platform !== "darwin") {
     warnings.push("chatgptDesktop.appServerShim is experimental and macOS only; ignored on this platform");
@@ -772,7 +772,8 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
   }
   const anthropicError = anthropicOAuthInstanceConfigError(value) ?? anthropicAccountPoolConfigError(value) ?? anthropicSidecarConfigError(value);
   if (anthropicError) return { ok: false, error: anthropicError };
-  const boundaryError = blockedModelRedirectsError(value)
+  const boundaryError = configCodexPassthroughCandidateError(value)
+    ?? blockedModelRedirectsError(value)
     ?? compactionRecoveryConfigError(value)
     ?? desktopCompatibilityConfigError(value)
     ?? configReasoningPinsConfigError(value)
@@ -830,6 +831,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
 export function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
   try {
     const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const codexWarnings = sanitizeCodexPassthroughForLoad(parsed);
     sanitizeReasoningPinsForLoad(parsed);
     // Same degradation as loadConfig: a hand-edited invalid retryOn429 must not trip the
     // schema and send the caller a default-config fallback (the config command could then
@@ -842,13 +844,13 @@ export function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     sanitizeCustomModelsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
-      return validFileConfigDiagnostics(normalizeApiKeyIds(result.data as OcxConfig), parsed);
+      return validFileConfigDiagnostics(normalizeApiKeyIds(result.data as OcxConfig), parsed, codexWarnings);
     }
 
     const merged = mergeConfigDefaults(parsed);
     const retryResult = configSchema.safeParse(merged);
     if (retryResult.success) {
-      return validFileConfigDiagnostics(normalizeApiKeyIds(retryResult.data as OcxConfig), parsed);
+      return validFileConfigDiagnostics(normalizeApiKeyIds(retryResult.data as OcxConfig), parsed, codexWarnings);
     }
 
     // #1785: one invalid routing profile must not make diagnostics report the built-in
@@ -865,7 +867,7 @@ export function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     if (salvaged) {
       // validFileConfigDiagnostics already folds in degradedListenerWarnings and the
       // chatgptDesktop block warning; appending the official calls again would duplicate them.
-      const diagnostics = validFileConfigDiagnostics(normalizeApiKeyIds(salvaged.parsed), parsed);
+      const diagnostics = validFileConfigDiagnostics(normalizeApiKeyIds(salvaged.parsed), parsed, codexWarnings);
       return {
         ...diagnostics,
         source: "fallback",

@@ -1,3 +1,4 @@
+import { carryCodexPassthroughResponse } from "../fork/codex-passthrough-turn";
 import type { ResponsesTerminalStatus } from "../bridge";
 import {
   cyberPolicyErrorType,
@@ -550,8 +551,9 @@ export function relaySseWithFailedTail(
   body: ReadableStream<Uint8Array>,
   upstream: AbortController,
   onClientGone?: (reason?: unknown) => void,
-  opts?: { upstreamError?: string; terminalBoundary?: CodexSafetyBufferingFilterOptions; maskCredential?: (text: string) => string },
+  opts?: { upstreamError?: string; terminalBoundary?: CodexSafetyBufferingFilterOptions; maskCredential?: (text: string) => string; synthesizeTerminalFailure?: boolean },
 ): ReadableStream<Uint8Array> {
+  if (opts?.synthesizeTerminalFailure === false) return relayUnmodifiedCodexSse(body, upstream, createSseInspector({ allowResponseDone: true }), onClientGone);
   const reader = body.getReader();
   const encoder = new TextEncoder();
   const terminalBoundary = createSseTerminalOutputBoundary(opts?.terminalBoundary, opts?.maskCredential);
@@ -621,6 +623,7 @@ export function relaySseWithFailedTail(
           if (result !== "buffered") return;
         }
       } catch (err) {
+        if (err instanceof CodexPrivateCredentialProtectionError) { terminalBoundary.dispose(); controller.error(err); upstream.abort(err); void reader.cancel(err).catch(() => {}); return; }
         let partial: Uint8Array = EMPTY_BYTES;
         let tailTerminal = false;
         let pendingReadError: Uint8Array | null = null;
@@ -923,7 +926,8 @@ function createFirstOutputReporter(onFirstOutput?: () => void): {
   };
 }
 
-export function terminalStatusFromParsed(parsed: unknown): ResponsesTerminalStatus | null {
+export function terminalStatusFromParsed(parsed: unknown, allowResponseDone = false): ResponsesTerminalStatus | null {
+  if (allowResponseDone) { const done = codexDoneTerminalStatus(parsed); if (done) return done; }
   const type = asJsonRecord(parsed)?.type;
   switch (type) {
     case "response.completed":
@@ -1073,11 +1077,11 @@ export function responseWithDeferredRequestLog(
       // Logging re-wraps the response, and an in-process verdict does not survive a re-wrap on
       // its own. A replay refusal that lost it here would read to a later quota recorder or
       // Retry-After synthesizer as a 429 some upstream produced.
-      return carryReplayRefusal(response, new Response(body, {
+      return carryCodexPassthroughResponse(response, carryReplayRefusal(response, new Response(body, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
-      }));
+      })));
     }
     if (isUsageDebugEnabled() && logCtx.usageDebugBodyKind === undefined) {
       logCtx.usageDebugBodyKind = response.body ? "other" : "none";
@@ -1105,11 +1109,11 @@ export function responseWithDeferredRequestLog(
     logCtx,
     () => recordFirstOutput(logCtx, start),
   );
-  return new Response(body, {
+  return carryCodexPassthroughResponse(response, new Response(body, {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers,
-  });
+  }));
 }
 
 export function markNativePassthroughSseResponse(response: Response): Response {
@@ -1231,6 +1235,7 @@ export type SseInspector = {
 };
 
 export type SseInspectorHandlers = {
+  allowResponseDone?: boolean;
   onTerminal?: (status: ResponsesTerminalStatus, httpStatusOverride?: number) => void;
   logCtx?: RequestLogContext;
   onCompletedResponse?: (response: { id?: unknown; output?: unknown; status?: unknown }) => void;
@@ -1469,7 +1474,7 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
     reportFirstOutput.parsed(parsed);
     const ordinaryFailure = cleanEofUpstreamErrorFromParsed(parsed);
     if (ordinaryFailure) cleanEofFailure = ordinaryFailure;
-    const status = terminalStatusFromParsed(parsed);
+    const status = terminalStatusFromParsed(parsed, handlers.allowResponseDone);
     type ParsedSseEvent = { type?: unknown; output_index?: unknown; item?: unknown; response?: unknown };
     const parsedEvent = parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? parsed as ParsedSseEvent
@@ -1969,3 +1974,5 @@ export function sanitizePassthroughHeaders(upstream: Headers, options?: CodexSaf
   });
   return out;
 }
+import { codexDoneTerminalStatus, relayUnmodifiedCodexSse } from "../fork/codex-passthrough-response";
+import { CodexPrivateCredentialProtectionError } from "../fork/codex-passthrough-secrets";

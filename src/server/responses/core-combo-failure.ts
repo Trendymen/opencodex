@@ -19,6 +19,9 @@ import { isNonReplayableResponse, markResponseNonReplayable } from "../../lib/up
 import { MODEL_NOT_ALLOWED_FOR_KEY } from "../admission-model-scope";
 import { usageFromResponsesPayload } from "../request-log";
 import type { ResponsesTerminalStatus } from "../../bridge";
+import { codexPassthroughResponsePermissions, carryCodexPassthroughResponse } from "../../fork/codex-passthrough-turn";
+import { CodexPrivateCredentialProtectionError } from "../../fork/codex-passthrough-secrets";
+import { codexLocalFailure, decideCodexLocalError } from "../../fork/codex-passthrough-local-errors";
 
 export function sanitizedRetryAfter(value: string | null, now: number): string | undefined {
   const trimmed = value?.trim();
@@ -33,10 +36,15 @@ export async function consumeComboFailure(
   response: Response,
   signal?: AbortSignal,
   now = Date.now(),
+  protectText?: (text: string, displaySafe: boolean) => string,
+  protectedHeaders?: Headers,
 ): Promise<ConsumedComboFailure> {
   // Read before the body: the marker lives on this Response object, and the failure below is
   // rebuilt as a new one that would otherwise lose it.
   const nonReplayable = isNonReplayableResponse(response);
+  const permissions = codexPassthroughResponsePermissions(response);
+  const localFailure = codexLocalFailure(response);
+  const localGateway = localFailure && decideCodexLocalError(permissions, localFailure).kind === "gateway";
   const fallback = `Provider error ${response.status}`;
   let classificationText = fallback;
   let codexModelRefusal: CodexAccountModelRefusal | undefined;
@@ -44,6 +52,7 @@ export async function consumeComboFailure(
   let upstreamCode: string | undefined;
   let upstreamMessage: string | undefined;
   let upstreamType: string | undefined;
+  let originalErrorText: string | undefined;
   // Whether the body itself confirms a quota/rate-limit refusal, computed on the SAME read as
   // the classification below. `shouldRetryCodexPoolAccountQuota` cannot be called here without
   // a second body read, so this mirrors its normalization: raw 402/429, or a 5xx whose intact,
@@ -54,7 +63,9 @@ export async function consumeComboFailure(
   // would hide the stable model_not_allowed_for_key type clients branch on.
   let scopeRefusalBody: string | undefined;
   try {
-    const body = await readBoundedResponseBody(response, { signal, reportUtf8Validity: serverError });
+    const readBody = await readBoundedResponseBody(response, { signal, reportUtf8Validity: serverError || protectText !== undefined, fatalUtf8: protectText !== undefined });
+    const body = protectText ? { ...readBody, text: protectText(readBody.text, readBody.displaySafe && !readBody.truncated && !readBody.oversized) } : readBody;
+    if (body.displaySafe && !body.truncated && (permissions?.redactUpstreamErrors === false || localGateway)) originalErrorText = body.text;
     // A 5xx body counts as quota or classification evidence only when it decoded as valid
     // UTF-8, matching shouldRetryCodexPoolAccountQuota. A malformed byte keeps the status-only
     // fallback, with one exception: a cyber-policy refusal must still stop the combo, so the
@@ -80,7 +91,9 @@ export async function consumeComboFailure(
       }
     }
   } catch (error) {
+    if (error instanceof CodexPrivateCredentialProtectionError) throw error;
     if (signal?.aborted) throw error;
+    if (protectText) throw new CodexPrivateCredentialProtectionError();
     classificationText = fallback;
   }
   const cyberFailure = isCyberPolicyCode(upstreamCode) || isCyberPolicyMessage(classificationText);
@@ -91,7 +104,8 @@ export async function consumeComboFailure(
     : classificationText === fallback
       ? fallback
       : `${fallback}: ${classificationText}`;
-  const upstreamRetryAfter = response.headers.get("retry-after");
+  const responseHeaders = protectedHeaders ?? response.headers;
+  const upstreamRetryAfter = responseHeaders.get("retry-after");
   // Past HTTP dates are an immediate retry directive, just like the numeric value zero.
   // Normalize before the client helper discards them and substitutes a default delay.
   const effectiveRetryAfter = parseRetryAfterMs(upstreamRetryAfter, now) === undefined
@@ -115,7 +129,7 @@ export async function consumeComboFailure(
   });
   const failureResponse = scopeRefusalBody !== undefined
     ? new Response(scopeRefusalBody, { status: 403, headers: { "Content-Type": "application/json" } })
-    : formatErrorResponse(
+    : originalErrorText === undefined ? formatErrorResponse(
     response.status,
     cyberFailure ? (upstreamType ?? CYBER_POLICY_ERROR_CODE) : "upstream_error",
     message,
@@ -123,7 +137,8 @@ export async function consumeComboFailure(
       ...(normalizedUpstreamCode !== undefined ? { code: normalizedUpstreamCode } : {}),
       ...(clientRetryAfter !== undefined ? { retryAfter: clientRetryAfter } : {}),
     },
-  );
+  ) : new Response(originalErrorText, { status: response.status, statusText: response.statusText, headers: responseHeaders });
+  carryCodexPassthroughResponse(response, failureResponse);
   if (nonReplayable) markResponseNonReplayable(failureResponse);
   return {
     response: failureResponse,
@@ -140,7 +155,7 @@ export async function consumeComboFailure(
     // window it was told about. `cyberFailure` stays excluded: a policy block is not a quota.
     ...(!cyberFailure
       && (response.status === 429 || response.status === 402 || quotaConfirmedByBody)
-      ? { resetAt: codexQuotaOutcomeMeta(response).resetAt }
+      ? { resetAt: codexQuotaOutcomeMeta(protectedHeaders ? new Response(null, { status: response.status, headers: protectedHeaders }) : response).resetAt }
       : {}),
     ...(usage ? { usage } : {}),
   };

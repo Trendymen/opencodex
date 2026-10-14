@@ -1,3 +1,4 @@
+export { codexPassthroughCandidateError, configCodexPassthroughCandidateError } from "../fork/codex-passthrough-contract";
 import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers";
 import { redactSecretString } from "../lib/redact";
 import {

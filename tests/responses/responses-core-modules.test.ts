@@ -80,7 +80,7 @@ describe("Responses core module boundaries", () => {
     const ingress = readResponsesCoreModule("core.ts");
     const native = readResponsesCoreModule("passthrough-execution.ts");
     expect(ingress).toContain("const passthroughResult = await executePassthroughResponse(");
-    expect(ingress).toContain("if (passthroughResult instanceof Response) return passthroughResult;");
+    expect(ingress).toContain("if (passthroughResult instanceof Response) return finish(passthroughResult);");
     expect(ingress).toContain("sendBudgetState.pendingHopPermit === unclaimedHop");
     expect(ingress.indexOf("await executePassthroughResponse("))
       .toBeLessThan(ingress.indexOf("const sidecarPlans = await executeResponsesSidecars("));
@@ -88,7 +88,7 @@ describe("Responses core module boundaries", () => {
     // Delivery is awaited inside the try, and its direct body is wrapped before
     // the return. What matters is that both awaits stay inside the lease owner,
     // not that the delivery call is itself the return expression.
-    expect(native).toContain("const response = await deliverPassthroughResponse(");
+    expect(native).toContain("const response = carryCodexPassthroughResponse(nativeExchange.upstreamResponse, await deliverPassthroughResponse(");
     expect(native).toContain("return guardDirectPassthroughBodyInactivity(");
     expect(native.indexOf("await deliverPassthroughResponse("))
       .toBeLessThan(native.indexOf("return guardDirectPassthroughBodyInactivity("));

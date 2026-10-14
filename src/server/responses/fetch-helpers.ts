@@ -1,6 +1,7 @@
 import type { NativeResponseControl } from "./native-response-control";
 import type { CodexWsPreOutputRefusalHold } from "./codex-ws-wire";
 import type { Server } from "bun";
+import { markCodexPreDispatchFailure } from "../../fork/codex-passthrough-local-errors";
 import {
   codexWsUpstreamFetch,
   currentBunRuntimeIdentity,
@@ -223,6 +224,7 @@ export function sendWithConnectionPolicy(
 }
 
 export interface ProviderFetchOptions {
+  codexPassthroughPermissions?: import("../../fork/codex-passthrough-contract").CodexPassthroughPermissions;
   /**
    * Keep this send on HTTP even where the WebSocket upstream would normally be selected.
    *
@@ -317,7 +319,8 @@ export function providerFetch(
       // mutator, and the copy it receives is deliberately not threaded onward. `Connection`
       // is decided inside `dispatch`, which runs after this, so the fresh-connection policy
       // wins regardless of what any caller or hook put in the header.
-      options.beforeDispatch?.(new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)));
+      try { options.beforeDispatch?.(new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))); }
+      catch (error) { if (options.codexPassthroughPermissions) markCodexPreDispatchFailure(error); throw error; }
       // No proxy option is attached here: a `dispatchOverride` may rebuild this request against
       // a different destination, so the route is decided at the physical send instead.
       const sharedReceipt = (init as Record<symbol, (() => void) | undefined> | undefined)?.[WS_FALLBACK_RECEIPT];
@@ -341,7 +344,7 @@ export function providerFetch(
     const upstreamWebsocket = provider.upstreamWebsocket;
     if (!options.httpOnly && typeof input === "string" && init
       && shouldUseCodexWsUpstream(input, init, runtime, upstreamWebsocket)) {
-      if (options.providerName && requestPacingMaxConcurrentRequests(provider, options.modelId) > 0) {
+      if (options.codexPassthroughPermissions?.localErrorPolicies.requestPacingAdmission !== false && options.providerName && requestPacingMaxConcurrentRequests(provider, options.modelId) > 0) {
         if (!pacingWebsocketDowngradeWarned.has(providerName)
           && pacingWebsocketDowngradeWarned.size < EGRESS_DOWNGRADE_NOTICE_LIMIT) {
           pacingWebsocketDowngradeWarned.add(providerName);
@@ -367,12 +370,13 @@ export function providerFetch(
       const fallback = ((url: Parameters<typeof globalThis.fetch>[0], fallbackInit?: RequestInit) =>
         httpFetch(url, { ...fallbackInit, [WS_FALLBACK_RECEIPT]: notifyOnce } as RequestInit)) as typeof globalThis.fetch;
       return codexWsUpstreamFetch(input, init, fallback, runtime, options.onCodexWsQuota, options.beforeDispatch, options.nativeControl,
-        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold);
+        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold, options.codexPassthroughPermissions);
     }
     return httpFetch(input, init);
   };
   let pacingSlotAcquired = options.pacingSlotAcquired === true;
   const waitForPacing = async (signal?: AbortSignal): Promise<ProviderRequestSlot | undefined> => {
+    if (options.codexPassthroughPermissions?.localErrorPolicies.requestPacingAdmission === false) return undefined;
     if (pacingSlotAcquired) {
       pacingSlotAcquired = false;
       if (!options.pacingSlot && requestPacingMaxConcurrentRequests(provider, options.modelId) > 0) {

@@ -1,11 +1,7 @@
 import type { OcxConfig } from "../../types";
 import type { RequestLogContext } from "../request-log";
-import type {
-  HandleResponsesOptions,
-  ResponsesRequestContext,
-  ResponsesAdmissionState,
-  ResponsesDispatchers,
-} from "./core-options";
+import type { HandleResponsesOptions, ResponsesRequestContext, ResponsesAdmissionState, ResponsesDispatchers } from "./core-options";
+import { captureCodexPassthroughTurn, codexPassthroughSourceRequired, releaseCodexPassthroughTurnSource, markCodexPassthroughAttemptResponse, markCodexPassthroughResponse } from "../../fork/codex-passthrough-turn";
 import { createTranslatorBudget } from "../../lib/translator-budget";
 import { captureExplicitOpenAiCallerAuth } from "../../providers/openai-sidecar";
 import { captureCallerDirectAuth } from "../../providers/caller-authorization";
@@ -41,14 +37,17 @@ export async function handleResponses(
   const ownsBudget = options.translatorBudget === undefined;
   const translatorBudget = options.translatorBudget ?? createTranslatorBudget();
   const abortSignal = options.abortSignal ?? req.signal;
+  const ownsTurn = options.codexPassthroughTurn === undefined;
+  const codexPassthroughTurn = options.codexPassthroughTurn ?? captureCodexPassthroughTurn(config.providers, options.inboundWire ?? "responses");
   const accountLoad = { lease: null as import("../../oauth/kiro-account-load").AccountLease | null,
     cancelled: abortSignal.aborted };
-  function release() { accountLoad.lease?.release(); accountLoad.lease = null; abortSignal.removeEventListener("abort", cancel); }
+  function release() { accountLoad.lease?.release(); accountLoad.lease = null; if (ownsTurn) releaseCodexPassthroughTurnSource(codexPassthroughTurn); abortSignal.removeEventListener("abort", cancel); }
   function cancel() { accountLoad.cancelled = true; release(); }
-  abortSignal.addEventListener("abort", cancel, { once: true });
+  if (abortSignal.aborted) cancel(); else abortSignal.addEventListener("abort", cancel, { once: true });
   try {
     const response = await runWithCompactionRecovery(req, config, logCtx, {
       ...options, abortSignal,
+      codexPassthroughTurn,
       openAiSidecarAuth: options.openAiSidecarAuth === undefined
         ? captureExplicitOpenAiCallerAuth(req.headers, config) : options.openAiSidecarAuth,
       nativeCallerAuth: options.nativeCallerAuth === undefined
@@ -64,8 +63,8 @@ export async function handleResponses(
       sendBudget: options.sendBudget ?? createInferenceSendBudget(req, logCtx),
     }, handleResponsesInner);
     const finalResponse = ownsBudget ? finalizeOwnedTranslatorBudget(response, translatorBudget, abortSignal) : response;
-    if (!accountLoad.lease) { release(); return finalResponse; }
-    return finalizeAccountLease(finalResponse, release);
+    if (!accountLoad.lease && !(ownsTurn && codexPassthroughSourceRequired(codexPassthroughTurn))) { release(); return finalResponse; }
+    return finalizeAccountLease(finalResponse, release, ownsTurn ? () => releaseCodexPassthroughTurnSource(codexPassthroughTurn) : undefined);
   } catch (error) {
     release();
     if (ownsBudget) translatorBudget.dispose();
@@ -107,12 +106,13 @@ async function handleResponsesInner(
   let releasePendingSend = () => {};
   try {
     const requestState = await prepareResponsesRequest(requestContext, admissionState, requestDispatchers);
-    if (requestState instanceof Response) return requestState;
+    if (requestState instanceof Response) return admissionState.codexPassthroughPermissions ? markCodexPassthroughResponse(requestState, admissionState.codexPassthroughPermissions) : requestState;
+    const finish = (response: Response) => markCodexPassthroughAttemptResponse(response, options.codexPassthroughTurn, { providerName: requestState.route.providerName, provider: requestState.route.provider, inboundWire: options.inboundWire ?? "responses" });
     const transportState = await prepareResponsesTransport(requestContext, admissionState, requestState);
-    if (transportState instanceof Response) return transportState;
+    if (transportState instanceof Response) return finish(transportState);
     options.onCompactionRecoveryRoute?.(requestState.route);
     const sidecarState = await prepareResponsesSidecarAuth(requestContext, requestState, transportState);
-    if (sidecarState instanceof Response) return sidecarState;
+    if (sidecarState instanceof Response) return finish(sidecarState);
     const responseEffects = createResponsesEffects(
       requestContext,
       admissionState,
@@ -120,7 +120,7 @@ async function handleResponsesInner(
       sidecarState,
     );
     const sendBudgetState = createResponsesSendBudget(requestContext);
-    if (sendBudgetState instanceof Response) return sendBudgetState;
+    if (sendBudgetState instanceof Response) return finish(sendBudgetState);
     if ("passthrough" in transportState.adapter && transportState.adapter.passthrough && !sidecarState.routedCompaction) {
       const passthroughResult = await executePassthroughResponse(
         requestContext,
@@ -131,7 +131,7 @@ async function handleResponsesInner(
         responseEffects,
         sendBudgetState,
       );
-      if (passthroughResult instanceof Response) return passthroughResult;
+      if (passthroughResult instanceof Response) return finish(passthroughResult);
       const unclaimedHop = sendBudgetState.pendingHopPermit;
       releasePendingSend = () => { if (sendBudgetState.pendingHopPermit === unclaimedHop) { unclaimedHop?.release(); sendBudgetState.pendingHopPermit = undefined; } };
     }
@@ -143,9 +143,9 @@ async function handleResponsesInner(
       responseEffects,
       sendBudgetState,
     );
-    if (sidecarPlans instanceof Response) return sidecarPlans;
+    if (sidecarPlans instanceof Response) return finish(sidecarPlans);
     const completionPolicy = createResponsesCompletionPolicy(requestContext, sidecarState);
-    if (transportState.adapter.runTurn) return await executeResponsesRunTurn(
+    if (transportState.adapter.runTurn) return finish(await executeResponsesRunTurn(
       requestContext,
       admissionState,
       requestState,
@@ -154,7 +154,7 @@ async function handleResponsesInner(
       responseEffects,
       sendBudgetState,
       completionPolicy,
-    );
+    ));
     const adapterExchange = await prepareAdapterExchange(
       requestContext,
       admissionState,
@@ -163,7 +163,7 @@ async function handleResponsesInner(
       responseEffects,
       sendBudgetState,
     );
-    if (adapterExchange instanceof Response) return adapterExchange;
+    if (adapterExchange instanceof Response) return finish(adapterExchange);
     const continuationState = createAdapterContinuations(
       requestContext,
       requestState,
@@ -172,7 +172,7 @@ async function handleResponsesInner(
       sendBudgetState,
       adapterExchange,
     );
-    return await deliverAdapterResponse(
+    return finish(await deliverAdapterResponse(
       requestContext,
       requestState,
       transportState,
@@ -181,7 +181,7 @@ async function handleResponsesInner(
       completionPolicy,
       adapterExchange,
       continuationState,
-    );
+    ));
   } finally {
     releasePendingSend();
     if (admissionState.pendingHostAdmissionLease) {

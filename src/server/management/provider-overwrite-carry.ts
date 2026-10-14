@@ -1,3 +1,4 @@
+import { codexPassthroughCandidateError, mergeCodexPassthroughPatch } from "../../fork/codex-passthrough-contract";
 import { nonBlankStringArrayConfigError, normalizeNonBlankStringArray } from "../../config/provider-validation";
 import {
   retryOn429PolicyConfigError,
@@ -73,13 +74,13 @@ export const PROVIDER_REASONING_WIRE_FORMATS: readonly NonNullable<OcxProviderCo
  * omitted this" and "the registry supplied it" look the same.
  */
 export interface ProviderOverwriteSample {
-  readonly submitted: ReadonlySet<ProviderCompatCarryField | ProviderDisplayCarryField>;
+  readonly submitted: ReadonlySet<ProviderCompatCarryField | ProviderDisplayCarryField | "codexPassthrough">;
   readonly namesAuthMode: boolean;
 }
 
 export function sampleProviderOverwrite(provider: object): ProviderOverwriteSample {
   return {
-    submitted: new Set([...PROVIDER_COMPAT_CARRY_FIELDS, ...PROVIDER_DISPLAY_CARRY_FIELDS].filter(field => Object.hasOwn(provider, field))),
+    submitted: new Set([...PROVIDER_COMPAT_CARRY_FIELDS, ...PROVIDER_DISPLAY_CARRY_FIELDS, "codexPassthrough" as const].filter(field => Object.hasOwn(provider, field))),
     namesAuthMode: Object.hasOwn(provider, "authMode"),
   };
 }
@@ -132,7 +133,7 @@ export function carryProviderCompatFields(
     if (stored !== undefined) target[field] = stored;
   }
   if (!providerOverwriteKeepsDestination(candidate, live, sample)) return;
-  for (const field of PROVIDER_COMPAT_CARRY_FIELDS) {
+  for (const field of [...PROVIDER_COMPAT_CARRY_FIELDS, "codexPassthrough" as const]) {
     if (sample.submitted.has(field)) continue;
     const stored = live[field];
     if (stored === undefined) continue;
@@ -153,6 +154,8 @@ const REASONING_LIST_FIELDS = ["preserveReasoningContentModels", "requiresReason
  * is already checked by `providerManagementConfigError`.
  */
 export function providerCompatFieldConfigError(provider: Record<string, unknown>): string | null {
+  const passthroughError = codexPassthroughCandidateError(provider.codexPassthrough);
+  if (passthroughError) return passthroughError;
   for (const field of REASONING_LIST_FIELDS) {
     const error = nonBlankStringArrayConfigError(provider[field], field);
     if (error) return error;
@@ -181,6 +184,13 @@ export function applyProviderCompatPatchFields(
   next: OcxProviderConfig,
 ): { touched: boolean } | { error: string } {
   let touched = false;
+  if (Object.hasOwn(rawBody, "codexPassthrough")) {
+    const result = mergeCodexPassthroughPatch(next.codexPassthrough, rawBody.codexPassthrough);
+    if (!result.ok) return { error: result.error };
+    if (result.value === undefined) delete next.codexPassthrough;
+    else next.codexPassthrough = result.value;
+    touched = true;
+  }
   for (const field of REASONING_LIST_FIELDS) {
     if (!Object.hasOwn(rawBody, field)) continue;
     const value = rawBody[field];

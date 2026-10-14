@@ -1,3 +1,4 @@
+import { codexPassthroughCandidateError } from "../../fork/codex-passthrough-contract";
 import * as z from "zod/v4";
 import { anthropicAccountPoolSchema } from "./anthropic-account-pool";
 import { join } from "node:path";
@@ -287,6 +288,10 @@ const providerNoProxySchema = z.unknown().superRefine((value, ctx) => {
  * fields pass through (preserved for runtime extensions).
  */
 export const providerConfigSchema = z.object({
+  codexPassthrough: z.unknown().superRefine((value, ctx) => {
+    const error = codexPassthroughCandidateError(value);
+    if (error) ctx.addIssue({ code: "custom", message: error });
+  }).optional().transform(value => value as OcxProviderConfig["codexPassthrough"]),
   anthropicAccountPool: anthropicAccountPoolSchema,
   // Raw diagnostics/writes reject malformed provenance; tolerant loads preserve the custom row.
   anthropicOAuthInstance: z.literal("anthropic2").optional().catch(undefined),

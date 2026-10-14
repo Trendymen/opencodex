@@ -106,6 +106,8 @@ import { preflightComboStreamResponse } from "./combo-stream-preflight";
 import { streamingContextOverflowResponse, jsonContextOverflowResponse, lateAttributionLimitResponse } from "./context-overflow";
 import { mandatoryResponsesReasoningReplayUnavailable } from "./core-replay";
 import { settleOperatorReplacement } from "../../lib/upstream-retry";
+import { codexPassthroughResponsePermissions, codexPassthroughRequestSource } from "../../fork/codex-passthrough-turn";
+import { bindCodexRequestHistory, linkCodexRequestReplay } from "../../fork/codex-passthrough-source";
 import { createComboProtocolLanes, dispatchNativeComboChild } from "./core-combo-native";
 import { createJevModelInvoker } from "./jev-model-invoke";
 import { comboRequestedEffortLabel } from "./combo-requested-effort";
@@ -355,6 +357,7 @@ export async function executeComboResponses(
   // imageInput is disabled (and so targets see the full replayed input).
   const inboundClientThreadId = req.headers.get("x-codex-parent-thread-id")?.trim() || undefined;
   const body = expandPreviousResponseInput(rawBody, inboundClientThreadId);
+  bindCodexRequestHistory(codexPassthroughRequestSource(options.codexPassthroughTurn), body);
   const replayFailure = previousResponseReplayFailure(body);
   if (replayFailure?.reason === "scope_mismatch") {
     console.warn("[opencodex] refusing continuation because the client task scope does not match replay state");
@@ -813,6 +816,7 @@ export async function executeComboResponses(
       body: JSON.stringify(childBody),
     });
     linkRequestSessionLane(req, childRequest);
+    linkCodexRequestReplay(codexPassthroughRequestSource(options.codexPassthroughTurn), childRequest, childInput);
     let resolvedAuth: CodexAuthContext | undefined;
     let terminalRecorder: ((status: ResponsesTerminalStatus, httpStatusOverride?: number) => void) | undefined;
     const started = Date.now();
@@ -1060,7 +1064,7 @@ export async function executeComboResponses(
     // client would resend becomes the refusal, and anything else reaches the client as it is.
     const spentReplacement = !failure.nonReplayable && comboSendScope?.ambiguousResendSpent === true;
     if (spentReplacement) {
-      const settled = settleOperatorReplacement(failure.response);
+      const settled = settleOperatorReplacement(failure.response, codexPassthroughResponsePermissions(failure.response));
       if (settled !== failure.response) {
         adoptFailedChildLog(childLog);
         return settled;

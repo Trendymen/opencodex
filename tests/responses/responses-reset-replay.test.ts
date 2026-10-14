@@ -5,6 +5,18 @@ import {
   selfContainedResponsesBody,
 } from "../../src/server/responses/reset-replay";
 import { authorizeResendForRecovery } from "../../src/lib/request-resend-gate";
+import { fetchWithResetRetry } from "../../src/lib/upstream-retry";
+import { CODEX_PASSTHROUGH_DEFAULTS } from "../../src/fork/codex-passthrough-contract";
+
+test("default official refusal permission cannot spend a replacement beyond the physical budget", async () => {
+  let sends = 0; let charged = 0; let claims = 0;
+  const response = await fetchWithResetRetry(async () => { sends++; throw Object.assign(new Error("fixture reset"), { code: "ECONNRESET" }); }, {
+    attempts: 1, codexPassthroughPermissions: CODEX_PASSTHROUGH_DEFAULTS,
+    onSendsConsumed: count => { charged += count; }, claimAmbiguousResend: () => { claims++; return true; },
+  });
+  expect(response.status).toBe(429); expect(response.headers.get("x-should-retry")).toBe("false");
+  expect(sends).toBe(1); expect(charged).toBe(1); expect(claims).toBe(0);
+});
 
 const clientTurn = {
   store: false,

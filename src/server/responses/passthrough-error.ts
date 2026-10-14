@@ -36,7 +36,7 @@ function isCyberPolicyBody(body: string): boolean {
  *
  * It is read off the body rather than a marker because this formatter is handed bytes, not
  * the response they came from, and the refusal reaches it after the original body was read.
- * The code is this proxy's own, so an upstream echoing it is not a case worth widening for.
+ * Native callers with a known source can suppress the legacy body fallback.
  */
 function isReplayRefusalBody(body: string): boolean {
   if (!body.includes(UPSTREAM_RESET_REPLAY_REFUSED_CODE)) return false;
@@ -89,6 +89,7 @@ export function formatPassthroughUpstreamError(
      * precisely when the empty-body branch would invent the retryable-429 default.
      */
     replayRefusal?: boolean;
+    authoritativeOrigin?: boolean;
     /** Surface a permanent vendor quota message without triggering Codex's global 429 UI. */
     renderQuotaAsClientError?: boolean;
   },
@@ -98,7 +99,7 @@ export function formatPassthroughUpstreamError(
   const upstreamRetryAfter = options?.headers?.get("retry-after")?.trim() || undefined;
   const originalValid = validateClientRetryAfterHeader(upstreamRetryAfter, now);
   const cyberPolicyFailure = isCyberPolicyBody(trimmed);
-  const replayRefusal = options?.replayRefusal === true || isReplayRefusalBody(trimmed);
+  const replayRefusal = options?.replayRefusal === true || (options?.authoritativeOrigin !== true && isReplayRefusalBody(trimmed));
   // Two different reasons to answer with no wait at all, handled the same way: a hard policy
   // block will not become servable, and a refusal we made was never a rate limit.
   const suppressRetryAfter = options?.suppressRetryAfter === true || cyberPolicyFailure || replayRefusal;
