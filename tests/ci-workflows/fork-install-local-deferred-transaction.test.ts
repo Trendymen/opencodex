@@ -305,7 +305,11 @@ describe("install:local deferred package transaction", () => {
     const { root, packageDir, result } = deferredFixture();
     expect(result.ok).toBe(true);
     packageTree(join(root, "scope", ".ocx-backup-zzzz", "opencodex"), "1.0.0");
-    expect(bootRestoreProbe(packageDir)).toMatchObject({ action: "pending", from: result.backup });
+    const recovery = bootRestoreProbe(packageDir);
+    expect(recovery).toMatchObject({ action: "pending" });
+    expect(process.platform === "win32" ? recovery.from?.toLowerCase() : recovery.from).toBe(
+      process.platform === "win32" ? result.backup!.toLowerCase() : result.backup,
+    );
     expect(existsSync(result.backup!)).toBe(true);
   });
 
@@ -316,10 +320,11 @@ describe("install:local deferred package transaction", () => {
     packageTree(unrelatedBackup, "0.9.0");
     rmSync(packageDir, { recursive: true, force: true });
 
-    expect(bootRestoreProbe(packageDir, { isProcessAlive: () => false })).toMatchObject({
-      action: "restored",
-      from: result.backup,
-    });
+    const recovery = bootRestoreProbe(packageDir, { isProcessAlive: () => false });
+    expect(recovery).toMatchObject({ action: "restored" });
+    expect(process.platform === "win32" ? recovery.from?.toLowerCase() : recovery.from).toBe(
+      process.platform === "win32" ? result.backup!.toLowerCase() : result.backup,
+    );
     expect(version(packageDir)).toBe("2.40.0-ben.2");
     expect(existsSync(join(root, "scope", ".ocx-transaction.json"))).toBe(false);
   });

@@ -44,6 +44,43 @@ try {
   }, { timeout: 4_000 },
 );
 
+test.each([false, true])("registration verifies a regular member after a successful write, inherited=%s", inherited => {
+  const root = mkdtempSync(join(tmpdir(), "ocx-lock-member-postcondition-"));
+  const driver = join(root, "driver.ts");
+  writeFileSync(driver, `import { mock } from "bun:test"; import * as fs from "node:fs"; import { join } from "node:path";
+const lockPath = ${JSON.stringify(join(root, "isolated.lock"))}; const write = fs.writeFileSync;
+let member = ""; let writes = 0;
+mock.module("node:fs", () => ({ ...fs, writeFileSync(path, ...args) {
+  if (String(path) === member) { writes++; return; }
+  return write(path, ...args);
+} }));
+const { acquireTestRunLock } = await import(${JSON.stringify(repoPath("scripts", "test-run-lock.ts"))});
+const options = { runId: "member-postcondition", lockPath, env: {}, pollMs: 5, maxWaitMs: 50 };
+const owner = await acquireTestRunLock(options);
+member = join(lockPath, "members", process.pid + "-" + owner.owner!.token);
+fs.mkdirSync(member, { recursive: true });
+let message = ""; let code = "";
+try { await acquireTestRunLock({ ...options, ${inherited ? "joinExistingOwnerToken: owner.owner!.token" : ""} }); }
+catch (error) { message = error.message; code = error.cause?.code; }
+console.log(JSON.stringify({ message, code, writes, directory: fs.lstatSync(member).isDirectory(),
+  intact: JSON.parse(fs.readFileSync(join(lockPath, "owner.json"), "utf8")).token === owner.owner!.token }));
+owner.release();
+`);
+  try {
+    const child = spawnSync(process.execPath, [driver], {
+      cwd: repoRoot(), env: { ...process.env, OCX_TEST_NO_QUEUE: "1" },
+      encoding: "utf8", timeout: 1_500, killSignal: "SIGKILL",
+    });
+    expect(child.status).toBe(0);
+    const result = JSON.parse(child.stdout);
+    expect(result.directory).toBe(true);
+    expect(result.writes).toBe(1);
+    expect(result.intact).toBe(true);
+    expect(result.message).toContain("Cannot register a member of the live Bun test lock");
+    expect(result.code).toBe("EISDIR");
+  } finally { removeTreeWithRetry(root); }
+}, { timeout: 4_000 });
+
 test("an owner CAS during member registration yields and retries the current owner", () => {
   const root = mkdtempSync(join(tmpdir(), "ocx-lock-registration-cas-"));
   const driver = join(root, "driver.ts");
