@@ -19,7 +19,14 @@ async function cli(service: boolean, args = ["start", "--port", "invalid"]) {
   const env = { ...process.env, HOME: root, OPENCODEX_HOME: join(root, ".opencodex"), CODEX_HOME: join(root, ".codex") };
   delete env.OCX_SERVICE;
   if (service) env.OCX_SERVICE = "1";
-  const child = Bun.spawn([process.execPath, repoPath("src/cli/index.ts"), ...args], {
+  const preload = join(root, "no-proxy-identity.ts");
+  writeFileSync(preload, `
+    import { mock } from "bun:test";
+    const path = ${JSON.stringify(repoPath("src/server/proxy-liveness.ts"))};
+    const original = await import(path);
+    mock.module(path, () => ({ ...original, proxyIdentityAt: async () => null }));
+  `);
+  const child = Bun.spawn([process.execPath, "--preload", preload, repoPath("src/cli/index.ts"), ...args], {
     cwd: repoRoot(), env, stdout: "pipe", stderr: "pipe",
   });
   const [stdout, stderr, code] = await Promise.all([
