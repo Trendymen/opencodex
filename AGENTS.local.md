@@ -19,13 +19,15 @@ final_commit=CN-docs-only-FORK_CHANGES-parent-CN-minus-1
 same_tree_retry=amend-CN-attempt-marker-no-N-plus-1
 material_fix=fold-into-owner-and-rebuild-all-successors-new-SK-AJ
 candidate_push=dev-exact-oid-force-with-lease
-candidate_ci=exact-push-dev-head-sha-completed-success-aggregate-ci
+candidate_ci=exact-workflow-dispatch-dev-lane-all-head-sha-completed-success-aggregate-ci
 workflow_security_review=pre-candidate-push-content-snapshot-ci-yml-blob-pass
 regular_reviews=post-candidate-ci-final-CN-sha-pass
 pre_release_ci=exact-dev-candidate-and-main-ci-success-same-CN-sha
 tagged_failure=immutable-tag-consumed-revision-release-blocked
 external_evidence=task-and-release-notes-not-candidate-tree
 <!-- fork-squash-release-policy:end -->
+
+- 执行 candidate CI 前，读取 [docs/fork-sync-automation.md](docs/fork-sync-automation.md) 的候选触发、验收与失败处理规则。
 
 - 压缩任务开始时固定 `SQUASH_TARGET_COUNT=N`（`N>=2`）；CI 或审查未通过时只 amend `C_N` 或把修复折回所属提交并重建后继，禁止追加 `C_(N+1)`。只有同一 `C_N` SHA 的 dev candidate CI、常规双审与 main CI 全部通过，才允许创建或补齐 GitHub Release。
 

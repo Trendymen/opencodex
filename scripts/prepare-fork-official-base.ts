@@ -51,8 +51,9 @@ export type GitOperation =
 
 function runningCandidateCi(): boolean {
   return process.env.GITHUB_ACTIONS === "true"
-    && process.env.GITHUB_EVENT_NAME === "push"
-    && process.env.GITHUB_REF === "refs/heads/dev";
+    && process.env.GITHUB_EVENT_NAME === "workflow_dispatch"
+    && process.env.GITHUB_REF === "refs/heads/dev"
+    && process.env.OCX_CANDIDATE_CI_LANE === "all";
 }
 
 function hasLeadingZeroNumericPreviewPart(value: string): boolean {

@@ -153,15 +153,24 @@ function verifierRoots(): string[] {
   return readdirSync(tmpdir()).filter(name => name.startsWith("ocx-fork-official-")).sort();
 }
 
-function runAsCandidate<T>(run: () => T): T {
+function runAsCandidate<T>(run: () => T, overrides: Record<string, string | undefined> = {}): T {
   const previous = {
     actions: process.env.GITHUB_ACTIONS,
     event: process.env.GITHUB_EVENT_NAME,
     ref: process.env.GITHUB_REF,
+    lane: process.env.OCX_CANDIDATE_CI_LANE,
   };
-  process.env.GITHUB_ACTIONS = "true";
-  process.env.GITHUB_EVENT_NAME = "push";
-  process.env.GITHUB_REF = "refs/heads/dev";
+  const environment = {
+    GITHUB_ACTIONS: "true",
+    GITHUB_EVENT_NAME: "workflow_dispatch",
+    GITHUB_REF: "refs/heads/dev",
+    OCX_CANDIDATE_CI_LANE: "all",
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(environment)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   try {
     return run();
   } finally {
@@ -171,6 +180,8 @@ function runAsCandidate<T>(run: () => T): T {
     else process.env.GITHUB_EVENT_NAME = previous.event;
     if (previous.ref === undefined) delete process.env.GITHUB_REF;
     else process.env.GITHUB_REF = previous.ref;
+    if (previous.lane === undefined) delete process.env.OCX_CANDIDATE_CI_LANE;
+    else process.env.OCX_CANDIDATE_CI_LANE = previous.lane;
   }
 }
 
@@ -355,6 +366,41 @@ describe("Fork CI official baseline preparation", () => {
     requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
     const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
     expect(() => runOutsideCandidate(prepared.run)).toThrow("official release tag does not match origin upstream-release");
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  for (const [name, environment] of [
+    ["local dispatch", { GITHUB_ACTIONS: "false" }],
+    ["missing Actions marker", { GITHUB_ACTIONS: undefined }],
+    ["main dispatch", { GITHUB_REF: "refs/heads/main" }],
+    ["preview dispatch", { GITHUB_REF: "refs/heads/preview" }],
+    ["tag dispatch", { GITHUB_REF: "refs/tags/v2.35.0" }],
+    ["legacy dev push", { GITHUB_EVENT_NAME: "push" }],
+    ["scheduled dev run", { GITHUB_EVENT_NAME: "schedule" }],
+    ["pull request", { GITHUB_EVENT_NAME: "pull_request" }],
+    ["missing lane", { OCX_CANDIDATE_CI_LANE: undefined }],
+    ["empty lane", { OCX_CANDIDATE_CI_LANE: "" }],
+    ["release-only lane", { OCX_CANDIDATE_CI_LANE: "release-gates" }],
+    ["macOS control lane", { OCX_CANDIDATE_CI_LANE: "macos-control" }],
+    ["unknown lane", { OCX_CANDIDATE_CI_LANE: "unknown" }],
+  ] as const) {
+    test(`rejects a pending ancestor marker in ${name}`, () => {
+      const fixture = createFixture();
+      const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
+      requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
+      const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
+      expect(() => runAsCandidate(prepared.run, environment))
+        .toThrow("official release tag does not match origin upstream-release");
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    });
+  }
+
+  test("full dev dispatch still requires the pending-marker option", () => {
+    const fixture = createFixture();
+    const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
+    requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
+    const prepared = prepare(fixture);
+    expect(() => runAsCandidate(prepared.run)).toThrow("official release tag does not match origin upstream-release");
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
 
@@ -776,7 +822,7 @@ describe("Fork CI official baseline preparation", () => {
       if?: string;
       "runs-on"?: unknown;
       strategy?: { matrix?: { os?: string[] } };
-      steps?: Array<{ name?: string; uses?: string; run?: string; with?: Record<string, unknown> }>;
+      steps?: Array<{ name?: string; uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, unknown> }>;
     };
     type Workflow = {
       on?: { workflow_dispatch?: { inputs?: Record<string, unknown> } };
@@ -798,6 +844,7 @@ describe("Fork CI official baseline preparation", () => {
       const matching = prepareSteps.filter(step => step.jobName === jobName);
       expect(matching).toHaveLength(1);
       expect(matching[0]?.step.name).toBe(prepareName);
+      expect(matching[0]?.step.env?.OCX_CANDIDATE_CI_LANE).toBe("${{ github.event.inputs.lane }}");
       const prepareIndex = steps.indexOf(matching[0]!.step);
       const setupIndex = steps.findIndex(step => step.name === "Setup project Bun");
       const installIndex = steps.findIndex(step => step.name === "Install dependencies");
