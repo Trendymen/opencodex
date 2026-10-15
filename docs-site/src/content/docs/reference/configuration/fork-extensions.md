@@ -3,7 +3,7 @@ title: Fork configuration
 description: Provider, recovery, custom-model and diagnostic controls added by the Trendymen Fork.
 ---
 
-These settings supplement upstream `v2.84.0`. Compatibility behavior is described in [Fork extensions](/reference/fork-extensions/).
+These settings supplement upstream `v2.86.0`. Compatibility behavior is described in [Fork extensions](/reference/fork-extensions/).
 
 ## Provider settings
 

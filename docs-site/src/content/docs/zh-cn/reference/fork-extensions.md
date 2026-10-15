@@ -3,7 +3,7 @@ title: Trendymen Fork 扩展
 description: 相对已 rebase 上游版本的兼容与维护差异。
 ---
 
-本附录描述 Trendymen Fork 相对上游 `v2.84.0` 的行为。其他参考页保留上游原文；配置差异见 [Fork 配置](/zh-cn/reference/configuration/fork-extensions/)。
+本附录描述 Trendymen Fork 相对上游 `v2.86.0` 的行为。其他参考页保留上游原文；配置差异见 [Fork 配置](/zh-cn/reference/configuration/fork-extensions/)。
 
 ## 兼容差异
 

@@ -483,7 +483,7 @@ export async function deliverPassthroughResponse(
     rememberClientVisiblePassthroughResponse,
   } = nativeExchange;
   const { commitReasoningReplayServingRoute, recordTerminalOutcomes } = responseEffects;
-  const { parsed, subagentQuotaFailureModel, clientRequestedStream, translatorBudget } = requestState;
+  const { parsed, subagentQuotaFailureModel, clientRequestedStream, translatorBudget, inboundWire } = requestState;
   const { openAiSidecar } = sidecarState;
   const { requestBindings } = transportState;
   let upstreamResponse = nativeExchange.upstreamResponse;
