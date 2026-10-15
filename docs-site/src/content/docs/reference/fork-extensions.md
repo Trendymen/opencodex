@@ -3,7 +3,7 @@ title: Trendymen Fork extensions
 description: Compatibility and maintenance differences from the rebased upstream release.
 ---
 
-This appendix describes the Trendymen Fork relative to upstream `v2.84.0`. The other reference pages retain upstream wording; the Fork configuration differences are in [Fork configuration](/reference/configuration/fork-extensions/).
+This appendix describes the Trendymen Fork relative to upstream `v2.86.0`. The other reference pages retain upstream wording; the Fork configuration differences are in [Fork configuration](/reference/configuration/fork-extensions/).
 
 ## Compatibility changes
 
