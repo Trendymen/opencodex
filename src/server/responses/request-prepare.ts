@@ -1655,6 +1655,9 @@ export async function prepareResponsesRequest(
     },
     adoptParsedRequest,
     get toolBridgeMaps() { return toolBridgeMaps; },
+    set toolBridgeMaps(value: typeof toolBridgeMaps) {
+      toolBridgeMaps = value;
+    },
     responseStateOptions,
     rememberKiroDeliveredFinalAnswer,
     route,
