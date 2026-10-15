@@ -99,7 +99,17 @@ describe("Fork local package staging", () => {
       expect(existsSync(join(dirname(prepared.tarball), "secret.txt"))).toBe(false);
       expect(existsSync(join(stageRoot, "validation/node_modules/ocx-stage-fixture/secret.txt"))).toBe(false);
       expect(existsSync(join(stageRoot, "validation/node_modules/ocx-stage-fixture/dist/index.js"))).toBe(true);
-      expect(lstatSync(join(dirname(prepared.tarball), "bin/fixture.mjs")).mode & 0o111).not.toBe(0);
+      if (process.platform !== "win32") {
+        expect(lstatSync(join(dirname(prepared.tarball), "bin/fixture.mjs")).mode & 0o111).not.toBe(0);
+      }
+      const cli = Bun.spawnSync(["node", join(stageRoot, "validation/node_modules/ocx-stage-fixture/bin/fixture.mjs")], {
+        cwd: stageRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(cli.exitCode).toBe(0);
+      expect(new TextDecoder().decode(cli.stdout)).toBe("fixture\n");
+      expect(new TextDecoder().decode(cli.stderr)).toBe("");
     } finally {
       prepared.cleanup();
     }

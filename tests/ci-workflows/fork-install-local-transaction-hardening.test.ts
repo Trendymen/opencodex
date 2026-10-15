@@ -12,7 +12,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { bootRestoreProbe, transactionalNpmUpdate, verifyInstallTree } from "../../src/update/transactional-install.mjs";
 import { runLocalInstallLifecycle } from "../../scripts/install-local";
@@ -95,16 +95,26 @@ describe("deferred local-install transaction hardening", () => {
 
   test("rejects a staged package whose canonical path is not contained by its staging root", () => {
     const { root, packageDir, stagedTree } = setup();
+    const originalManifest = readFileSync(join(packageDir, "package.json"));
+    const originalLauncher = readFileSync(join(packageDir, "bin", "ocx.mjs"));
+    let escapedCanonicalPathInjected = false;
     const result = transactionalNpmUpdate({
       ...options(packageDir, stagedTree, {
-        realpath: (path: string) => path.endsWith("/opencodex") && path.includes(".ocx-staging-")
-          ? join(root, "outside", "opencodex")
-          : realpathSync(path),
+        realpath: (path: string) => {
+          if (basename(path) === "opencodex" && path.includes(".ocx-staging-")) {
+            escapedCanonicalPathInjected = true;
+            return join(root, "outside", "opencodex");
+          }
+          return realpathSync(path);
+        },
       }),
     });
 
+    expect(escapedCanonicalPathInjected).toBe(true);
     expect(result).toMatchObject({ ok: false, phase: "verify" });
     expect(version(packageDir)).toBe("2.40.0-ben.2");
+    expect(readFileSync(join(packageDir, "package.json"))).toEqual(originalManifest);
+    expect(readFileSync(join(packageDir, "bin", "ocx.mjs"))).toEqual(originalLauncher);
   });
 
   test.skipIf(process.platform === "win32")("rejects a symlinked package root", () => {
@@ -372,9 +382,10 @@ describe("deferred local-install transaction hardening", () => {
     })).toMatchObject({ action: "pending" });
   });
 
-  test("fresh recovery markers are owner-only", () => {
+  test("fresh recovery markers use exclusive mode-0600 creation and retain recovery details", () => {
     const { packageDir, stagedTree } = setup();
     let renameCalls = 0;
+    const recoveryWrites: Array<{ flag: string; mode: number }> = [];
     const result = transactionalNpmUpdate({
       ...options(packageDir, stagedTree),
       deps: {
@@ -383,9 +394,22 @@ describe("deferred local-install transaction hardening", () => {
           if (renameCalls >= 2) throw Object.assign(new Error("EPERM: rollback also blocked"), { code: "EPERM" });
           renameSync(from, to);
         },
+        writeRecoveryFile: (path: string, contents: string, options: { flag: string; mode: number }) => {
+          recoveryWrites.push(options);
+          writeFileSync(path, contents, options);
+        },
       },
     });
-    expect(result).toMatchObject({ ok: false, phase: "double-fault" });
-    expect(lstatSync(join(dirname(packageDir), ".ocx-recovery.json")).mode & 0o777).toBe(0o600);
+    expect(result).toMatchObject({ ok: false, phase: "double-fault", recoveryUnsafe: true, markerWriteFailed: false });
+    expect(recoveryWrites).toEqual([{ flag: "wx", mode: 0o600 }]);
+    const markerPath = join(dirname(packageDir), ".ocx-recovery.json");
+    const markerStat = lstatSync(markerPath);
+    expect(markerStat.isFile()).toBe(true);
+    expect(markerStat.isSymbolicLink()).toBe(false);
+    const marker = JSON.parse(readFileSync(markerPath, "utf8"));
+    expect(marker).toMatchObject({ live: packageDir, rollbackError: "EPERM: rollback also blocked" });
+    expect(version(marker.backup)).toBe("2.40.0-ben.2");
+    // Windows mode bits do not establish whether its DACL is owner-only.
+    if (process.platform !== "win32") expect(markerStat.mode & 0o777).toBe(0o600);
   });
 });

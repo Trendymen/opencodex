@@ -160,6 +160,8 @@ describe("local installer provider debug handling", () => {
   test("restores saved plist bytes and modes without starting launchd", () => {
     const plist = tempPlist();
     chmodSync(plist, 0o644);
+    const originalMode = statSync(plist).mode & 0o777;
+    if (process.platform !== "win32") expect(originalMode).toBe(0o644);
     const original = readFileSync(plist, "utf8");
     const snapshot = captureProviderDebugLaunchdSnapshot(plist, {
       platform: "darwin",
@@ -170,18 +172,20 @@ describe("local installer provider debug handling", () => {
 
     snapshot!.restore();
     expect(readFileSync(plist, "utf8")).toBe(original);
-    expect(statSync(plist).mode & 0o777).toBe(0o644);
+    expect(statSync(plist).mode & 0o777).toBe(originalMode);
 
     writeFileSync(plist, "replacement plist again", { encoding: "utf8", mode: 0o600 });
     chmodSync(plist, 0o600);
     snapshot!.restore();
     expect(readFileSync(plist, "utf8")).toBe(original);
-    expect(statSync(plist).mode & 0o777).toBe(0o644);
+    expect(statSync(plist).mode & 0o777).toBe(originalMode);
   });
 
   test("restores a real plist before loading the old launchd service through lifecycle recovery", async () => {
     const plist = tempPlist();
     chmodSync(plist, 0o644);
+    const originalMode = statSync(plist).mode & 0o777;
+    if (process.platform !== "win32") expect(originalMode).toBe(0o644);
     const original = readFileSync(plist, "utf8");
     const snapshot = captureProviderDebugLaunchdSnapshot(plist, { platform: "darwin" });
     const events: string[] = [];
@@ -209,7 +213,7 @@ describe("local installer provider debug handling", () => {
           platform: "darwin",
           launchctl: args => {
             expect(readFileSync(plist, "utf8")).toBe(original);
-            expect(statSync(plist).mode & 0o777).toBe(0o644);
+            expect(statSync(plist).mode & 0o777).toBe(originalMode);
             events.push(args.join(" "));
             return { ok: true, stdout: "", stderr: "", status: 0 };
           },
@@ -219,7 +223,7 @@ describe("local installer provider debug handling", () => {
     }, () => {})).rejects.toThrow("new runtime is not ready");
 
     expect(readFileSync(plist, "utf8")).toBe(original);
-    expect(statSync(plist).mode & 0o777).toBe(0o644);
+    expect(statSync(plist).mode & 0o777).toBe(originalMode);
     expect(events).toEqual([
       "stop", "verify", "restart-new", "ready",
       "stop", "verify", "rollback", "restore-plist", `load -w ${plist}`, "ready",
@@ -229,6 +233,8 @@ describe("local installer provider debug handling", () => {
   test("restores a real plist but never loads it when package rollback is unsafe", async () => {
     const plist = tempPlist();
     chmodSync(plist, 0o644);
+    const originalMode = statSync(plist).mode & 0o777;
+    if (process.platform !== "win32") expect(originalMode).toBe(0o644);
     const original = readFileSync(plist, "utf8");
     const snapshot = captureProviderDebugLaunchdSnapshot(plist, { platform: "darwin" });
     const events: string[] = [];
@@ -254,7 +260,7 @@ describe("local installer provider debug handling", () => {
     }, () => {})).rejects.toThrow("local package replacement failed");
 
     expect(readFileSync(plist, "utf8")).toBe(original);
-    expect(statSync(plist).mode & 0o777).toBe(0o644);
+    expect(statSync(plist).mode & 0o777).toBe(originalMode);
     expect(events).toEqual(["stop", "verify", "restart-new", "stop", "verify"]);
   });
 
@@ -397,7 +403,7 @@ describe("local installer provider debug handling", () => {
 
   test("builds the launchd plist path under the requested home", () => {
     expect(launchdProxyPlistPath("/tmp/example-home")).toBe(
-      "/tmp/example-home/Library/LaunchAgents/com.opencodex.proxy.plist",
+      join("/tmp/example-home", "Library", "LaunchAgents", "com.opencodex.proxy.plist"),
     );
   });
 });
