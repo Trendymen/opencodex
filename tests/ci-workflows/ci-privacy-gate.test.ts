@@ -30,7 +30,7 @@ type Step = {
 type Job = { if?: string; needs?: string | string[]; outputs?: Record<string, string>; steps?: Step[] };
 
 const workflow = Bun.YAML.parse(readFileSync(repoPath(".github", "workflows", "ci.yml"), "utf8")) as {
-  on?: { push?: { branches?: string[]; paths?: string[] } };
+  on?: { push?: { paths?: string[] } };
   jobs: Record<string, Job>;
 };
 const jobs = workflow.jobs;
@@ -66,10 +66,11 @@ function selected(job: string, event: string, ci: string): boolean {
 }
 
 describe("the privacy scan selection", () => {
-  test("every release-line push starts a scan regardless of changed paths", () => {
-    expect([...(workflow.on?.push?.branches ?? [])].sort()).toEqual(["dev", "main", "preview"]);
-    expect(workflow.on?.push?.paths).toBeUndefined();
-    expect(filters.ci).toContain("tests/**");
+  test("the push trigger keeps mirroring the ci filter exactly", () => {
+    // Pull-request scope, like docs-site-build and structure-gate: dev, main and
+    // preview require a pull request, so no devlog change reaches an integration
+    // line without passing through one.
+    expect([...(workflow.on?.push?.paths ?? [])].sort()).toEqual([...(filters.ci ?? [])].sort());
   });
 
   test("no job or step still reads a privacy filter output", () => {
