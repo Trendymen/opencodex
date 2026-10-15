@@ -423,6 +423,12 @@ function registerMember(lockPath: string, owner: TestRunLockOwner, pid: number):
   try {
     mkdirSync(membersPath, { recursive: true, mode: 0o700 });
     writeFileSync(memberPath(lockPath, owner, pid), "", { flag: "a", mode: 0o600 });
+    const member = lstatSync(memberPath(lockPath, owner, pid));
+    if (!member.isFile()) {
+      throw Object.assign(new Error("The lock member is not a regular file."), {
+        code: member.isDirectory() ? "EISDIR" : "EINVAL",
+      });
+    }
   } catch (error) {
     if (!ownsLock(lockPath, owner)) return false;
     const code = errorCode(error);

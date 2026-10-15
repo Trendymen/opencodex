@@ -785,34 +785,42 @@ describe("Fork CI official baseline preparation", () => {
   test("direct production entry redacts the generated bare path on a cleanup-only failure", () => {
     const root = mkdtempSync(join(tmpdir(), "ocx-fork-cli-cleanup-"));
     roots.push(root);
-    const fakeBin = join(root, "fake-bin");
     const fakeLog = join(root, "calls.jsonl");
-    mkdirSync(fakeBin);
     const fakeScript = join(root, "fake-git.mjs");
-    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\nconst bare = rows.find(row => row[0] === "init")?.[2] ?? "";\nconst deletes = rows.filter(row => row[0] === "update-ref" && row[1] === "-d").length;\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 2) { process.stderr.write("cleanup " + bare); process.exit(1); }\nif (args.includes("cat-file")) { process.stdout.write("tag\\n"); process.exit(0); }\nif (args.includes("rev-parse")) { if (args.includes("refs/tags/v2.35.0") && !args.some(value => value.startsWith("--git-dir="))) process.exit(1); process.stdout.write(args.some(value => value.includes("^{commit}")) ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n"); process.exit(0); }\nprocess.exit(0);\n`);
-    const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
-    if (process.platform === "win32") writeFileSync(fakeGit, `@echo off\n"${process.execPath}" "${fakeScript}" %*\n`);
-    else {
-      writeFileSync(fakeGit, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`);
-      chmodSync(fakeGit, 0o755);
-    }
+    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\nconst bare = rows.find(row => row[0] === "init")?.[2] ?? "";\nconst deletes = rows.filter(row => row[0] === "update-ref" && row[1] === "-d").length;\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 2) { process.stderr.write("cleanup " + bare); process.exit(1); }\nif (args.includes("cat-file")) { process.stdout.write("tag\\n"); process.exit(0); }\nif (args.includes("rev-parse")) { if (args[1]?.startsWith("refs/tags/") && !args.some(value => value.startsWith("--git-dir="))) process.exit(1); process.stdout.write(args.some(value => value.includes("^{commit}")) ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n"); process.exit(0); }\nprocess.exit(0);\n`);
+    const preload = join(root, "git-preload.mjs");
+    // Keep the real CLI entry while passing Git argv through a native executable on Windows.
+    writeFileSync(preload, `const spawnSync = Bun.spawnSync.bind(Bun);\nBun.spawnSync = (command, options) => spawnSync(command[0] === "git" ? [process.execPath, ${JSON.stringify(fakeScript)}, ...command.slice(1)] : command, options);\n`);
     const scriptPath = fileURLToPath(new URL("../../scripts/prepare-fork-official-base.ts", import.meta.url));
     const repoRoot = resolveRepoRoot();
-    const result = Bun.spawnSync([process.execPath, scriptPath], {
+    const result = Bun.spawnSync([process.execPath, "--preload", preload, scriptPath], {
       cwd: repoRoot,
-      env: fakeGitEnvironment(fakeBin, { FAKE_GIT_LOG: fakeLog }),
+      env: { ...process.env, FAKE_GIT_LOG: fakeLog },
       stdout: "pipe",
       stderr: "pipe",
     });
     const stderr = decoder.decode(result.stderr);
     const rows = readFileSync(fakeLog, "utf8").trim().split("\n").map(JSON.parse) as string[][];
     const bareDir = rows.find(row => row[0] === "init")?.[2] ?? "";
+    const { version } = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+    const tagRef = `refs/tags/v${version.split("-ben.")[0]}`;
     expect(result.exitCode).not.toBe(0);
     expect(decoder.decode(result.stdout)).toBe("");
     expect(stderr.split("\n").filter(Boolean)).toHaveLength(1);
     expect(stderr.length).toBeLessThanOrEqual(513);
     expect(stderr).toContain("[REDACTED_PATH]");
     expect(stderr).not.toContain(bareDir);
+    expect(stderr).toStartWith("prepare official base: cleanup official verifier: cleanup ");
+    expect(stderr).not.toContain("cleanup also failed");
+    expect(bareDir).not.toBe("");
+    expect(rows).toContainEqual([`--git-dir=${bareDir}`, "rev-parse", `${tagRef}^{commit}`]);
+    expect(rows).toContainEqual(["rev-parse", "refs/ocx-ci/official-tag^{commit}"]);
+    expect(rows).toContainEqual(["update-ref", tagRef, "b".repeat(40), "0".repeat(40)]);
+    expect(rows.slice(-2)).toEqual([
+      ["update-ref", "-d", "refs/ocx-ci/fork-marker"],
+      ["update-ref", "-d", "refs/ocx-ci/official-tag"],
+    ]);
+    expect(existsSync(dirname(bareDir))).toBe(false);
   });
 
   test("requires official-base preparation wherever the workflow opts into Fork provenance", async () => {

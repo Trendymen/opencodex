@@ -23,7 +23,7 @@ import { isTestHomeGuardArmed } from "../../src/lib/test-home-guard";
 import type { OcxConfig } from "../../src/types";
 import { fakeChatGptJwt } from "./fake-chatgpt-jwt";
 import { ownedServiceHomeInspection } from "./owned-service-home-inspection";
-import { removeTreeWithRetry } from "./remove-tree";
+import { removeTreeAfterBackgroundWork } from "./remove-tree";
 import { INTERNAL_DEADLINE_MS } from "./test-budget";
 
 export const PROXY_KEY = "ocx_data_reserve_ingress_fixture";
@@ -107,7 +107,7 @@ export async function reserveIngressFixture(options: {
         for (const [name, value] of oldEnv) {
           if (value === undefined) delete process.env[name]; else process.env[name] = value;
         }
-        removeTreeWithRetry(root);
+        await removeTreeAfterBackgroundWork(root);
       }
     }
     expect(unexpected).toEqual([]);

@@ -70,6 +70,21 @@ function runGit(cwd: string, ...args: string[]): string {
   return new TextDecoder().decode(result.stdout).trim();
 }
 
+function changedFixtureDiagnostic(result: Bun.ReadableSyncSubprocess, args: string[], cwd: string): string {
+  const redact = (value: string) => {
+    for (const privateValue of [cwd, repoRoot(), process.env.HOME, process.env.USERPROFILE,
+      process.env[TEST_RUN_LOCK_TOKEN_ENV], ...LIVE_INSTALL_CREDENTIAL_ENV.map(key => process.env[key])]) {
+      if (privateValue) value = value.replaceAll(privateValue, "<redacted>");
+    }
+    return value.replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, "<token>").slice(-12_000);
+  };
+  return JSON.stringify({
+    args: args.map(redact), exitCode: result.exitCode, signal: result.signalCode ?? null,
+    timeout: result.exitedDueToTimeout ?? false, maxBuffer: result.exitedDueToMaxBuffer ?? false,
+    stdout: redact(result.stdout.toString()), stderr: redact(result.stderr.toString()),
+  });
+}
+
 // Assembled from fragments so the fixture identity is not an email literal in a tracked
 // file: scripts/privacy-scan.ts matches any email-shaped string and `.invalid` is not
 // allow-listed, so writing it whole fails the repository's own privacy gate. The bytes
@@ -202,9 +217,11 @@ test("SQLite writer",async()=>{expect(value).toBe(2);mkdirSync(${JSON.stringify(
   const comparison = runGit(cwd, "rev-parse", "HEAD");
   writeFileSync(join(cwd, "src/shared.ts"), readFileSync(join(cwd, "src/shared.ts"), "utf8").replace("value=1", "value=2"));
   try {
-    const result = Bun.spawnSync([process.execPath, repoPath("scripts", "test.ts"), "--changed=" + comparison, ...(noIsolate ? ["--parallel=1", "--no-isolate"] : [])], {
+    const args = [repoPath("scripts", "test.ts"), "--changed=" + comparison, ...(noIsolate ? ["--parallel=1", "--no-isolate"] : [])];
+    const result = Bun.spawnSync([process.execPath, ...args], {
       cwd, env: { ...process.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 30_000,
     });
+    if (result.exitCode !== 0) console.error(changedFixtureDiagnostic(result, args, cwd));
     expect(result.exitCode).toBe(0);
     const rows = readFileSync(records, "utf8").trim().split("\n").map(line => JSON.parse(line));
     expect(rows.filter(row => typeof row.id === "number").map(row => row.id).sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
@@ -1131,16 +1148,22 @@ describe("bun test argv", () => {
       expect(plan.map(lane => lane.label)).toEqual(["parallel suite", "claude-desktop-picker-routes.test.ts", "claude-desktop-first-party-guards.test.ts"]);
       const lanes = plan;
       let output = "";
+      const diagnostics: string[] = [];
       for (const lane of lanes) {
         const result = Bun.spawnSync([process.execPath, "test", ...lane.args], {
           cwd, env: { ...isolated.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
         });
+        const diagnostic = changedFixtureDiagnostic(result, lane.args, cwd);
+        diagnostics.push(diagnostic);
+        if (result.exitCode !== 0) console.error(diagnostic);
         expect(result.exitCode).toBe(0);
         const text = result.stdout.toString() + result.stderr.toString();
         if (lane === plan[0]) expect(text).not.toContain("EXECUTED_claude-desktop-picker-routes");
         output += text;
       }
-      expect(output.match(/^EXECUTED_claude-desktop-picker-routes$/gm)).toHaveLength(1);
+      const executed = output.match(/^EXECUTED_claude-desktop-picker-routes$/gm);
+      if (executed?.length !== 1) console.error(diagnostics.join("\n"));
+      expect(executed).toHaveLength(1);
       expect(output).not.toContain("EXECUTED_claude-desktop-first-party-guards");
       expect(output).not.toContain("UNRELATED_ORDINARY");
       expect(changedSelectionFailure({ comparisonRef: "fixture", comparisonCommit, changedFiles: ["tests/claude-integration/claude-desktop-picker-routes.test.ts"] }, output)).toBeNull();
