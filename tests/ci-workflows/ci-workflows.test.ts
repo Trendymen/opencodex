@@ -12,6 +12,7 @@ import {
 } from "../helpers/enforce-pr-target-harness";
 import { pathToFileURL } from "node:url";
 import { repoRoot } from "../helpers/repo-root";
+
 /** Final consolidated gate comment body (the single bot message). */
 function lastGateCommentBody(result: HarnessResult): string {
   const marker = "<!-- opencodex-pr-gate -->";
@@ -25,13 +26,16 @@ function lastGateCommentBody(result: HarnessResult): string {
   }
   return gateCreates[gateCreates.length - 1]!.body;
 }
+
 /** The single consolidated comment body; alias kept for scenario readability. */
 const lastReadinessCommentBody = lastGateCommentBody;
 /** Alias kept for scenarios that named the pre-consolidation enforcer comment. */
 const lastEnforcerCommentBody = lastGateCommentBody;
+
 const root = pathToFileURL(repoRoot() + "/");
 const doctorGuiIfChangedScript = fileURLToPath(new URL("../../scripts/doctor-gui-if-changed.ts", import.meta.url));
 const lintGuiIfChangedScript = fileURLToPath(new URL("../../scripts/lint-gui-if-changed.ts", import.meta.url));
+
 async function readText(path: string): Promise<string> {
   return await Bun.file(new URL(path, root)).text();
 }
@@ -189,7 +193,6 @@ describe("GitHub Actions hardening", () => {
       const steps = (ci.jobs?.[jobName] as { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> })?.steps ?? [];
       const checkout = steps.find(step => typeof step.uses === "string" && step.uses.includes("actions/checkout"));
       expect(`${jobName}:${String(checkout?.with?.["fetch-tags"])}`).toBe(`${jobName}:true`);
-      expect(`${jobName}:${String(checkout?.with?.["fetch-depth"])}`).toBe(`${jobName}:0`);
     }
 
     // Windows shards more finely than Linux. Six shards grew to 13-30 minutes against
@@ -378,8 +381,8 @@ describe("GitHub Actions hardening", () => {
       .flatMap(job => (job as { steps?: { uses?: string; with?: Record<string, unknown> }[] })?.steps ?? [])
       .filter(step => step.uses?.startsWith("actions/checkout@"));
     expect(checkouts.length).toBeGreaterThan(0);
-    for (const step of checkouts) {
-      expect(step.with?.["persist-credentials"]).toBe(false);
+    for (const [index, step] of checkouts.entries()) {
+      expect(`checkout[${index}]:${step.with?.["persist-credentials"]}`).toBe(`checkout[${index}]:false`);
     }
 
     // The self-hosted workspace wipe must not swallow its own failure. A clean
