@@ -49,6 +49,18 @@ export function resolveCodexPassthroughAttempt(turn: CodexPassthroughTurn | unde
   return overrides && Object.hasOwn(overrides, destination.providerName) ? overrides[destination.providerName] : CODEX_PASSTHROUGH_DEFAULTS;
 }
 
+export function codexPassthroughStreamPolicy(provider: OcxProviderConfig, permissions: CodexPassthroughPermissions | undefined,
+  parsedStream: boolean, clientRequestedStream: boolean): { upstreamRequestsStream: boolean; canonicalBufferedJson: boolean } {
+  const normalizedStream = isCanonicalOpenAiForwardProvider(provider) && permissions?.normalizeRequestParameters !== false;
+  // Recovery must classify the stream requested upstream, including when ChatGPT omits Content-Type.
+  // Parameter normalization forces SSE on the outbound copy without changing the client's preference.
+  // JSON clients stay on HTTP so delivery can fold SSE and preserve manual redirect handling.
+  return {
+    upstreamRequestsStream: parsedStream === true || normalizedStream,
+    canonicalBufferedJson: clientRequestedStream !== true && normalizedStream,
+  };
+}
+
 export function codexPassthroughSourceRequired(turn: CodexPassthroughTurn | undefined): boolean {
   return !!turn && turns.has(turn);
 }
