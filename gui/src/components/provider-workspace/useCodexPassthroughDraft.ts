@@ -22,14 +22,15 @@ export function useCodexPassthroughDraft(saved: CodexPassthroughConfig | undefin
     setDraft(previous => {
       const merged = mergeCodexPassthroughPatch(previous.signature === signature ? previous.patch : undefined, edit);
       if (!merged.ok) return previous;
-      const next = merged.value ?? {};
-      for (const row of CODEX_PASSTHROUGH_CATALOG) {
-        if (row.group === "localErrors") {
-          if (next.localErrorPolicies && edit.localErrorPolicies?.[row.key] === baseline.localErrorPolicies[row.key]) delete next.localErrorPolicies[row.key];
-        } else if (edit[row.key] === baseline[row.key]) delete next[row.key];
-      }
-      if (next.localErrorPolicies && !Object.keys(next.localErrorPolicies).length) delete next.localErrorPolicies;
-      return { signature, confirmed, patch: Object.keys(next).length ? next : undefined };
+      const next = mergeCodexPassthroughPatch(merged.value, {
+        ...Object.fromEntries(CODEX_PASSTHROUGH_CATALOG.filter(row => row.group !== "localErrors"
+          && edit[row.key] === baseline[row.key]).map(row => [row.key, null])),
+        ...(merged.value?.localErrorPolicies ? { localErrorPolicies: Object.fromEntries(
+          CODEX_PASSTHROUGH_CATALOG.filter(row => row.group === "localErrors"
+            && edit.localErrorPolicies?.[row.key] === baseline.localErrorPolicies[row.key]).map(row => [row.key, null]),
+        ) } : {}),
+      });
+      return next.ok ? { signature, confirmed, patch: next.value } : previous;
     });
   };
   const acknowledge = () => setDraft(previous => {
