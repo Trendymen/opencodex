@@ -50,7 +50,7 @@
 
 ## 安装与维护边界
 
-- `.github/workflows/ci.yml` 的 macOS 测试分为三片，继续使用官方 `scripts/ci/run-bun-test-batches.sh`；每片 1 个 worker、每批 12 文件、批次 300 秒和 job 20 分钟预算保持。本地测试仍使用官方单主池、默认 4 个 worker 和 900 秒主预算。
+- CI 的 job、条件、分片、worker 和运行预算跟随官方 `.github/workflows/ci.yml` 与 `scripts/ci/run-bun-test-batches.sh`；Fork 保留 `scripts/prepare-fork-official-base.ts` 的官方基线、Tag 和 marker 校验。候选触发与精确 SHA 验收见[同步政策](../docs/fork-sync-automation.md)。本地 runner 继续沿用官方主池和预算，保留 Fork helper 与隔离回归。
 - `scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts` 在离线验证后的同卷 stage 上替换包；根 manifest 保持冻结。Volta、服务、readiness、plist 和包字节共用失败回滚边界。
 - 停服、包回滚和 plist 恢复全部确认成功后，才恢复原先已加载的服务；不安全/未知状态拒绝继续 restart。Windows pending transaction 的 wrapper 和 probe 成对维护。
 - macOS `install:local` 补写 `OCX_DEBUG=1` / `OCX_PROVIDER_TEXT_DEBUG=1`，运行安装命令须当前用户明确授权。普通自更新保留官方事务路径，字体补丁不扩展为滚动 CSS 改写。
