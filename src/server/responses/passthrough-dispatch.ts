@@ -1,4 +1,4 @@
-import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
+import { codexPassthroughStreamPolicy, resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import type { PassthroughDispatchInputs, PassthroughAdapterHandoff } from "./passthrough-dispatch-types";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { requestPacingOverloadResponse } from "./pacing-overload";
@@ -228,18 +228,9 @@ export async function preparePassthroughExchange(
     const codexSafetyBufferingOptions = isCanonicalOpenAiForwardProvider(route.provider)
       ? codexSafetyBufferingFilterOptions(config)
       : undefined;
-    // With parameter normalization enabled, the canonical adapter coerces its outbound copy so the
-    // upstream streams while the captured client preference still selects JSON. Recovery runs before
-    // delivery, though, and must classify the bytes the upstream was actually asked to send:
-    // ChatGPT may omit Content-Type, so consulting `parsed.stream` here would mistake its SSE body
-    // for non-streaming JSON and skip both opaque-state and safe-reset recovery.
-    const upstreamRequestsStream = parsed.stream === true
-      || (isCanonicalOpenAiForwardProvider(route.provider) && codexPermissions?.normalizeRequestParameters !== false);
-    // A JSON client still needs the canonical destination's HTTP/SSE response so delivery can
-    // validate and fold it. Letting the forced `stream:true` body select the WebSocket transport
-    // bypasses manual HTTP redirects and can turn a real 3xx into a connect timeout.
-    const canonicalBufferedJson = clientRequestedStream !== true
-      && (isCanonicalOpenAiForwardProvider(route.provider) && codexPermissions?.normalizeRequestParameters !== false);
+    const { upstreamRequestsStream, canonicalBufferedJson } = codexPassthroughStreamPolicy(
+      route.provider, codexPermissions, parsed.stream, clientRequestedStream,
+    );
     const imageGenCallAliases = route.provider.authMode === "forward"
       ? new Map<string, { namespace: string; name: string }>()
       : imageGenToolCallAliases(toolBridgeMaps.toolNsMap, parsed._rawBody, translatorBudget);
