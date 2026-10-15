@@ -131,6 +131,8 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 OCX 实际注入的私有凭据始终在交付前受保护，包含 Pool/已存主登录凭据及敏感配置头值。无法确认安全交付时，在响应提交前返回 `upstream_error_protection_failed`，已提交的流则中止，不伪造成功终态。
 
+成功响应的正文格式既非 SSE 也非 JSON 时，只要有私有值需要保护，代理就会在交付前取消上游正文并返回上述保护错误。无正文或没有私有值需要保护时，沿用原有交付行为；caller 已持有的值不会触发这项限制。
+
 只取消固定 5 秒 SSE 期限时，把 `codexPassthrough.privateSseReadDeadline` 设为 `false`，或在 Provider 的响应设置中关闭“私有 SSE 固定 5 秒期限”。这不改变 HTTP 错误体的有界读取期限，也不允许输出未遮盖的凭据。等待更久可能延迟暴露失败；`stallTimeoutSec` 和请求取消仍限制停滞的流。
 
 另外两个期限在响应设置中独立控制。把 `upstreamWsSilenceDeadline` 设为 `false`，取消上游 WebSocket 额外的 90 秒静默期限；把 `privateErrorBodyReadDeadline` 设为 `false`，取消私有 HTTP 错误正文的固定 5 秒期限。后者使用正常的 `stallTimeoutSec`：默认 300 秒，显式 `0` 关闭该停滞限制。两个开关都不改变断流重发、401 刷新后重发、账号轮换或 `agentTaskRecovery`。主账号额度硬锁仍由已有的 `codexMainAccountHardLock` 单独控制。

@@ -4,9 +4,75 @@ import { createCodexPassthroughFixture, disabledCodexPassthrough } from "../help
 import { ACCESS } from "../helpers/reserve-ingress-fixture";
 import { createTranslatorBudget } from "../../src/lib/translator-budget";
 import { createCodexPrivateCredentialGuard, protectCodexPrivateSse, CodexPrivateCredentialProtectionError } from "../../src/fork/codex-passthrough-secrets";
+import * as translatorBudgets from "../../src/lib/translator-budget";
+import { getActiveTurnCount } from "../../src/server/lifecycle";
+import { observeRequestLogsForTests, type RequestLogEntry } from "../../src/server/request-log";
+import * as upstreamHost from "../../src/codex/upstream-host-health";
 
 const input = { model: "gpt-5.6-sol", stream: false, input: "synthetic" };
 const escaped = (value: string) => [...value].map(letter => `\\u${letter.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+
+test.each(["direct", "pool"] as const)("unclassified private success fails closed for %s without reading or replaying", async mode => {
+  const secret = "synthetic-private-success";
+  const entries: RequestLogEntry[] = []; const unobserve = observeRequestLogsForTests(entry => entries.push(entry));
+  const budgets: translatorBudgets.TranslatorBudget[] = [];
+  const hostLeases: upstreamHost.UpstreamHostAdmissionLease[] = [];
+  let cancelled = 0; let activeDuringSend = 0; let body: ReadableStream<Uint8Array> | undefined; let upstreamSignal: AbortSignal | undefined;
+  const fixture = await createCodexPassthroughFixture({ mode, configure(config) {
+    config.providers.openai!.codexPassthrough = disabledCodexPassthrough(); config.providers.openai!.headers = { "session-token": secret };
+    config.upstreamHostCircuitThreshold = 1;
+  }, upstream: async request => {
+    upstreamSignal = request.signal; activeDuringSend = getActiveTurnCount();
+    body = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(new TextEncoder().encode("prefix synthetic-private-")); controller.enqueue(new TextEncoder().encode("success suffix"));
+    }, cancel() { cancelled++; return new Promise<void>(() => {}); } });
+    return new Response(body, { headers: { "content-type": "text/plain", "x-echo": secret } });
+  } });
+  const createBudget = translatorBudgets.createTranslatorBudget;
+  const budgetSpy = spyOn(translatorBudgets, "createTranslatorBudget").mockImplementation(options => {
+    const budget = createBudget(options); budgets.push(budget); return budget;
+  });
+  const acquireHost = upstreamHost.acquireUpstreamHostAdmission;
+  const hostAcquireSpy = spyOn(upstreamHost, "acquireUpstreamHostAdmission").mockImplementation((...args) => {
+    const admission = acquireHost(...args); if (admission.kind === "admitted" && admission.lease) hostLeases.push(admission.lease); return admission;
+  });
+  const hostResetSpy = spyOn(upstreamHost, "resetUpstreamHostHealth");
+  try {
+    const response = await fixture.request(input);
+    expect(response.status).toBe(502); const text = await response.text();
+    expect(text).toContain("upstream_error_protection_failed"); expect(text).not.toContain(secret);
+    expect(response.headers.get("x-echo") ?? "").not.toContain(secret);
+    expect(cancelled).toBe(1); expect(body!.locked).toBe(false); expect(upstreamSignal!.aborted).toBe(true);
+    expect(fixture.seen).toHaveLength(1); expect(activeDuringSend).toBeGreaterThan(0); expect(getActiveTurnCount()).toBe(0);
+    expect(hostLeases.length).toBeGreaterThan(0); for (const lease of hostLeases) {
+      expect(hostResetSpy).toHaveBeenCalledWith(lease.key, lease); expect(upstreamHost.releaseUpstreamHostAdmission(lease)).toBe(false);
+    }
+    expect(budgets.length).toBeGreaterThan(0); for (const budget of budgets) expect(budget.snapshot().currentBytes).toBe(0);
+    expect(entries.at(-1)).toMatchObject({ status: 502, upstreamHttpStatus: 200, errorCode: "private-body-unreadable",
+      failureCause: "local-refusal", terminalSource: "synthetic", upstreamError: "Private response protection could not verify the bounded body." });
+    expect(JSON.stringify(entries)).not.toContain(secret);
+  } finally { hostAcquireSpy.mockRestore(); hostResetSpy.mockRestore(); budgetSpy.mockRestore(); unobserve(); await fixture.close(); }
+});
+
+test.each([false, true])("unclassified caller-owned success stays byte-exact with configured echo=%s", async configured => {
+  const original = `${ACCESS}\r\ncaller-owned\\u0061`;
+  const fixture = await createCodexPassthroughFixture({ mode: "direct", configure(config) {
+    config.providers.openai!.codexPassthrough = disabledCodexPassthrough();
+    if (configured) config.providers.openai!.headers = { "session-token": ACCESS };
+  }, upstream: async () => new Response(original, { headers: { "content-type": "text/plain", "x-echo": ACCESS } }) });
+  try { const response = await fixture.request(input); expect(response.status).toBe(200);
+    expect(response.headers.get("x-echo")).toBe(ACCESS); expect(await response.text()).toBe(original); expect(fixture.seen).toHaveLength(1);
+  } finally { await fixture.close(); }
+});
+
+test("unclassified private bodyless success retains its upstream status", async () => {
+  const fixture = await createCodexPassthroughFixture({ mode: "pool", configure(config) {
+    config.providers.openai!.codexPassthrough = disabledCodexPassthrough(); config.providers.openai!.headers = { "session-token": "synthetic-bodyless-private" };
+  }, upstream: async () => new Response(null, { status: 204, headers: { "content-type": "text/plain", "x-retained": "safe" } }) });
+  try { const response = await fixture.request(input); expect(response.status).toBe(204); expect(await response.text()).toBe("");
+    expect(response.headers.get("x-retained")).toBe("safe"); expect(fixture.seen).toHaveLength(1); expect(getActiveTurnCount()).toBe(0);
+  } finally { await fixture.close(); }
+});
 
 test("pool private authentication echoes are protected in HTTP errors and headers", async () => {
   const text = `{"error":{"type":"fixture_error","code":"fixture_code","message":"${escaped(ACCESS)}","api_key":"business value"},"future":[3,1]}`;
