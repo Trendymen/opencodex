@@ -1751,6 +1751,11 @@ export async function deliverPassthroughResponse(
       try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already closed */ }
       return formatErrorResponse(502, "upstream_error", "plaintext V2 agent-message response used an unsupported content type");
     }
+    if (privateGuard && upstreamResponse.body) {
+      const error = new CodexPrivateCredentialProtectionError("private-body-unreadable");
+      void upstreamResponse.body.cancel(error).catch(() => {});
+      return privateFailure(error);
+    }
     // An unclassified passthrough body is relayed directly and has no bounded completion observer;
     // use the same non-error-status success boundary as SSE instead of retaining per-stream state.
     nestedExecInspection?.dispose();

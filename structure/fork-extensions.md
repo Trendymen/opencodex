@@ -24,7 +24,7 @@
 - `codex-passthrough-source.ts` 在既有解压/读入点持有原始 JSON 文本，按共享 translator budget 管理副本；`codex-passthrough-request.ts` 在最终路由后按许可准备请求，提交选中尝试的 skills 副作用。EOF、错误、取消和 abort 释放来源，不增加独立硬上限。
 - 已获准的 agent-task-recovery 替换按原始/历史 item 来源登记，canonical 重建只重放这些替换，不回灌整份旧输入，也不再次恢复或查询缓存。Combo 序列化转移实际 child item 的来源；关闭历史展开不带回历史替换。新副本保留禁止持久化标记，替换字符串记入既有观察预算并随来源释放。
 - `codex-passthrough-response.ts` 和 `codex-passthrough-snapshot.ts` 接入已有 JSON/SSE/WS 交付点；关闭改写时保留业务字段，WS 仍需协议 framing，错误体保存在 `response`。缓存记录实际交付形状，不把无终态 EOF 记作成功。
-- `codex-passthrough-secrets.ts` 仅按本次真实出站值保护实际注入的私有凭据，覆盖 header、JSON 转义和跨 chunk 文本；一般脱敏关闭不取消这项保护。保护失败在提交前返回错误、提交后中止，受既有取消和有界读取约束。
+- `codex-passthrough-secrets.ts` 仅按本次真实出站值保护实际注入的私有凭据，覆盖 header、JSON 转义和跨 chunk 文本；一般脱敏关闭不取消这项保护。成功响应的正文格式既非 SSE 也非 JSON 时，若存在私有保护值，则在交付正文前取消上游并返回保护失败；无正文、没有实际私有值或值已由 caller 持有时沿用原交付。保护失败在提交前返回错误、提交后中止，受既有取消和有界读取约束。
 - `privateSseReadDeadline` 只控制私有 SSE 首输出及不完整块的固定 5 秒期限；关闭后使用 `stallTimeoutSec` 的停滞期限，并保留 abort、预算、格式验证和凭据遮盖。共享 HTTP 错误体期限保持原值。保护失败通过闭合 `private-*` 错误码、`local-refusal` 与 `synthetic` 归因为本地；`src/server/request-log.ts` 和 `src/usage/log.ts` 持久化实际响应头的 `upstreamHttpStatus`，不从最终状态反推。
 - `upstreamWsSilenceDeadline` 仅控制官方订阅上游 WS 等待首次响应的 90 秒静默期限；关闭后保留 ping、连接期限、abort 和传输预算。`privateErrorBodyReadDeadline` 仅控制使用私有凭据保护的 HTTP 错误正文固定 5 秒期限；关闭后取消总期限，首字节和停滞等待使用 `stallTimeoutSec`。普通投递和 `src/server/responses/core-combo-failure.ts` 的同一次分类读取共用 Fork 期限转换，不额外读取正文；无私有保护的 combo 调用者保持原期限。64 KiB、严格解码、JSON 检查及 token 遮盖继续执行。`src/lib/bounded-body.ts` 允许 `Infinity` 表示无期限，已有默认及有限期限不变；Fork 调用点显式选择，其他调用者不受影响。
 - `codex-passthrough-local-errors.ts` 按已分类来源决定五项可选策略；`codex-passthrough-routing.ts` 将本次普通额度预检许可传给既有账号选择。真实上游错误、恢复失败、硬预算、认证/身份和明确账号政策保留，关闭拒绝说明不增加重放。
