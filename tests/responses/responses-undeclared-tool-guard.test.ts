@@ -68,11 +68,11 @@ async function relay(
 describe("undeclared tool call guard", () => {
   const declared = ["exec", "wait", "request_user_input"];
 
-  test("sixth false keeps default-name normalization without invoking the seventh reject callback", () => {
+  test("refuseUndeclared false keeps default-name normalization without invoking onReject", () => {
     const rejected: string[] = [];
     const rewrite = createUndeclaredToolCallGuardBlockRewrite(
       new Set(["view_image"]), undefined, undefined, new Set(["view_image"]), undefined,
-      false, name => rejected.push(name),
+      { refuseUndeclared: false }, name => rejected.push(name),
     );
     const dotted = frame("response.output_item.added", {
       output_index: 0,
@@ -92,11 +92,11 @@ describe("undeclared tool call guard", () => {
     expect(rejected).toEqual([]);
   });
 
-  test("sixth true invokes the seventh callback only for an actual undeclared rejection", () => {
+  test("refuseUndeclared true invokes onReject only for an actual undeclared rejection", () => {
     const rejected: string[] = [];
     const rewrite = createUndeclaredToolCallGuardBlockRewrite(
       new Set(["exec"]), undefined, undefined, undefined, undefined,
-      true, name => rejected.push(name),
+      { refuseUndeclared: true }, name => rejected.push(name),
     );
     const declaredCall = frame("response.output_item.added", {
       output_index: 0,
