@@ -439,6 +439,7 @@ describe("inbound upstream Responses debug observer", () => {
 
     // Nested day/hour directories under two debug roots are removed recursively; the roots
     // themselves stay (the ownership loop removes exactly the manifest-listed paths).
+    releaseSpendHome?.();
     expect(removeOwnedConfigState(testDir)).toMatchObject({ status: "removed" });
     expect(existsSync(testDir)).toBe(false);
   });
