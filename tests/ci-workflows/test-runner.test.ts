@@ -139,11 +139,29 @@ function changedFixturePathFacts(cwd: string): Record<string, boolean> {
   } catch { return { pathFactsAvailable: false }; }
 }
 
-function initChangedRunFixture(): { cwd: string; base: string } {
-  const cwd = mkdtempSync(join(tmpdir(), "opencodex-changed-ref-"));
-  runGit(cwd, "init", "--quiet");
-  const base = commitFixture(cwd, "base.txt", "base\n", "base");
-  return { cwd, base };
+function initChangedRunFixture(): { cwd: string; base: string; allocated: string } {
+  const allocated = mkdtempSync(join(tmpdir(), "opencodex-changed-ref-"));
+  try {
+    if (Object.keys(process.env).some(key => /^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES)$/.test(key)))
+      throw new Error("changed fixture refuses inherited Git path overrides");
+    runGit(allocated, "init", "--quiet");
+    const cwd = runGit(allocated, "rev-parse", "--show-toplevel");
+    for (const [owned, candidate] of [
+      [allocated, cwd],
+      [join(allocated, ".git"), runGit(cwd, "rev-parse", "--absolute-git-dir")],
+    ]) {
+      const original = statSync(owned!, { bigint: true }), canonical = statSync(candidate!, { bigint: true });
+      if (!original.isDirectory() || original.ino === 0n || original.dev !== canonical.dev
+        || original.ino !== canonical.ino) {
+        throw new Error("changed fixture Git root or metadata is outside its allocated directory");
+      }
+    }
+    const base = commitFixture(cwd, "base.txt", "base\n", "base");
+    return { cwd, base, allocated };
+  } catch (error) {
+    removeTreeWithRetry(allocated);
+    throw error;
+  }
 }
 
 const desktopLifecycleFiles = [
@@ -201,7 +219,7 @@ test.each(["-c", "--config", "--cwd", "--no-isolate", "--watch", "--hot", "--cov
 });
 
 test.each([false, true])("changed wrapper keeps one main HOME and serializes official and SQLite writers, no-isolate=%s", noIsolate => {
-  const { cwd } = initChangedRunFixture();
+  const { cwd, allocated } = initChangedRunFixture();
   const records = join(cwd, "executions.jsonl");
   const held = join(cwd, "sqlite-held");
   mkdirSync(join(cwd, "src"));
@@ -244,7 +262,7 @@ test("SQLite writer",async()=>{expect(value).toBe(2);mkdirSync(${JSON.stringify(
     for (const home of new Set<string>(rows.map(row => row.home))) expect(existsSync(home)).toBe(false);
     const output = result.stdout.toString() + result.stderr.toString();
     expect(changedSelectionFailure({ comparisonRef: "fixture", comparisonCommit: comparison, changedFiles: ["src/shared.ts"] }, output)).toBeNull();
-  } finally { removeTreeWithRetry(cwd); }
+  } finally { removeTreeWithRetry(allocated); }
 }, { timeout: 40_000 });
 
 describe("test runner watchdog diagnostics", () => {
@@ -1134,7 +1152,7 @@ describe("bun test argv", () => {
   });
 
   test("changed lanes let Bun select only changed sensitive fixtures", () => {
-    const { cwd, base } = initChangedRunFixture();
+    const { cwd, base, allocated } = initChangedRunFixture();
     const isolated = createIsolatedTestEnvironment();
     try {
       mkdirSync(join(cwd, "tests", "claude-integration"), { recursive: true });
@@ -1175,7 +1193,7 @@ describe("bun test argv", () => {
       expect(changedSelectionFailure({ comparisonRef: "fixture", comparisonCommit, changedFiles: ["tests/claude-integration/claude-desktop-picker-routes.test.ts"] }, output)).toBeNull();
     } finally {
       isolated.cleanup();
-      removeTreeWithRetry(cwd);
+      removeTreeWithRetry(allocated);
     }
   }, { timeout: 35_000 });
 
@@ -1220,7 +1238,7 @@ describe("bun test argv", () => {
     const fixtures: string[] = [];
     try {
       const behind = initChangedRunFixture();
-      fixtures.push(behind.cwd);
+      fixtures.push(behind.allocated);
       runGit(behind.cwd, "branch", "candidate", behind.base);
       commitFixture(behind.cwd, "head.txt", "head\n", "head ahead of candidate");
       expect(inspectChangedRun(["--changed=candidate"], behind.cwd)).toMatchObject({
@@ -1230,7 +1248,7 @@ describe("bun test argv", () => {
       });
 
       const ahead = initChangedRunFixture();
-      fixtures.push(ahead.cwd);
+      fixtures.push(ahead.allocated);
       const candidateTip = commitFixture(ahead.cwd, "candidate.txt", "candidate\n", "candidate ahead");
       runGit(ahead.cwd, "branch", "candidate", candidateTip);
       runGit(ahead.cwd, "checkout", "--quiet", "--detach", ahead.base);
@@ -1241,7 +1259,7 @@ describe("bun test argv", () => {
       });
 
       const diverged = initChangedRunFixture();
-      fixtures.push(diverged.cwd);
+      fixtures.push(diverged.allocated);
       runGit(diverged.cwd, "checkout", "--quiet", "-b", "candidate");
       commitFixture(diverged.cwd, "candidate.txt", "candidate\n", "candidate side");
       runGit(diverged.cwd, "checkout", "--quiet", "--detach", diverged.base);
