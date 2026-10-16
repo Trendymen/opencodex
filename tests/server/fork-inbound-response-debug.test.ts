@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   createInboundResponsesDebugObserver,
   persistInboundResponsesDebugSummary,
@@ -460,6 +460,7 @@ describe("inbound upstream Responses debug observer", () => {
     const textRef = persisted[0]?.textRef;
     expect(typeof textRef).toBe("string");
     expect(textRef).toMatch(/provider-debug-artifacts.+jsonl$/);
+    expect(textRef).not.toContain("\\");
     const artifactPath = join(testDir, textRef as string);
     const artifact = readFileSync(artifactPath, "utf8")
       .trim()
@@ -664,6 +665,7 @@ describe("inbound upstream Responses debug observer", () => {
       "response.completed",
     ]);
     expect(entry.timelineRef).toMatch(/^provider-debug\/\d{4}-\d{2}-\d{2}\/.+\.jsonl$/);
+    expect(entry.timelineRef).not.toContain("\\");
     const journal = readFileSync(join(testDir, entry.timelineRef as string), "utf8")
       .trim()
       .split("\n")
@@ -693,8 +695,9 @@ describe("inbound upstream Responses debug observer", () => {
     expect(typeof group).toBe("string");
     expect(payload.textRef).toContain(`/groups/${group}/`);
     expect(payload.timelineRef).toContain(`/groups/${group}/`);
-    const journal = providerDebugLogPath().replace(/provider-debug\.jsonl$/, "");
-    expect(journal).toContain(`/groups/${group}/`);
+    const journal = dirname(providerDebugLogPath());
+    expect(basename(journal)).toBe(group);
+    expect(basename(dirname(journal))).toBe("groups");
     expect(existsSync(join(testDir, payload.textRef as string))).toBe(true);
     expect(existsSync(join(testDir, payload.timelineRef as string))).toBe(true);
   });
