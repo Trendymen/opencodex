@@ -34,7 +34,7 @@ import {
   NESTED_LIVE_LOCK_RECEIPT_KEY,
 } from "../helpers/nested-test-run-lock-controller";
 import { helperPath, repoPath, repoRoot } from "../helpers/repo-root";
-import { changedFixtureDiagnostic } from "../helpers/fork-changed-fixture-diagnostic";
+import { changedFixtureDiagnostic, changedFixturePathFacts } from "../helpers/fork-changed-fixture-diagnostic";
 import {
   acquireTestRunLock,
   resolveBareTestRunIdentity,
@@ -117,26 +117,6 @@ function commitFixture(cwd: string, path: string, contents: string, message: str
     message,
   );
   return runGit(cwd, "rev-parse", "HEAD");
-}
-
-function changedFixturePathFacts(cwd: string): Record<string, boolean> {
-  try {
-    const normalize = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
-    const original = normalize(cwd), real = normalize(realpathSync(cwd));
-    const result = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], { cwd, stdout: "pipe", stderr: "pipe", timeout: 1_000 });
-    if (result.exitCode !== 0) return { pathFactsAvailable: false };
-    const root = normalize(result.stdout.toString().trim());
-    const shortName = (path: string) => /(?:^|\/)[^/]*~\d+(?:\/|$)/i.test(path);
-    return {
-      pathFactsAvailable: true,
-      cwdMatchesRealpath: original === real, cwdMatchesGitRoot: original === root,
-      gitRootMatchesRealpath: root === real,
-      cwdMatchesRealpathIgnoringCase: original.toLowerCase() === real.toLowerCase(),
-      cwdMatchesGitRootIgnoringCase: original.toLowerCase() === root.toLowerCase(),
-      gitRootMatchesRealpathIgnoringCase: root.toLowerCase() === real.toLowerCase(),
-      cwdHasShortName: shortName(original), realpathHasShortName: shortName(real), gitRootHasShortName: shortName(root),
-    };
-  } catch { return { pathFactsAvailable: false }; }
 }
 
 function initChangedRunFixture(): { cwd: string; base: string; allocated: string } {
