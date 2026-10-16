@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { posix } from "node:path";
 import { debugProviderDiagnostic } from "../lib/debug";
 import { isDebugEnabled, isProviderTextDebugEnabled } from "../lib/debug-settings";
 import { redactSecretString } from "../lib/redact";
@@ -539,7 +539,7 @@ export function persistInboundResponsesDebugSummary(args: {
     textRef = group
       ? persistProviderDebugCaptureArtifact(group, "artifact", textPayload)
       : args.persist
-        ? join("provider-debug-artifacts", debugDay, debugHour, `${Date.now()}-${randomUUID()}.jsonl`)
+        ? posix.join("provider-debug-artifacts", debugDay, debugHour, `${Date.now()}-${randomUUID()}.jsonl`)
         : undefined;
     if (textRef && !group && !persistProviderDebugFile(textRef, textPayload)) textRef = undefined;
   }
@@ -547,7 +547,7 @@ export function persistInboundResponsesDebugSummary(args: {
     timelineRef = group
       ? persistProviderDebugCaptureArtifact(group, "timeline", timelinePayload)
       : args.persist
-        ? join("provider-debug", debugDay, debugHour, "timelines", `timeline-${Date.now()}-${randomUUID()}.jsonl`)
+        ? posix.join("provider-debug", debugDay, debugHour, "timelines", `timeline-${Date.now()}-${randomUUID()}.jsonl`)
         : undefined;
     if (timelineRef && !group && !persistProviderDebugFile(timelineRef, timelinePayload)) timelineRef = undefined;
     if (timelineRef) {

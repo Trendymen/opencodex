@@ -46,6 +46,7 @@
 - Provider 注册只在独立 draft 成功持久化后发布；遇到 `ConfigWritePublishedError` 保留已发布且与磁盘一致的 live 值。上下文上限保存失败由 `src/server/management/provider-context-cap-routes.ts` 回滚该路由字段。
 - `src/fork/debug-persistence.ts`、`src/fork/inbound-response-debug.ts`、`src/fork/outbound-debug.ts` 增加结构抓包。普通 debug 不保存正文/key/工具参数；文本样本同时要求 provider debug 和独立 `providerText`，并执行脱敏及预算限制。
 - 主日志与引用工件共用 4 MiB 分组、7 天和 20 GiB 预算；淘汰先删主日志，失败时保留引用工件。unsafe / 不可盘点条目保留并告警，诊断失败不影响 relay。
+- `textRef` 与 `timelineRef` 在所有平台均使用 `/` 分隔的相对路径；文件系统绝对路径使用本机分隔符。逐文件持久化回调沿用同一引用格式，安全解析器继续拒绝反斜杠。
 - `src/lib/config-ownership.ts` 仅收养带运行时标记的旧 home，收养前路径不登记为自有。debug 登记失败继续捕获，Kimi catalog 仍要求登记成功。
 
 ## 安装与维护边界
