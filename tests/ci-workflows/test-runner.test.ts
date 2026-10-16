@@ -122,7 +122,7 @@ function commitFixture(cwd: string, path: string, contents: string, message: str
 function initChangedRunFixture(): { cwd: string; base: string; allocated: string } {
   const allocated = mkdtempSync(join(tmpdir(), "opencodex-changed-ref-"));
   try {
-    if (Object.keys(process.env).some(key => /^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES)$/.test(key)))
+    if (Object.keys(process.env).some(key => /^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES)$/i.test(key)))
       throw new Error("changed fixture refuses inherited Git path overrides");
     runGit(allocated, "init", "--quiet");
     const cwd = runGit(allocated, "rev-parse", "--show-toplevel");
