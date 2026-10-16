@@ -42,6 +42,18 @@ export function deferred<T>() {
   return { promise, resolve };
 }
 
+export async function withReserveIngressCleanup<T>(body: () => T | Promise<T>, ...cleanups: Array<() => unknown>): Promise<T> {
+  const errors: unknown[] = [];
+  let result!: T;
+  try { result = await body(); } catch (error) { errors.push(error); }
+  for (const cleanup of cleanups) {
+    try { await cleanup(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "Reserve ingress body or cleanup failed");
+  return result;
+}
+
 function clearState(): void {
   clearComboSelectionState();
   clearComboTargetCooldowns();
@@ -93,24 +105,36 @@ export async function reserveIngressFixture(options: {
   const unexpected: string[] = [];
 
   const close = async () => {
-    holdUsage?.resolve();
-    holdCredential?.resolve();
-    for (const socket of sockets) socket.close();
-    try { await server?.stop(true); }
-    finally {
-      globalThis.fetch = nativeFetch;
-      for (const restore of restores.reverse()) restore();
-      clearState();
-      try { await flushConfigDirHardeningForTests(); }
-      finally {
-        setIcaclsRunnerForTests(null); setAsyncIcaclsRunnerForTests(null);
-        for (const [name, value] of oldEnv) {
-          if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    let serverStop = "not-started";
+    let hardening = "not-started";
+    await withReserveIngressCleanup(
+      () => { holdUsage?.resolve(); holdCredential?.resolve(); },
+      ...[...sockets].map(socket => () => socket.close()),
+      async () => {
+        serverStop = server ? "rejected" : "not-started";
+        await server?.stop(true);
+        if (server) serverStop = "fulfilled";
+      },
+      () => { globalThis.fetch = nativeFetch; },
+      ...restores.reverse(),
+      clearState,
+      async () => { hardening = "rejected"; await flushConfigDirHardeningForTests(); hardening = "fulfilled"; },
+      () => { setIcaclsRunnerForTests(null); },
+      () => { setAsyncIcaclsRunnerForTests(null); },
+      ...oldEnv.map(([name, value]) => () => {
+        if (value === undefined) delete process.env[name]; else process.env[name] = value;
+      }),
+      async () => {
+        try { await removeTreeAfterBackgroundWork(root); }
+        catch (error) {
+          const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+          const safeCode = ["EBUSY", "EPERM", "EACCES", "ENOTEMPTY"].includes(code ?? "") ? code : "other";
+          console.warn(`[reserve-ingress-cleanup] server-stop=${serverStop} config-hardening=${hardening} remove-tree=rejected code=${safeCode}`);
+          throw error;
         }
-        await removeTreeAfterBackgroundWork(root);
-      }
-    }
-    expect(unexpected).toEqual([]);
+      },
+      () => { expect(unexpected).toEqual([]); },
+    );
   };
 
   try {
@@ -264,5 +288,5 @@ export async function reserveIngressFixture(options: {
         expect(readFileSync(join(configHome, "config.json"), "utf8")).toBe(baselineDisk);
       },
     };
-  } catch (error) { await close(); throw error; }
+  } catch (error) { return withReserveIngressCleanup(() => { throw error; }, close); }
 }
