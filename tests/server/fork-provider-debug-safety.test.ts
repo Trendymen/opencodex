@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import * as filesystem from "node:fs";
 import {
   chmodSync,
   closeSync,
@@ -362,7 +363,13 @@ describe("provider debug consent and durable storage safety", () => {
     const fallback = seedGroup({ at: now - 2_000 });
     const survivor = seedGroup({ at: now - 1_000 });
     debugPersistence.setProviderDebugRetentionLimitsForTests({ maxTotalBytes: 12 * MEBIBYTE });
-    chmodSync(stuck.directory, 0o500);
+    const originalUnlink = filesystem.unlinkSync;
+    const removal = spyOn(filesystem, "unlinkSync").mockImplementation(path => {
+      if (String(path) === stuck.journal) {
+        throw Object.assign(new Error("index deletion blocked"), { code: "EACCES" });
+      }
+      return originalUnlink(path);
+    });
     try {
       persistMarker("capacity-after-stuck-index");
       expect(existsSync(stuck.journal)).toBe(true);
@@ -370,7 +377,7 @@ describe("provider debug consent and durable storage safety", () => {
       expect([fallback, survivor].some(group => !existsSync(group.journal) && !existsSync(group.artifact))).toBe(true);
       expect(readFileSync(debugPersistence.providerDebugLogPath(), "utf8")).toContain("capacity-after-stuck-index");
     } finally {
-      chmodSync(stuck.directory, 0o700);
+      removal.mockRestore();
     }
     for (const path of [stuck.journal, stuck.artifact, stuck.timeline]) {
       utimesSync(path, new Date(now - 8 * DAY_MS), new Date(now - 8 * DAY_MS));
