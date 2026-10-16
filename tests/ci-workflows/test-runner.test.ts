@@ -139,7 +139,11 @@ function initChangedRunFixture(): { cwd: string; base: string; allocated: string
     const base = commitFixture(cwd, "base.txt", "base\n", "base");
     return { cwd, base, allocated };
   } catch (error) {
-    removeTreeWithRetry(allocated);
+    try {
+      removeTreeWithRetry(allocated);
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "changed fixture initialization and cleanup failed");
+    }
     throw error;
   }
 }

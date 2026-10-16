@@ -21,6 +21,8 @@ import { findAvailablePort } from "../../src/server/ports";
 import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests, windowsSecretAclReapPendingAtOrBelow } from "../../src/lib/windows-secret-acl";
 import { assertSpendLedgerOwnerHeld, spendLedgerOwnerSnapshot } from "../../src/lib/spend-ledger-owner";
 import { pendingBackgroundWork } from "../../src/lib/background-work";
+import { closeRequestHistoryIndex } from "../../src/routing/history/indexer";
+import { clearResponseStateForTests, flushResponseState } from "../../src/responses/state";
 import { isTestHomeGuardArmed } from "../../src/lib/test-home-guard";
 import type { OcxConfig } from "../../src/types";
 import { fakeChatGptJwt } from "./fake-chatgpt-jwt";
@@ -149,6 +151,9 @@ export async function reserveIngressFixture(options: {
           if (server) serverStop = "fulfilled";
         } finally { afterStop = ownerState(); }
       },
+      closeRequestHistoryIndex,
+      flushResponseState,
+      clearResponseStateForTests,
       () => { globalThis.fetch = nativeFetch; },
       ...restores.reverse(),
       clearState,
