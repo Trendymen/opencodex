@@ -1,10 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { fixturePath } from "../helpers/repo-root";
 import { createCodexPassthroughFixture, disabledCodexPassthrough } from "../helpers/codex-passthrough-fixture";
-import { reserveIngressFixture, ACCESS, PROXY_KEY, deferred } from "../helpers/reserve-ingress-fixture";
+import { reserveIngressFixture, withReserveIngressCleanup, ACCESS, PROXY_KEY, deferred } from "../helpers/reserve-ingress-fixture";
 import { CODEX_PASSTHROUGH_CATALOG, resolveCodexPassthroughPermissions, type CodexPassthroughConfig } from "../../src/fork/codex-passthrough-contract";
 import { saveCodexAccountCredential } from "../../src/codex/account-store";
 import { updateAccountQuota } from "../../src/codex/auth-api";
@@ -13,6 +13,8 @@ import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
 import { setDebugSettings, resetDebugSettingsForTests } from "../../src/lib/debug-settings";
 import { resetProviderDebugPersistenceForTests } from "../../src/fork/debug-persistence";
 import { getConfigDir } from "../../src/config";
+import * as reserveRemoval from "../helpers/remove-tree";
+import * as reserveServer from "../../src/server";
 
 const legacyText = readFileSync(fixturePath("codex-passthrough-legacy.json"), "utf8");
 const legacy = JSON.parse(legacyText);
@@ -33,6 +35,98 @@ async function patch(fetcher: typeof fetch, base: string, provider: string, valu
     body: JSON.stringify({ codexPassthrough: value }), signal: AbortSignal.timeout(10_000) });
   expect(response.status).toBe(200); await response.text();
 }
+
+test("reserve fixture preserves startup and removal failures", async () => {
+  const startupError = new Error("controlled reserve startup failure");
+  const removalError = Object.assign(new Error("controlled reserve removal failure"), { code: "EBUSY" });
+  const originalFetch = globalThis.fetch;
+  const originalHome = process.env.OPENCODEX_HOME;
+  const realRemove = reserveRemoval.removeTreeAfterBackgroundWork;
+  const removal = spyOn(reserveRemoval, "removeTreeAfterBackgroundWork").mockImplementation(async path => {
+    await realRemove(path);
+    throw removalError;
+  });
+  let failure: unknown;
+  try {
+    await reserveIngressFixture({ configure() { throw startupError; } });
+  } catch (error) { failure = error; }
+  finally { removal.mockRestore(); }
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect((failure as AggregateError).errors).toHaveLength(2);
+  expect((failure as AggregateError).errors[0]).toBe(startupError);
+  expect((failure as AggregateError).errors[1]).toBe(removalError);
+  expect(globalThis.fetch).toBe(originalFetch);
+  expect(process.env.OPENCODEX_HOME).toBe(originalHome);
+});
+
+test("reserve fixture preserves shutdown and removal failures after restoring its globals", async () => {
+  const shutdownError = new Error("controlled reserve shutdown failure");
+  const removalError = Object.assign(new Error("controlled reserve removal failure"), { code: "EBUSY" });
+  const originalFetch = globalThis.fetch;
+  const originalHome = process.env.OPENCODEX_HOME;
+  const realStart = reserveServer.startServer;
+  const realRemove = reserveRemoval.removeTreeAfterBackgroundWork;
+  const startup = spyOn(reserveServer, "startServer").mockImplementation((...args) => {
+    const server = realStart(...args);
+    const realStop = server.stop.bind(server);
+    return new Proxy(server, { get(target, key) {
+      if (key === "stop") return async (closeActive: boolean) => { await realStop(closeActive); throw shutdownError; };
+      return Reflect.get(target, key, target);
+    } });
+  });
+  const removal = spyOn(reserveRemoval, "removeTreeAfterBackgroundWork").mockImplementation(async path => {
+    await realRemove(path);
+    throw removalError;
+  });
+  let failure: unknown;
+  try {
+    const fixture = await reserveIngressFixture();
+    await fixture.close();
+  } catch (error) { failure = error; }
+  finally { startup.mockRestore(); removal.mockRestore(); }
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect((failure as AggregateError).errors).toHaveLength(2);
+  expect((failure as AggregateError).errors[0]).toBe(shutdownError);
+  expect((failure as AggregateError).errors[1]).toBe(removalError);
+  expect(globalThis.fetch).toBe(originalFetch);
+  expect(process.env.OPENCODEX_HOME).toBe(originalHome);
+});
+
+test("fallback cleanup preserves every failure and closes the real gateway", async () => {
+  const bodyError = new Error("controlled fallback assertion failure");
+  const closeError = new Error("controlled fallback fixture close failure");
+  const gatewayError = new Error("controlled fallback gateway stop failure");
+  const gateway = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("fixture gateway") });
+  const url = gateway.url.toString();
+  const nativeFetch = globalThis.fetch;
+  let failure: unknown;
+  let reachable = true;
+  try {
+    expect(await (await nativeFetch(url, { signal: AbortSignal.timeout(1_000) })).text()).toBe("fixture gateway");
+    try {
+      await withReserveIngressCleanup(
+        () => { throw bodyError; },
+        () => { throw closeError; },
+        async () => { await gateway.stop(true); throw gatewayError; },
+      );
+    } catch (error) { failure = error; }
+    try { await nativeFetch(url, { signal: AbortSignal.timeout(1_000) }); }
+    catch { reachable = false; }
+  } finally { await gateway.stop(true); }
+  expect(reachable).toBe(false);
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect((failure as AggregateError).errors).toHaveLength(3);
+  expect((failure as AggregateError).errors[0]).toBe(bodyError);
+  expect((failure as AggregateError).errors[1]).toBe(closeError);
+  expect((failure as AggregateError).errors[2]).toBe(gatewayError);
+});
+
+test("reserve cleanup preserves a lone error and a successful body result", async () => {
+  const failure = new Error("controlled lone cleanup failure");
+  await expect(withReserveIngressCleanup(() => { throw failure; }, () => {})).rejects.toBe(failure);
+  await expect(withReserveIngressCleanup(() => 47, () => { throw failure; })).rejects.toBe(failure);
+  await expect(withReserveIngressCleanup(() => 47, () => {})).resolves.toBe(47);
+});
 
 test("legacy fixture is the immutable pre-implementation evidence", () => {
   expect(legacy.sourceHead).toBe("34f76ec760fd0d5381672fa7a419da0fed7e063c");
@@ -217,20 +311,22 @@ for (const routeKind of ["combo", "policy"] as const) for (const first of ["offi
     gatewayBodies.push(await request.json()); order.push("gateway");
     return first === "gateway" ? Response.json({ error: { code: "rate_limit_exceeded", message: "controlled gateway quota" } }, { status: 429 }) : Response.json(upstream);
   } });
-  const fixture = await createCodexPassthroughFixture({ mode: "direct", configure(config) {
-    config.providers.openai!.codexPassthrough = disabledCodexPassthrough();
-    config.providers.gateway = { adapter: "openai-responses", authMode: "key", apiKey: "sk-controlled-gateway", baseUrl: gateway.url.toString(), allowPrivateNetwork: true,
-      codexPassthrough: disabledCodexPassthrough() };
-    const candidates = (first === "official" ? ["openai", "gateway"] : ["gateway", "openai"]).map(provider => ({ provider, model: incoming.model }));
-    if (routeKind === "combo") config.combos = { contract: { strategy: "failover", targets: candidates } };
-    else config.routingProfiles = { contract: { candidates } };
-  }, upstream: async () => {
-    order.push("official"); return first === "official" ? Response.json({ error: { code: "rate_limit_exceeded", message: "controlled official quota" } }, { status: 429 }) : Response.json(upstream);
-  } });
-  const fixtureFetch = globalThis.fetch;
-  globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => new URL(new Request(input, init).url).origin === gateway.url.origin
-    ? nativeFetch(input, init) : fixtureFetch(input, init), { preconnect() {} });
-  try {
+  let closeFixture: (() => Promise<void>) | undefined;
+  await withReserveIngressCleanup(async () => {
+    const fixture = await createCodexPassthroughFixture({ mode: "direct", configure(config) {
+      config.providers.openai!.codexPassthrough = disabledCodexPassthrough();
+      config.providers.gateway = { adapter: "openai-responses", authMode: "key", apiKey: "sk-controlled-gateway", baseUrl: gateway.url.toString(), allowPrivateNetwork: true,
+        codexPassthrough: disabledCodexPassthrough() };
+      const candidates = (first === "official" ? ["openai", "gateway"] : ["gateway", "openai"]).map(provider => ({ provider, model: incoming.model }));
+      if (routeKind === "combo") config.combos = { contract: { strategy: "failover", targets: candidates } };
+      else config.routingProfiles = { contract: { candidates } };
+    }, upstream: async () => {
+      order.push("official"); return first === "official" ? Response.json({ error: { code: "rate_limit_exceeded", message: "controlled official quota" } }, { status: 429 }) : Response.json(upstream);
+    } });
+    closeFixture = fixture.close;
+    const fixtureFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => new URL(new Request(input, init).url).origin === gateway.url.origin
+      ? nativeFetch(input, init) : fixtureFetch(input, init), { preconnect() {} });
     const response = await fixture.request({ ...incoming, model: `${routeKind}/contract` }, clientHeaders);
     expect(response.status).toBe(200); expect((await response.json()).id).toBe(upstream.id);
     expect(order).toEqual(first === "official" ? ["official", "gateway"] : ["gateway", "official"]);
@@ -238,7 +334,7 @@ for (const routeKind of ["combo", "policy"] as const) for (const first of ["offi
     expect(fixture.seen[0]!.body).toMatchObject({ model: incoming.model, stream: false, temperature: incoming.temperature, unknown_valid_field: incoming.unknown_valid_field });
     expect(fixture.seen[0]!.headers.get("x-codex-routing-hint")).toBe("caller-hint");
     expect(gatewayBodies[0]).toMatchObject({ model: incoming.model, temperature: incoming.temperature });
-  } finally { await fixture.close(); await gateway.stop(true); }
+  }, () => closeFixture?.(), () => gateway.stop(true));
 });
 
 for (const [label, permissions] of [...forms, ["all off", disabledCodexPassthrough()] as const]) test(`pool_rotation_keeps_the_same_permissions_on_both_physical_sends (${label})`, async () => {
