@@ -119,6 +119,26 @@ function commitFixture(cwd: string, path: string, contents: string, message: str
   return runGit(cwd, "rev-parse", "HEAD");
 }
 
+function changedFixturePathFacts(cwd: string): Record<string, boolean> {
+  try {
+    const normalize = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
+    const original = normalize(cwd), real = normalize(realpathSync(cwd));
+    const result = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], { cwd, stdout: "pipe", stderr: "pipe", timeout: 1_000 });
+    if (result.exitCode !== 0) return { pathFactsAvailable: false };
+    const root = normalize(result.stdout.toString().trim());
+    const shortName = (path: string) => /(?:^|\/)[^/]*~\d+(?:\/|$)/i.test(path);
+    return {
+      pathFactsAvailable: true,
+      cwdMatchesRealpath: original === real, cwdMatchesGitRoot: original === root,
+      gitRootMatchesRealpath: root === real,
+      cwdMatchesRealpathIgnoringCase: original.toLowerCase() === real.toLowerCase(),
+      cwdMatchesGitRootIgnoringCase: original.toLowerCase() === root.toLowerCase(),
+      gitRootMatchesRealpathIgnoringCase: root.toLowerCase() === real.toLowerCase(),
+      cwdHasShortName: shortName(original), realpathHasShortName: shortName(real), gitRootHasShortName: shortName(root),
+    };
+  } catch { return { pathFactsAvailable: false }; }
+}
+
 function initChangedRunFixture(): { cwd: string; base: string } {
   const cwd = mkdtempSync(join(tmpdir(), "opencodex-changed-ref-"));
   runGit(cwd, "init", "--quiet");
@@ -207,7 +227,7 @@ test("SQLite writer",async()=>{expect(value).toBe(2);mkdirSync(${JSON.stringify(
     const result = Bun.spawnSync([process.execPath, ...args], {
       cwd, env: { ...process.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 30_000,
     });
-    if (result.exitCode !== 0) console.error(changedFixtureDiagnostic(result, args, cwd));
+    if (result.exitCode !== 0) console.error(changedFixtureDiagnostic(result, args, cwd), changedFixturePathFacts(cwd));
     expect(result.exitCode).toBe(0);
     const rows = readFileSync(records, "utf8").trim().split("\n").map(line => JSON.parse(line));
     expect(rows.filter(row => typeof row.id === "number").map(row => row.id).sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
@@ -1141,14 +1161,14 @@ describe("bun test argv", () => {
         });
         const diagnostic = changedFixtureDiagnostic(result, lane.args, cwd);
         diagnostics.push(diagnostic);
-        if (result.exitCode !== 0) console.error(diagnostic);
+        if (result.exitCode !== 0) console.error(diagnostic, changedFixturePathFacts(cwd));
         expect(result.exitCode).toBe(0);
         const text = result.stdout.toString() + result.stderr.toString();
         if (lane === plan[0]) expect(text).not.toContain("EXECUTED_claude-desktop-picker-routes");
         output += text;
       }
       const executed = output.match(/^EXECUTED_claude-desktop-picker-routes$/gm);
-      if (executed?.length !== 1) console.error(diagnostics.join("\n"));
+      if (executed?.length !== 1) console.error(diagnostics.join("\n"), changedFixturePathFacts(cwd));
       expect(executed).toHaveLength(1);
       expect(output).not.toContain("EXECUTED_claude-desktop-first-party-guards");
       expect(output).not.toContain("UNRELATED_ORDINARY");
