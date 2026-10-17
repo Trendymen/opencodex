@@ -80,7 +80,13 @@ describe("Responses core module boundaries", () => {
     const ingress = readResponsesCoreModule("core-pipeline.ts");
     const native = readResponsesCoreModule("passthrough-execution.ts");
     expect(ingress).toContain("const passthroughResult = await executePassthroughResponse(");
-    expect(ingress).toContain("if (passthroughResult instanceof Response) return finish(passthroughResult);");
+    expect(ingress).toContain("if (passthroughResult instanceof Response) return passthroughResult;");
+    expect(ingress).toContain("const response = await execute();");
+    expect(ingress).toContain("return finish(retention ? retention.deliver(response) : response);");
+    expect(ingress.indexOf("const response = await execute();"))
+      .toBeLessThan(ingress.indexOf("return finish(retention ? retention.deliver(response) : response);"));
+    expect(ingress.indexOf("return finish(retention ? retention.deliver(response) : response);"))
+      .toBeLessThan(ingress.indexOf("} finally {"));
     expect(ingress).toContain("sendBudgetState.pendingHopPermit === unclaimedHop");
     expect(ingress.indexOf("await executePassthroughResponse("))
       .toBeLessThan(ingress.indexOf("const sidecarPlans = await executeResponsesSidecars("));

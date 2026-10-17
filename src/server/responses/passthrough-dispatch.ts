@@ -45,7 +45,7 @@ import {
 import { restoreRoutedCustomCalls, RoutedCustomToolCompatError } from "../../responses/custom-tool-compat";
 import { XaiToolSchemaCompatibilityError } from "../../adapters/xai-tool-schema";
 import { MuseToolChoiceCompatibilityError } from "../../adapters/openai-responses/muse-tool-choice";
-import { formatErrorResponse } from "../../bridge";
+import { formatErrorResponse, type ResponsesTerminalStatus } from "../../bridge";
 import { redactSecretString } from "../../lib/redact";
 import {
   collectFunctionCallRepairSchemas,
@@ -56,7 +56,6 @@ import { normalizeCodexResponseSnapshotJson } from "../../fork/codex-passthrough
 import type { AdapterRequest } from "../../adapters/base";
 import { isXaiResponsesDestination, resolveProviderTransport } from "../../providers/xai-transport";
 import { CODE_MODE_EXEC_TOOL_NAME } from "../../types";
-import type { ResponsesTerminalStatus } from "../../bridge";
 import { hasPassiveAccountQuota, recordPassiveAccountQuota } from "../../providers/quota";
 import {
   isMuseSubscriptionUsagePayload,
@@ -70,7 +69,7 @@ import {
   sealRequestAttemptIdentity,
   recordAttemptCredentialSource,
 } from "../request-log";
-import { noteAttemptRecoveryWithheld } from "../request-log";
+import { noteAttemptRecoveryWithheld, type RequestLogContext } from "../request-log";
 import {
   upstreamHostHealthKey,
   normalizeUpstreamHostCircuitThreshold,
@@ -158,7 +157,6 @@ import {
   CONSOLE_GO_UPLOAD_RETRY_DELAY_MS,
   reasoningEffortRejectionText,
 } from "./core-opaque-recovery";
-import type { RequestLogContext } from "../request-log";
 import { deferProtocolSafeResetRecovery, preflightComboStreamResponse } from "./combo-stream-preflight";
 import { authorizeResendForRecovery } from "../../lib/request-resend-gate";
 import { ambiguousResendAllowanceFor, selfContainedResponsesBody } from "./reset-replay";

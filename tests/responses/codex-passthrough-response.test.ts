@@ -8,6 +8,10 @@ import { markCodexPassthroughResponse, codexPassthroughResponsePermissions } fro
 import { resolveCodexPassthroughPermissions } from "../../src/fork/codex-passthrough-contract";
 import { repoRoot } from "../helpers/repo-root";
 import { relayUnmodifiedCodexSse } from "../../src/fork/codex-passthrough-response";
+import { handleResponses } from "../../src/server/responses/core";
+import { createTranslatorBudget } from "../../src/lib/translator-budget";
+import type { OcxConfig } from "../../src/types";
+import { PROXY_KEY } from "../helpers/reserve-ingress-fixture";
 
 const input = { model: "gpt-5.6-sol", stream: false, input: "synthetic request" };
 const sparse = '{ "id": "resp_sparse", "status":"completed", "output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}], "future":{"ordered":[3,1,2]} }';
@@ -215,3 +219,43 @@ describe("terminal synthesis permission", () => {
     }
   });
 });
+
+for (const summary of ["retained progress", ""] as const) test(
+  `pipeline compaction ${summary ? "delivery" : "invalid summary"} preserves selected response permissions`, async () => {
+    let config!: OcxConfig;
+    const fixture = await createCodexPassthroughFixture({ mode: "pool", configure(current) {
+      config = current;
+      current.reasoningRetention = { enabled: true };
+      current.providers.openai!.codexPassthrough = disabledCodexPassthrough();
+    }, upstream: async () => new Response([
+      { type: "response.output_text.delta", delta: summary },
+      { type: "response.completed", response: { id: "resp_pipeline_retention", status: "completed", output: [] } },
+    ].map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+    { headers: { "content-type": "text/event-stream" } }) });
+    const budget = createTranslatorBudget();
+    try {
+      const response = await handleResponses(new Request("http://localhost/v1/responses", {
+        method: "POST", headers: { authorization: `Bearer ${PROXY_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify({ ...input, model: "openai/gpt-5.6-sol", input: [
+          { type: "message", role: "user", content: "compact this conversation" },
+          { type: "reasoning", summary: [{ type: "summary_text", text: "retained private reasoning" }] },
+          { type: "compaction_trigger" },
+        ] }),
+      }), config, { model: "", provider: "" }, { translatorBudget: budget,
+        compactionRoutingOverride: { sourceModel: "keyed/some-model" },
+      });
+      const payload = await response.json() as any;
+      expect(response.status).toBe(summary ? 200 : 502);
+      expect(fixture.seen).toHaveLength(1);
+      if (summary) {
+        expect(payload.output[0].type).toBe("compaction");
+        expect(payload.output[0].encrypted_content).toStartWith("ocx2:");
+      } else {
+        expect(payload.error.type).toBe("server_error");
+        expect(payload.error.code).toBe("upstream_server_error");
+        expect(payload.error.message).toBe("Compaction returned an empty summary");
+      }
+      expect(codexPassthroughResponsePermissions(response)?.addResponseRequestId).toBe(false);
+      expect(codexPassthroughResponsePermissions(response)?.addResponseBrowserHeaders).toBe(false);
+    } finally { budget.dispose(); await fixture.close(); }
+  });

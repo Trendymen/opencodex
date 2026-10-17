@@ -15,6 +15,7 @@ import { ACCESS } from "../helpers/reserve-ingress-fixture";
 import type { OcxConfig } from "../../src/types";
 import type { CodexPassthroughConfig } from "../../src/fork/codex-passthrough-contract";
 import { getProviderRegistryEntry } from "../../src/providers/registry";
+import { createResponsesPassthroughAdapter } from "../../src/adapters/openai-responses/passthrough";
 
 const upstream = async () => Response.json({ id: "resp_passthrough", status: "completed", model: "gpt-5.6-sol",
   output: [{ id: "msg_passthrough", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "done", annotations: [] }] }],
@@ -81,6 +82,29 @@ describe("official request permission controls", () => {
       } finally { await fixture.close(); }
     });
   }
+
+  for (const mode of ["direct", "pool"] as const) for (const row of [
+    { label: "default synthesis", synthesizeRoutingHint: undefined, want: "model=gpt-5.6-sol" },
+    { label: "disabled synthesis", synthesizeRoutingHint: false, want: "provider-hint" },
+    { label: "enabled synthesis", synthesizeRoutingHint: true, want: "model=gpt-5.6-sol" },
+  ]) test(`static routing hint respects ${row.label} and independent Lite permission (${mode})`, async () => {
+    for (const bridgeLiteMetadata of [false, true]) {
+      const fixture = await createCodexPassthroughFixture({ mode, upstream, configure(config) {
+        config.providers.openai!.headers = { "X-CoDeX-RoUtInG-HiNt": "provider-hint", "X-OpenAI-Internal-Codex-Responses-Lite": "false" };
+        config.providers.openai!.codexPassthrough = { ...disabledCodexPassthrough(), synthesizeRoutingHint: row.synthesizeRoutingHint, bridgeLiteMetadata };
+      } });
+      try {
+        const input = { ...body, client_metadata: { caller_field: "keep" } };
+        const response = await fixture.request(input, { "x-codex-routing-hint": "caller-hint", "x-openai-internal-codex-responses-lite": "true" });
+        await response.text(); expect(response.status).toBe(200);
+        expect(fixture.seen).toHaveLength(1);
+        expect(fixture.seen[0]!.headers.get("x-codex-routing-hint")).toBe(row.want);
+        expect(fixture.seen[0]!.headers.get("x-openai-internal-codex-responses-lite")).toBe("true");
+        expect(fixture.seen[0]!.body).toEqual({ ...input, client_metadata: bridgeLiteMetadata
+          ? { caller_field: "keep", ws_request_header_x_openai_internal_codex_responses_lite: "true" } : input.client_metadata });
+      } finally { await fixture.close(); }
+    }
+  });
 
   test("only_lite_permission_can_restore_lite_bridge", async () => {
     for (const bridgeLiteMetadata of [false, true]) {
@@ -205,6 +229,41 @@ describe("official request permission controls", () => {
         if (!normalizeEncryptedContent) expect(sent).toEqual(input);
         else { expect(JSON.stringify(sent.input)).toContain("synthetic compaction summary"); expect(JSON.stringify(sent.input)).not.toContain("ocx1:"); }
       } finally { await fixture.close(); }
+    }
+  });
+
+  for (const normalizeEncryptedContent of [undefined, false, true]) for (const identity of [
+    { label: "same identity", native: false, reasoning: false, strip: false },
+    { label: "native compaction mismatch", native: true, reasoning: false, strip: true },
+    { label: "reasoning identity mismatch", native: false, reasoning: true, strip: true },
+    { label: "both identity flags", native: true, reasoning: true, strip: true },
+  ]) test(`compaction ciphertext permission ${normalizeEncryptedContent} with ${identity.label}`, async () => {
+    for (const normalizeRequestParameters of [false, true]) {
+      const native = { type: "compaction", encrypted_content: "native-cross-fixture" };
+      const ocx = { type: "compaction", encrypted_content: "ocx1:Y29tcGFjdGlvbiBjcm9zcyBzdW1tYXJ5" };
+      const input = { model: "gpt-5.6-sol", stream: true, input: [native, ocx] };
+      const budget = createTranslatorBudget();
+      try {
+        const request = await createResponsesPassthroughAdapter({ adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex" }).buildRequest({
+          ...parseRequest(input), _stripNativeCompactionEncryptedContent: identity.native, _stripReasoningEncryptedContent: identity.reasoning,
+        }, { headers: new Headers(), translatorBudget: budget, codexPassthroughPermissions: resolveCodexPassthroughPermissions({
+          ...disabledCodexPassthrough(), normalizeRequestParameters, normalizeEncryptedContent,
+        }) });
+        expect(request.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+        const sent = JSON.parse(request.body);
+        expect(sent.input[0]).toEqual(normalizeEncryptedContent !== false && identity.strip ? {
+          type: "message", role: "user", content: [{ type: "input_text", text: "[earlier conversation was compacted; the summary is stored in a format this model cannot read]" }],
+        } : { type: "compaction", encrypted_content: "native-cross-fixture" });
+        if (normalizeEncryptedContent === false) expect(sent.input).toEqual([
+          { type: "compaction", encrypted_content: "native-cross-fixture" },
+          { type: "compaction", encrypted_content: "ocx1:Y29tcGFjdGlvbiBjcm9zcyBzdW1tYXJ5" },
+        ]);
+        else expect(sent.input[1]).toEqual({ type: "message", role: "user", content: [{ type: "input_text", text: expect.stringContaining("compaction cross summary") }] });
+        expect(input.input).toEqual([
+          { type: "compaction", encrypted_content: "native-cross-fixture" },
+          { type: "compaction", encrypted_content: "ocx1:Y29tcGFjdGlvbiBjcm9zcyBzdW1tYXJ5" },
+        ]);
+      } finally { budget.dispose(); }
     }
   });
 

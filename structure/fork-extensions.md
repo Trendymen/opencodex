@@ -21,6 +21,8 @@
 
 - `src/fork/codex-passthrough-contract.ts` 是配置、面板和运行时共用的纯 23 项目录。默认 `true` 只允许既有处理，仍受原功能开关约束；配置说明统一见 [Fork 配置](../docs-site/src/content/docs/reference/configuration/fork-extensions.md#gpt-subscription-processing)。
 - `codex-passthrough-turn.ts` 按 turn 冻结 Provider 覆盖值，最终 native Responses + canonical forward 目的地才解析许可；Direct、Pool、模型级 adapter 和 fallback 使用同一判断。它按当前许可、目的地和客户端偏好计算上游流模式与 JSON 客户端的 HTTP 选择；发送、恢复、预算和取消仍由 dispatch 管理。响应携带实际尝试的许可，非官方目的地不能继承父目标许可。
+- `src/adapters/openai-responses/transport.ts` 在共享传输构建点转发 caller 的 routing hint。关闭 hint 合成时，Provider 静态同名头优先；开启时仍按最终 body 合成。`normalizeEncryptedContent: false` 跳过 OCX1 解封装和 native compaction 密文规范化；默认开启时沿用官方身份切换清理条件。
+- `src/server/responses/core-pipeline.ts` 为准备阶段的早退响应附上 admission 许可；路由确定后为实际尝试的响应附上许可，包括 retention 交付后的响应与无效摘要的 502。retention 的 prepare、deliver、dispose 和发送资源释放仍由官方 pipeline 管理。
 - `codex-passthrough-source.ts` 在既有解压/读入点持有原始 JSON 文本，按共享 translator budget 管理副本；`codex-passthrough-request.ts` 在最终路由后按许可准备请求，提交选中尝试的 skills 副作用。EOF、错误、取消和 abort 释放来源，不增加独立硬上限。
 - 已获准的 agent-task-recovery 替换按原始/历史 item 来源登记，canonical 重建只重放这些替换，不回灌整份旧输入，也不再次恢复或查询缓存。Combo 序列化转移实际 child item 的来源；关闭历史展开不带回历史替换。新副本保留禁止持久化标记，替换字符串记入既有观察预算并随来源释放。
 - `codex-passthrough-response.ts` 和 `codex-passthrough-snapshot.ts` 接入已有 JSON/SSE/WS 交付点；关闭改写时保留业务字段，WS 仍需协议 framing，错误体保存在 `response`。缓存记录实际交付形状，不把无终态 EOF 记作成功。
@@ -43,7 +45,7 @@
 ## 配置与诊断边界
 
 - 官方 customModels 基础类型、CRUD、catalog 和 modality 判定继续使用。`src/config/custom-models.ts` 补校验、salvage、三方合并和公开字段投影，未知 opaque 字段只在内部保留。
-- Provider 注册只在独立 draft 成功持久化后发布；遇到 `ConfigWritePublishedError` 保留已发布且与磁盘一致的 live 值。上下文上限保存失败由 `src/server/management/provider-context-cap-routes.ts` 回滚该路由字段。
+- `src/server/management/provider-routes.ts` 在 Provider 保存尚未发布便失败时，恢复原 Provider 属性；`setDefault: true` 同时恢复原默认值。遇到 `ConfigWritePublishedError` 保留已发布且与磁盘一致的 Provider 与默认值。上下文上限保存失败由 `src/server/management/provider-context-cap-routes.ts` 回滚该路由字段。
 - `src/fork/debug-persistence.ts`、`src/fork/inbound-response-debug.ts`、`src/fork/outbound-debug.ts` 增加结构抓包。普通 debug 不保存正文/key/工具参数；文本样本同时要求 provider debug 和独立 `providerText`，并执行脱敏及预算限制。
 - 主日志与引用工件共用 4 MiB 分组、7 天和 20 GiB 预算；淘汰先删主日志，失败时保留引用工件。unsafe / 不可盘点条目保留并告警，诊断失败不影响 relay。
 - `textRef` 与 `timelineRef` 在所有平台均使用 `/` 分隔的相对路径；文件系统绝对路径使用本机分隔符。逐文件持久化回调沿用同一引用格式，安全解析器继续拒绝反斜杠。
