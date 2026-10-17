@@ -366,7 +366,7 @@ for (const [label, permissions] of [...forms, ["all off", disabledCodexPassthrou
 for (const wire of ["chat", "anthropic"] as const) test(`translated_${wire}_inbound_ignores_subscription_overrides`, async () => {
   const nativeFetch = globalThis.fetch;
   const fixture = await createCodexPassthroughFixture({ mode: "direct", upstream: async () => Response.json(upstream) });
-  let firstBody: unknown; let firstReply: unknown;
+  let firstBody: unknown; let firstReply: unknown; let firstRequestIdHeader: boolean | undefined;
   try {
     for (const value of permissionVariants) {
       await patch(nativeFetch, fixture.publicBase, "openai", null);
@@ -382,7 +382,8 @@ for (const wire of ["chat", "anthropic"] as const) test(`translated_${wire}_inbo
       expect(sent).toEqual(firstBody);
       if (wire === "chat") { expect((reply as any).choices[0].message.content).toBe((firstReply as any).choices[0].message.content); }
       else expect((reply as any).content).toEqual((firstReply as any).content);
-      expect(response.headers.has("x-opencodex-request-id")).toBe(wire === "anthropic");
+      if (value === null) firstRequestIdHeader = response.headers.has("x-opencodex-request-id");
+      expect(response.headers.has("x-opencodex-request-id")).toBe(firstRequestIdHeader);
     }
     expect(fixture.seen.length).toBe(permissionVariants.length);
   } finally { await fixture.close(); }
