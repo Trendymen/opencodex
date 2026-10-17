@@ -1,7 +1,7 @@
 # Trendymen Fork 差异
 
 记录当前代码相对 [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) 已 rebase 基线的剩余能力。
-基线：`v2.87.0`（`04d4ad8ce9e174a9f8d852e5bca0f52776bb7374`）；包版本见 [package.json](package.json)，发布状态以 Tag 和 Release 为准。
+基线：`v2.88.0`（`6936d9885d8a9bda9301737affcbaf1a4ff00e17`）；包版本见 [package.json](package.json)，发布状态以 Tag 和 Release 为准。
 
 官方文档保留上游原文。Fork 结构约束见 [structure/fork-extensions.md](structure/fork-extensions.md)，配置用法见 [Fork reference](docs-site/src/content/docs/reference/fork-extensions.md)，发布补充见 [FORK_MAINTAINERS.md](FORK_MAINTAINERS.md)。
 能力变化时原地更新本文；历史设计、执行步骤、冲突和验证流水从 Git 历史、任务材料及 Release Notes 查阅。
