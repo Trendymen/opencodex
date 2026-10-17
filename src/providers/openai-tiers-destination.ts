@@ -100,7 +100,7 @@ export function isOpenAiOrChatGptHost(baseUrl: string | undefined): boolean {
  * merely speaks the Responses wire cannot without an explicit capability opt-in (#422).
  * This is a protocol claim, not OpenAI identity or permission to forward caller credentials.
  */
-export function supportsNativeResponsesCompactEndpoint<T extends OpenAiDestinationShape>(
+export function supportsNativeResponsesCompactEndpoint<T extends OpenAiDestinationShape & { readonly supportsNativeCompactEndpoint?: boolean }>(
   providerName: string,
   provider: T,
 ): boolean {
@@ -114,7 +114,7 @@ export function supportsNativeResponsesCompactEndpoint<T extends OpenAiDestinati
 }
 
 /** Native v2 is independent of the v1 endpoint and ciphertext replay capabilities. */
-export function supportsNativeResponsesCompactionTrigger(provider: OcxProviderConfig): boolean {
+export function supportsNativeResponsesCompactionTrigger<T extends OpenAiDestinationShape & { readonly supportsNativeCompactionTrigger?: boolean }>(provider: T): boolean {
   return isCanonicalOpenAiForwardProvider(provider)
     || (provider.adapter === "openai-responses" && provider.supportsNativeCompactionTrigger === true);
 }
