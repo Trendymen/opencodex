@@ -190,9 +190,17 @@ describe("Responses fetch-helper import boundary", () => {
       "../../lib/upstream-http-version",
       // Import-free plugin rewrite slot (src/plugins/upstream-hooks.ts).
       "../../plugins/upstream-hooks",
+      "../../providers/openai-tiers-destination",
       "../../providers/request-pacing",
       "./ws-upstream",
     ]);
+    expect(expectRuntimeImportBoundary(readFileSync(resolve(repoRoot, "src/providers/openai-tiers-destination.ts"), "utf8"))).toEqual([
+      "../adapters/openai-responses-url",
+      "./openai-model-identity",
+    ]);
+    for (const dependency of ["src/adapters/openai-responses-url.ts", "src/providers/openai-model-identity.ts"]) {
+      expect(expectRuntimeImportBoundary(readFileSync(resolve(repoRoot, dependency), "utf8"))).toEqual([]);
+    }
   });
 
   test("the guard recognizes runtime edges and ignores type-only imports", () => {
