@@ -35,7 +35,7 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 | --- | --- |
 | `normalizeRequestParameters` | 既有官方后端参数清理、默认值和原条件下的强制流式请求。 |
 | `expandRequestHistory` | 为 `previous_response_id` 展开已保存的续接历史。 |
-| `normalizeEncryptedContent` | 既有 encrypted-content 规范化；任务恢复失败处理单独保留。 |
+| `normalizeEncryptedContent` | 解封装 OCX1，并按既有身份切换条件规范化 native compaction 密文。关闭时跳过该规范化；任务恢复失败处理单独保留。 |
 | `snapshotSkillsCatalog` | 在既有 skills 配置要求时应用技能目录快照。 |
 | `rewriteAnnotationInstructions` | 改写已识别的 Codex 注解说明，要求输出裸 directive。 |
 | `bridgeLiteMetadata` | 把已识别的 Lite header 补到缺失的请求 metadata，不覆盖显式值。 |
@@ -57,12 +57,14 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 | 字段 | 开启后允许的处理 |
 | --- | --- |
-| `synthesizeRoutingHint` | 生成缺失的 `x-codex-routing-hint`。 |
+| `synthesizeRoutingHint` | 按最终请求正文生成 `x-codex-routing-hint`。 |
 | `synthesizeSessionId` | 生成缺失的 `session_id`。 |
 | `addResponseRequestId` | 添加 OCX 的 `x-opencodex-request-id` 返回头。 |
 | `addResponseBrowserHeaders` | 添加 OCX 的浏览器 CORS/可见头字段；关闭后，跨域浏览器客户端可能无法读取响应。 |
 
 关闭头字段生成不会删除调用方或 Provider 的显式头。认证、选中账号身份、必要 HTTP/WebSocket framing 和既有传输及安全检查继续生效。
+
+`synthesizeRoutingHint: false` 时，Provider 静态配置的 routing hint 优先于调用方的值。开启合成时，既有逻辑按最终正文生成的 hint 可以覆盖这两种值。
 
 ### 本地错误策略
 
@@ -145,7 +147,9 @@ customModels 类型、CRUD 和 catalog 行已是官方能力。Fork 增加严格
 
 `customModels[].codexToolMode` 支持 `code_mode_only`、`shell` 或继承：创建省略为继承，更新省略保留存储值，更新 `null` 清除。CLI 使用 `--tool-mode code_mode_only|shell|inherit`，补齐既有 catalog 字段的管理入口。
 
-`PUT /api/provider-context-caps` 保存失败恢复该路由的 live 上限字段与 pending deletions，不刷新 catalog；这不保证所有配置字段都具备回滚。Provider 注册只在 draft 保存后发布；`ConfigWritePublishedError` 保留已发布且与磁盘一致的值。
+`PUT /api/provider-context-caps` 保存失败恢复该路由的 live 上限字段与 pending deletions，不刷新 catalog；这不保证所有配置字段都具备回滚。
+
+`POST /api/providers` 在尚未发布便失败时，恢复原 Provider 条目；`setDefault: true` 同时恢复原默认值。`ConfigWritePublishedError` 保留已经发布的 Provider 和默认值，使其与磁盘一致。
 
 ## 加密子任务恢复
 

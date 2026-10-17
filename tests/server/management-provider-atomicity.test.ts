@@ -442,6 +442,71 @@ describe("provider POST publication boundary", () => {
     expect(h.events).toEqual(["save"]);
   });
 
+  test.each([false, true])("a pre-rename overwrite failure restores the existing provider (setDefault=%s)", async setDefault => {
+    const config = fixture();
+    saveConfig(config);
+    armClaudeCodeBaseline(config);
+    const originalProvider = config.providers.relay;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(config.providers, "relay");
+    const originalBytes = readFileSync(join(home, "config.json"), "utf8");
+    const h = harness(config, saveConfigPreservingClaudeCode);
+    const write = atomicWrite.atomicWriteFile;
+    let injections = 0;
+    spyOn(atomicWrite, "atomicWriteFile").mockImplementation((path, bytes, io, hooks) => {
+      write(path, bytes, io, {
+        ...hooks,
+        beforeRename: (temp, target) => {
+          hooks?.beforeRename?.(temp, target);
+          expect(() => prepareConfigMutationDatabasePathForWrite()).toThrow("must not run inside");
+          expect(readFileSync(target, "utf8")).toBe(originalBytes);
+          expect(JSON.parse(readFileSync(temp, "utf8")).providers.relay.note).toBe("overwrite");
+          injections++;
+          throw failure;
+        },
+      });
+    });
+
+    await expect(h.post({ name: "relay", provider: {
+      adapter: "openai-chat", baseUrl: "https://relay.example/v1", models: ["relay-model"], note: "overwrite",
+    }, setDefault })).rejects.toBe(failure);
+
+    expect(injections).toBe(1);
+    expect(readFileSync(join(home, "config.json"), "utf8")).toBe(originalBytes);
+    expect(() => prepareConfigMutationDatabasePathForWrite()).not.toThrow();
+    expect(h.events).toEqual(["save"]);
+    expect(config.providers.relay).toBe(originalProvider);
+    expect(Object.getOwnPropertyDescriptor(config.providers, "relay")).toEqual(originalDescriptor);
+    expect(config.defaultProvider).toBe("fallback");
+  });
+
+  test("a post-rename overwrite failure retains the published provider and default", async () => {
+    const config = fixture();
+    saveConfig(config);
+    armClaudeCodeBaseline(config);
+    const originalProvider = config.providers.relay;
+    const h = harness(config, saveConfigPreservingClaudeCode);
+    const write = atomicWrite.atomicWriteFile;
+    spyOn(atomicWrite, "atomicWriteFile").mockImplementation((path, bytes, io, hooks) => {
+      write(path, bytes, io, {
+        ...hooks,
+        afterRename: target => { hooks?.afterRename?.(target); throw failure; },
+      });
+    });
+
+    await expect(h.post({ name: "relay", provider: {
+      adapter: "openai-chat", baseUrl: "https://relay.example/v1", models: ["relay-model"], note: "overwrite",
+    }, setDefault: true })).rejects.toMatchObject({ name: "ConfigWritePublishedError", cause: failure });
+
+    const disk = JSON.parse(readFileSync(join(home, "config.json"), "utf8")) as OcxConfig;
+    expect(disk.providers.relay.note).toBe("overwrite");
+    expect(config.providers.relay).not.toBe(originalProvider);
+    expect(config.providers.relay).toEqual(disk.providers.relay);
+    expect(config.defaultProvider).toBe("relay");
+    expect(config.defaultProvider).toBe(disk.defaultProvider);
+    expect(() => prepareConfigMutationDatabasePathForWrite()).not.toThrow();
+    expect(h.events).toEqual(["save"]);
+  });
+
   test("an unpublished pinned overwrite restores the existing provider", async () => {
     const config = fixture();
     saveConfig(config);

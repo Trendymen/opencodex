@@ -1441,7 +1441,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         return;
       }
       const previous = Object.getOwnPropertyDescriptor(config.providers, name);
-      const rollback = !existing || pinsOwned
+      const rollback = !existing || pinsOwned || body.setDefault === true
         ? captureConfigTopLevelRollback(config, ["defaultProvider", "modelDiscovery", "disabledModels"])
         : undefined;
       try {
@@ -1458,10 +1458,10 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         (deps.saveConfigPreservingClaudeCode ?? saveConfigPreservingClaudeCode)(config);
         savedProvider = candidate;
       } catch (error) {
-        if (rollback && !(error instanceof ConfigWritePublishedError)) {
+        if (!(error instanceof ConfigWritePublishedError)) {
           if (previous) Object.defineProperty(config.providers, name, previous);
           else delete config.providers[name];
-          rollback();
+          rollback?.();
         }
         throw error;
       }

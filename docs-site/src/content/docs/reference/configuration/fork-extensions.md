@@ -35,7 +35,7 @@ The paths in these tables are relative to `codexPassthrough`. All defaults are `
 | --- | --- |
 | `normalizeRequestParameters` | Existing official-backend parameter cleanup, defaults and forced streaming where previously required. |
 | `expandRequestHistory` | Expand saved continuation history for `previous_response_id`. |
-| `normalizeEncryptedContent` | Existing encrypted-content normalization; task-recovery failure handling remains separate. |
+| `normalizeEncryptedContent` | Decode OCX1 envelopes and normalize native compaction ciphertext under the existing identity-change conditions. Disabling this skips that normalization; task-recovery failure handling remains separate. |
 | `snapshotSkillsCatalog` | Apply the skills-catalog snapshot when the existing skills settings require it. |
 | `rewriteAnnotationInstructions` | Rewrite recognized Codex annotation instructions to request bare directives. |
 | `bridgeLiteMetadata` | Copy the recognized Lite header into missing request metadata without replacing explicit values. |
@@ -57,12 +57,14 @@ The paths in these tables are relative to `codexPassthrough`. All defaults are `
 
 | Field | Operation permitted when enabled |
 | --- | --- |
-| `synthesizeRoutingHint` | Generate a missing `x-codex-routing-hint`. |
+| `synthesizeRoutingHint` | Generate `x-codex-routing-hint` from the final request body. |
 | `synthesizeSessionId` | Generate a missing `session_id`. |
 | `addResponseRequestId` | Add OCX's `x-opencodex-request-id` response header. |
 | `addResponseBrowserHeaders` | Add OCX's browser CORS/exposed-header fields. Disabling this can prevent cross-origin browser clients from reading responses. |
 
 Disabling header synthesis does not delete explicit caller or provider headers. Authentication, selected-account identity, required HTTP/WebSocket framing and existing transport/security checks still apply.
+
+With `synthesizeRoutingHint: false`, a provider-configured routing hint takes precedence over the caller's hint. With synthesis enabled, the existing body-derived hint can replace either value.
 
 ### Local error policies
 
@@ -145,7 +147,9 @@ Custom-model types, CRUD and catalog rows already exist upstream. The Fork adds 
 
 `customModels[].codexToolMode` supports `code_mode_only`, `shell`, or inheritance. Create omission inherits; update omission retains the stored value; update `null` clears it. The CLI uses `--tool-mode code_mode_only|shell|inherit`; this supplements the existing catalog consumer of the field.
 
-Failed saves to `PUT /api/provider-context-caps` restore that route's live context-cap fields and pending deletions without refreshing the catalog. This guarantee does not extend to every configuration field. Provider registration publishes its draft only after saving; a `ConfigWritePublishedError` retains the already-published disk-consistent value.
+Failed saves to `PUT /api/provider-context-caps` restore that route's live context-cap fields and pending deletions without refreshing the catalog. This guarantee does not extend to every configuration field.
+
+If `POST /api/providers` fails before publication, it restores the previous provider entry and, for `setDefault: true`, the previous default. A `ConfigWritePublishedError` retains the already-published provider and default so they remain consistent with disk.
 
 ## Encrypted task recovery
 
