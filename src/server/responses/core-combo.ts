@@ -110,7 +110,7 @@ import { preflightComboStreamResponse } from "./combo-stream-preflight";
 import { streamingContextOverflowResponse, jsonContextOverflowResponse, lateAttributionLimitResponse } from "./context-overflow";
 import { mandatoryResponsesReasoningReplayUnavailable } from "./core-replay";
 import { settleOperatorReplacement } from "../../lib/upstream-retry";
-import { codexPassthroughResponsePermissions, codexPassthroughRequestSource } from "../../fork/codex-passthrough-turn";
+import { carryCodexPassthroughResponse, codexPassthroughResponsePermissions, codexPassthroughRequestSource } from "../../fork/codex-passthrough-turn";
 import { bindCodexRequestHistory, linkCodexRequestReplay } from "../../fork/codex-passthrough-source";
 import { createComboProtocolLanes, dispatchNativeComboChild } from "./core-combo-native";
 import { createJevModelInvoker } from "./jev-model-invoke";
@@ -1054,10 +1054,10 @@ export async function executeComboResponses(
       if (preflight.kind === "failed") {
         callbackGate.discard();
         terminalRecorder?.("failed", preflight.response.status);
-        response = preflight.response;
+        response = carryCodexPassthroughResponse(response, preflight.response);
         preflightModelRefusal = preflight.codexModelRefusal;
       } else {
-        response = preflight.response;
+        response = carryCodexPassthroughResponse(response, preflight.response);
         if (nativePassthrough) markNativePassthroughSseResponse(response);
         if (eagerRelay) markEagerRelaySseResponse(response);
       }

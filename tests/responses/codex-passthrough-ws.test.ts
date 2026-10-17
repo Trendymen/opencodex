@@ -1,16 +1,51 @@
 import { expect, test } from "bun:test";
 import { normalizeResponsesWsRelayEvent } from "../../src/server/responses/codex-ws-wire";
 import { sendResponseToWebSocket } from "../../src/server/ws-bridge";
-import { markCodexPassthroughResponse } from "../../src/fork/codex-passthrough-turn";
+import { markCodexPassthroughResponse, codexPassthroughResponsePermissions } from "../../src/fork/codex-passthrough-turn";
 import { resolveCodexPassthroughPermissions } from "../../src/fork/codex-passthrough-contract";
-import { disabledCodexPassthrough } from "../helpers/codex-passthrough-fixture";
+import { createCodexPassthroughFixture, disabledCodexPassthrough } from "../helpers/codex-passthrough-fixture";
 import { codexWsExchange } from "../../src/server/responses/codex-ws-exchange";
 import { CodexWsSession } from "../../src/server/responses/codex-ws-session";
 import { prepareCodexWsRequest } from "../../src/server/responses/codex-ws-request";
 import { createCodexPrivateCredentialGuard, protectCodexPrivateSse } from "../../src/fork/codex-passthrough-secrets";
 import { createTranslatorBudget } from "../../src/lib/translator-budget";
+import { handleResponses } from "../../src/server/responses/core";
+import { PROXY_KEY } from "../helpers/reserve-ingress-fixture";
+import type { OcxConfig } from "../../src/types";
 
 const off = resolveCodexPassthroughPermissions(disabledCodexPassthrough());
+for (const terminal of ["response.done", "response.failed"] as const) test(`combo preflight retains selected child permissions through final WS: ${terminal}`, async () => {
+  let config!: OcxConfig;
+  const error = { type: "server_error", code: "upstream_server_error", message: "fixture preflight failure" };
+  const usage = { input_tokens: 1, output_tokens: 1, total_tokens: 2 };
+  const payload = { type: terminal, response: { id: "resp_combo_raw", status: terminal === "response.done" ? "completed" : "failed",
+    output: [], usage, ...(terminal === "response.failed" ? { error } : {}) } };
+  const text = JSON.stringify(payload);
+  const fixture = await createCodexPassthroughFixture({ mode: "pool", configure(current) {
+    config = current;
+    current.providers.openai!.codexPassthrough = disabledCodexPassthrough();
+    current.combos = { raw: { strategy: "failover", targets: [{ provider: "openai", model: "gpt-5.6-sol" }] } };
+  }, upstream: async () => new Response(`event: ${terminal}\ndata: ${text}\n\n`, { headers: { "content-type": "text/event-stream" } }) });
+  try {
+    const response = await handleResponses(new Request("http://localhost/v1/responses", {
+      method: "POST", headers: { authorization: `Bearer ${PROXY_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "combo/raw", stream: true, input: "fixture combo input" }),
+    }), config, { model: "", provider: "" }, { inboundTransport: "websocket" });
+    const sent: string[] = []; const terminals: string[] = [];
+    const socket = { data: {}, readyState: 1, send(value: string) { sent.push(value); return value.length; }, getBufferedAmount: () => 0 } as any;
+    await sendResponseToWebSocket(socket, response, () => true, { onTerminal: value => terminals.push(value) });
+    expect(fixture.seen).toHaveLength(1);
+    if (terminal === "response.done") {
+      expect(response.status).toBe(200); expect(sent).toEqual([text]); expect(terminals).toEqual(["completed"]);
+    } else {
+      expect(response.status).toBe(502); expect(sent).toHaveLength(1);
+      expect(JSON.parse(sent[0]!)).toMatchObject({ type: "error", status: 502, error, response: { error, response: { error, usage } } });
+    }
+    expect(codexPassthroughResponsePermissions(response)?.backfillResponseFields).toBe(false);
+    expect(codexPassthroughResponsePermissions(response)?.synthesizeTerminalFailure).toBe(false);
+  } finally { await fixture.close(); }
+});
+
 for (const mode of ["oversized", "stall", "cancel"] as const) test(`raw WS errors retain bounded read and cancellation (${mode})`, async () => {
   let controller!: ReadableStreamDefaultController<Uint8Array>; let cancelled = 0; let current = true;
   const source = new ReadableStream<Uint8Array>({ start(value) {
