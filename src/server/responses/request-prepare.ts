@@ -1451,6 +1451,7 @@ export async function prepareResponsesRequest(
           Object.assign(next, { _clientThreadId: previous._clientThreadId, _codexOwnThreadId: previous._codexOwnThreadId,
             _cursorClientThreadId: previous._cursorClientThreadId, _cursorConversationId: previous._cursorConversationId,
             _reasoningReplayScope: previous._reasoningReplayScope, _promptCacheKeyIsSharedCohort: previous._promptCacheKeyIsSharedCohort,
+            _nativeReasoningRetention: previous._nativeReasoningRetention,
             _cursorIsolateConversation: previous._cursorIsolateConversation, _memoryModelPhase: previous._memoryModelPhase,
             _stripReasoningEncryptedContent: previous._stripReasoningEncryptedContent, _dropForeignReasoningItemIds: previous._dropForeignReasoningItemIds,
             _providerContinuationCandidate: previous._providerContinuationCandidate, _providerContinuationOwner: previous._providerContinuationOwner,
