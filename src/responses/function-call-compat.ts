@@ -1,4 +1,5 @@
 import { coerceIntegerToolArguments } from "../lib/tool-argument-integers";
+import { repairSpawnAgentForkTurnsArguments } from "../fork/spawn-agent-compat";
 import { namespacedToolName } from "../types/tools";
 import { rewriteRoutedNamespaceToolsForUpstream } from "./namespace-tool-compat";
 import { collectResponsesToolGroups } from "./tool-groups";
@@ -163,8 +164,9 @@ function repairItem(item: unknown, schemas: FunctionCallRepairSchemas, completed
       if (unsafe) return item;
     } catch { return item; }
   }
+  const forkTurnsArguments = repairSpawnAgentForkTurnsArguments(raw, schema);
   const integerRepaired = coerceIntegerToolArguments(
-    raw || "{}",
+    forkTurnsArguments || "{}",
     schema.parameters,
     schema.namespace ? undefined : schema.name,
   );

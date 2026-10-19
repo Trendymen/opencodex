@@ -6,10 +6,6 @@
   ],
   "absentPaths": [
     {
-      "path": "docs/",
-      "reason": "the root docs/ folder is retired; ops/docs-and-release.md documents where its material went and that no docs/ tree is tracked"
-    },
-    {
       "path": "go/",
       "reason": "the Go native-runtime experiment is retired; ops/docs-and-release.md documents that no go/ tree is tracked"
     }
@@ -487,6 +483,14 @@
         "src/server/responses/passthrough-dispatch.ts",
         "src/codex/catalog/routed-gather.ts"
       ]
+    },
+    {
+      "path": "fork-extensions.md",
+      "tier": 4,
+      "title": "Trendymen Fork Extensions",
+      "scope": "Fork-only runtime, diagnostics and maintenance contracts.",
+      "documents": ["src/fork/", "src/claude/intercept/picker-listener.ts", ".github/workflows/ci.yml", "src/server/responses/core-combo.ts", "src/codex/websocket-activity.ts"],
+      "forkOnly": true
     },
     {
       "path": "providers/jev-decision.md",
