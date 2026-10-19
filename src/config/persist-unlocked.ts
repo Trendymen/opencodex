@@ -1,6 +1,7 @@
 import { normalizeAccountAutoPauseRevisions, observeAccountAutoPauseRevisions, snapshotAutoPauseFingerprints } from "./account-auto-pause-revisions";
 import { existsSync, readFileSync } from "node:fs";
 import { configReasoningPinsConfigError } from "./provider-validation";
+import { configAgentMessageFormatError } from "./diagnostics";
 import type { OcxConfig } from "../types";
 import { withPreservedDiskOnlyProviders } from "../usage/user-cost-overlays";
 import { refreshConfigDerivedRegistries } from "./derived-registries";
@@ -66,6 +67,8 @@ function failClosedClientPersistenceError(
 export function persistConfigUnlocked(config: OcxConfig): boolean {
   const pinError = configReasoningPinsConfigError(config);
   if (pinError) throw new Error(pinError);
+  const agentMessageFormatError = configAgentMessageFormatError(config);
+  if (agentMessageFormatError) throw new Error(agentMessageFormatError);
   const configPath = getConfigPath();
   const rawBeforeWrite = readRawConfigJson();
   const clientPersistenceError = failClosedClientPersistenceError(rawBeforeWrite, config);
