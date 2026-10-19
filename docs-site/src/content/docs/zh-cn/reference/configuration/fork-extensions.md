@@ -33,7 +33,7 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 | 字段 | 开启后允许的处理 |
 | --- | --- |
-| `normalizeRequestParameters` | 既有官方后端参数清理、默认值和原条件下的强制流式请求。 |
+| `normalizeRequestParameters` | 既有官方后端参数清理、默认值和原条件下的强制流式请求，以及未声明 hosted-search 工具时的自动历史投影。Provider 显式开启的 `projectResponsesLiteHostedSearchHistory` 保持独立。 |
 | `expandRequestHistory` | 为 `previous_response_id` 展开已保存的续接历史。 |
 | `normalizeEncryptedContent` | 解封装 OCX1，并按既有身份切换条件规范化 native compaction 密文。关闭时跳过该规范化；任务恢复失败处理单独保留。 |
 | `snapshotSkillsCatalog` | 在既有 skills 配置要求时应用技能目录快照。 |
@@ -129,7 +129,7 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 }
 ```
 
-全部关闭时，保留请求 JSON 值、字段是否存在、未知字段和数组顺序；显式模型/Fast 路由、选中账号认证和必要传输规则仍生效。JSON 可以重新序列化。需要 framing 或私有凭据保护时，不保证响应字节完全一致。关闭错误改写时，客户端 WebSocket 错误帧在 `response` 中保留完整上游错误体。
+全部关闭时，保留请求 JSON 值、字段是否存在、未知字段和数组顺序；显式模型/Fast 路由、选中账号认证、必要传输规则及 Provider 独立开启的 `projectResponsesLiteHostedSearchHistory` 仍生效。需要原样保留 hosted-search 历史时，也须关闭这个独立选项。JSON 可以重新序列化。需要 framing 或私有凭据保护时，不保证响应字节完全一致。关闭错误改写时，客户端 WebSocket 错误帧在 `response` 中保留完整上游错误体。
 
 OCX 实际注入的私有凭据始终在交付前受保护，包含 Pool/已存主登录凭据及敏感配置头值。无法确认安全交付时，在响应提交前返回 `upstream_error_protection_failed`，已提交的流则中止，不伪造成功终态。
 
