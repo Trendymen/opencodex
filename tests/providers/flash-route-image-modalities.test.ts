@@ -19,7 +19,10 @@
  * declarations, the native-vs-sidecar distinction, the catalog advertisement,
  * and the combo intersection they feed.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   applyProviderConfigHints,
   deriveComboCatalogModel,
@@ -33,6 +36,8 @@ import { providerConfigSeed } from "../../src/providers/derive";
 import { isModelVisionSidecarConsumer } from "../../src/vision/eligibility";
 import { nativeOpenAiAutoCompactTokenLimit } from "../../src/codex/catalog/metadata";
 import type { CatalogModel, OcxConfig, OcxProviderConfig } from "../../src/types";
+import { installIsolatedCodexRuntime } from "../helpers/isolated-codex-runtime";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 const OPENCODE_GO_NATIVE = "glm-5.3-flash";
 /**
@@ -190,6 +195,24 @@ describe("flash-route combo intersection (#4505)", () => {
 });
 
 describe("custom-model combo capability alignment (#4689)", () => {
+  let previousHome: string | undefined;
+  let testHome = "";
+  let restoreCodexRuntime: (() => void) | undefined;
+  beforeEach(() => {
+    previousHome = process.env.OPENCODEX_HOME;
+    testHome = mkdtempSync(join(tmpdir(), "ocx-flash-combo-"));
+    process.env.OPENCODEX_HOME = testHome;
+    restoreCodexRuntime = installIsolatedCodexRuntime(testHome);
+  });
+  afterEach(() => {
+    restoreCodexRuntime?.();
+    restoreCodexRuntime = undefined;
+    if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
+    else process.env.OPENCODEX_HOME = previousHome;
+    if (testHome) removeTreeWithRetry(testHome);
+    testHome = "";
+  });
+
   test("combo derivation sees the explicit custom row before intersecting members", async () => {
     const config: OcxConfig = {
       port: 10100,

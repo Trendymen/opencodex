@@ -81,6 +81,12 @@ describe("Responses core module boundaries", () => {
     const native = readResponsesCoreModule("passthrough-execution.ts");
     expect(ingress).toContain("const passthroughResult = await executePassthroughResponse(");
     expect(ingress).toContain("if (passthroughResult instanceof Response) return passthroughResult;");
+    expect(ingress).toContain("const response = await execute();");
+    expect(ingress).toContain("return finish(retention ? retention.deliver(response) : response);");
+    expect(ingress.indexOf("const response = await execute();"))
+      .toBeLessThan(ingress.indexOf("return finish(retention ? retention.deliver(response) : response);"));
+    expect(ingress.indexOf("return finish(retention ? retention.deliver(response) : response);"))
+      .toBeLessThan(ingress.indexOf("} finally {"));
     expect(ingress).toContain("sendBudgetState.pendingHopPermit === unclaimedHop");
     expect(ingress.indexOf("await executePassthroughResponse("))
       .toBeLessThan(ingress.indexOf("const sidecarPlans = await executeResponsesSidecars("));
@@ -88,7 +94,7 @@ describe("Responses core module boundaries", () => {
     // Delivery is awaited inside the try, and its direct body is wrapped with
     // tool ownership before return. Both awaits must stay inside the lease owner;
     // the delivery call itself need not be the return expression.
-    expect(native).toContain("const response = await deliverPassthroughResponse(");
+    expect(native).toContain("const response = carryCodexPassthroughResponse(nativeExchange.upstreamResponse, await deliverPassthroughResponse(");
     const guardedReturn = "return attachResponseToolOwnership(guardDirectPassthroughBodyInactivity(";
     expect(native).toContain(guardedReturn);
     expect(native.indexOf("await deliverPassthroughResponse("))

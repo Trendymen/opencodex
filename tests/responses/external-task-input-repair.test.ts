@@ -68,7 +68,7 @@ describe("external task input in raw-body repairs (#6764)", () => {
     const plain = { type: "function_call_output", id: "fco_plain", output: DELEGATION };
     expect(externalTaskInputResponsesContent(plain)).toBeUndefined();
     expect(repairUnidentifiedToolOutputItems({ input: [plain] })).toEqual({ input: [
-      userTurn(`[tool output for unknown call]\n${DELEGATION}`),
+      userTurn(`[Tool output without call identification]\n${DELEGATION}`),
     ] });
     expect(externalTaskInputResponsesContent(seed({ call_id: "call_1" }))).toBeUndefined();
   });

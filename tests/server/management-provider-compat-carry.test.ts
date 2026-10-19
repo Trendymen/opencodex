@@ -172,6 +172,19 @@ function withoutField(provider: OcxProviderConfig, field: ProviderCompatCarryFie
 }
 
 describe("an unrelated POST overwrite keeps each compatibility setting on the next request", () => {
+  test("Codex compatibility overrides are carried without merging unrelated old fields", async () => {
+    await withServer({ relay: { adapter: "openai-chat", baseUrl: BASE_URL, apiKey: "sk-relay",
+      codexPassthrough: { bridgeLiteMetadata: false, localErrorPolicies: { accountSoftPrecheck: false } },
+      note: "old note", } }, async url => {
+      const saved = await send(url, "/api/providers", "POST", { name: "relay",
+        provider: { adapter: "openai-chat", baseUrl: BASE_URL, apiKey: "sk-relay" } });
+      expect(saved.status).toBe(200);
+      expect(loadConfig().providers.relay!.codexPassthrough).toEqual({ bridgeLiteMetadata: false,
+        localErrorPolicies: { accountSoftPrecheck: false } });
+      expect(loadConfig().providers.relay!.note).toBeUndefined();
+    });
+  });
+
   test("every carried field has a case", () => {
     expect(Object.keys(CASES).sort()).toEqual([...PROVIDER_COMPAT_CARRY_FIELDS].sort());
   });

@@ -499,7 +499,8 @@ test("a failure cause never carries message text, paths or identifiers (#1784)",
 
 test("the route inventory retains every convergence path after separating subagent routes", () => {
   const counts = Object.fromEntries([
-    ["provider-routes.ts", 8],
+    ["provider-routes.ts", 5],
+    ["provider-context-cap-routes.ts", 3],
     ["model-routes.ts", 15],
     ["combo-routes.ts", 2],
     ["agent-settings-routes.ts", 1],
@@ -519,7 +520,8 @@ test("the route inventory retains every convergence path after separating subage
     return [file, count];
   }));
   expect(counts).toEqual({
-    "provider-routes.ts": 8,
+    "provider-routes.ts": 5,
+    "provider-context-cap-routes.ts": 3,
     "model-routes.ts": 15,
     "combo-routes.ts": 2,
     "agent-settings-routes.ts": 1,

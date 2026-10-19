@@ -11,6 +11,7 @@ import { prepareResponsesRequest } from "../../src/server/responses/request-prep
 import { handleComboResponses } from "../../src/server/responses/core";
 import type { ResponsesAdmissionState } from "../../src/server/responses/core-options";
 import { createTranslatorBudget } from "../../src/lib/translator-budget";
+import { captureCodexPassthroughTurn, releaseCodexPassthroughTurnSource } from "../../src/fork/codex-passthrough-turn";
 import {
   canAcquireTransientProbe,
   clearPoolRecoveryState,
@@ -431,12 +432,14 @@ describe("stored-account credit refusal before Responses dispatch (#6606)", () =
 
   async function prepareProbe(req: Request, cfg: OcxConfig, state: ResponsesAdmissionState, abortSignal?: AbortSignal) {
     const translatorBudget = createTranslatorBudget();
+    const codexPassthroughTurn = captureCodexPassthroughTurn(cfg.providers, "responses");
     try {
       return await prepareResponsesRequest({
         req, config: cfg, logCtx: { model: "", provider: "" } as RequestLogContext,
-        options: { translatorBudget, abortSignal },
+        options: { translatorBudget, abortSignal, codexPassthroughTurn },
       }, state, { handleResponses, handleComboResponses });
     } finally {
+      releaseCodexPassthroughTurnSource(codexPassthroughTurn);
       translatorBudget.dispose();
     }
   }
@@ -582,10 +585,26 @@ describe("ordinary pool 401 refresh and replay (#2887)", () => {
         );
       },
     });
-    const response = await handleResponses(
-      request("/v1/responses", { stream }), config(), { model: "", provider: "" } as RequestLogContext,
-    );
-    const body = await response.text();
+    const cfg = config();
+    cfg.providers.openai.upstreamWebsocket = false;
+    const originalWebSocket = globalThis.WebSocket;
+    let websocketConstructs = 0;
+    globalThis.WebSocket = new Proxy(originalWebSocket, {
+      construct() {
+        websocketConstructs += 1;
+        throw new Error("HTTP fixture rejects upstream WebSocket");
+      },
+    });
+    let response: Response;
+    let body: string;
+    try {
+      response = await handleResponses(
+        request("/v1/responses", { stream }), cfg, { model: "", provider: "" } as RequestLogContext,
+      );
+      body = await response.text();
+    } finally {
+      globalThis.WebSocket = originalWebSocket;
+    }
     expect(harness.sends).toEqual(["Bearer rejected-access"]);
     expect(response.status).toBe(200);
     if (stream) expect(body).toContain("event: response.failed");
@@ -594,6 +613,7 @@ describe("ordinary pool 401 refresh and replay (#2887)", () => {
     expect(body).toContain("[REDACTED]");
     const next = { model: "gpt-5.5", previous_response_id: "resp_failed_pool_echo", input: "retry" };
     expect(expandPreviousResponseInput(next)).toEqual(next);
+    expect(websocketConstructs).toBe(0);
   });
 
   test("bare upstream SSE error masks the selected pool credential in buffered JSON and diagnostics", async () => {
@@ -950,6 +970,7 @@ describe("ordinary pool 401 refresh and replay (#2887)", () => {
 
   test("a combo stops on a zero-output failure from the stored-account replay stream", async () => {
     const cfg = recoveryComboConfig();
+    cfg.providers.openai.upstreamWebsocket = false;
     const harness = installHarness({
       responseForSend: (authorization, _sendNumber, url) => {
         if (url.hostname === "backup.example") {
