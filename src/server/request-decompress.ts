@@ -293,11 +293,24 @@ export function decodeRequestBody(
  * it. Callers that need both (for example request disconnect plus a deadline) must
  * merge them into one AbortSignal before calling.
  */
+export type DecodedJsonCapture = {
+  value: unknown;
+  jsonText: string;
+  textBytes: number;
+  serializedBytes: number;
+  takeTextLease(): () => void;
+};
+export type JsonReadOptions = {
+  emptyBodyFallback?: unknown;
+  signal?: AbortSignal;
+  onDecodedJson?: (capture: DecodedJsonCapture) => void;
+};
+
 export async function readBoundedJsonRequestBody(
   req: Request,
   maxBytes: number,
   budget?: TranslatorBudget,
-  options?: { emptyBodyFallback?: unknown; signal?: AbortSignal },
+  options?: JsonReadOptions,
 ): Promise<unknown> {
   const encoding = req.headers.get("content-encoding");
   const declaredLength = declaredBodyLength(req);
@@ -326,13 +339,21 @@ export async function readBoundedJsonRequestBody(
     releaseDecoded = decoded === raw ? undefined : budget?.observeAcceptedRequestCopy(decoded.byteLength);
     const text = new TextDecoder().decode(decoded);
     // Count UTF-8 without allocating another request-sized byte array for diagnostics.
-    releaseText = budget?.observeAcceptedRequestCopy(Buffer.byteLength(text, "utf8"));
+    const textBytes = Buffer.byteLength(text, "utf8");
+    releaseText = budget?.observeAcceptedRequestCopy(textBytes);
     if (options && "emptyBodyFallback" in options && text.trim() === "") {
       return options.emptyBodyFallback;
     }
     const parsed = JSON.parse(text);
     // Keep the serialized-size contract: normalization can expand numeric literals.
-    budget?.observeAcceptedRequestCopy(Buffer.byteLength(JSON.stringify(parsed), "utf8"));
+    const serializedBytes = budget || options?.onDecodedJson ? Buffer.byteLength(JSON.stringify(parsed), "utf8") : 0;
+    budget?.observeAcceptedRequestCopy(serializedBytes);
+    if (options?.onDecodedJson) {
+      const lease = releaseText ?? (() => {});
+      let taken = false;
+      options.onDecodedJson({ value: parsed, jsonText: text, textBytes, serializedBytes,
+        takeTextLease() { if (taken) throw new Error("Decoded JSON text lease already transferred"); taken = true; releaseText = undefined; return lease; } });
+    }
     return parsed;
   } finally {
     releaseText?.();
@@ -351,6 +372,7 @@ export function readJsonRequestBody(
   req: Request,
   budget?: TranslatorBudget,
   maxBytes: number = MAX_DECOMPRESSED_BODY_BYTES,
+  options?: JsonReadOptions,
 ): Promise<unknown> {
-  return readBoundedJsonRequestBody(req, maxBytes, budget);
+  return readBoundedJsonRequestBody(req, maxBytes, budget, options);
 }

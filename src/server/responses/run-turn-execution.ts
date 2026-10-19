@@ -50,6 +50,8 @@ import { trackStreamLifetime } from "../lifecycle";
 import { awaitThoughtSignatureDurability } from "../../responses/thought-signature-replay";
 import { undeclaredToolCallMessage } from "../responses-undeclared-tool-guard";
 import { emptyToolCatalogRefusal, guardEmptyToolCatalogEvents, guardEmptyToolCatalogStream } from "../../lib/empty-tool-catalog";
+import { createNestedExecAdapterEventRepair } from "../responses-nested-exec-call-repair";
+import { COMBO_PREFLIGHT_ABORTED, COMBO_PREFLIGHT_STALLED, preflightComboAdapterEvents } from "./combo-adapter-preflight";
 // LOCAL PATCH (runturn-websearch)
 import { planWebSearch } from "../../web-search";
 import { runTurnWebSearchInitialParsed, runTurnWebSearchLoop } from "../../web-search/run-turn-loop";
@@ -165,6 +167,12 @@ export async function executeResponsesRunTurn(
     notifyResponseComplete,
   } = responseEffects;
   const { routedCompaction } = sidecarState;
+  const { repairSource: repairAdapterEventSource, repairBatch: repairAdapterEventBatch } = createNestedExecAdapterEventRepair({
+    rawBody: parsed._rawBody,
+    replayPrefixLength: parsed._replayPrefixLen ?? 0,
+    isPassthrough: false,
+    translatorBudget,
+  });
 
   // LOCAL PATCH (runturn-websearch): resolving the OpenAI search credential can
   // hold the account's sole cooldown-recovery probe lease. The fetch path hands
@@ -828,9 +836,24 @@ export async function executeResponsesRunTurn(
         if (refusal) return refusal;
       }
       if (options.comboAttempt) {
-        const preflight = await preflightAdapterEvents(
-          eventSource, classifyUndeclaredFirstTool, { honorReady: false },
+        // The first-tool gate must inspect the repaired name. The delivery repair below also
+        // covers events produced by search iterations or an empty-completion retry.
+        eventSource = repairAdapterEventSource(eventSource);
+        const preflight = await preflightComboAdapterEvents(
+          eventSource,
+          classifyUndeclaredFirstTool,
+          options.abortSignal,
+          resolveStallTimeoutSec(wsPlan?.stallTimeoutSec ?? config.stallTimeoutSec) * 1_000,
+          () => { runTurnAbort.abort(); queue.close(); },
         );
+        if (preflight === COMBO_PREFLIGHT_STALLED || preflight === COMBO_PREFLIGHT_ABORTED) {
+          const failure = preflight === COMBO_PREFLIGHT_STALLED
+            ? formatErrorResponse(504, "upstream_error", "upstream_stall_timeout: adapter preflight stalled")
+            : formatErrorResponse(499, "client_cancelled", "Client cancelled adapter preflight");
+          markResponseNonReplayable(failure);
+          releaseSearchProbeLease();
+          return failure;
+        }
         if (preflight.error || preflight.empty) {
           runTurnAbort.abort();
           queue.close();
@@ -886,7 +909,7 @@ export async function executeResponsesRunTurn(
           console.warn(emptyCompletionNotice(route.providerName, route.modelId));
         });
       const sseStream = bridgeToResponsesSSE(
-        guardEmptyToolCatalogStream(guardedSource, clientToolCatalog, translatorBudget), parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
+        guardEmptyToolCatalogStream(repairAdapterEventSource(guardedSource), clientToolCatalog, translatorBudget), parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
         () => {
           cancelResponseCompletion();
           runTurnAbort.abort();
@@ -1025,6 +1048,7 @@ export async function executeResponsesRunTurn(
         }
         events = searched;
       }
+      events = await repairAdapterEventBatch(events);
       events = guardEmptyToolCatalogEvents(events, clientToolCatalog, translatorBudget);
       if (options.comboAttempt) {
         const firstMeaningfulIndex = events.findIndex(event => event.type !== "heartbeat");

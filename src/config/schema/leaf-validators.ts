@@ -1,3 +1,4 @@
+import { codexPassthroughCandidateError } from "../../fork/codex-passthrough-contract";
 import * as z from "zod/v4";
 import { anthropicAccountPoolSchema } from "./anthropic-account-pool";
 import { join } from "node:path";
@@ -43,6 +44,7 @@ import {
   declaredUnsupportedHostedTools,
   isHostedToolUnsupportedForModel,
 } from "../../responses/hosted-tool-policy";
+import { isCodexReasoningEffort } from "../../reasoning-effort";
 import { getConfigDir } from "../paths";
 import { COMPACTION_TRIGGERS, validCompactionSourceModels } from "./compaction-triggers";
 
@@ -303,6 +305,10 @@ const providerNoProxySchema = z.unknown().superRefine((value, ctx) => {
  * fields pass through (preserved for runtime extensions).
  */
 export const providerConfigSchema = z.object({
+  codexPassthrough: z.unknown().superRefine((value, ctx) => {
+    const error = codexPassthroughCandidateError(value);
+    if (error) ctx.addIssue({ code: "custom", message: error });
+  }).optional().transform(value => value as OcxProviderConfig["codexPassthrough"]),
   anthropicAccountPool: anthropicAccountPoolSchema,
   // Raw diagnostics/writes reject malformed provenance; tolerant loads preserve the custom row.
   anthropicOAuthInstance: z.literal("anthropic2").optional().catch(undefined),
@@ -344,6 +350,10 @@ export const providerConfigSchema = z.object({
   requiresPairedResponsesToolResults: z.boolean().optional(),
   annotateEmptyToolOutputs: z.boolean().optional(),
   foldDeveloperRoleToSystem: z.boolean().optional(),
+  inferResponsesMessagePhaseModels: z.array(z.string().min(1))
+    .transform(normalizeNonBlankStringArray)
+    .optional(),
+  agentMessageFormat: z.enum(["preserve", "user_message"]).optional(),
   fastWire: fastWireSchema.nullable().optional(),
   responseTierAuthoritative: z.boolean().optional(),
   fastEnabled: z.boolean().optional(),
@@ -852,7 +862,9 @@ export const asideProfileSyncSchema = z.object({
 export const agentTaskRecoverySchema = z.object({
   enabled: z.boolean().optional(),
   model: z.string().trim().min(1).optional(),
+  reasoningEffort: z.string().refine(isCodexReasoningEffort).optional(),
   timeoutMs: z.number().int().min(1_000).max(120_000).optional(),
+  maxRetries: z.number().int().min(0).max(2).optional(),
   cacheEntries: z.number().int().min(1).max(512).optional(),
   retries: z.number().int().min(0).max(2).optional(),
 }).strict();

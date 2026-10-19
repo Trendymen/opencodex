@@ -1,4 +1,5 @@
 import { bindAnthropicRejectionResponse } from "../../adapters/anthropic-rejection-memo";
+import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { deferPhysicalSendReporter } from "./deferred-send-reporter";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { classifyAnthropic429 } from "../../oauth/anthropic-rate-limit-policy";
@@ -415,6 +416,7 @@ export async function prepareAdapterExchange(
           onRecoveryWithheld: noteAdapterRecoveryWithheld,
           stream: parsed.stream,
           executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
             pacingSlotAcquired: true,
             pacingSlot,
             dispatchOverride: oauthDispatch(builtInitialRequest),
@@ -493,6 +495,7 @@ export async function prepareAdapterExchange(
             body: builtInitialRequest.body,
           }, recovery), upstream.signal, connectMs, parsed.stream,
             providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
               dispatchOverride: oauthDispatch(builtInitialRequest),
               providerName: route.providerName,
               modelId: route.modelId,
@@ -519,6 +522,7 @@ export async function prepareAdapterExchange(
           abortSignal: upstream.signal,
           label: safeHostLabel(builtInitialRequest.url),
           claimAmbiguousResend: claimPreHeaderResend,
+          codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
           ...(sendBudgetState.adapterSendBudget?.spendEnforced || options.comboDispatchPermit || transientPolicy || resetPolicy || compactPrepaid || options.comboAttempt
             || billingPoolRequest
             ? {
@@ -718,6 +722,7 @@ export async function prepareAdapterExchange(
                 onRecoveryWithheld: noteAdapterRecoveryWithheld,
                 stream: parsed.stream,
                 executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                   pacingSlotAcquired: true,
                   pacingSlot,
                   dispatchOverride: oauthDispatch(retryRequest),
@@ -786,6 +791,7 @@ export async function prepareAdapterExchange(
                     method: retryRequest.method, headers: retryRequest.headers, body: retryRequest.body,
                   }, recoveryKind), upstream.signal, connectMs, parsed.stream,
                   providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                     dispatchOverride: oauthDispatch(retryRequest),
                     onPhysicalDispatch: deferredRefetch ? () => {
                       if (!deferredRefetch.beforeDispatch()) throw new SendBudgetExhaustedError(safeHostLabel(retryRequest.url));
@@ -801,6 +807,7 @@ export async function prepareAdapterExchange(
                 abortSignal: upstream.signal,
                 label: safeHostLabel(retryRequest.url),
                 claimAmbiguousResend: claimPreHeaderResend,
+          codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                 ...(refetchAllowance
                   ? {
                     attempts: refetchAllowance.attempts,

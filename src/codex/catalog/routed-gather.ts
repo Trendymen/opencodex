@@ -56,7 +56,7 @@ import { recordLiveCursorClaudeModels, recordLiveCursorMaxModeModels } from "../
 import { fetchQoderModels } from "../../adapters/qoder/live-models";
 import { resolveQoderProfile } from "../../adapters/qoder/profiles";
 import { fetchDevinUsableModels } from "../../adapters/devin/live-models";
-import { isCanonicalOpenAiForwardProvider, OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
+import { isCanonicalOpenAiForwardProvider, isOpenAiOperatedResponsesDestination, OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
 import {
   COMBO_NAMESPACE,
   comboModelId,
@@ -563,6 +563,9 @@ async function gatherRoutedModelsUncached(
     const providerForCanonicalCheck = rawProvider
       ? withCanonicalOpenAiForwardAuthDefault(cm.provider, rawProvider)
       : undefined;
+    const progressProvider = cm.provider === OPENAI_CODEX_PROVIDER_ID
+      ? (providerForCanonicalCheck ?? effectiveProvider)
+      : effectiveProvider;
     const codexForwardNativeCapabilityAlias = cm.provider === OPENAI_CODEX_PROVIDER_ID
       && providerForCanonicalCheck !== undefined
       && isCanonicalOpenAiForwardProvider(providerForCanonicalCheck)
@@ -625,6 +628,9 @@ async function gatherRoutedModelsUncached(
       id: cm.modelId,
       provider: cm.provider,
       catalogKind: CODEX_CUSTOM_MODEL_CATALOG_KIND,
+      ...(progressProvider
+        ? { routedProgressContractEligible: !isOpenAiOperatedResponsesDestination(progressProvider) }
+        : {}),
       // Display-only label: never feeds routing (customModels are keyed by routedSlug below).
       ...(cm.displayName
         ? { displayName: cm.displayName }
@@ -710,6 +716,13 @@ async function gatherRoutedModelsUncached(
       ...(base.supportsReasoningSummaries === undefined && replaced.supportsReasoningSummaries !== undefined ? { supportsReasoningSummaries: replaced.supportsReasoningSummaries } : {}),
       ...(base.codexToolMode === undefined && replaced.codexToolMode !== undefined ? { codexToolMode: replaced.codexToolMode } : {}),
       ...(base.capabilities === undefined && replaced.capabilities !== undefined ? { capabilities: replaced.capabilities } : {}),
+      ...(base.pricingStatus === undefined && replaced.pricingStatus !== undefined
+        ? { pricingStatus: replaced.pricingStatus }
+        : {}),
+      ...(base.routedProgressContractEligible === undefined
+        && replaced.routedProgressContractEligible !== undefined
+        ? { routedProgressContractEligible: replaced.routedProgressContractEligible }
+        : {}),
     } : base;
     // A custom-only model may never appear in /models or the provider's configured roster.
     // Fill only its absent context; a full hint overlay would overwrite custom capabilities.

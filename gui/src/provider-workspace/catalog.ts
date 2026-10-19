@@ -1,3 +1,5 @@
+import { CODEX_FORWARD_BASE_URL, isCanonicalOpenAiForwardProvider, normalizedOpenAiBaseUrl } from "../../../src/providers/openai-tiers-destination";
+
 /**
  * provider-workspace/catalog.ts
  *
@@ -24,6 +26,7 @@
  * over free.
  */
 
+import type { CodexPassthroughConfig } from "../../../src/fork/codex-passthrough-contract";
 import { isSubscriptionCliProvider } from "./subscription-cli";
 
 /**
@@ -40,6 +43,7 @@ export interface WorkspaceProvider {
   apiKeyTransport?: "x-api-key" | "bearer";
   /** Static/configured model ids from provider config (offline fallback). */
   models?: string[];
+  modelAdapters?: Record<string, string>;
   /** Whether the proxy fetches the provider's live model catalog (default true). */
   liveModels?: boolean;
   /** Optional upstream HTTP version pin. Cursor defaults to HTTP/2 when omitted. */
@@ -61,6 +65,7 @@ export interface WorkspaceProvider {
     keySelection?: "active" | "round-robin";
     keys?: { requestsPerMinute?: number; minIntervalMs?: number; maxConcurrentRequests?: number };
   };
+  codexPassthrough?: CodexPassthroughConfig;
   /** Codex account routing mode for the canonical `openai` forward provider. */
   codexAccountMode?: "direct" | "pool";
   /** Derived state of the two xAI Grok Responses model-adapter entries. */
@@ -92,28 +97,11 @@ export interface WorkspaceSections {
   disabled: WorkspaceItem[];
 }
 
-const CODEX_FORWARD_BASE_URL = "https://chatgpt.com/backend-api/codex";
-
 /**
  * The single canonical OpenAI forward provider id. Legacy ids are migration-only
  * and must never be revived as account-provider workspace rows.
  */
 const CANONICAL_FORWARD_PROVIDER = "openai";
-
-/**
- * Mirrors src/providers/openai-tiers.ts `normalizedBaseUrl` exactly: strict
- * parsing, userinfo/query/hash rejection, no raw-string fallback.
- */
-function normalizedBaseUrl(value: string): string | undefined {
-  try {
-    const url = new URL(value.trim());
-    if (url.username || url.password || url.search || url.hash) return undefined;
-    const path = url.pathname.replace(/\/+$/, "");
-    return `${url.origin}${path}`;
-  } catch {
-    return undefined;
-  }
-}
 
 const CANONICAL_PROVIDER_PROTOCOL = new URL(CODEX_FORWARD_BASE_URL).protocol;
 function providerEndpoint(host: string, ...path: string[]): string {
@@ -129,7 +117,7 @@ const STATIC_MODEL_CATALOG_TRANSPORTS: Readonly<Record<string, { adapter: string
 export function providerSupportsLiveModelDiscovery(name: string, provider: WorkspaceProvider): boolean {
   const canonical = STATIC_MODEL_CATALOG_TRANSPORTS[name];
   if (!canonical || provider.adapter !== canonical.adapter) return true;
-  return normalizedBaseUrl(provider.baseUrl) !== normalizedBaseUrl(canonical.baseUrl);
+  return normalizedOpenAiBaseUrl(provider.baseUrl) !== normalizedOpenAiBaseUrl(canonical.baseUrl);
 }
 
 /** Loopback host check shared with the provider-kind classifier (WP080a). */
@@ -155,15 +143,9 @@ function isConfigurationReady(p: WorkspaceProvider): boolean {
     p.hasApiKey === true;
 }
 
-/**
- * True when the provider config is the canonical Codex passthrough shape.
- * GUI-local mirror of `isCanonicalOpenAiForwardProvider` (src/providers/openai-tiers.ts) —
- * strict casing, no fallback.
- */
+/** True when the provider config is the canonical Codex passthrough shape. */
 function isCanonicalForwardShape(p: WorkspaceProvider): boolean {
-  return p.adapter === "openai-responses"
-    && p.authMode === "forward"
-    && normalizedBaseUrl(p.baseUrl) === CODEX_FORWARD_BASE_URL;
+  return isCanonicalOpenAiForwardProvider(p);
 }
 
 /**

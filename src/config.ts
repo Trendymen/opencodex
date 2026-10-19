@@ -153,7 +153,9 @@ import { observeInitialConfigState } from "./config/diagnostics";
 import {
   configDiagnosticsFromRaw,
   mergeConfigDefaults,
+  sanitizeCustomModelsForLoad,
   validateConfigCandidate,
+  warnDegradedCustomModels,
 } from "./config/diagnostics";
 
 // replace path — never publishInitialConfigNoReplace
@@ -169,7 +171,7 @@ import {
   normalizeClaudeSubagentEffort,
   normalizeNativeSubagentSync,
   sanitizeAliasesForLoad,
-  sanitizeReasoningPinsForLoad,
+  sanitizeReasoningPinsForLoad, sanitizeCodexPassthroughForLoad,
   sanitizeModelDisplayNamesForLoad,
   sanitizeAutoReviewForLoad,
   sanitizeRetryOn429ForLoad,
@@ -203,7 +205,6 @@ import {
   warnDroppedConfigSections,
   warnAndBackupInvalidConfig,
 } from "./config/salvage";
-
 /**
  * Load and validate config.json into an OcxConfig. Missing files reset to
  * defaults and clear stale overlays. Broken existing files also fall back to
@@ -225,6 +226,7 @@ export function loadConfig(): OcxConfig {
     const parsed = JSON.parse(raw);
     sanitizeOpenCodeOverridesForLoad(parsed);
     sanitizeAliasesForLoad(parsed);
+    for (const warning of sanitizeCodexPassthroughForLoad(parsed)) console.warn(warning);
     sanitizeReasoningPinsForLoad(parsed);
     sanitizeModelDisplayNamesForLoad(parsed);
     sanitizeAutoReviewForLoad(parsed);
@@ -232,6 +234,7 @@ export function loadConfig(): OcxConfig {
     sanitizeAnthropicSidecarInstanceForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
     sanitizeCapabilityDeclarationsForLoad(parsed);
+    sanitizeCustomModelsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       const config = normalizeApiKeyIds(result.data as OcxConfig);
@@ -240,6 +243,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
+      warnDegradedCustomModels(parsed);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
@@ -276,6 +280,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
+      warnDegradedCustomModels(parsed);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
@@ -306,6 +311,7 @@ export function loadConfig(): OcxConfig {
         warnDegradedHostname(parsed, config);
         warnDegradedListeners(parsed, config);
         warnDegradedApiKeys(parsed, config);
+        warnDegradedCustomModels(parsed);
         warnDegradedCodexAccountPriorities(parsed, config);
         warnDegradedCodexQuotaAutoRefresh(parsed, config);
         warnDegradedClaudeSubagentEffort(parsed);

@@ -1503,6 +1503,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           let response: Response;
           try {
             response = await handleResponses(sessionReq, config, logCtx, {
+              codexSessionIdSynthesized: !req.headers.has("session_id") && sessionReq.headers.has("session_id"),
               turnAdmissionLease,
               admission,
               onRequestBodyRead: () => disableResponsesRequestTimeout(req, requestServer),
@@ -1528,9 +1529,10 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             );
             throw error;
           }
+          const codexPermissions = codexPassthroughResponsePermissions(response);
           return withRequestLogId(
-            withCors(responseWithDeferredRequestLog(response, requestId, start, logCtx), req, policy),
-            requestId,
+            withCors(responseWithDeferredRequestLog(response, requestId, start, logCtx), req, policy, codexPermissions?.addResponseBrowserHeaders !== false),
+            requestId, codexPermissions?.addResponseRequestId !== false,
           );
         }, { requestId, start, logCtx });
       }
@@ -1973,3 +1975,4 @@ export function createServeOptions(ctx: ServeOptionsContext) {
   } as const;
   return serveOptions;
 }
+import { codexPassthroughResponsePermissions } from "../../fork/codex-passthrough-turn";

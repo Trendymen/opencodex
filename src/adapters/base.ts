@@ -7,6 +7,7 @@ import type { ProviderRequestSlot } from "../providers/request-pacing";
 
 /** Metadata about the caller's incoming request, for auth-forwarding adapters. */
 export interface IncomingMeta {
+  codexPassthroughPermissions?: import("../fork/codex-passthrough-contract").CodexPassthroughPermissions;
   headers: Headers;
   /** Canonical routed provider identity for provider-specific wire fields. */
   providerName?: string;
@@ -143,6 +144,8 @@ export interface AdapterRequest {
     convertedMuseToolNameAliases?: ReadonlyMap<string, string>;
     /** Releases observation of a serialized request body after its final fetch attempt settles. */
     releaseBodyObservation?: () => void;
+    /** Opaque thread-id tag for provider diagnostics; no raw thread id on the wire. */
+    threadIdTag?: string;
     /** Exact reasoning parameter emitted by the adapter, for request-log diagnostics only. */
     reasoningLog?:
       | {
