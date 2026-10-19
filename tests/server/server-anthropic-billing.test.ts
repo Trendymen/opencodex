@@ -245,10 +245,11 @@ test("translated billing replacement allows one physical reset replay within the
     if (seen.length === 2) throw Object.assign(new Error("The socket connection was closed unexpectedly."), { code: "ECONNRESET" });
     return success();
   }) as typeof globalThis.fetch;
+  const caller = new AbortController();
   try {
     // Explicitly disable storage: this complete, tool-free request is eligible for
     // the configured one-request-wide ambiguous resend grant.
-    const signal = AbortSignal.timeout(2_000);
+    const signal = caller.signal;
     const request = new Request("http://localhost/v1/responses", {
       method: "POST", headers: { "content-type": "application/json" }, signal,
       body: JSON.stringify({ model: "anth/claude-x", input: "hello", store: false, stream: false }),
@@ -270,6 +271,7 @@ test("translated billing replacement allows one physical reset replay within the
     expect(getKeyCooldownUntil("anth", "k1")).toBeNull();
     expect(loadConfig().providers.anth!.apiKey).toBe("fixture-key-1");
   } finally {
+    caller.abort();
     globalThis.fetch = priorFetch;
     expect(providerRequestPacingStatus("anth", config.providers.anth!)).toMatchObject({ inFlight: 0, queued: 0 });
   }
