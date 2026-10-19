@@ -26,6 +26,32 @@ const body = { model: "gpt-5.6-sol", stream: false, temperature: 0.2, max_output
   unknown_valid_field: { order: [3, 1, 2], annotations: [{ type: "custom", field: "keep" }] } };
 
 describe("official request permission controls", () => {
+  test("hosted history automatic projection follows only the parameter permission", () => {
+    const history = [{ type: "web_search_call", id: "synthetic-search", status: "completed", action: { type: "search", query: "synthetic", queries: ["synthetic"] } }];
+    for (const nativeCompaction of [false, true]) for (const declared of ["none", "tools", "additional_tools"] as const) {
+      for (const mode of ["off", "normalize", "expand", "default", "opt-in", "noncanonical"] as const) {
+        const raw = { model: body.model, stream: true, tools: declared === "tools" ? [{ type: "web_search" }] : [],
+          input: [...history, ...(declared === "additional_tools" ? [{ type: "additional_tools", tools: [{ type: "web_search" }] }] : [])] };
+        const parsed = parseRequest(raw); parsed._compactionRequest = nativeCompaction;
+        const permissions = mode === "default" ? undefined : resolveCodexPassthroughPermissions({ ...disabledCodexPassthrough(),
+          ...(mode === "normalize" ? { normalizeRequestParameters: true } : {}), ...(mode === "expand" ? { expandRequestHistory: true } : {}) });
+        const provider = { adapter: "openai-responses" as const, authMode: mode === "noncanonical" ? "key" as const : "forward" as const,
+          baseUrl: mode === "noncanonical" ? "https://gateway.example.test/v1" : "https://chatgpt.com/backend-api/codex",
+          ...(mode === "opt-in" ? { projectResponsesLiteHostedSearchHistory: true } : {}) };
+        const budget = createTranslatorBudget();
+        try {
+          const request = createResponsesPassthroughAdapter(provider).buildRequest(parsed, { translatorBudget: budget,
+            headers: new Headers({ "x-openai-internal-codex-responses-lite": "true" }), codexPassthroughPermissions: permissions });
+          const sent = JSON.parse(request.body as string);
+          const projected = mode === "opt-in" || mode === "noncanonical" && nativeCompaction
+            || declared === "none" && ["normalize", "default", "noncanonical"].includes(mode);
+          expect(sent.input.some((item: { type: string }) => item.type === "web_search_call"), JSON.stringify({ nativeCompaction, declared, mode })).toBe(!projected);
+          expect(raw.input[0]).toEqual(history[0]); request.releaseBodyObservation?.();
+        } finally { budget.dispose(); }
+      }
+    }
+  });
+
   for (const stream of [true, undefined]) test(`all-off preserves stream presence despite a registry streaming policy (${stream})`, async () => {
     const entry = getProviderRegistryEntry("openai")!; const previous = entry.modelResponsesUpstreamStreaming;
     entry.modelResponsesUpstreamStreaming = { [body.model]: false };

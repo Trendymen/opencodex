@@ -872,9 +872,9 @@ export async function prepareAdapterExchange(
    // Keep recovery kinds in sync with the native Responses `passthroughRecovery:` loop above.
    recovery: for (;;) {
       if (wasAccountAutoPaused(upstreamResponse) && route.provider.authMode !== "forward") {
-        const recovered = await recoverAutoPausedAccount({ requestKey: transportState, reserve: reserveCredentialHop,
+        const recovered = await recoverAutoPausedAccount({ requestKey: transportState, response: upstreamResponse, signal: upstream.signal, reserve: reserveCredentialHop,
           remaining: transientSendCapFor(transientRetryPolicyFor(route.provider)?.attempts, sendBudgetState.targetSendsUsed),
-          refresh: () => transportState.recoverAutoPausedSelection(parsed), refetch: () => rebuildAndRefetch("oauth-account-429"), setPermit: permit => { sendBudgetState.pendingHopPermit = permit; } });
+          refresh: () => transportState.recoverAutoPausedSelection(parsed), refetch: failure => rebuildAndRefetch("oauth-account-429", undefined, failure), setPermit: permit => { sendBudgetState.pendingHopPermit = permit; } });
         if (!recovered) break;
         if ("failed" in recovered) return recovered.failed;
         upstreamResponse = recovered; continue recovery;

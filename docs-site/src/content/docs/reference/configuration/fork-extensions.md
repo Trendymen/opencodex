@@ -33,7 +33,7 @@ The paths in these tables are relative to `codexPassthrough`. All defaults are `
 
 | Field | Operation permitted when enabled |
 | --- | --- |
-| `normalizeRequestParameters` | Existing official-backend parameter cleanup, defaults and forced streaming where previously required. |
+| `normalizeRequestParameters` | Existing official-backend parameter cleanup, defaults and forced streaming where previously required, plus automatic hosted-search history projection when no hosted-search tool is declared. The provider's explicit `projectResponsesLiteHostedSearchHistory` opt-in remains independent. |
 | `expandRequestHistory` | Expand saved continuation history for `previous_response_id`. |
 | `normalizeEncryptedContent` | Decode OCX1 envelopes and normalize native compaction ciphertext under the existing identity-change conditions. Disabling this skips that normalization; task-recovery failure handling remains separate. |
 | `snapshotSkillsCatalog` | Apply the skills-catalog snapshot when the existing skills settings require it. |
@@ -129,7 +129,7 @@ To disable all permissions, use the dashboard action or set all 23 leaves to `fa
 }
 ```
 
-With all permissions off, request JSON values, field presence, unknown fields and array order are preserved, subject to explicit model/Fast routing, selected-account authentication and required transport rules. JSON can be serialized again. Responses are not guaranteed to be byte-identical when framing or private-credential protection is required. Client WebSocket error frames retain the complete upstream error body in `response` when error rewriting is disabled.
+With all permissions off, request JSON values, field presence, unknown fields and array order are preserved, subject to explicit model/Fast routing, selected-account authentication, required transport rules and the independent provider `projectResponsesLiteHostedSearchHistory` opt-in. Leave that opt-in disabled to preserve hosted-search history unchanged. JSON can be serialized again. Responses are not guaranteed to be byte-identical when framing or private-credential protection is required. Client WebSocket error frames retain the complete upstream error body in `response` when error rewriting is disabled.
 
 Private credentials actually injected by OCX remain protected before delivery, including Pool/stored-main credentials and sensitive configured header values. If safe delivery cannot be established, the proxy returns `upstream_error_protection_failed` before committing the response, or aborts an already committed stream. It does not invent a successful terminal event.
 

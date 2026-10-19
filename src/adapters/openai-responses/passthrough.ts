@@ -652,7 +652,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (isPlainObject(finalBody)
         && ((provider.projectResponsesLiteHostedSearchHistory === true && url === `${CODEX_FORWARD_BASE_URL}/responses`
           && !parsed._portableCompaction && codexResponsesLiteSelected(headers, finalBody))
-          || !declaresHostedWebSearch(finalBody))) {
+          || normalizeParameters && !declaresHostedWebSearch(finalBody))) {
         finalBody = projectHostedSearchHistory(finalBody);
       }
       finalBody = normalizeOpenGatewayResponsesInput(finalBody, url);
