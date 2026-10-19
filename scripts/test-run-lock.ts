@@ -423,8 +423,22 @@ function registerMember(lockPath: string, owner: TestRunLockOwner, pid: number):
   try {
     mkdirSync(membersPath, { recursive: true, mode: 0o700 });
     writeFileSync(memberPath(lockPath, owner, pid), "", { flag: "a", mode: 0o600 });
-  } catch {
-    return false;
+    const member = lstatSync(memberPath(lockPath, owner, pid));
+    if (!member.isFile()) {
+      throw Object.assign(new Error("The lock member is not a regular file."), {
+        code: member.isDirectory() ? "EISDIR" : "EINVAL",
+      });
+    }
+  } catch (error) {
+    if (!ownsLock(lockPath, owner)) return false;
+    const code = errorCode(error);
+    const safeCode = ["EACCES", "EPERM", "ENOENT", "ENOTDIR", "EISDIR", "EEXIST", "EROFS", "ENOSPC", "EMFILE", "ENFILE", "EIO"]
+      .includes(code) ? code : "filesystem-error";
+    throw new Error(
+      `Cannot register a member of the live Bun test lock (${safeCode}). `
+        + "Check its members directory and file permissions before retrying.",
+      { cause: { code: safeCode } },
+    );
   }
   if (ownsLock(lockPath, owner)) return true;
   rmSync(memberPath(lockPath, owner, pid), { force: true });
@@ -535,13 +549,15 @@ export async function acquireTestRunLock(options: AcquireTestRunLockOptions): Pr
     }
 
     const current = readOwner(lockPath);
+    let ownerChangedDuringRegistration = false;
     if (current?.runId === options.runId && lockIsLive(lockPath, current)) {
       if (registerMember(lockPath, current, process.pid)) {
         return { acquired: false, owner: current, release() {} };
       }
-      continue;
+      ownerChangedDuringRegistration = true;
     }
-    const ownerIsLive = current ? lockIsLive(lockPath, current) : incompleteOwnerIsRecent(lockPath);
+    const ownerIsLive = ownerChangedDuringRegistration
+      || (current ? lockIsLive(lockPath, current) : incompleteOwnerIsRecent(lockPath));
     if (!ownerIsLive && reclaimStaleLock(lockPath)) continue;
 
     if (!announced) {
