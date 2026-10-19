@@ -46,6 +46,7 @@ export const RESPONSES_CORE_MODULES = [
   "compaction-recovery.ts",
   "compaction-recovery-policy.ts",
   "memory-models.ts",
+  "annotation-instructions.ts",
   "request-transport.ts",
   "request-sidecar-auth.ts",
   "response-effects.ts",
@@ -55,6 +56,7 @@ export const RESPONSES_CORE_MODULES = [
   "passthrough-execution.ts",
   "passthrough-dispatch.ts",
   "passthrough-observations.ts",
+  "passthrough-dispatch-types.ts",
   // Reached from passthrough/adapter dispatch, compact and runTurn: local spend-ledger refusal mapping.
   "spend-storage-error.ts",
   // Reached from passthrough dispatch: local pacing refusals retain 429 and Retry-After.
@@ -68,6 +70,7 @@ export const RESPONSES_CORE_MODULES = [
   "sidecar-send-budget.ts",
   "completion-policy.ts",
   "run-turn-execution.ts",
+  "combo-adapter-preflight.ts",
   "adapter-dispatch.ts",
   "antigravity-validation-refusal.ts",
   "adapter-continuation.ts",

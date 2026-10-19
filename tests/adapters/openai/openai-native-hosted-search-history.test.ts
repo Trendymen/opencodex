@@ -211,7 +211,8 @@ test.each([
   const { body, request } = build(raw, canonical, undefined, headers);
   expect(notes(body)).toHaveLength(lite ? 4 : 0);
   expect(body.input.filter((item: any) => item.type === "web_search_call")).toHaveLength(lite ? 0 : 4);
-  expect(body.tools).toEqual(raw.tools); expect(body.client_metadata).toEqual(raw.client_metadata);
+  expect(body.tools).toEqual(raw.tools); expect(body.client_metadata).toEqual(header === "true" && metadata === undefined
+    ? { [CODEX_RESPONSES_LITE_METADATA_KEY]: "true" } : raw.client_metadata);
   expect(new Headers(request.headers).get(CODEX_RESPONSES_LITE_HEADER)).toBe(header ?? null);
   const ws = prepareCodexWsRequest(request.url, { headers: request.headers, body: request.body });
   const validMetadata = metadata === undefined || (metadata !== null && !Array.isArray(metadata) && Object.values(metadata).every(value => typeof value === "string"));
@@ -343,7 +344,8 @@ test.each([undefined, false, true, "true", "false", 1, 0, null, {}, []].map(sett
     expect(body.input.filter((item: any) => item.type === "web_search_call")).toHaveLength(project ? 0 : 4);
     expect(body.tools).toEqual(raw.tools);
     expect(body.input.find((item: any) => item.type === "reasoning")).toEqual(raw.input[1]);
-    expect(body.client_metadata).toEqual(raw.client_metadata);
+    expect(body.client_metadata).toEqual(signal === "true"
+      ? { [CODEX_RESPONSES_LITE_METADATA_KEY]: "true" } : raw.client_metadata);
     expect(new Headers(request.headers).get(CODEX_RESPONSES_LITE_HEADER)).toBe(headers.get(CODEX_RESPONSES_LITE_HEADER));
     expect(body.projectResponsesLiteHostedSearchHistory).toBeUndefined();
   }

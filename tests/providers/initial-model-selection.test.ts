@@ -16,23 +16,24 @@ import { upsertOAuthProvider } from "../../src/oauth";
 import { commitKeyLoginProvider } from "../../src/oauth/login-cli";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 import { ManagementRequest } from "../helpers/management-auth";
-import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
+import { installIsolatedCodexRuntime } from "../helpers/isolated-codex-runtime";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { catalogConvergenceFactory } from "../helpers/catalog-convergence";
 
 let home = "";
 let previousHome: string | undefined;
-let codex: IsolatedCodexHome;
+let restoreCodexRuntime: (() => void) | undefined;
 beforeEach(() => {
   previousHome = process.env.OPENCODEX_HOME;
   home = mkdtempSync(join(tmpdir(), "ocx-initial-selection-"));
   process.env.OPENCODEX_HOME = home;
-  codex = installIsolatedCodexHome("ocx-initial-selection-codex-");
+  restoreCodexRuntime = installIsolatedCodexRuntime(home);
 });
 afterEach(async () => {
   clearModelCache();
   await flushConfigDirHardeningForTests();
-  codex.restore();
+  restoreCodexRuntime?.();
+  restoreCodexRuntime = undefined;
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
   removeTreeWithRetry(home);

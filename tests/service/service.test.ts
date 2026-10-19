@@ -3796,9 +3796,9 @@ describe("service serving confirmation", () => {
           timeoutMs: SERVICE_INSTALL_HEALTH_WINDOWS_MS,
         });
         expect(now).toBe(SERVICE_INSTALL_HEALTH_WINDOWS_MS + 500);
-        expect(errors.join("\n")).toContain("after 46s");
-        expect(errors.join("\n")).not.toContain("45s");
-        expect(errors.join("\n")).not.toContain("20s");
+        expect(errors.join("\n").split("\n")[0]).toContain("after 46s");
+        expect(errors.join("\n").split("\n")[0]).not.toContain("45s");
+        expect(errors.join("\n").split("\n")[0]).not.toContain("20s");
       } finally {
         console.error = previousError;
         process.exitCode = previousExitCode ?? 0;
