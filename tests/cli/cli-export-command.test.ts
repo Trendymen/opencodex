@@ -436,7 +436,7 @@ describe("ocx export never serializes a key (accept criterion 6)", () => {
       logs = [];
       errors = [];
       const result = await run(args, { baseUrl: proxy.baseUrl, config: withKey });
-      expect(result.code).toBe(0);
+      expect(result.code, JSON.stringify({ args, stderr: result.stderr.replace(/ocx_[A-Za-z0-9_-]+/g, "[REDACTED]") })).toBe(0);
       expect(result.stdout).not.toContain("ocx_");
       // The env REFERENCE is present; the value it stands for never is.
       expect(result.stdout).toContain(envRef);
