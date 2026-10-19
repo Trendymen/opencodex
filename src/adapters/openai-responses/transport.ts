@@ -1,6 +1,6 @@
 import type { IncomingMeta } from "../base";
 import type { OcxProviderConfig } from "../../types";
-import { CODEX_RESPONSES_LITE_HEADER } from "../../codex/forward-transport-headers";
+import { CODEX_RESPONSES_LITE_HEADER, CODEX_ROUTING_HINT_HEADER } from "../../codex/forward-transport-headers";
 import { CODEX_FORWARD_BASE_URL, isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers-destination";
 import { normalizeForwardedClientHeaderName } from "../../lib/provider-client-headers";
 import { AGENT_ASSERTION_HEADER } from "../../lib/authorization-scheme";
@@ -10,7 +10,7 @@ import { openaiResponsesUrl } from "../openai-responses-url";
 export const FORWARD_HEADERS = [
   "authorization", "chatgpt-account-id", "openai-beta", "originator", "session_id", "session-id",
   "thread-id", "x-client-request-id", "x-codex-beta-features", "x-codex-installation-id",
-  "x-codex-parent-thread-id", "x-codex-turn-metadata", "x-codex-turn-state", "x-codex-window-id",
+  "x-codex-parent-thread-id", "x-codex-turn-metadata", "x-codex-turn-state", CODEX_ROUTING_HINT_HEADER, "x-codex-window-id",
   "x-oai-attestation", "x-openai-subagent", "x-responsesapi-include-timing-metrics", CODEX_RESPONSES_LITE_HEADER,
 ];
 
@@ -58,6 +58,7 @@ export function buildResponsesTransport(provider: OcxProviderConfig, incoming: P
       for (const name of FORWARD_HEADERS) {
         const value = incoming.headers.get(name);
         if (!value) continue;
+        if (name === CODEX_ROUTING_HINT_HEADER && Object.keys(headers).some(existing => existing.toLowerCase() === name)) continue;
         if (name === CODEX_RESPONSES_LITE_HEADER) {
           for (const existing of Object.keys(headers)) {
             if (existing.toLowerCase() === name) delete headers[existing];

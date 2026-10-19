@@ -165,9 +165,10 @@ export async function codexWsUpstreamFetch(
   onPhysicalDispatch?: () => void,
   /** Opt-in pre-output refusal hold (#6969); see codexWsExchange. */
   preOutputRefusalHold?: CodexWsPreOutputRefusalHold,
+  permissions?: import("../../fork/codex-passthrough-contract").CodexPassthroughPermissions,
 ): Promise<Response> {
-  const prepared = prepareCodexWsRequest(url, init);
-  if (!prepared) return sseFallback(url, prepareCodexHttpInit(url, init));
+  const prepared = prepareCodexWsRequest(url, init, permissions);
+  if (!prepared) return sseFallback(url, prepareCodexHttpInit(url, init, permissions));
   init = prepared.httpInit;
   if ((url !== CODEX_RESPONSES_HTTP_URL && url !== OPENAI_API_RESPONSES_URL)
     || !bunSupportsBoundedCodexWsRelay(runtime)) {
@@ -248,7 +249,7 @@ export async function codexWsUpstreamFetch(
   }
   return codexWsExchange({
     session, url, init, prepared, sseFallback, onQuota, beforeDispatch,
-    nativeControl: control,
+    nativeControl: control, permissions,
     beforeContinuation, onPhysicalDispatch,
     preOutputRefusalHold,
     bunVersion: typeof runtime === "string" ? runtime : runtime.version,

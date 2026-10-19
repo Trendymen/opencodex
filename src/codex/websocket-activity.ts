@@ -103,7 +103,7 @@ export class CodexWebSocketActivity {
       else if (call.result !== null) this.observeResultKey(call.result);
     }
     if (frame.type === "response.output_item.done") this.observeOutput(frame.item, providerExecuted);
-    if (["response.completed", "response.incomplete", "response.failed"].includes(String(frame.type))
+    if (["response.completed", "response.incomplete", "response.failed", "response.done"].includes(String(frame.type))
       && record(frame.response) && Array.isArray(frame.response.output)) {
       for (const item of frame.response.output) this.observeOutput(item, providerExecuted);
     }

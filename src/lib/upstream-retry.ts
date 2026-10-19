@@ -17,6 +17,8 @@
  */
 import { clearableDeadline } from "./abort";
 import { redactSecretString } from "./redact";
+import { decideCodexLocalError, codexLocalGatewayResponse, markCodexLocalFailure, carryCodexLocalFailure, codexLocalFailure, markCodexPreDispatchFailure, isCodexPreDispatchFailure, type ClassifiedLocalFailure } from "../fork/codex-passthrough-local-errors";
+import type { CodexPassthroughPermissions } from "../fork/codex-passthrough-contract";
 
 /**
  * Responses the origin may already be executing. RFC 9110 §9.2.2 forbids an intermediary
@@ -87,7 +89,7 @@ export const UPSTREAM_CLOSED_BEFORE_RESPONSE_CODE = "upstream_closed_before_resp
  * follows the send-budget precedent and answers 429: the Codex client is configured with
  * `retry_429: false` and `retry_5xx: true` over four attempts, so a 5xx here multiplies
  * the duplicate send the refusal exists to prevent. See
- * structure/transports/responses.md#ambiguous-connection-reset-replay-boundary.
+ * structure/transports/responses-failover.md#ambiguous-connection-reset-replay-boundary.
  */
 export const UPSTREAM_RESET_REPLAY_REFUSED_CODE = "upstream_reset_replay_refused";
 const NON_REPLAYABLE_UPSTREAM_CODES: ReadonlySet<string> = new Set([
@@ -159,7 +161,7 @@ export function retainReplayRefusal<T extends Response>(response: T): T {
 /** Carry the verdict from a response onto the one that replaces it. */
 export function carryReplayRefusal<T extends Response>(source: Response, rewrapped: T): T {
   if (sameTargetRetryHolds.has(source)) sameTargetRetryHolds.add(rewrapped);
-  return isReplayRefusalResponse(source) ? retainReplayRefusal(rewrapped) : rewrapped;
+  return carryCodexLocalFailure(source, isReplayRefusalResponse(source) ? retainReplayRefusal(rewrapped) : rewrapped);
 }
 
 // 1 initial + 2 retries: the pool may hold more than one stale socket.
@@ -464,11 +466,15 @@ function invitesResendAfterReplacement(status: number): boolean {
  * opaque-blob rebuild of a 400 or a combo hop on a context overflow, because each of those checks
  * it before sending again.
  */
-export function settleOperatorReplacement(response: Response): Response {
+export function settleOperatorReplacement(response: Response, permissions?: CodexPassthroughPermissions): Response {
   if (response.ok) return response;
+  if (permissions && codexLocalFailure(response)?.kind === "protected") { markResponseNonReplayable(response); return response; }
   if (invitesResendAfterReplacement(response.status)) {
+    if (permissions?.localErrorPolicies.resetReplayRefusal === false) {
+      markResponseNonReplayable(response); return response;
+    }
     cancelResponseBodyBestEffort(response);
-    return replayRefusalResponse();
+    return replayRefusalResponse(permissions);
   }
   markResponseNonReplayable(response);
   return response;
@@ -502,6 +508,7 @@ export async function fetchWithAttemptDeadline(
 }
 
 export interface ResetRetryOptions {
+  codexPassthroughPermissions?: CodexPassthroughPermissions;
   /**
    * Opt in only when repeating this operation cannot duplicate upstream effects.
    * This permits reset retries, not extra sends: attempts and onSendsConsumed still
@@ -556,6 +563,8 @@ export interface TransientRetryOptions extends ResetRetryOptions {
    * it; a caller that can genuinely wait longer says so and is not cut short.
    */
   retryAfterCeilingMs?: number;
+  /** 配置的发送次数耗尽且最终仍为 transient 状态时通知调用方。 */
+  onTransientExhausted?: () => void;
 }
 
 export type UpstreamSendRecovery = "connection-reset" | "transient-5xx";
@@ -594,6 +603,20 @@ export class UpstreamRetryEvidenceError extends Error {
   }
 }
 
+export function isProtectedCodexReplacementFailure(error: unknown): boolean {
+  while (error instanceof UpstreamRetryEvidenceError) error = error.cause;
+  return error instanceof SendBudgetExhaustedError || isCodexPreDispatchFailure(error);
+}
+
+export function preserveCodexReplacementFailure(error: unknown, response: Response,
+  reason: Extract<ClassifiedLocalFailure, { kind: "protected" }>["reason"], permissions?: CodexPassthroughPermissions): Response {
+  if (!permissions || !isProtectedCodexReplacementFailure(error)) return response;
+  for (let evidence = error; evidence instanceof UpstreamRetryEvidenceError; evidence = evidence.cause) {
+    if (evidence.resetSeen) { markResponseNonReplayable(response); break; }
+  }
+  return markCodexLocalFailure(response, { kind: "protected", reason });
+}
+
 /**
  * Opt out of Bun's keep-alive pool after a connection-reset retry.
  *
@@ -621,7 +644,10 @@ export function applyUpstreamRecoveryInit<T extends RequestInit>(
  * account-recovery layer downstream cannot read it as a replayable upstream fault. The raw
  * exception is never exposed: it can carry credentials or request data.
  */
-export function replayRefusalResponse(): Response {
+export function replayRefusalResponse(permissions?: CodexPassthroughPermissions, reason: "reset" | "timeout" = "reset"): Response {
+  const failure = { kind: "reset-refusal", reason, sentAmbiguously: true } as const;
+  const decision = decideCodexLocalError(permissions, failure);
+  if (decision.kind === "gateway") return retainReplayRefusal(codexLocalGatewayResponse(decision, failure));
   const response = new Response(JSON.stringify({ error: {
     type: "upstream_error",
     code: UPSTREAM_RESET_REPLAY_REFUSED_CODE,
@@ -630,7 +656,7 @@ export function replayRefusalResponse(): Response {
     status: REPLAY_REFUSED_STATUS,
     headers: { "content-type": "application/json", ...REPLAY_REFUSAL_CLIENT_HEADERS },
   });
-  return retainReplayRefusal(response);
+  return markCodexLocalFailure(retainReplayRefusal(response), failure);
 }
 
 /**
@@ -660,21 +686,30 @@ export async function fetchWithResetRetry(
     // Reported before the await, one physical send at a time: a send that rejects has still
     // been made, and this helper leaves through four exits (return, reset give-up, non-reset
     // rethrow, abort), so a per-send report is the only shape that is correct on all of them.
-    if (opts.onSendsConsumed?.beforeSend && !opts.onSendsConsumed.beforeSend()) throw new SendBudgetExhaustedError(opts.label);
+    if (opts.onSendsConsumed?.beforeSend && !opts.onSendsConsumed.beforeSend()) {
+      const refusal = new SendBudgetExhaustedError(opts.label);
+      throw opts.codexPassthroughPermissions && sawReset ? new UpstreamRetryEvidenceError([], refusal, true) : refusal;
+    }
     if (!opts.onSendsConsumed?.beforeSend) opts.onSendsConsumed?.(1);
     try {
       let response: Response;
-      try { const run = () => doFetch(attempt === 0 ? firstRecovery : "connection-reset");
+      let entered = false;
+      try { const run = () => { entered = true; return doFetch(attempt === 0 ? firstRecovery : "connection-reset"); };
         response = await (opts.onSendsConsumed?.execute ? opts.onSendsConsumed.execute(run) : run()); }
+      catch (error) { if (!entered && opts.codexPassthroughPermissions) markCodexPreDispatchFailure(error); throw error; }
       finally { if (opts.onSendsConsumed?.beforeSend) opts.onSendsConsumed(1); }
-      return spentOperatorReplacement ? settleOperatorReplacement(response) : response;
+      return spentOperatorReplacement ? settleOperatorReplacement(response, opts.codexPassthroughPermissions) : response;
     } catch (err) {
       if (opts.abortSignal?.aborted) throw err;
+      if (opts.codexPassthroughPermissions && isProtectedCodexReplacementFailure(err)) {
+        if (sawReset) throw new UpstreamRetryEvidenceError([], err, true);
+        throw err;
+      }
       if (!isConnectionResetError(err)) {
         // Whatever ended the leg, an operator replacement already went out, so the first send
         // may have run the turn. Settle it as the refusal instead of throwing into a caller
         // whose transport-failure path answers with a client-retryable 502.
-        if (spentOperatorReplacement) return replayRefusalResponse();
+        if (spentOperatorReplacement) return replayRefusalResponse(opts.codexPassthroughPermissions, err instanceof Error && err.name === "TimeoutError" ? "timeout" : "reset");
         // A reset that already reached the origin is credential-visible
         // evidence: keep it attached so the terminal rejection cannot be
         // downgraded to the pre-connection neutral class (#914 review).
@@ -692,7 +727,7 @@ export async function fetchWithResetRetry(
         // Return evidence rather than throwing a generic transport error: outer catches
         // otherwise turn it into a replayable 502 and a combo/account recovery resends it.
         if (attempt + 1 >= attempts || opts.claimAmbiguousResend?.() !== true) {
-          return replayRefusalResponse();
+          return replayRefusalResponse(opts.codexPassthroughPermissions);
         }
         spentOperatorReplacement = true;
       }
@@ -812,6 +847,9 @@ export async function fetchWithTransientRetry(
       if (err instanceof SendBudgetExhaustedError) throw err;
       throw new UpstreamRetryEvidenceError(transientStatuses, err);
     }
+  }
+  if (isTransientUpstreamStatus(res.status) && !opts.abortSignal?.aborted) {
+    opts.onTransientExhausted?.();
   }
   // Budget exhausted: the last response is returned with its body intact.
   return res;
