@@ -1070,7 +1070,7 @@ export async function preparePassthroughExchange(
       );
       if (!("passthrough" in retryAdapter) || !retryAdapter.passthrough) {
         if (!oneShot) upstream.abort();
-        return { failed: formatErrorResponse(502, "upstream_error", "Recovery changed the provider wire unexpectedly") };
+        return { failed: !oneShot && discardBeforeSend ? discardBeforeSend : formatErrorResponse(502, "upstream_error", "Recovery changed the provider wire unexpectedly") };
       }
       try {
         if (recovery !== "console-go-upload-retry") {
@@ -1084,6 +1084,7 @@ export async function preparePassthroughExchange(
         recordAdapterReasoning(logCtx, request);
         recordAdapterTier(logCtx, request);
       } catch (err) {
+        if (!oneShot && discardBeforeSend && !upstream.signal.aborted) return { failed: discardBeforeSend };
         if (!oneShot) upstream.abort();
         if (options.abortSignal?.aborted) return { failed: clientCancelledResponse() };
         const msg = err instanceof Error ? err.message : String(err);
@@ -1115,7 +1116,7 @@ export async function preparePassthroughExchange(
         { allowFinalRecoveryReserve: transientSendPolicy() === null },
       );
       try {
-        if (oneShot && allowance.attempts === 0 && discardBeforeSend) return discardBeforeSend;
+        if (allowance.attempts === 0 && discardBeforeSend) return discardBeforeSend;
         if (oneShot) allowance.attempts = Math.min(1, allowance.attempts);
         const replacement = await fetchWithTransientRetry(
           innerRecovery => {
@@ -1188,9 +1189,9 @@ export async function preparePassthroughExchange(
     passthroughRecovery: for (;;) {
       if (agentTaskRecoveryReplayTerminal) break;
       if (wasAccountAutoPaused(upstreamResponse) && route.provider.authMode !== "forward") {
-        const recovered = await recoverAutoPausedAccount({ requestKey: transportState, reserve: reserveCredentialHop,
+        const recovered = await recoverAutoPausedAccount({ requestKey: transportState, response: upstreamResponse, signal: upstream.signal, reserve: reserveCredentialHop,
           remaining: transientSendCapFor(transientRetryPolicyFor(route.provider)?.attempts, sendBudgetState.targetSendsUsed),
-          refresh: () => transportState.recoverAutoPausedSelection(parsed), refetch: () => rebuildAndRefetch("oauth-account-429"), setPermit: permit => { sendBudgetState.pendingHopPermit = permit; } });
+          refresh: () => transportState.recoverAutoPausedSelection(parsed), refetch: failure => rebuildAndRefetch("oauth-account-429", false, failure), setPermit: permit => { sendBudgetState.pendingHopPermit = permit; } });
         if (!recovered) break;
         if ("failed" in recovered) return recovered.failed;
         upstreamResponse = recovered; continue passthroughRecovery;
