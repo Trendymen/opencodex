@@ -49,6 +49,7 @@ for (const oauth of [false, true]) for (const native of [false, true]) {
       baseUrl: "https://example.test/v1", adapter: native ? "openai-responses" : "openai-chat",
       authMode: oauth ? "oauth" : "key", models: ["fixture"],
       accountAutoPause: { enabled: true, consecutiveFailures: 1 },
+      requestPacing: { enabled: true, maxConcurrentRequests: 1 },
       ...(!oauth ? { apiKey: "synthetic-A", apiKeyPool: [{ id: "A", key: "synthetic-A" }, { id: "B", key: "synthetic-B" }] } : {}),
     } };
     saveConfig(config);
@@ -104,7 +105,7 @@ for (const oauth of [false, true]) for (const native of [false, true]) {
       const response = await handleResponses(new Request("http://localhost/v1/responses", {
         method: "POST", headers: { "content-type": "application/json", "thread-id": `synthetic-${oauth}-${native}` },
         body: JSON.stringify({ model: `${name}/fixture`, input: "synthetic", stream: false, store: false }),
-      }), config, { model: "fixture", provider: name });
+      }), config, { model: "fixture", provider: name }, { abortSignal: AbortSignal.timeout(1_500) });
       const text = await response.text();
       expect(response.status, text).toBe(200);
       expect(sends).toEqual(["Bearer synthetic-A", "Bearer synthetic-B"]);
@@ -125,6 +126,53 @@ for (const oauth of [false, true]) for (const native of [false, true]) {
       expect(persisted?.__ocxOwner).toEqual(retry!._providerContinuationOwner);
       expect(persisted?.__ocxOwner?.credentialIdentity).toBe(expectedCredentialIdentity);
       expect(persisted?.cursor?.conversationId).toBe("synthetic-B-conversation");
+    } finally { prepared.mockRestore(); }
+  });
+}
+
+for (const native of [false, true]) for (const buildFailure of [false, true]) {
+  test(`auto-pause preserves its original failure when the ${native ? "native" : "translated"} replacement cannot be ${buildFailure ? "built" : "selected"}`, async () => {
+    const config = getDefaultConfig();
+    config.defaultProvider = "fixture"; config.defaultModel = "fixture";
+    config.providers = { fixture: { baseUrl: "https://example.test/v1", adapter: native ? "openai-responses" : "openai-chat", authMode: "key", models: ["fixture"],
+      accountAutoPause: { enabled: true, consecutiveFailures: 1 }, requestPacing: { enabled: true, maxConcurrentRequests: 1 },
+      apiKey: "synthetic-A", apiKeyPool: [{ id: "A", key: "synthetic-A" }, ...(buildFailure ? [{ id: "B", key: "synthetic-B" }] : [])] } };
+    saveConfig(config);
+    const original = JSON.stringify({ error: { type: "permission_error", message: "OAuth authentication is currently not allowed for this organization" } });
+    let sends = 0;
+    globalThis.fetch = (async () => { sends++; return new Response(original, { status: 403,
+      headers: { "content-type": "application/json", "content-length": String(original.length), "x-fixture": "retained" } }); }) as typeof fetch;
+    const prepare = transport.prepareResponsesTransport;
+    const prepared = spyOn(transport, "prepareResponsesTransport").mockImplementation(async (...args) => {
+      const state = await prepare(...args);
+      if (state instanceof Response) return state;
+      let replacement = false;
+      const select = state.resolveSelectionAdapter;
+      const failBuild = () => { throw new Error("synthetic replacement build failure"); };
+      state.resolveSelectionAdapter = (...selection) => {
+        const adapter = select(...selection);
+        return replacement ? { ...adapter, buildRequest: failBuild } : adapter;
+      };
+      const recover = state.recoverAutoPausedSelection;
+      state.recoverAutoPausedSelection = async parsed => {
+        const available = await recover(parsed);
+        replacement = available;
+        if (available) state.activeAdapter = { ...state.activeAdapter, buildRequest: failBuild };
+        return available;
+      };
+      return state;
+    });
+    try {
+      const response = await handleResponses(new Request("http://localhost/v1/responses", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "fixture/fixture", input: "synthetic", stream: false, store: false }) }), config,
+        { model: "fixture", provider: "fixture" }, { abortSignal: AbortSignal.timeout(1_500) });
+      expect(response.status).toBe(403);
+      const text = await response.text();
+      if (native || buildFailure) {
+        expect(text).toBe(original); expect(response.headers.get("x-fixture")).toBe("retained");
+      } else expect(text).toContain("OAuth authentication is currently not allowed for this organization");
+      if (buildFailure) expect(response.headers.has("content-length")).toBe(false);
+      expect(sends).toBe(1);
     } finally { prepared.mockRestore(); }
   });
 }

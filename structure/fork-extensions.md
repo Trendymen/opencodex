@@ -20,6 +20,7 @@
 ## 官方订阅逐项许可
 
 - `src/fork/codex-passthrough-contract.ts` 是配置、面板和运行时共用的纯 23 项目录。默认 `true` 只允许既有处理，仍受原功能开关约束；配置说明统一见 [Fork 配置](../docs-site/src/content/docs/reference/configuration/fork-extensions.md#gpt-subscription-processing)。
+- `src/adapters/openai-responses/passthrough.ts` 对未声明 hosted-search 工具的请求做自动历史投影时，检查 `normalizeRequestParameters`；显式 `projectResponsesLiteHostedSearchHistory` 沿用独立的 Provider opt-in 条件。非 canonical 路径继续采用官方默认处理。
 - `codex-passthrough-turn.ts` 按 turn 冻结 Provider 覆盖值，最终 native Responses + canonical forward 目的地才解析许可；Direct、Pool、模型级 adapter 和 fallback 使用同一判断。它按当前许可、目的地和客户端偏好计算上游流模式与 JSON 客户端的 HTTP 选择；发送、恢复、预算和取消仍由 dispatch 管理。响应携带实际尝试的许可，非官方目的地不能继承父目标许可。
 - `src/adapters/openai-responses/transport.ts` 在共享传输构建点转发 caller 的 routing hint。关闭 hint 合成时，Provider 静态同名头优先；开启时仍按最终 body 合成。`normalizeEncryptedContent: false` 跳过 OCX1 解封装和 native compaction 密文规范化；默认开启时沿用官方身份切换清理条件。
 - `src/server/responses/core-pipeline.ts` 为准备阶段的早退响应附上 admission 许可；路由确定后为实际尝试的响应附上许可，包括 retention 交付后的响应与无效摘要的 502。retention 的 prepare、deliver、dispose 和发送资源释放仍由官方 pipeline 管理。
@@ -38,6 +39,7 @@
 ## 响应与恢复边界
 
 - `src/server/responses/passthrough-dispatch-types.ts` 与 `src/server/responses/adapter-dispatch-types.ts` 分别保存对应 dispatch 的参数类型，母文件通过 `import type` 引用，发送预算、取消和恢复逻辑仍在母文件中。
+- `src/server/responses/account-auto-pause-recovery.ts` 只在预算允许且已选中替补后，按现有有界错误读取保存失败响应、释放旧 body 的 pacing slot，再进入替补发送。没有预算、没有替补或 body 被外部 reader 锁定时不读取原 body；重建失败使用保留的失败响应，请求取消仍沿用 abort 路径。
 - `src/server/responses-reasoning-summary-rewrite.ts` 仅在客户端请求 summary 且路由满足条件时投影；已有 summary 不重复投影。保留 raw reasoning、终态字段和原始存储对象，passthrough continuation 记录客户端实际收到的形状。
 - projection 的唯一序号按 32 字节计入共享 `translatorBudget`；EOF、失败和取消完成资源释放，超限沿用 `translation_buffer_limit`。flush 不扩大到 reader error / nested-exec barrier。
 - phase 推断只适用于显式配置的第三方原生 Responses；宣布阶段的 `final_answer` 不足以证明最终相位，已有 phase 和后续工作证据共同决定交付结果。
