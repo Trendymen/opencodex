@@ -85,6 +85,10 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promis
       usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
     });
   }
+  if ((url.hostname === "chatgpt.com" && url.pathname === "/backend-api/wham/usage")
+    || (url.hostname === "auth.openai.com" && url.pathname === "/oauth/token")) {
+    return new Response(null, { status: 503 });
+  }
   return realFetch(input, init);
 }) as typeof fetch;
 

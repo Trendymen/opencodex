@@ -135,6 +135,46 @@ async function openDetails(row: HTMLTableRowElement) {
   await act(async () => { row.querySelector<HTMLButtonElement>(".log-detail-btn")!.click(); });
 }
 
+test("local delivery failure details retain the upstream HTTP status without blaming upstream", async () => {
+  mockLogs([{
+    ...fixture("private-deadline"), status: 502, upstreamHttpStatus: 200,
+    errorCode: "private-sse-read-timeout", failureCause: "local-refusal",
+    upstreamError: "Private SSE read deadline exceeded (5 seconds).",
+  }]);
+  const { root, container } = await mountLogs();
+  try {
+    await openDetails(rowFor(container, "private-deadline"));
+    const dialog = document.querySelector(".log-detail-card")!;
+    expect(dialog.textContent).toContain("Local response delivery failed");
+    const upstreamLabel = [...dialog.querySelectorAll("span")].find(span => span.textContent === "Upstream HTTP status");
+    expect(upstreamLabel?.nextElementSibling?.textContent).toBe("200");
+    expect(dialog.textContent).toContain("Local reason");
+    expect(dialog.textContent).toContain("private-sse-read-timeout");
+    expect(dialog.textContent).not.toContain("Upstream reason");
+  } finally {
+    await act(async () => { root.unmount(); });
+    container.remove();
+  }
+});
+
+test("upstream failures retain their upstream explanation beside the observed HTTP status", async () => {
+  mockLogs([{ ...fixture("upstream-failure"), status: 502, upstreamHttpStatus: 503,
+    errorCode: "upstream_server_error", failureCause: "upstream-fault", upstreamError: "Synthetic provider unavailable." }]);
+  const { root, container } = await mountLogs();
+  try {
+    await openDetails(rowFor(container, "upstream-failure"));
+    const dialog = document.querySelector(".log-detail-card")!;
+    expect(dialog.textContent).toContain("Bad upstream response");
+    expect(dialog.textContent).toContain("Upstream reason");
+    expect(dialog.textContent).not.toContain("Local response delivery failed");
+    const upstreamLabel = [...dialog.querySelectorAll("span")].find(span => span.textContent === "Upstream HTTP status");
+    expect(upstreamLabel?.nextElementSibling?.textContent).toBe("503");
+  } finally {
+    await act(async () => { root.unmount(); });
+    container.remove();
+  }
+});
+
 test("mixed Logs rows visibly identify their basis, with distinct details and attempt timing", async () => {
   const current = fixture("generation-row", value("generation-window"));
   const attempt = fixture("attempt-row", value("legacy-post-visible-output", 30));
