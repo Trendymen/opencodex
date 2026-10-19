@@ -78,6 +78,7 @@ export const RESPONSES_CORE_MODULES = [
   "run-turn-execution.ts",
   "combo-adapter-preflight.ts",
   "adapter-dispatch.ts",
+  "adapter-dispatch-types.ts",
   "antigravity-validation-refusal.ts",
   "adapter-continuation.ts",
   "adapter-delivery.ts",

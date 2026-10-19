@@ -37,7 +37,7 @@
 
 ## 响应与恢复边界
 
-- `src/server/responses/passthrough-dispatch-types.ts` 只保存原生 Responses dispatch 的参数类型，母文件通过 `import type` 引用，发送预算、取消和恢复逻辑仍在母文件中。
+- `src/server/responses/passthrough-dispatch-types.ts` 与 `src/server/responses/adapter-dispatch-types.ts` 分别保存对应 dispatch 的参数类型，母文件通过 `import type` 引用，发送预算、取消和恢复逻辑仍在母文件中。
 - `src/server/responses-reasoning-summary-rewrite.ts` 仅在客户端请求 summary 且路由满足条件时投影；已有 summary 不重复投影。保留 raw reasoning、终态字段和原始存储对象，passthrough continuation 记录客户端实际收到的形状。
 - projection 的唯一序号按 32 字节计入共享 `translatorBudget`；EOF、失败和取消完成资源释放，超限沿用 `translation_buffer_limit`。flush 不扩大到 reader error / nested-exec barrier。
 - phase 推断只适用于显式配置的第三方原生 Responses；宣布阶段的 `final_answer` 不足以证明最终相位，已有 phase 和后续工作证据共同决定交付结果。
