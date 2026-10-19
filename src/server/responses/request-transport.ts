@@ -1,3 +1,4 @@
+import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { SendBudgetExhaustedError } from "../../lib/upstream-retry";
 import { anthropicBillingPhysicalFetch } from "../../providers/anthropic-billing-ownership";
 import { rebindPhysicalSend } from "../../lib/request-execution-budget";
@@ -550,8 +551,16 @@ export async function prepareResponsesTransport(
   /** Bind the negotiated wire adapter and its built requests to the serving credential's authority. */
   const resolveSelectionAdapter = (provider: OcxProviderConfig, retention = config.cacheRetention): ProviderAdapter => {
     if (copilotAutoAdapter) provider = { ...provider, adapter: copilotAutoAdapter };
-    const resolved = resolveAdapter(provider, retention, route.providerName);
-    if (route.provider.authMode === "forward") return resolved;
+    const adapterProvider = options.comboAttempt && provider.allowEncryptedV2AgentTasks === true
+      ? { ...provider, allowEncryptedV2AgentTasks: false }
+      : provider;
+    const resolved = resolveAdapter(adapterProvider, retention, route.providerName);
+    if (route.provider.authMode === "forward") {
+      const build = resolved.buildRequest.bind(resolved);
+      const permissions = resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: adapterProvider, inboundWire });
+      if (permissions) resolved.buildRequest = (requestParsed, incoming) => build(requestParsed, { ...incoming, codexPassthroughPermissions: permissions });
+      return resolved;
+    }
     const binding: DispatchBinding | undefined = route.provider.authMode === "oauth"
       ? oauthSelection && servingOAuthSnapshot
         ? { kind: "oauth", selection: { ...oauthSelection }, snapshot: servingOAuthSnapshot }
@@ -724,6 +733,7 @@ export async function prepareResponsesTransport(
           sent = true;
         };
         const fetch = providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
           providerName: route.providerName, modelId: route.modelId, pacingSlotAcquired: true,
           pacingSlot: attemptSlot,
           turnScopedPacing: true,

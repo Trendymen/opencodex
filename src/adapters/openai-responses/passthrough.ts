@@ -4,11 +4,12 @@ import { frameCompactionHistory } from "../../responses/compaction-history-frami
 import { nameRoutedIdentity, repairIdentityInResponsesBody, stripRoutedIdentity } from "../identity";
 import { stripBracketedModelSuffix } from "../openai-chat";
 import { normalizeOpenCodeGoAdditionalTools } from "../opencode-go-additional-tools";
+import { isConsoleGoDestination } from "../../providers/opencode-zen-rate-limit";
 import { isXaiResponsesDestination } from "../../providers/xai-transport";
 import { applyGithubCopilotContextTier } from "../../providers/github-copilot-context";
 import { Buffer } from "node:buffer";
 import type { IncomingMeta, ProviderAdapter } from "../base";
-import { namespacedToolName, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../../types";
+import { namespacedToolName, toolChoiceToolPredicate, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../../types";
 import { applyCodexRoutingHint, CODEX_RESPONSES_LITE_HEADER, CODEX_RESPONSES_LITE_METADATA_KEY, CODEX_ROUTING_HINT_HEADER } from "../../codex/forward-transport-headers";
 import { COMPACT_PROMPT, compactionItemToText, decodeCompactionSummary, isCompactionItemType, transferCompactionCiphertextLease } from "../../responses/compaction";
 import { decodeServerSentEvents } from "../../lib/sse-decoder";
@@ -28,7 +29,24 @@ import { preparePlaintextV2AgentMessages } from "../../responses/plaintext-v2-ag
 import { isMetaAiResponsesDestination, rewriteMuseToolNamesForUpstream } from "../../responses/muse-tool-name-alias";
 import { buildResponsesTransport } from "./transport";
 export { FORWARD_HEADERS } from "./transport";
+import { collectFunctionCallRepairSchemas } from "../../responses/function-call-compat";
+import { collectResponsesToolGroups } from "../../responses/tool-groups";
+import { agentMessageConversionOptions } from "../../fork/agent-message-format";
+import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../../fork/glm-kimi-compat";
+import { addSpawnAgentForkTurnsGuidance } from "../../fork/spawn-agent-compat";
+import { applyRoutedProgressContractToResponsesBody } from "../../fork/routed-progress-contract";
+import { debugResponsesOutboundShape } from "../../fork/outbound-debug";
+import { modelRecordValue } from "../../reasoning-effort";
+import { estimateInputTokens } from "../../server/responses/input-admission";
 import { normalizeResponsesCodeMode } from "../responses-code-mode";
+import { CODE_MODE_RESULT_ECHO_SENTENCE } from "../exec-tool-result-normalize";
+import {
+  buildNonOpenAIToolCatalogNudgeFromNames,
+  isBareShellBridgeTool,
+  isCodexApplyPatchTool,
+  isCodexCodeModeExecTool,
+  shouldInjectNonOpenAIToolCatalogNudge,
+} from "../tool-catalog-nudge";
 import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "../xai-web-search";
 import {
   isXaiSchemaTarget,
@@ -45,7 +63,7 @@ import { notePlaintextReasoningDropped } from "./plaintext-reasoning-notice";
 import { stripCanonicalForwardPromptCacheOptions, stripDeprecatedPromptCacheRetention } from "./prompt-cache";
 import { isPlainObject } from "./internal";
 import { normalizeToolSchemas, promoteClientLoadedTools, stripUnsupportedHostedTools } from "./tool-schema";
-import { annotateEmptyResponsesToolOutputs, backfillWebSearchQueries, normalizeResponsesToolResultAdjacency, repairOrphanedInputItems, repairOversizedReplayCallIds, repairUnidentifiedToolOutputItems, restoreBridgedWebSearchCalls } from "./tool-output-recovery";
+import { annotateEmptyResponsesToolOutputs, backfillWebSearchQueries, normalizeDuplicateResponsesToolOutputs, normalizeResponsesToolResultAdjacency, repairOrphanedInputItems, repairOversizedReplayCallIds, repairUnidentifiedToolOutputItems, restoreBridgedWebSearchCalls } from "./tool-output-recovery";
 import { bridgeSearchReplayScope } from "../../responses/bridge-search-replay-cache";
 import { applyTierDecisionToResponsesBody, normalizeCanonicalForwardContinuationEnvelope, normalizeCanonicalForwardPromptEnvelope, stripCanonicalForwardSamplingParams, stripPreviousResponseId, stripStatefulResponsesParams, stripUnsupportedForwardParams } from "./canonical-forward";
 import { normalizeImageGenClientTools, preferConfiguredHostedTools } from "./image-gen";
@@ -67,6 +85,12 @@ import { stripKimiEmptyAssistantMessages } from "./empty-assistant";
 export function requiresPlaintextReasoningReplay(provider: OcxProviderConfig): boolean {
   return provider.preserveResponsesReasoningContent === true
     && provider.requiresAdjacentResponsesToolResults === true;
+}
+
+const MIN_INJECTED_OUTPUT_TOKENS = 512;
+
+function positiveBudgetWindow(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
 /** Replace every `input_image` part under a routed-compaction body with a short marker. */
@@ -186,6 +210,87 @@ function appendedUtf8Bytes(previousBytes: number, lastCodeUnit: number, fragment
   return previousBytes + Buffer.byteLength(fragment, "utf8") - (joinsSurrogatePair ? 2 : 0);
 }
 
+/** Add tool guidance from the final wire catalog so routed models see every callable name. */
+function applyRoutedResponsesToolCatalogNudge(body: unknown, parsed: OcxParsedRequest): unknown {
+  if (!isPlainObject(body) || typeof body.instructions !== "string") return body;
+  const declarations = collectResponsesToolGroups(body).flat();
+  if (declarations.length === 0) return body;
+  if (declarations.some(tool => !isPlainObject(tool) || typeof tool.name !== "string")) return body;
+
+  const wireNames = [...new Set(declarations.map(tool => (tool as Record<string, unknown>).name as string))];
+  const wireNameSet = new Set(wireNames);
+  let codeModeExecName: string | undefined;
+  let directApplyPatchName: string | undefined;
+  const tools = parsed.context.tools;
+  if (tools?.length) {
+    const visible = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
+    const codeModeVisible = !visible.some(isBareShellBridgeTool);
+    for (const tool of visible) {
+      const wireName = namespacedToolName(tool.namespace, tool.name);
+      if (!wireNameSet.has(wireName)) continue;
+      if (codeModeVisible && !codeModeExecName && isCodexCodeModeExecTool(tool)) codeModeExecName = wireName;
+      if (isCodexApplyPatchTool(tool)) directApplyPatchName = wireName;
+    }
+  }
+
+  const nudge = buildNonOpenAIToolCatalogNudgeFromNames(
+    wireNames,
+    undefined,
+    codeModeExecName,
+    directApplyPatchName,
+  );
+  if (!nudge) return body;
+  const novelNudge = body.instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)
+    ? nudge.replace(`${CODE_MODE_RESULT_ECHO_SENTENCE} `, "")
+    : nudge;
+  if (body.instructions.includes(novelNudge)) return body;
+  return { ...body, instructions: `${body.instructions}\n\n${novelNudge}` };
+}
+
+export function applyConfiguredResponsesMaxOutputTokens(
+  body: unknown,
+  provider: Pick<OcxProviderConfig, "contextWindow" | "defaultMaxOutputTokens" | "modelContextWindows" | "modelMaxOutputTokens"> & { authMode?: OcxProviderConfig["authMode"] },
+  modelId: string,
+  parsed?: OcxParsedRequest,
+): unknown {
+  if (!isPlainObject(body)) return body;
+  if (provider.authMode === "forward") return body;
+  if (Object.prototype.hasOwnProperty.call(body, "max_output_tokens")) return body;
+  const configured = modelRecordValue(provider.modelMaxOutputTokens, modelId)
+    ?? provider.defaultMaxOutputTokens;
+  if (configured === undefined) return body;
+  const contextWindow = positiveBudgetWindow(modelRecordValue(provider.modelContextWindows, modelId))
+    ?? positiveBudgetWindow(provider.contextWindow);
+  if (contextWindow === null || parsed === undefined) return { ...body, max_output_tokens: configured };
+  const remaining = contextWindow - estimateInputTokens(parsed, modelId);
+  if (remaining <= MIN_INJECTED_OUTPUT_TOKENS) return { ...body, max_output_tokens: configured };
+  const headroom = Math.min(4_096, Math.max(256, Math.floor(remaining / 10)));
+  const budget = Math.max(
+    MIN_INJECTED_OUTPUT_TOKENS,
+    Math.min(configured, remaining - headroom),
+  );
+  return { ...body, max_output_tokens: budget };
+}
+
+function addCanonicalForwardResponsesLiteMetadata(body: unknown, incoming: IncomingMeta): unknown {
+  if (incoming.headers.get("x-openai-internal-codex-responses-lite") !== "true" || !isPlainObject(body)) {
+    return body;
+  }
+  if (Object.hasOwn(body, "client_metadata") && !isPlainObject(body.client_metadata)) return body;
+  const clientMetadata = body.client_metadata;
+  if (isPlainObject(clientMetadata)
+    && Object.hasOwn(clientMetadata, "ws_request_header_x_openai_internal_codex_responses_lite")) {
+    return body;
+  }
+  return {
+    ...body,
+    client_metadata: {
+      ...(isPlainObject(clientMetadata) ? clientMetadata : {}),
+      ws_request_header_x_openai_internal_codex_responses_lite: "true",
+    },
+  };
+}
+
 export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): ProviderAdapter & { passthrough: true } {
   return {
     name: "openai-responses",
@@ -193,6 +298,8 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
 
     buildRequest(parsed: OcxParsedRequest, incoming: IncomingMeta) {
       const translatorBudget = incoming.translatorBudget;
+      const permissions = isCanonicalOpenAiForwardProvider(provider) ? incoming.codexPassthroughPermissions : undefined;
+      const normalizeParameters = permissions?.normalizeRequestParameters !== false;
       const { url, headers } = buildResponsesTransport(provider, incoming);
 
       const forward = provider.authMode === "forward";
@@ -206,10 +313,12 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       const unexpandedMiss = !!parsed.previousResponseId && parsed._previousResponseInputExpanded !== true;
       let outBody = stripPreviousResponseId(
         parsed._rawBody,
-        forward || parsed._previousResponseInputExpanded === true,
+        permissions?.expandRequestHistory !== false && (forward || parsed._previousResponseInputExpanded === true),
       );
-      if (!forward) outBody = normalizeRoutedAgentMessages(outBody, {
-        allowStringContent: isXaiResponsesDestination(provider),
+      const agentMessageOptions = agentMessageConversionOptions({
+        provider,
+        resolvedModelId: parsed.modelId,
+        phase: "early",
       });
       // #5217: a sub-agent inherits the parent session's instruction block, so the identity
       // sentence this proxy generated for the PARENT's model rides along to a worker running a
@@ -218,11 +327,14 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // destination our sentence is dropped, because Codex's own identity wording (sent in the
       // client's model_switch block) is the correct one there. Text the proxy did not generate —
       // user turns, tool output, fenced code, provider-native blocks — is untouched.
-      outBody = repairIdentityInResponsesBody(
+      if (normalizeParameters) outBody = repairIdentityInResponsesBody(
         outBody,
         forward ? stripRoutedIdentity : (text: string) => nameRoutedIdentity(text, parsed.modelId),
       );
-      outBody = mapRoutedResponsesReasoningEffort(outBody, provider, parsed.modelId);
+      if (normalizeParameters && permissions?.normalizeEncryptedContent !== false && agentMessageOptions) {
+        outBody = normalizeRoutedAgentMessages(outBody, agentMessageOptions);
+      }
+      if (normalizeParameters) outBody = mapRoutedResponsesReasoningEffort(outBody, provider, parsed.modelId);
       // stripPreviousResponseId() intentionally returns its input on a no-op. Detach before the
       // tier write so a force-fast/default decision can never mutate parsed._rawBody.
       outBody = applyTierDecisionToResponsesBody(outBody, parsed.options?.tierDecision);
@@ -233,7 +345,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // own capability: Kimi carries the adjacency flag but accepts a dangling call (#4726) and
       // must not start receiving placeholders it never needed.
       const pairedToolResults = provider.requiresPairedResponsesToolResults === true;
-      if (stateless) outBody = stripStatefulResponsesParams(outBody);
+      if (normalizeParameters && (stateless)) outBody = stripStatefulResponsesParams(outBody);
       // A replay miss can leave a function_call_output whose paired function_call sat
       // in the prefix that was never expanded. A stateless upstream cannot resolve the
       // pair from its own storage either, so it needs the same repair the forward
@@ -244,11 +356,11 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // stores conversations for 30 days and documents previous_response_id. So it carries the
       // pairing capability instead, which reuses the orphan-call placeholder without touching
       // store or previous_response_id.
-      if (provider.annotateEmptyToolOutputs === true) {
+      if (normalizeParameters && (provider.annotateEmptyToolOutputs === true)) {
         outBody = annotateEmptyResponsesToolOutputs(outBody, true);
       }
       const synthesizeMissingCallOutputs = !forward && (stateless || pairedToolResults);
-      if (forward || stateless || pairedToolResults) {
+      if (normalizeParameters && (forward || stateless || pairedToolResults)) {
         // A stateful destination can resolve an output-only delta against the call stored behind
         // an unexpanded previous_response_id. All other shapes have no hidden call to preserve.
         const repairOrphanOutputs = forward || stateless || !unexpandedMiss;
@@ -259,13 +371,16 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           repairOrphanOutputs,
         );
       }
-      if (provider.dropResponsesReasoningItems === true) {
+      if (normalizeParameters && (provider.dropResponsesReasoningItems === true)) {
         outBody = dropResponsesReasoningInputItems(outBody);
       }
-      if (adjacentToolResults) {
+      if (normalizeParameters && (isConsoleGoDestination(url))) {
+        outBody = normalizeDuplicateResponsesToolOutputs(outBody);
+      }
+      if (normalizeParameters && (adjacentToolResults)) {
         outBody = normalizeResponsesToolResultAdjacency(outBody);
       }
-      if (forward) {
+      if (forward && normalizeParameters) {
         // `metadata` is stripped on every forward route for compatibility with the canonical backend.
         // `max_output_tokens` is stripped only when this provider is the canonical backend.
         outBody = stripUnsupportedForwardParams(outBody, isCanonicalOpenAiForwardProvider(provider));
@@ -276,9 +391,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           outBody = stripDeprecatedPromptCacheRetention(outBody, parsed.modelId);
           outBody = stripCanonicalForwardPromptCacheOptions(outBody);
           outBody = normalizeCanonicalForwardPromptEnvelope(outBody);
-          outBody = normalizeCanonicalForwardContinuationEnvelope(outBody);
+          if (permissions?.expandRequestHistory !== false) outBody = normalizeCanonicalForwardContinuationEnvelope(outBody);
         }
-      } else {
+      } else if (!forward) {
         outBody = stripRejectedSamplingParams(outBody, provider, parsed.modelId);
         outBody = preferConfiguredHostedTools(
           outBody,
@@ -288,11 +403,11 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         );
         outBody = normalizeImageGenClientTools(outBody);
       }
-      if (forward || parsed._previousResponseInputExpanded === true) {
+      if (normalizeParameters && (forward || parsed._previousResponseInputExpanded === true)) {
         outBody = repairOversizedReplayCallIds(outBody);
       }
-      outBody = stripUnsupportedReasoningSummaryDelivery(outBody, parsed.modelId);
-      outBody = stripNoneReasoningSummary(outBody);
+      if (normalizeParameters) outBody = stripUnsupportedReasoningSummaryDelivery(outBody, parsed.modelId);
+      if (normalizeParameters) outBody = stripNoneReasoningSummary(outBody);
       // #4587: on a bridged provider, hand the destination back the search call and result the
       // proxy executed on its behalf, in place of the hosted cell the caller replays. Scoped to
       // its exact conversation and serving identity and recorded by the bridge itself, so a
@@ -305,13 +420,13 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // direction: a conversation that already recorded a web_search_call replays it
       // every turn, and a strict parser rejects the whole request over the missing key —
       // `queries` for DeepSeek (#930), `query` for Console Go (#3071).
-      outBody = backfillWebSearchQueries(outBody);
+      if (normalizeParameters) outBody = backfillWebSearchQueries(outBody);
       // #5095: a conversation that already contains a `default.`-prefixed call name is refused by
       // the upstream `^[a-zA-Z0-9_-]+$` name pattern on every later turn that replays it, so the
       // task cannot be compacted or continued at all. Repair the replayed item here, before the
       // canonical-destination split below, because the reported failure was a side chat on a plain
       // OpenAI model inheriting history a routed provider had damaged.
-      outBody = repairLegacyDottedToolCallNames(outBody);
+      if (normalizeParameters) outBody = repairLegacyDottedToolCallNames(outBody);
       // Shared HTTP/WS outbound projection, including concrete combo/fallback destinations.
       if (isOpenAiOperatedResponsesDestination(provider)) {
         outBody = stripProviderInputItemMetadata(outBody);
@@ -336,6 +451,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           outBody = stripCanonicalOnlyTopLevelFields(outBody);
         }
         outBody = promoteClientLoadedTools(outBody);
+      }
+      if (!isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = addSpawnAgentForkTurnsGuidance(outBody, collectFunctionCallRepairSchemas(outBody));
       }
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         const rewritten = rewriteRoutedCustomToolsForUpstream(
@@ -390,15 +508,15 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // compaction body build removes the tool surface and must
       // therefore be the last routed transform that may depend on those declarations. Structural
       // sanitizers below can still run after it.
-      outBody = normalizeResponsesCodeMode(outBody, parsed, provider);
+      if (normalizeParameters) outBody = normalizeResponsesCodeMode(outBody, parsed, provider);
       if (parsed._compactionRequest === true && (!supportsNativeResponsesCompactionTrigger(provider) || parsed._portableCompaction === true)) {
         outBody = buildRoutedCompactionBody(outBody, new Headers(headers).get(CODEX_RESPONSES_LITE_HEADER) === "true");
       }
       // Run after routed compaction so nested input_image parts are replaced before a malformed
       // tool output is flattened to text and can no longer be inspected structurally.
-      outBody = repairUnidentifiedToolOutputItems(outBody);
+      if (normalizeParameters) outBody = repairUnidentifiedToolOutputItems(outBody);
       outBody = stripKimiEmptyAssistantMessages(outBody, url);
-      if (parsed._plaintextV2AgentMessages === true && isCanonicalOpenAiForwardProvider(provider)) {
+      if (normalizeParameters && parsed._plaintextV2AgentMessages === true && isCanonicalOpenAiForwardProvider(provider)) {
         const prepared = preparePlaintextV2AgentMessages(outBody);
         outBody = prepared.body;
         if (prepared.namespaceAliased) {
@@ -406,6 +524,17 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           plaintextV2AgentMessageAliasedToolNames = prepared.aliasedAgentMessageToolNames;
         }
       }
+      if (parsed._compactionRequest !== true && !isOpenAiOperatedResponsesDestination(provider)) {
+        outBody = applyRoutedProgressContractToResponsesBody(outBody);
+      }
+      const glmKimiCompatibility = applyGlmKimiOutboundCompatibility({
+        body: outBody,
+        provider,
+        modelId: parsed.modelId,
+        threadId: incoming.headers.get("thread-id") ?? incoming.headers.get("thread_id"),
+        url,
+      });
+      outBody = glmKimiCompatibility.body;
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       const stripNativeCompaction = parsed._stripNativeCompactionEncryptedContent === true
         || threadServingIdentityChanged;
@@ -413,17 +542,19 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // encrypted reasoning blob, including one whose provenance is unknown. Combo routing
       // separately refuses a proven cross-route replay when no plaintext exists; this final
       // serializer guard ensures the foreign opaque state is never forwarded regardless.
-      const sanitizedBody = normalizeToolSchemas(
+      if (forward && !normalizeParameters && permissions?.expandRequestHistory !== false) outBody = normalizeCanonicalForwardContinuationEnvelope(outBody);
+      const compactionBody = permissions?.normalizeEncryptedContent !== false ? scrubOcxCompactionItems(
+        outBody,
+        destinationDecodesNativeCompactionBlob(provider),
+        stripNativeCompaction,
+        parsed._compactionRequest !== true,
+      ) : outBody;
+      const sanitizedBody = normalizeParameters ? normalizeToolSchemas(
         stripItemIdsWhenUnstored(
           stripInvalidItemIds(
             stripUnsupportedHostedTools(
               sanitizeReasoningInputContent(
-                scrubOcxCompactionItems(
-                  outBody,
-                  destinationDecodesNativeCompactionBlob(provider),
-                  stripNativeCompaction,
-                  parsed._compactionRequest !== true,
-                ),
+                compactionBody,
                 {
                   preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
                   dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
@@ -431,6 +562,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
                   dropForeignItemId: parsed._dropForeignReasoningItemIds === true,
                   requirePlaintextReasoning: requiresPlaintextReasoningReplay(provider),
                   onPlaintextReasoningBlanked: () => notePlaintextReasoningDropped(provider),
+                  stripRawContentBackedEncryptedContent: isOpenAiOperatedResponsesDestination(provider),
                 },
               ),
               provider,
@@ -440,8 +572,10 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           provider.preserveResponsesInputItemIds === true,
         ),
         isXaiSchemaTarget(provider),
-      );
-      const unnormalizedBody = stripDisabledVerbosity(
+        !isOpenAiOperatedResponsesDestination(provider)
+          && !((provider.authMode ?? "key") === "key" && provider.allowEncryptedV2AgentTasks === true),
+      ) : compactionBody;
+      let finalBody = normalizeParameters ? stripDisabledVerbosity(
         stripDisabledReasoningSummaries(
           normalizeConfiguredReasoningSummaryDelivery(sanitizedBody, provider, parsed.modelId),
           provider,
@@ -449,16 +583,20 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         ),
         provider,
         parsed.modelId,
-      );
+      ) : sanitizedBody;
       // Normalize the wire model before deriving model-dependent transport metadata.
-      let finalBody =
-        provider.modelSuffixBracketStrip
-          && unnormalizedBody !== null
-          && typeof unnormalizedBody === "object"
-          && !Array.isArray(unnormalizedBody)
-          && typeof (unnormalizedBody as { model?: unknown }).model === "string"
-          ? { ...(unnormalizedBody as Record<string, unknown>), model: stripBracketedModelSuffix((unnormalizedBody as { model: string }).model) }
-          : unnormalizedBody;
+      if (
+        normalizeParameters && provider.modelSuffixBracketStrip
+        && finalBody !== null
+        && typeof finalBody === "object"
+        && !Array.isArray(finalBody)
+        && typeof (finalBody as { model?: unknown }).model === "string"
+      ) {
+        finalBody = {
+          ...(finalBody as Record<string, unknown>),
+          model: stripBracketedModelSuffix((finalBody as { model: string }).model),
+        };
+      }
       if (isMetaAiResponsesDestination(url)) {
         const originalChoice = isPlainObject(parsed._rawBody) ? parsed._rawBody.tool_choice : undefined;
         finalBody = normalizeMuseToolChoice(finalBody, originalChoice);
@@ -468,21 +606,28 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // and coerce only this final upstream copy; passthrough delivery folds the terminal stream
       // back into JSON for that client. `store` is intentionally untouched here because explicit
       // caller storage semantics are independent of the transport required by the destination.
-      if (isCanonicalOpenAiForwardProvider(provider)
+      if (normalizeParameters && isCanonicalOpenAiForwardProvider(provider)
         && isPlainObject(finalBody)
         && finalBody.stream !== true) {
         finalBody = { ...finalBody, stream: true };
       }
+      if (parsed._compactionRequest !== true && shouldInjectNonOpenAIToolCatalogNudge(provider)) {
+        finalBody = applyRoutedResponsesToolCatalogNudge(finalBody, parsed);
+      }
+      finalBody = applyConfiguredResponsesMaxOutputTokens(finalBody, provider, parsed.modelId, parsed);
       if (isCanonicalOpenAiForwardProvider(provider)) {
-        const routingHeaders = new Headers(headers);
-        applyCodexRoutingHint(routingHeaders, finalBody);
-        // Static headers may use mixed casing. Remove every stale spelling
-        // without normalizing unrelated headers returned by this adapter.
-        for (const name of Object.keys(headers)) {
-          if (name.toLowerCase() === CODEX_ROUTING_HINT_HEADER) delete headers[name];
+        if (permissions?.bridgeLiteMetadata !== false) finalBody = addCanonicalForwardResponsesLiteMetadata(finalBody, incoming);
+        if (permissions?.synthesizeRoutingHint !== false) {
+          const routingHeaders = new Headers(headers);
+          applyCodexRoutingHint(routingHeaders, finalBody);
+          // Static headers may use mixed casing. Remove every stale spelling
+          // without normalizing unrelated headers returned by this adapter.
+          for (const name of Object.keys(headers)) {
+            if (name.toLowerCase() === CODEX_ROUTING_HINT_HEADER) delete headers[name];
         }
         const hint = routingHeaders.get(CODEX_ROUTING_HINT_HEADER);
         if (hint !== null) headers[CODEX_ROUTING_HINT_HEADER] = hint;
+        }
       }
       const tierLog = createAdapterTierMetadata(
         parsed.options?.tierObservation,
@@ -512,10 +657,31 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         validateFinalCustomToolCompatibility(finalBody, provider.supportsResponsesCustomTools);
       }
-      const body = JSON.stringify(applyGithubCopilotContextTier(finalBody, provider, parsed.modelId, incoming.providerName));
+      const outboundBody = applyGithubCopilotContextTier(finalBody, provider, parsed.modelId, incoming.providerName);
+      const body = JSON.stringify(outboundBody);
+      const bodyBytes = Buffer.byteLength(body, "utf8");
+      persistKimiToolSchemaCatalog({
+        body: outboundBody,
+        provider,
+        modelId: parsed.modelId,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+        url,
+      });
+      debugResponsesOutboundShape({
+        url,
+        provider,
+        model: parsed.modelId,
+        body: outboundBody,
+        bodyBytes,
+        convertedCustomToolNames: convertedRoutedCustomToolNames,
+        convertedToolSearchNames: convertedRoutedToolSearchNames,
+        convertedNamespaceAliases: convertedRoutedNamespaceToolAliases,
+        kimiToolSchemaLowering: glmKimiCompatibility.kimiToolSchemaLowering,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
+      });
       const releaseBodyObservation = translatorBudget.observeExternallyCapped(
         "passthrough_serialization",
-        Buffer.byteLength(body, "utf8"),
+        bodyBytes,
       );
       return {
         url,
@@ -523,6 +689,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         headers,
         body,
         releaseBodyObservation,
+        threadIdTag: glmKimiCompatibility.threadIdTag,
         ...(convertedRoutedCustomToolNames ? { convertedRoutedCustomToolNames } : {}),
         ...(routedCustomToolRepairNames ? { routedCustomToolRepairNames } : {}),
         ...(convertedRoutedToolSearchNames ? { convertedRoutedToolSearchNames } : {}),

@@ -1,6 +1,7 @@
 import type { NativeResponseControl } from "./native-response-control";
 import type { CodexWsPreOutputRefusalHold } from "./codex-ws-wire";
 import type { Server } from "bun";
+import { markCodexPreDispatchFailure } from "../../fork/codex-passthrough-local-errors";
 import {
   codexWsUpstreamFetch,
   currentBunRuntimeIdentity,
@@ -8,6 +9,7 @@ import {
   type BunRuntimeGateInput,
 } from "./ws-upstream";
 import type { OcxProviderConfig } from "../../types";
+import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers-destination";
 import type { WsData } from "../ws-bridge";
 import {
   requestPacingMaxConcurrentRequests,
@@ -250,6 +252,7 @@ export function sendWithConnectionPolicy(
 
 export interface ProviderFetchOptions {
   accountAutoPause?: (name: string, provider: OcxProviderConfig, headers: Headers) => AccountAutoPauseObserver | undefined;
+  codexPassthroughPermissions?: import("../../fork/codex-passthrough-contract").CodexPassthroughPermissions;
   /**
    * Keep this send on HTTP even where the WebSocket upstream would normally be selected.
    *
@@ -290,6 +293,7 @@ export function providerFetch(
   options: ProviderFetchOptions = {},
 ): ProviderFetch {
   const providerName = options.providerName ?? "<unnamed provider>";
+  const permissions = isCanonicalOpenAiForwardProvider(provider) ? options.codexPassthroughPermissions : undefined;
   const customExecutor = (provider as OcxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch;
   // The route is applied at the physical send (see `sendWithConnectionPolicy`). This binding is
   // only what that boundary needs to decide it.
@@ -346,7 +350,8 @@ export function providerFetch(
       // mutator, and the copy it receives is deliberately not threaded onward. `Connection`
       // is decided inside `dispatch`, which runs after this, so the fresh-connection policy
       // wins regardless of what any caller or hook put in the header.
-      options.beforeDispatch?.(new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)));
+      try { options.beforeDispatch?.(new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))); }
+      catch (error) { if (permissions) markCodexPreDispatchFailure(error); throw error; }
       // No proxy option is attached here: a `dispatchOverride` may rebuild this request against
       // a different destination, so the route is decided at the physical send instead.
       const sharedReceipt = (init as Record<symbol, (() => void) | undefined> | undefined)?.[WS_FALLBACK_RECEIPT];
@@ -373,7 +378,8 @@ export function providerFetch(
       && shouldUseCodexWsUpstream(input, init, runtime, upstreamWebsocket)) {
       const keyedPacing = provider.requestPacing?.enabled
         && (provider.requestPacing.keys || provider.requestPacing.keySelection === "round-robin");
-      if (keyedPacing || (options.providerName && requestPacingMaxConcurrentRequests(provider, options.modelId) > 0)) {
+      if (keyedPacing || (permissions?.localErrorPolicies.requestPacingAdmission !== false
+        && options.providerName && requestPacingMaxConcurrentRequests(provider, options.modelId) > 0)) {
         if (!pacingWebsocketDowngradeWarned.has(providerName)
           && pacingWebsocketDowngradeWarned.size < EGRESS_DOWNGRADE_NOTICE_LIMIT) {
           pacingWebsocketDowngradeWarned.add(providerName);
@@ -399,7 +405,7 @@ export function providerFetch(
       const fallback = ((url: Parameters<typeof globalThis.fetch>[0], fallbackInit?: RequestInit) =>
         httpFetch(url, { ...fallbackInit, [WS_FALLBACK_RECEIPT]: notifyOnce } as RequestInit, reacquirePacing)) as typeof globalThis.fetch;
       return codexWsUpstreamFetch(input, init, fallback, runtime, options.onCodexWsQuota, options.beforeDispatch, options.nativeControl,
-        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold);
+        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold, permissions);
     }
     return httpFetch(input, init, reacquirePacing);
   };
@@ -414,6 +420,7 @@ export function providerFetch(
   };
   let pacingSlotAcquired = options.pacingSlotAcquired === true;
   const waitForPacing = async (signal?: AbortSignal): Promise<ProviderRequestSlot | undefined> => {
+    if (permissions?.localErrorPolicies.requestPacingAdmission === false) return undefined;
     if (pacingSlotAcquired) {
       pacingSlotAcquired = false;
       if (!options.pacingSlot && requestPacingMaxConcurrentRequests(provider, options.modelId) > 0) {

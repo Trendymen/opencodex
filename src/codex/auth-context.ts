@@ -48,6 +48,7 @@ import {
   type CodexThreadResolution,
   type TransientProbeGrant,
 } from "./routing";
+import { codexAccountHasNonQuotaHealthBlock, type CodexAccountSelectionOptions } from "./routing/selection";
 // The half-open TRANSIENT-HOLD lease (#4701). Not the quota-cooldown probe lease imported from
 // ./routing above -- different module, different domain, and a request never holds both.
 import { releaseTransientProbe } from "../routing/probe-lease";
@@ -139,6 +140,7 @@ export function requestOwnedMainPinState(
   requestScopedMainCredential: boolean,
   fixedAccountId: string | undefined,
   quotaScope?: CodexQuotaScope,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): { candidate: boolean; preserve: boolean } {
   const candidate = requestScopedMainCredential
     && fixedAccountId === undefined
@@ -151,7 +153,7 @@ export function requestOwnedMainPinState(
     preserve: candidate && !(callerMatchesObservedMain(headers)
       && (isMainAccountHardLocked(policy)
         || mainCreditsHoldResetAt(policy) !== undefined
-        || getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, quotaScope)?.cooldownUntil)),
+        || (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true || codexAccountHasNonQuotaHealthBlock(config, MAIN_CODEX_ACCOUNT_ID)) && getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, quotaScope)?.cooldownUntil)),
   };
 }
 
@@ -1014,6 +1016,7 @@ export function shouldMarkAccountNeedsReauthForCodexAuthFailure(cause: unknown):
 }
 
 export interface ResolveCodexAuthContextOptions {
+  skipOrdinaryCachedQuotaPrecheck?: boolean;
   admission?: Pick<DataPlaneAdmission, "source">;
   /** Live policy owner when the routing config is a caller-specific replay snapshot. */
   codexAuthPolicy?: CodexAuthPolicyConfig;
@@ -1140,7 +1143,7 @@ async function resolveCodexAuthContextUnannotated(
   // Pool pins and fallback must not resurrect an observed main credential that is cooling
   // down. Unrelated caller-owned credentials and explicit Direct keep their own policy.
   // The identity match and scoped health read are memory-only; never probe the auth file.
-  const callerOwnedMainPoolCooldown = () => mode === "pool" && callerMatchesObservedMain(headers)
+  const callerOwnedMainPoolCooldown = () => mode === "pool" && callerMatchesObservedMain(headers) && (options.skipOrdinaryCachedQuotaPrecheck !== true || codexAccountHasNonQuotaHealthBlock(config, MAIN_CODEX_ACCOUNT_ID))
     ? getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, quotaScope)
     : null;
   const assertCallerOwnedMainPoolNotCooled = () => {
@@ -1152,7 +1155,7 @@ async function resolveCodexAuthContextUnannotated(
     }
   };
   const mainPinState = () => requestOwnedMainPinState(
-    headers, config, policy, requestScopedMainCredential, fixedAccountId, quotaScope,
+    headers, config, policy, requestScopedMainCredential, fixedAccountId, quotaScope, options,
   );
   const requestOwnedMainPinCandidate = mainPinState().candidate;
   // During an owned startup, equality cannot be established until recovery and the
@@ -1352,6 +1355,7 @@ async function resolveCodexAuthContextUnannotated(
     );
     eligibility.deniedModelAccountIds = deniedModelAccountIds;
     const selectionOptions = {
+      skipOrdinaryCachedQuotaPrecheck: options.skipOrdinaryCachedQuotaPrecheck,
       // Temporary switch drain keeps the candidate until the atomic claim rejects
       // it. Retained recovery makes main wholly ineligible so pool routing continues.
       nativeMainSelectionOnly,
@@ -1561,14 +1565,13 @@ async function resolveCodexAuthContextUnannotated(
   }
   // Snapshot (not just the deadline) so a refused request can report WHY it is cooled:
   // a literal Retry-After reads very differently to a user than a reset-derived guess.
-  const cooldown = getCodexQuotaHealthSnapshot(accountId, quotaScope);
+  const skipQuotaPrecheck = options.skipOrdinaryCachedQuotaPrecheck === true
+    && (transientProbe !== undefined || !codexAccountHasNonQuotaHealthBlock(config, accountId));
+  const cooldown = skipQuotaPrecheck ? null : getCodexQuotaHealthSnapshot(accountId, quotaScope);
   const cooldownUntil = cooldown?.cooldownUntil;
-  // A transient-hold trial and a quota cooldown cannot both describe this account:
-  // `isTransientOnlyAffinityBlock` refuses to recognise a transient hold on an account carrying
-  // quota health, so the cooldown branch below is unreachable while a trial is held. That is
-  // also why no request pays two recovery permits for one send. The release is defensive --
-  // should that invariant ever move, the trial is handed back rather than stranded behind a
-  // refusal that belongs to the other domain.
+  // A granted transient trial keeps its existing recovery lease when ordinary quota checks
+  // are skipped. Without that grant, mixed health retains the old cooldown refusal.
+  // Release the trial if a quota refusal still applies, so one send never holds two permits.
   if (cooldownUntil && transientProbe) releaseTransientProbeGrant();
   // A cooled-down account never sends traffic, so upstream recovery can never be
   // observed and the cooldown outlives the real limit. Admit one probe per
@@ -1689,11 +1692,11 @@ async function resolveCodexAuthContextUnannotated(
   }
 }
 
-export function assertCodexAuthContextNotCooled(ctx: CodexAuthContext | undefined): void {
+export function assertCodexAuthContextNotCooled(ctx: CodexAuthContext | undefined, selectionOptions?: CodexAccountSelectionOptions): void {
   if (ctx?.kind !== "pool" && ctx?.kind !== "main-pool") return;
   if (ctx.kind === "pool") assertPoolAccountCredits(ctx.accountId, poolContextCreditHoldResetAt(ctx));
   // A context holding the probe lease was deliberately admitted through the cooldown.
-  if (ctx.probeLeaseId) return;
+  if (ctx.probeLeaseId || selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true) return;
   const cooldown = getCodexQuotaHealthSnapshot(ctx.accountId, ctx.quotaScope);
   if (cooldown?.cooldownUntil) {
     throw new CodexAccountCooldownError(ctx.accountId, cooldown.cooldownUntil, cooldown.cooldownSource, cooldown.quotaScope);

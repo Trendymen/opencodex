@@ -1,3 +1,5 @@
+import { codexPassthroughCandidateError } from "../fork/codex-passthrough-contract";
+import { carryCodexPassthroughResponse } from "../fork/codex-passthrough-turn";
 import { providerRelativeSendPathConfigError } from "../config/provider-relative-send-path";
 import { contextTierRecordConfigError, modelCapabilitiesConfigError } from "../config/provider-validation";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -42,6 +44,7 @@ import { providerConfigSeed } from "../providers/derive";
 import { anthropicOAuthInstanceConfigError } from "../config/schema/anthropic-account-pool";
 import { accountAutoPausePolicySchema } from "../config/schema/account-auto-pause";
 import type { OcxConfig, OcxProviderConfig } from "../types";
+import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers";
 import { openRouterRoutingConfigError } from "../providers/openrouter-routing";
 import { modelAutoCompactTokenLimitsConfigError } from "../providers/auto-compact-budget";
 import { vercelGatewayRoutingConfigError } from "../providers/vercel-gateway-routing";
@@ -276,16 +279,17 @@ export function managementCorsHeaders(req?: Request, config?: OcxConfig): Record
   return headers;
 }
 
-export function withCors(response: Response, req: Request, config: RequestPolicyView): Response {
+export function withCors(response: Response, req: Request, config: RequestPolicyView, enabled = true): Response {
+  if (!enabled) return response;
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(corsHeaders(req, config))) {
     headers.set(name, value);
   }
-  return new Response(response.body, {
+  return carryCodexPassthroughResponse(response, new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
-  });
+  }));
 }
 
 export function withManagementCors(response: Response, req: Request, config: OcxConfig): Response {
@@ -788,6 +792,8 @@ export function providerManagementConfigError(
     // Validated operator overlays do not change the canonical auth/transport seed.
     delete canonicalCandidate.pinnedReasoningEffort;
     delete canonicalCandidate.modelPinnedReasoningEfforts;
+    delete canonicalCandidate.agentMessageFormat;
+    delete canonicalCandidate.codexPassthrough;
     delete canonicalCandidate.responsesSnapshotRepair;
     // Explicit history-loss opt-in changes request content, never auth or transport identity.
     delete canonicalCandidate.projectResponsesLiteHostedSearchHistory;
@@ -858,6 +864,8 @@ export function providerManagementConfigError(
   }
   const headersError = providerHeadersConfigError(typed.headers);
   if (headersError) return `provider ${name} ${headersError}`;
+  const passthroughError = codexPassthroughCandidateError(raw.codexPassthrough);
+  if (passthroughError) return passthroughError;
   const forwardClientHeadersError = providerForwardClientHeadersConfigError(raw.forwardClientHeaders);
   if (forwardClientHeadersError) return `provider ${name} ${forwardClientHeadersError}`;
   const retryOn429Error = retryOn429PolicyConfigError(raw.retryOn429);
@@ -978,6 +986,16 @@ export function providerManagementConfigError(
         + `${[...DECLARABLE_HOSTED_TOOL_TYPES].join(", ")}`;
     }
   }
+  const messagePhaseInferenceError = nonBlankStringArrayConfigError(
+    raw.inferResponsesMessagePhaseModels,
+    "inferResponsesMessagePhaseModels",
+  );
+  if (messagePhaseInferenceError) return `provider ${name} ${messagePhaseInferenceError}`;
+  if (raw.agentMessageFormat !== undefined
+    && raw.agentMessageFormat !== "preserve"
+    && raw.agentMessageFormat !== "user_message") {
+    return `provider ${name} agentMessageFormat must be preserve or user_message`;
+  }
   const openRouterError = openRouterRoutingConfigError(typed);
   if (openRouterError) return `provider ${name} ${openRouterError}`;
   const vercelError = vercelGatewayRoutingConfigError(typed);
@@ -993,10 +1011,8 @@ export function providerManagementConfigError(
   }
   if (typed.authMode === "forward") {
     const normalizedName = name.trim().toLowerCase();
-    const base = typed.baseUrl.replace(/\/+$/, "");
     const isBuiltInChatGptForward = normalizedName === "openai"
-      && typed.adapter === "openai-responses"
-      && base === "https://chatgpt.com/backend-api/codex";
+      && isCanonicalOpenAiForwardProvider(typed);
     if (isBuiltInChatGptForward) return null;
     return `provider ${name} uses reserved authMode "forward"; configure ChatGPT passthrough via the built-in provider`;
   }
@@ -1047,6 +1063,7 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   codexToolMode: "editor",
   projectContext: "editor",
   requestPacing: "editor",
+  codexPassthrough: "editor",
   mcpMaxTools: "editor",
   mcpMaxSchemaBytes: "editor",
   mcpMaxResultBytes: "editor",
@@ -1061,6 +1078,8 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   statelessResponses: "editor",
   requiresAdjacentResponsesToolResults: "editor",
   requiresPairedResponsesToolResults: "editor",
+  inferResponsesMessagePhaseModels: "editor",
+  agentMessageFormat: "editor",
   annotateEmptyToolOutputs: "editor",
   supportsServiceTier: "editor",
   modelSupportsServiceTier: "editor",

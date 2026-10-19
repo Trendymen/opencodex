@@ -15,21 +15,19 @@ import type { NormalizedComboConfig } from "./combos/types";
 import { hasOwnProvider } from "./config/provider-name";
 import { anthropicInstanceRowShapeMatches } from "./providers/anthropic-instance-id";
 import { reconcileRouterWarningMemos, routedProviderConfig } from "./providers/routed-config";
-import { assertProviderDestinationAllowed } from "./lib/destination-policy";
 import {
   PROVIDER_REGISTRY,
   providerCodexAccountMode,
 } from "./providers/registry";
-// Imported from the module directly rather than through the registry facade, which is at its
-// file-size cap.
-import { registryModelIdKeys } from "./providers/registry/model-ids";
 import { providerMatchesRegistryTransportWithStaticGuards } from "./providers/static-model-discovery";
+import { knownStaticModelIdsForProvider } from "./providers/known-model-ids";
 import {
   isCanonicalOpenAiForwardProvider,
   LEGACY_CHATGPT_PROVIDER_ID,
   LEGACY_OPENAI_MULTI_PROVIDER_ID,
   OPENAI_CODEX_PROVIDER_ID,
 } from "./providers/openai-tiers";
+import { isImplicitNativeOpenAiRouteModel } from "./providers/openai-model-identity";
 import { decodeRoutedModelIdOrThrow, encodeRoutedModelId } from "./providers/slug-codec";
 import { effectiveProviderAliasDecision, resolveModelAlias } from "./providers/default-aliases";
 import { resolveBlockedModelRedirect } from "./lib/shadow-call";
@@ -153,19 +151,7 @@ export function knownModelIdsForProvider(
   prov: OcxProviderConfig,
   config?: Pick<OcxConfig, "customModels">,
 ): string[] {
-  const ids = new Set<string>();
-  for (const id of prov.models ?? []) ids.add(id);
-  if (prov.defaultModel) ids.add(prov.defaultModel);
-  const registry = providerMatchesRegistryTransportWithStaticGuards(provName, prov)
-    ? PROVIDER_REGISTRY.find(entry => entry.id === provName)
-    : undefined;
-  for (const id of registry?.models ?? []) ids.add(id);
-  // Registry model-keyed hint maps double as known native ids (e.g. NVIDIA carries no
-  // static models list but names `moonshotai/kimi-k2.6` in its effort/window maps). Which
-  // maps count is classified by the registry itself rather than listed here, so an id declared
-  // only in a map this function forgot is no longer undecodable, and a new model-keyed field
-  // fails typecheck until its keys are given a meaning.
-  for (const id of registry ? registryModelIdKeys(registry) : []) ids.add(id);
+  const ids = new Set(knownStaticModelIdsForProvider(provName, prov));
   const cachedModels = getRoutingCached(provName, () => {
     // This callback runs only for a scoped entry, not for each provider in an alias scan.
     const routed = routedProviderConfig(provName, prov);
@@ -471,7 +457,7 @@ function routeModelInternal(
       .find(([candidate]) => candidate === namespace);
     if (binding) {
       const nativeModelId = modelId.slice(slash + 1);
-      if (!isBareOpenAiFamilyModel(nativeModelId)) {
+      if (!isImplicitNativeOpenAiRouteModel(nativeModelId)) {
         throw new Error(`Codex account namespace ${namespace} only supports native OpenAI model ids`);
       }
       const provider = config.providers[OPENAI_CODEX_PROVIDER_ID];
@@ -595,7 +581,7 @@ function routeModelInternal(
     }
   }
 
-  if (isBareOpenAiFamilyModel(modelId)) {
+  if (isImplicitNativeOpenAiRouteModel(modelId)) {
     const provider = config.providers[OPENAI_CODEX_PROVIDER_ID];
     if (provider && provider.disabled !== true) {
       return routeResult(config, OPENAI_CODEX_PROVIDER_ID, provider, modelId, "native", "native-family", redirectState);
