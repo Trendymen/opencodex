@@ -17,6 +17,7 @@ import {
 import type { OcxConfig } from "../../../src/types";
 import { SERVER_BUDGET_MS } from "../../helpers/test-budget";
 import { removeTreeWithRetry } from "../../helpers/remove-tree";
+import { installIsolatedCodexRuntime } from "../../helpers/isolated-codex-runtime";
 
 // Cursor's local-agent runtime ("Private Inference" build) only enables its reasoning-effort
 // control when a GET /v1/models row carries api_types (+ optional capabilities). These cases
@@ -25,6 +26,7 @@ setDefaultTimeout(SERVER_BUDGET_MS);
 
 const previousHome = process.env.OPENCODEX_HOME;
 let testHome = "";
+let restoreCodexRuntime: (() => void) | undefined;
 
 function capabilityConfig(): OcxConfig {
   return {
@@ -58,10 +60,13 @@ function capabilityConfig(): OcxConfig {
 beforeEach(() => {
   testHome = mkdtempSync(join(tmpdir(), "ocx-cursor-local-schema-"));
   process.env.OPENCODEX_HOME = testHome;
+  restoreCodexRuntime = installIsolatedCodexRuntime(testHome);
 });
 
 afterEach(() => {
   resetCodexModelEntitlementCacheForTests();
+  restoreCodexRuntime?.();
+  restoreCodexRuntime = undefined;
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
   if (testHome) removeTreeWithRetry(testHome);

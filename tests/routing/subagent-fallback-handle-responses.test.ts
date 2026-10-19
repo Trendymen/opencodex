@@ -46,6 +46,7 @@ import {
 } from "../helpers/agent-task-recovery";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { CODEX_PASSTHROUGH_DEFAULTS } from "../../src/fork/codex-passthrough-contract";
 
 setDefaultTimeout(30_000);
 
@@ -1441,16 +1442,14 @@ describe("native fallback account preview", () => {
     expect(capture.bodies.some((body) => body.includes('"model":"gpt-5.6-terra"'))).toBe(true);
   });
 
-  test("recovery re-previews shared candidate scope instead of the legacy affinity", async () => {
+  for (const allOff of [false, true]) test(`recovery re-previews shared candidate scope instead of the legacy affinity (allOff=${allOff})`, async () => {
+    setSubagentQuotaPrimeForTests(async () => {});
     const now = 1_800_000_000_000;
     let currentNow = now;
     Date.now = () => currentNow;
     installPoolCredential("pool-a", "pool_acc_a", now);
-    // Both accounts advertise the ordinary recovery candidate.
-    installCodexRosterMock({
-      pool_acc_a: GPT56_NATIVE_MODELS,
-      pool_acc_b: GPT56_NATIVE_MODELS,
-    });
+    const rosters: Record<string, readonly string[]> = { pool_acc_a: GPT56_NATIVE_MODELS, pool_acc_b: GPT56_NATIVE_MODELS };
+    installCodexRosterMock(rosters);
     installPoolCredential("pool-b", "pool_acc_b", now);
     const cfg = poolNativePlusRoutedConfig({
       defaultProvider: "xai",
@@ -1464,6 +1463,8 @@ describe("native fallback account preview", () => {
         { id: "pool-b", email: "b@example.test", isMain: false, chatgptAccountId: "pool_acc_b" },
       ],
     });
+    if (allOff) cfg.providers.openai!.codexPassthrough = { ...Object.fromEntries(Object.keys(CODEX_PASSTHROUGH_DEFAULTS).map(key => [key, false])),
+      localErrorPolicies: Object.fromEntries(Object.keys(CODEX_PASSTHROUGH_DEFAULTS.localErrorPolicies).map(key => [key, false])) };
     const requestHeaders = codexHeaders("caller-account", {
       "session-id": "recovery-candidate-scope-session-private",
       "thread-id": "recovery-candidate-scope-thread-private",
@@ -1529,6 +1530,7 @@ describe("native fallback account preview", () => {
     const forwardedBodies: string[] = [];
     const forwardedAuths: Array<string | null> = [];
     globalThis.fetch = (async (input, init) => {
+      if (isCodexModelsFetch(input)) return codexRosterResponse(rosters[codexRosterKey(new Headers(init?.headers))] ?? []);
       const raw = typeof init?.body === "string" ? init.body : "";
       fetchedUrls.push(String(input));
       forwardedBodies.push(raw);
@@ -1567,7 +1569,7 @@ describe("native fallback account preview", () => {
       url: fetchedUrls[index],
       auth: forwardedAuths[index],
     })).filter(({ body }) => body.length > 0);
-    expect(bodyRequests).toHaveLength(2);
+    expect(bodyRequests, bodyRequests.map(entry => new URL(entry.url).pathname).join(", ")).toHaveLength(2);
     expect(bodyRequests[0]?.body).toContain("capture_assignment");
     expect(bodyRequests[1]?.body).toContain("Use the recovered candidate-scope assignment.");
     expect(bodyRequests[1]?.body).toContain('"model":"gpt-5.6-terra"');

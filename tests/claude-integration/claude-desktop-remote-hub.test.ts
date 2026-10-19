@@ -186,6 +186,9 @@ for (const storedProfile of [true, false]) {
     const decoy = mockProvider();
     const hub = fixture("hub", [chosen.server.url.origin, decoy.server.url.origin]);
     hub.env.OPENCODEX_API_AUTH_TOKEN = DATA_KEY;
+    // Keep native discovery inputs stable across snapshot, CLI apply and cold restart.
+    copyFileSync(repoPath("src/codex/data/upstream-models.json"), join(hub.codex, "native-catalog.json"));
+    writeFileSync(join(hub.codex, "config.toml"), 'model_catalog_json = "native-catalog.json"\n');
     const provider = (target: ReturnType<typeof mockProvider>, model: string) => ({
       adapter: "openai-chat" as const, baseUrl: target.server.url.origin + "/v1",
       apiKey: "fixture-provider-key", models: [model], liveModels: false, allowPrivateNetwork: true,
