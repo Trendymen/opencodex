@@ -5,7 +5,16 @@
 ## 巡检入口
 
 - 每轮先完整读取本文、`AGENTS.local.md`、`AGENTS.md`、`scripts/AGENTS.md` 和 `MAINTAINERS.md`；存在当前轮次的 `.tmp/fork-sync-vX.Y.Z/<轮次>/` 审查或恢复材料时一并读取。先按“幂等收敛”处理未完成的发布，再检查新的上游稳定 Release。
-- 用户已长期授权自动化按本文完成符合条件的上游同步和第 1–15 步发布。任一门禁未通过、reviewer 通道不可用、证据不足或需要新的重大决策时，停止发布并按“通知策略”报告。
+- 用户已长期授权自动化按本文完成符合条件的上游同步和第 1–15 步发布。门禁未通过、reviewer 通道不可用、证据不足或出现决策分歧时，按“持续修复与手动暂停”继续处理，直到本轮 Fork 同步完整完成。
+
+## 持续修复与手动暂停
+
+- 本轮同步未通过第 15 步终验前，持续执行取证、修复、验证、复审和发布收尾。只有用户明确手动要求暂停、中止或限定到某个中间边界时，才在该边界停下；暂停后须等用户明确要求继续，heartbeat 不自动撤销人工暂停。
+- 技术取舍由执行方根据当前官方实现、Fork 能力和真实证据自主决定，优先保留现有能力、采用最小修改面及可逆方案，并记录依据。证据不足时继续调查、对照和验证；必要时先保留兼容行为，不以“需要用户决策”或 `pendingDecision` 为由结束任务。可以询问偏好，但不把等待答复作为继续修复的前提。
+- 测试、CI、reviewer、网络、API、runner 容量及发布失败都进入修复流程：保留原错误，定位原因，执行相关定向验证，修复后恢复适用门禁。单次命令、观察和重试保持有界；同一方法反复失败时重新取证、调整修复路径，或按外部状态有界退避，不因固定重试次数耗尽而终止整个任务，也不无依据重复全量测试。
+- 本文中的“阻塞”“停止发布”和 `fail closed` 只拒绝当前不满足条件的写入或发布操作，随即回到修复流程，不表示停止整个同步。双审、精确 SHA CI、来源校验、lease、原子更新、不可变 Tag 和用户未提交工作保护继续生效；不得为完成同步而绕过门禁、伪造证据或覆盖未知变更。
+- 确实缺少凭据、账户权限或只能由用户完成的外部操作时，如实报告具体缺口，同时继续所有已授权且可推进的调查、修复和发布准备，并检查外部条件的恢复情况；不伪造授权，不只留下“等待用户决策”就停止工作。
+- 当前回合需要让出或等待外部条件时，在本轮恢复材料记录已执行尝试、未完成项、下一项具体动作和自动恢复条件，并保存当前 HEAD、rebase step、索引 stage 与工作树差异快照，供现有 heartbeat 核对后继续同一任务；保留已通过且输入未变的证据，不重新开始一轮同步。只有第 15 步终验完成才记录完成；通知进展或失败不代表任务结束。
 
 ## 分支职责
 
@@ -51,7 +60,7 @@ tag|fork|no-force-no-lease|refs/tags/vX.Y.Z-ben.N:refs/tags/vX.Y.Z-ben.N
 
 旧 marker 仍须是经验证的新官方 Tag peeled commit 的祖先。CI 的官方基线准备步骤先从上游验证并导入官方 Tag，版本线测试随后运行；candidate 阶段不要求 origin 已发布新官方 Tag 或 Fork Tag，也不跳过版本测试。
 
-candidate CI 失败、缺失或指向旧 SHA 时停止建 Tag 和发布。远端 `dev` 保留无 Tag 的候选；修复后按审查轮次规则形成新的 `RELEASE_COMMIT_RN`，以最新远端 `dev` 的精确 lease 再推候选并重新取得 CI。推送结果不确定时先读取远端 `dev` 的实际 OID；推送成功也不代表 dispatch 已创建，须单独记录 dispatch run ID、输入和精确 SHA。dispatch 创建结果不确定时先查对应 run，避免重复触发。发布时仍提交下方完整六引用原子集合；即使 candidate push 已使 `dev` 等于目标 SHA，也必须包含该 refspec 和精确 lease，不把其他发布引用拆开推送。
+candidate CI 失败、缺失或指向旧 SHA 时，暂不建 Tag 或发布，继续定位并修复。远端 `dev` 保留无 Tag 的候选；实现变化后按审查轮次规则形成新的 `RELEASE_COMMIT_RN`，以最新远端 `dev` 的精确 lease 再推候选并重新取得 CI；同一候选的基础设施故障按“持续修复与手动暂停”有界恢复，保留已经通过的有效 jobs 和历史失败证据。推送结果不确定时先读取远端 `dev` 的实际 OID；推送成功也不代表 dispatch 已创建，须单独记录 dispatch run ID、输入和精确 SHA。dispatch 创建结果不确定时先查对应 run，避免重复触发。发布时仍提交下方完整六引用原子集合；即使 candidate push 已使 `dev` 等于目标 SHA，也必须包含该 refspec 和精确 lease，不把其他发布引用拆开推送。
 
 <!-- fork-release-lifecycle:start -->
 rebase_branch=dev
@@ -131,7 +140,7 @@ prepare
 commit
 ```
 
-四个 branch 使用各自精确 expected-SHA lease；`main`、`dev`、`RELEASE_SYNC_REF` 与 marker 都允许按发布策略 force。`RELEASE_SYNC_REF` 始终是 `refs/heads/sync/vX.Y.Z`：首次不存在时使用 expected-absent lease，已存在时紧邻 push 重新读取并使用精确 expected-OID lease；允许 non-fast-forward，不要求 ancestry。实际 sync refspec 使用 `+RELEASE_COMMIT:refs/heads/sync/vX.Y.Z`。两个 Tag 都不 force、不使用 lease。任何 mismatch、revision-specific sync ref、atomic 不支持或不确定失败都 fail closed，禁止拆分推送。
+四个 branch 使用各自精确 expected-SHA lease；`main`、`dev`、`RELEASE_SYNC_REF` 与 marker 都允许按发布策略 force。`RELEASE_SYNC_REF` 始终是 `refs/heads/sync/vX.Y.Z`：首次不存在时使用 expected-absent lease，已存在时紧邻 push 重新读取并使用精确 expected-OID lease；允许 non-fast-forward，不要求 ancestry。实际 sync refspec 使用 `+RELEASE_COMMIT:refs/heads/sync/vX.Y.Z`。两个 Tag 都不 force、不使用 lease。任何 mismatch、revision-specific sync ref、atomic 不支持或不确定失败都拒绝本次推送，核对实际状态并继续修复后重试，禁止拆分推送。
 
 同基线维护发布还必须枚举本地与 origin 远端完整的 `refs/tags/vX.Y.Z-ben.*` 名称空间，
 仅按与 `X.Y.Z-ben.N` 解析器等价的严格规则接受有效 revision，并将每个 Tag 冻结为名称、raw
@@ -141,8 +150,8 @@ OID 与 peeled OID 的映射。阶段迁移必须精确：创建本地目标 Tag
 等于 `REMOTE_BASELINE`；确定成功或不确定结果后，本地保持不变，远端只能等于 baseline 或
 baseline 加同一个精确目标对象。每个阶段都重新计算最高有效 revision；任何其他新增、删除、
 替换、对象身份变化或更高 revision 都 fail closed。确定成功也必须在创建 GitHub Release 前
-完成 post-push 全集合复核；若 TOCTOU 窗口出现更高 revision，保留已发布 immutable Tag，停止
-Release 并报告竞态，不自动删除或移动 Tag。发布期间只允许一个 publisher。Git 无法对尚未
+完成 post-push 全集合复核；若 TOCTOU 窗口出现更高 revision，保留已发布 immutable Tag，拒绝
+本次 Release 创建，报告竞态并重新核对现有发布状态，按幂等收敛继续处理，不自动删除或移动 Tag。发布期间只允许一个 publisher。Git 无法对尚未
 存在的更高 Tag 名称空间建立 lease，因此最终复核到 push 之间仍有不可完全消除的 TOCTOU
 窗口，必须作为残余风险报告，不能以较早的本地测试快照替代最终远端复核。
 
@@ -151,13 +160,14 @@ sync 的 force 权限只来自当前发布动作，并且必须 ref-scoped：远
 ## 通知策略
 
 - 无新官方稳定 Release、当前派生闭环、无失败或未决事项：按 DONT_NOTIFY 安静结束。
-- 发现并完成新官方稳定 Release 同步（rebase、push、Release 任一实质进展或闭环）、发生失败、阻塞或需要用户决策的未决事项：NOTIFY，简体中文摘要（官方 Tag、Fork 版本/Tag、Release URL 或阻塞原因）。
+- 同步有实质进展、完成，或出现新的失败、恢复路径变化及确需用户完成的外部操作：NOTIFY，简体中文说明官方 Tag、Fork 版本/Tag、Release URL、当前问题及正在执行的下一步；报告后继续修复，除非用户手动暂停。
+- 排队、容量不足、服务暂不可用等状态未变且无新证据或可通知进展时，按 DONT_NOTIFY 记录当前状态和自动恢复入口；继续有界检查与恢复，不重复发送同一阻塞摘要。
 
 ## 最高优先级前置检查
 
-1. 本会话存在需要用户重大决策的未决事项时，停止新的同步、rebase、Tag、Release 和 push，提醒用户先处理；不得绕过或猜测。
-2. 要求工作树、索引干净且没有进行中的 Git 操作；存在其他未提交工作时 fail closed，不得 stash、覆盖或混入同步提交。
-3. `main` 本地/远端必须一致，且只作为已发布 Release 指针校验。不要因 `dev` 有已提交开发内容或领先 `main` 而停止同步；`dev` 正是本流程的发布候选来源。
+1. 先核对用户是否明确手动暂停。没有人工暂停时，既有未决事项按“持续修复与手动暂停”继续取证和处理，记录自主决定与依据，不因等待用户决策停止整个任务。
+2. 启动新同步、切换候选或执行 candidate push 及发布写入前，要求工作树、索引干净且没有进行中的 Git 操作。恢复本轮未完成修改或 rebase 时，只有固定任务输入、当前 HEAD、rebase step、索引 stage 和工作树差异均与本轮恢复材料吻合，且确认没有混入其他任务或用户变更，才允许继续本轮冲突解决、暂存、提交及 `rebase --continue`；该例外不豁免 candidate push 和发布前的干净状态要求。存在其他未提交工作、操作来源不明或证据不足时，保护原状态，继续只读调查及安全临时环境中的验证；不得 stash、覆盖或混入同步提交。
+3. `main` 本地/远端必须一致，且只作为已发布 Release 指针校验；不一致时先核对 Tag、Release 和引用来源，再按幂等规则修复。不要因 `dev` 有已提交开发内容或领先 `main` 而停止同步；`dev` 正是本流程的发布候选来源。
 
 ## 维护真源
 
@@ -197,7 +207,7 @@ FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维�
 - 审查包只包含当前任务 brief、官方旧/新 Tag SHA、scoped diff（相对新官方 Tag 的完整 Fork 修改面）、冲突处理说明与验证证据；不得携带主会话历史。
 - 任一 Critical/Important finding 阻塞推送与发布：修复后按“验证选择与结果复用”完成适用检查，用当前实现 SHA 更新 FORK_CHANGES.md 并重建末尾文档提交，再以 REVIEW_PHASE RE_REVIEW 携带完整 PRIOR_FINDINGS、FIX_DIFF 与真实 VERIFICATION_EVIDENCE 复用原 reviewer 复审。
 - 两个 reviewer 的固定 verdict 均为 `PASS`，且无未决 Critical/Important finding 后，才进入 Tag / push / Release；正式 verdict 只使用 `PASS` / `FAIL`。
-- 无双审通过证据时执行 push 或 Release 视为违规，必须回滚未发布状态并登记失败。
+- 无双审通过证据时执行 push 或 Release 视为违规，必须回滚未发布状态并登记失败，再补齐修复、验证和双审；不改写已发布 Tag。
 
 ## Rebase 冲突证据包与审查粒度
 
@@ -266,7 +276,7 @@ residual_risk=<尚未验证的真实边界；没有则写 none:<理由>>
 同一路径有多个互不相干的冲突符号时可以拆成多条，但至少一条记录必须覆盖该路径。仅列
 文件名、只描述冲突文本、只写“采用 ours/theirs”或只附一次 HTTP 200 均不合格。删除 Fork
 行为时，`official_coverage` 必须同时给出当前官方源码、当前官方测试和最终消费者证据；证据
-不足就保留能力或请求用户决定。
+不足就保留能力，继续补充源码、测试与最终消费者证据，按“持续修复与手动暂停”自主处理。
 
 ### SHA 独立机械重算
 
@@ -315,7 +325,7 @@ commit 选择/merge/rename/换行的 config 及来源、两端 `.gitattributes` 
 replay manifest 摘要 hash 方便比对，但它不是发布门禁；固定输入、每个 stop 的 stage/hunk/action/tree
 证据可复算即可。
 主流程显式设置 `rerere.enabled=false`、`rerere.autoupdate=false`，不得读取既有 `rr-cache`；
-非确定性 external merge driver 阻塞同步。
+非确定性 external merge driver 阻塞该次 rebase；继续定位其来源并准备可确定重放的方案，通过证据核对后恢复，不直接结束同步任务。
 
 每次 rebase 停在 unresolved 状态时，必须在继续之前捕获 rebase step、`REBASE_HEAD`、
 `git diff --name-only --diff-filter=U`、`git ls-files -u` 的 stage 1/2/3 mode+blob，以及禁用 color 和
@@ -339,7 +349,7 @@ SHA 唯一证明；使用 `--rebase-merges`、merge commit、custom/external mer
 显式禁用 rerere。每个 shadow stop 独立捕获路径、stage mode+blob 与 hunk，再恢复主流程记录的
 resolved index tree 并执行同一 `resolution_action`。动作序列、commit/dropped 映射、每个生成
 commit 的 tree、post-action tree、最终 tree，以及主/影 stop、路径、`hunk_id` 并集必须一致，
-否则 fail closed。未触发时，review package 写明未触发的逐项依据，reviewer 只核对固定 SHA、
+否则拒绝该候选进入 review，继续修复证据或重放差异。未触发时，review package 写明未触发的逐项依据，reviewer 只核对固定 SHA、
 主流程 stop 证据和最终 scoped diff。
 
 <!-- conflict-snapshot-contract:start -->
@@ -405,7 +415,7 @@ shortstat。reviewer 可自行读取固定 commit 中的文件和运行只读命
 本轮深审范围是冲突决定、官方与 Fork 的交叠改动、rebase 后修复，以及这些改动实际影响的
 消费者和失败路径。finding 必须说明是本轮引入、因官方改动暴露，还是与本轮无关的既有问题，
 并给出差异或调用链依据。无关既有问题单列，不自动混入同步修复；明确影响本次发布安全、
-数据完整性或能力可用性的问题仍须停止并处理。复审聚焦原 finding、FIX_DIFF 及受影响链路，
+数据完整性或能力可用性的问题仍须在发布前修复并验证。复审聚焦原 finding、FIX_DIFF 及受影响链路，
 不重新开始无边界扫描；已经捕获的 SHA、集合和冲突附件用原记录引用，无需复制重写。
 
 ### CODE_QUALITY 命名风险清单
@@ -464,7 +474,7 @@ hook 不是发布状态真源，只能证明它实际执行过的静态契约与
 
 从已提交 package.json 推导预期 X.Y.Z-ben.N 和 vX.Y.Z-ben.N，并核对 FORK_CHANGES.md 的当前官方基线与包版本对应：
 
-- 实现、最终验证或末尾文档提交未完成：只恢复当前 ben.N 剩余收尾；不重新 rebase、不递增 revision。工作树不干净、来源不明或证据不足时登记未完成并 fail closed。
+- 实现、最终验证或末尾文档提交未完成：只恢复当前 ben.N 剩余收尾；不重新 rebase、不递增 revision。工作树不干净、来源不明或证据不足时登记未完成，按前置检查保护原状态并继续调查、修复和验证。
 - `RELEASE_COMMIT` 完成但 Fork Tag 缺失：验证 package/document 一致、其父提交等于此前捕获的 `IMPLEMENTATION_HEAD`、该提交只含 `FORK_CHANGES.md`，再按 annotated Tag 和一次 `git push --atomic` 同时更新 `main`、`dev`、`sync/vX.Y.Z`、`upstream-release`、Fork Tag 与官方 Tag 的流程补齐；不得生成 ben.(N+1)。
 - 远端 push 完成但本地 main / sync / upstream-release 未对齐：严格按 `local-ref-cas-transaction`
   使用一个带 `start` / `prepare` / `commit` 的 `git update-ref --stdin` transaction，同时用
@@ -472,20 +482,20 @@ hook 不是发布状态真源，只能证明它实际执行过的静态契约与
   只更新固定的 `refs/heads/sync/vX.Y.Z`，禁止把三条 update 拆成顺序执行的命令。
 - Tag 存在但 GitHub Release 缺失或元数据不合格：只创建或幂等修正同名 Release，不移动 Tag、不递增 revision。Release 须满足 tagName 精确、name 等于 Tag、isDraft=false、isPrerelease=false，中文 body 至少含官方基线、Fork 修改点、验证结果、已知缺口与 commit。
 
-`dev` 可以在已发布 `main` 之上有自由的已提交开发内容；这不是 drift。只有候选来源、远端 `dev` 预期 SHA、或其重写权限无法确定时才 fail closed。
+`dev` 可以在已发布 `main` 之上有自由的已提交开发内容；这不是 drift。候选来源、远端 `dev` 预期 SHA 或其重写权限无法确定时，拒绝相关写入，继续核对来源、实际远端状态与权限，确认后恢复。
 
 上述每个补 Tag、atomic push 重试或不确定结果恢复入口都必须重新执行完整同基线远端 Fork
-Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 raw/peeled 身份漂移时停止，
-不得仅因目标 Tag 本身仍缺失而继续创建较低 revision。
+Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 raw/peeled 身份漂移时拒绝
+本次补建或推送，继续核对竞态、来源及已发布状态；不得仅因目标 Tag 本身仍缺失而创建较低 revision。
 
 全部闭环且无更新官方稳定 Release 才可记录无需同步。
 
 ## 新官方稳定 Release 同步流程
 
-1. fetch 后固定本地/远端 main、dev、upstream-release、`refs/heads/sync/vX.Y.Z` 和目标 Fork Tag 的 raw/peeled SHA；按 `sync-audit-ref-policy` 固定本轮 `RELEASE_SYNC_REF=refs/heads/sync/vX.Y.Z`，并将 `OLD_OFFICIAL`、`NEW_OFFICIAL`、`PRE_REBASE_DEV` 记为任务级不可变输入。本地 main 与 marker 必须和远端一致；dev 的本地/远端状态同时记录为候选证据；发现本基线 `sync/vX.Y.Z-ben.N` 即停止。
-2. 保护候选历史：候选固定为已提交的 `dev`。远端 dev 必须 fetch；本地 dev 领先、落后或分叉时均须记录两端 SHA 与来源。只要本地 dev 是当前已知、干净的发布候选，可继续；来源不明、远端独有而无法证明、或 lease 预期无法固定时停止。目标 `RELEASE_SYNC_REF` 已存在时必须 fetch 并记录精确 expected-OID lease；首次不存在时记录 expected-absent lease。sync 不要求是 `RELEASE_COMMIT` 的祖先，允许在发布时 non-fast-forward 强制更新。
+1. fetch 后固定本地/远端 main、dev、upstream-release、`refs/heads/sync/vX.Y.Z` 和目标 Fork Tag 的 raw/peeled SHA；按 `sync-audit-ref-policy` 固定本轮 `RELEASE_SYNC_REF=refs/heads/sync/vX.Y.Z`，并将 `OLD_OFFICIAL`、`NEW_OFFICIAL`、`PRE_REBASE_DEV` 记为任务级不可变输入。本地 main 与 marker 必须和远端一致；dev 的本地/远端状态同时记录为候选证据；发现本基线 `sync/vX.Y.Z-ben.N` 时不执行发布写入，先查明其来源，按单一 sync ref 规则准备修复，不删除未知引用。
+2. 保护候选历史：候选固定为已提交的 `dev`。远端 dev 必须 fetch；本地 dev 领先、落后或分叉时均须记录两端 SHA 与来源。只要本地 dev 是当前已知、干净的发布候选，可继续；来源不明、远端独有而无法证明、或 lease 预期无法固定时，继续调查并补齐证据，确认前不重写引用。目标 `RELEASE_SYNC_REF` 已存在时必须 fetch 并记录精确 expected-OID lease；首次不存在时记录 expected-absent lease。sync 不要求是 `RELEASE_COMMIT` 的祖先，允许在发布时 non-fast-forward 强制更新。
 3. 启动主 rebase 前按 `conflict-snapshot-contract` 固定 replay 输入，并显式禁用 `rerere`/`rerere.autoupdate`。随后在 `dev` 上执行等价于 `git rebase --onto <new-tag-sha> <old-upstream-release-sha> dev`。每次停住时先捕获完整证据，才允许解决并继续；完成后立即固定 `POST_REBASE_HEAD`，并按条件判断是否需要 shadow replay。rebase 阶段不得移动 main，不得 detached HEAD 验证。完成实现、验证和末尾文档提交后，才能准备本轮 `RELEASE_SYNC_REF` 指向同一 `RELEASE_COMMIT`；不得将 dev 当作只读证据，也不得在任何 sync ref 上 rebase。
-4. 冲突处理以 FORK_CHANGES.md、src/fork 边界、AGENTS.local.md、既有测试和新官方实现为依据，并为全部 `CONTENT_CONFLICTS` 写逐冲突 ledger。仅当前官方源码与测试证明等价或更优才可删除 Fork 行为；名称相似、旧文档或单次 HTTP 200 不算证据。部分覆盖只移除被替代部分；语义改变、能力放弃或无法判定时请用户决定。Fork 逻辑优先放窄模块或 src/fork，官方高频文件最小接线。
+4. 冲突处理以 FORK_CHANGES.md、src/fork 边界、AGENTS.local.md、既有测试和新官方实现为依据，并为全部 `CONTENT_CONFLICTS` 写逐冲突 ledger。仅当前官方源码与测试证明等价或更优才可删除 Fork 行为；名称相似、旧文档或单次 HTTP 200 不算证据。部分覆盖只移除被替代部分；语义改变、能力放弃或无法判定时先保留现有能力，继续对照和验证后自主确定兼容方案，不停在等待用户选择。Fork 逻辑优先放窄模块或 src/fork，官方高频文件最小接线。
 5. revision：新官方 vX.Y.Z 首次派生固定 X.Y.Z-ben.1 / vX.Y.Z-ben.1。同基线已有 Release 不自动递增；仅用户明确要求才允许 ben.2、ben.3。`ben.N` 按官方基线独立维护：即使完整 Tag 集已有更新官方稳定版，明确授权的旧基线维护修订仍可继续，但必须存在精确官方基线 Tag、不得低于同基线最高有效 ben revision、不得复用或移动既有 Fork Tag，也不得声称包含更新官方版本能力。普通 stable/preview 仍遵守全局单调版本门禁。重复 heartbeat 幂等。
 6. 完成并提交全部 rebase、冲突、版本与实现修复。
 7. 创建下一个候选尝试 `AK`（首次为 `A1`，否则最大 `K + 1`），捕获 `CANDIDATE_IMPLEMENTATION_HEAD_AK`，不得从后续 HEAD 反推。按该 SHA 原地更新 FORK_CHANGES.md 的当前官方 Tag/SHA、能力差异、代码与测试入口、覆盖/移除结论及已知边界，不追加版本历史。实现 commit、shortstat、包版本、目标 Tag、逐冲突 ledger 和验证证据保存在本轮任务记录，供第 10 步 review package 使用。只保留仍影响维护判断的移除结论，旧 PASS 不沿用。
@@ -493,8 +503,8 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 9. 验证通过后只暂存 `FORK_CHANGES.md`，核对 staged list 与 diff check，创建 docs-only commit，并机械验证其父提交等于当前 `CANDIDATE_IMPLEMENTATION_HEAD_AK`。此时才将完整 SHA 对晋升为下一个审查轮次：尚无轮次时创建 `R1`；已有 reviewed round 时使用当前最大 `N + 1`。令 `IMPLEMENTATION_HEAD_RN=CANDIDATE_IMPLEMENTATION_HEAD_AK`、`RELEASE_COMMIT_RN=<docs-only commit>`，两者同时存在后才算分配成功。
 10. 生成最新完整 `RN` 的 review package，执行机械集合/冲突 replay 对账、命名风险检查与双审门禁（见上）。首次真实派发使用 `REVIEW_PHASE: INITIAL`。任一 Critical/Important finding 都从新 `AK` 回到第 7 步；新候选经第 7–9 步晋升为下一完整 `RN` 后，按 `REVIEW_PHASE: RE_REVIEW` 复用原 reviewer 并保留完整 `PRIOR_FINDINGS`。未取得两个 `PASS`，以及仅在明确未收敛跨边界风险时所需的窄审 `PASS` 前，禁止后续 push、Tag、Release。
     按“提交术语与唯一原子集合”中的普通同步 candidate 规则，以精确 lease 只推最终 `RELEASE_COMMIT_RN` 到远端 `dev`，再显式 dispatch 官方 `ci.yml`（`ref=dev`、`lane=all`），在原子 promotion 之前按上述候选规则取得同一最终完整 SHA 的 aggregate `ci` `completed success` 与实际 checkout 证据。此时 origin 的 `upstream-release` 仍可能是 `OLD_OFFICIAL`；候选 verifier 只有在 `GITHUB_ACTIONS=true`、`GITHUB_EVENT_NAME=workflow_dispatch`、`GITHUB_REF=refs/heads/dev`、`OCX_CANDIDATE_CI_LANE=all` 全部成立，且证明该 marker 是新官方 Tag peeled commit 的祖先时，才允许继续。lane 由准备步骤显式传入；缺失、空值、其他 lane、旧 dev push 和本地执行均不获得祖先例外。发布后的 verifier 仍要求 marker 与新官方 Tag 精确相等；候选例外不能用于本地或非 candidate CI 运行。
-11. 双审通过后创建中文注释 annotated Tag vX.Y.Z-ben.N；raw 类型必须是 tag，peeled 等于 `RELEASE_COMMIT`。远端已存在时核对 OID，否则 fail closed。禁止 force Tag。
-12. 紧邻 push 重新读取 `main`、`dev`、`refs/heads/sync/vX.Y.Z` 与 marker 的 expected OID；sync 首次不存在则重证 absent。按“提交术语与唯一原子集合”执行一次 `git push --atomic`，同时提交 `main`、`dev`、`RELEASE_SYNC_REF`、`upstream-release`、Fork Tag 和官方 Tag 六个 refspec：前三个 branch 与 Fork Tag 指向 `RELEASE_COMMIT`，`upstream-release` 与官方 Tag 指向 `OFFICIAL_COMMIT`。四个 branch 均使用各自 ref-scoped force-with-lease；candidate push 后 `dev` 通常已等于 `RELEASE_COMMIT`，仍须提交其 refspec 和精确 lease；sync 使用 `+RELEASE_COMMIT:refs/heads/sync/vX.Y.Z`，允许 non-fast-forward。任一 lease 漂移、出现 revision-specific sync ref、Tag 冲突或 push 失败都 fail closed；禁止无 lease force、blanket force 和拆分推送。
+11. 双审通过后创建中文注释 annotated Tag vX.Y.Z-ben.N；raw 类型必须是 tag，peeled 等于 `RELEASE_COMMIT`。远端已存在时核对 OID；不一致则拒绝本次建 Tag，继续调查并按幂等规则恢复。禁止 force Tag。
+12. 紧邻 push 重新读取 `main`、`dev`、`refs/heads/sync/vX.Y.Z` 与 marker 的 expected OID；sync 首次不存在则重证 absent。按“提交术语与唯一原子集合”执行一次 `git push --atomic`，同时提交 `main`、`dev`、`RELEASE_SYNC_REF`、`upstream-release`、Fork Tag 和官方 Tag 六个 refspec：前三个 branch 与 Fork Tag 指向 `RELEASE_COMMIT`，`upstream-release` 与官方 Tag 指向 `OFFICIAL_COMMIT`。四个 branch 均使用各自 ref-scoped force-with-lease；candidate push 后 `dev` 通常已等于 `RELEASE_COMMIT`，仍须提交其 refspec 和精确 lease；sync 使用 `+RELEASE_COMMIT:refs/heads/sync/vX.Y.Z`，允许 non-fast-forward。任一 lease 漂移、出现 revision-specific sync ref、Tag 冲突或 push 失败都拒绝本次推送，继续核对实际结果、修复并重试；禁止无 lease force、blanket force 和拆分推送。
 13. push 成功后、Release API 前，严格按 `local-ref-cas-transaction` 使用一个带
     `start` / `prepare` / `commit` 的 `git update-ref --stdin` transaction，把本地
     `refs/heads/main`、`refs/heads/sync/vX.Y.Z` 与 `refs/heads/upstream-release` 同时
@@ -503,7 +513,7 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
     `EXPECTED_OLD_LOCAL_MARKER`，任一失败则三者都不更新。禁止顺序执行三个 update；dev
     已是候选 checkout，不重写到其他内容；随后 fetch 核对。
     Release 失败也保持 branch 收敛。
-14. 创建或核对同名 GitHub Release：ben.N 为正式修订，非 prerelease 非 draft；标题等于 Tag；中文 Notes 含官方基线、修改点、验证、已知缺口、commit。默认仅 source archive。后验查询元数据；不合格只幂等修正。失败保留 Tag，任务标未完成，下次只收敛 Release。
+14. 创建或核对同名 GitHub Release：ben.N 为正式修订，非 prerelease 非 draft；标题等于 Tag；中文 Notes 含官方基线、修改点、验证、已知缺口、commit。默认仅 source archive。后验查询元数据；不合格只幂等修正。失败保留 Tag，任务标未完成，继续核对 API 实际结果并有界恢复；恢复时只收敛同名 Release，不重新 rebase 或递增 revision。
 15. 终验：发布瞬间本地/远端 `main`、`dev`、本轮 `RELEASE_SYNC_REF=refs/heads/sync/vX.Y.Z` 与 Fork Tag peeled commit 全部等于 `RELEASE_COMMIT`，且不存在本基线 revision-specific sync ref；Fork Tag 为 annotated；`upstream-release` 等于 `OFFICIAL_COMMIT`；官方基线 Tag 在 origin；Release 公开指向 Fork Tag。发布后 `dev` 可以继续领先 `main`，后续自动化不得把 advanced dev 重置回该旧 `RELEASE_COMMIT`。报告官方 Tag、修改点、冲突摘要、双审结论、验证、commit、push、Release URL 与残余风险。
 
 ## 通用约束
@@ -511,4 +521,5 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 - 普通 Fork 功能提交新增/删除/替换/实质改变 FORK_CHANGES.md 能力时，同步中文更新文档。
 - origin 为 Trendymen/opencodex，upstream 为 lidge-jun/opencodex。不创建 GitHub App、Secrets、PR 或 Issue；保留完整上游历史与原始 SHA。
 - 发布后的官方基线证据用本地 upstream remote Tag 与 origin/upstream-release marker 的精确相等证明。candidate CI 在原子 promotion 前保留旧 marker 时，额外证明旧 marker 是新官方 Tag 的祖先；该例外只存在于 GitHub `workflow_dispatch`、`refs/heads/dev` 且显式 `lane=all` 的 candidate 环境。
-- CI 因 origin clone 缺官方基线 Tag 失败时，登记为需用户决策事项并停止，不自行镜像、不改测试断言、不放宽门禁。
+- CI 因 origin clone 缺官方基线 Tag 失败时，继续核对上游 Release、Tag raw/peeled SHA 和 main 可达性，按本文官方基线准备及 Tag 保留规则补齐来源证据与缺失引用，再恢复失败检查。candidate 阶段仍遵守六引用原子发布顺序，不提前拆推新官方 Tag 或 marker，不改测试断言、不放宽门禁。
+- 持续修复不包含自动安装、替换、修复或重启用户的全局 OpenCodex；每次本地安装仍须用户在当前对话单独明确要求，且仅手动执行一次，旧授权不复用。macOS 手动运行 `install:local` 时默认开启有界 Provider debug 的行为保持不变。
