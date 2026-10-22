@@ -99,7 +99,15 @@ describe("fork agent task recovery (strict backend ciphertext)", () => {
     expect(sendBudget.reserveSpent).toBe(true);
   });
 
-  test("cleans an older unknown slot while preserving the strict current task for bounded recovery", async () => {
+  test.each([
+    { metadata: [] },
+    { metadata: [{ type: "configuration_update", reasoning: { effort: "high" } }] },
+    { metadata: [
+      { type: "compaction_trigger" },
+      { type: "additional_tools", tools: [] },
+      { type: "configuration_update", reasoning: { effort: "high" } },
+    ] },
+  ])("cleans an older unknown slot while preserving the strict current task for bounded recovery with %j", async ({ metadata }) => {
     const backendCiphertext = `gAAAA${"D".repeat(128)}`;
     const olderUnknownSlot = "A".repeat(128);
     const assignment = "Return only the recovered current task.";
@@ -130,6 +138,7 @@ describe("fork agent task recovery (strict backend ciphertext)", () => {
           content: [{ type: "encrypted_content", encrypted_content: olderUnknownSlot }],
         },
         ...encryptedInput({ ciphertext: backendCiphertext }),
+        ...metadata,
       ],
       codexHeaders(),
     );

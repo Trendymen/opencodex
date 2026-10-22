@@ -178,6 +178,33 @@ describe("fork V2 strict backend ciphertext envelope guard", () => {
     expect(hasStrictBackendEncryptedAgentTask(extraPart)).toBe(false);
   });
 
+  test.each([
+    { metadata: [{ type: "configuration_update", reasoning: { effort: "high" } }] },
+    { metadata: [
+      { type: "configuration_update", reasoning: { effort: "high" } },
+      { type: "compaction_trigger" },
+      { type: "additional_tools", tools: [] },
+    ] },
+  ])("keeps strict task boundaries with trailing metadata %j", ({ metadata }) => {
+    const strict = agentMessage([
+      { type: "input_text", text: ROUTING_ENVELOPE },
+      { type: "encrypted_content", encrypted_content: BACKEND_TASK },
+    ]);
+    expect(hasStrictBackendEncryptedAgentTask([...strict, ...metadata])).toBe(true);
+    expect(hasStrictBackendEncryptedAgentTask([
+      ...strict,
+      { type: "message", role: "user", content: [{ type: "input_text", text: "CURRENT_USER" }] },
+      ...metadata,
+    ])).toBe(false);
+    expect(hasStrictBackendEncryptedAgentTask([
+      ...agentMessage([
+        { type: "input_text", text: ROUTING_ENVELOPE.replace("Sender: /root", "Sender: /other") },
+        { type: "encrypted_content", encrypted_content: BACKEND_TASK },
+      ]),
+      ...metadata,
+    ])).toBe(false);
+  });
+
   test("rejects multiline whitespace inside the strict NEW_TASK header", () => {
     const malformedHeaders = [
       ROUTING_ENVELOPE.replace("Message Type: NEW_TASK", "Message Type:\nNEW_TASK"),

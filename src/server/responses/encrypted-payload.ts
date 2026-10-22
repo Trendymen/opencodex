@@ -283,7 +283,7 @@ function currentAgentMessage(input: unknown): Record<string, unknown> | null {
   while (index >= 0) {
     const item = input[index];
     const type = item && typeof item === "object" ? (item as { type?: unknown }).type : undefined;
-    if (type !== "compaction_trigger" && type !== "additional_tools") break;
+    if (type !== "compaction_trigger" && type !== "additional_tools" && type !== "configuration_update") break;
     index -= 1;
   }
   const item = input[index];
