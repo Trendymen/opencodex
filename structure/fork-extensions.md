@@ -43,7 +43,7 @@
 - `src/server/responses-reasoning-summary-rewrite.ts` 仅在客户端请求 summary 且路由满足条件时投影；已有 summary 不重复投影。保留 raw reasoning、终态字段和原始存储对象，passthrough continuation 记录客户端实际收到的形状。
 - projection 的唯一序号按 32 字节计入共享 `translatorBudget`；EOF、失败和取消完成资源释放，超限沿用 `translation_buffer_limit`。flush 不扩大到 reader error / nested-exec barrier。
 - phase 推断只适用于显式配置的第三方原生 Responses；宣布阶段的 `final_answer` 不足以证明最终相位，已有 phase 和后续工作证据共同决定交付结果。
-- `src/server/responses/encrypted-payload.ts` 和 `src/fork/passthrough-agent-task-recovery.ts` 限定 strict backend envelope；禁用 recovery 时不增加分类、恢复或重放。原生重放使用官方共享发送预算，最多一次；恢复后的请求不再进入其他重试链。
+- `src/server/responses/encrypted-payload.ts` 和 `src/fork/passthrough-agent-task-recovery.ts` 限定 strict backend envelope；当前任务识别只跳过尾部 `compaction_trigger`、`additional_tools` 和 `configuration_update`，不跨过新的消息回溯历史任务。禁用 recovery 时不增加分类、恢复或重放。原生重放使用官方共享发送预算，最多一次；恢复后的请求不再进入其他重试链。
 - strict 密文和恢复 body 不写 continuation cache。父任务 `MESSAGE` 超时提示不含密文，不声称正文已读；`invalid_encrypted_content` 属于 `recovery_unreadable` 终局。
 - key-auth 输出预算由 `src/adapters/openai-responses/passthrough.ts` 补全；显式客户端预算优先，forward 不注入。估算不替代上游计费或超窗判断。
 
