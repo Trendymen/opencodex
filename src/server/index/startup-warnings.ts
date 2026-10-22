@@ -1,4 +1,7 @@
-import { carryCodexPassthroughResponse } from "../../fork/codex-passthrough-turn";
+import {
+  carryCodexPassthroughResponse,
+  codexPassthroughResponsePermissions,
+} from "../../fork/codex-passthrough-turn";
 import { currentServiceHomes, serviceStatePathsForOpenCodexHome } from "../../service";
 import {
   createWindowsTaskListingCache,
@@ -148,6 +151,20 @@ export function withRequestLogId(response: Response, requestId: string, enabled 
     statusText: response.statusText,
     headers,
   }));
+}
+
+export function withCodexResponseHeaders(
+  response: Response,
+  req: Request,
+  policy: RequestPolicyView,
+  requestId: string,
+): Response {
+  const permissions = codexPassthroughResponsePermissions(response);
+  return withRequestLogId(
+    withCors(response, req, policy, permissions?.addResponseBrowserHeaders !== false),
+    requestId,
+    permissions?.addResponseRequestId !== false,
+  );
 }
 
 export interface StartServerDeps {

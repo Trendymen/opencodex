@@ -22,6 +22,7 @@ import {
   webSocketFrameBytes,
 } from "./live-sideband";
 import {
+  withCodexResponseHeaders,
   withRequestLogId,
   withMessagesRequestLogId,
 } from "./startup-warnings";
@@ -1549,10 +1550,8 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             );
             throw error;
           }
-          const codexPermissions = codexPassthroughResponsePermissions(response);
-          return withRequestLogId(
-            withCors(responseWithDeferredRequestLog(response, requestId, start, logCtx), req, policy, codexPermissions?.addResponseBrowserHeaders !== false),
-            requestId, codexPermissions?.addResponseRequestId !== false,
+          return withCodexResponseHeaders(
+            responseWithDeferredRequestLog(response, requestId, start, logCtx), req, policy, requestId,
           );
         }, { requestId, start, logCtx });
       }
@@ -1998,4 +1997,3 @@ export function createServeOptions(ctx: ServeOptionsContext) {
   return { ...serveOptions, fetch: async (req: Request, requestServer: Server<WsData>): Promise<Response> =>
     stampServedBy(req.method, codexCompatibleUrl(req.url).pathname, await routeFetch(req, requestServer)) } as const;
 }
-import { codexPassthroughResponsePermissions } from "../../fork/codex-passthrough-turn";
