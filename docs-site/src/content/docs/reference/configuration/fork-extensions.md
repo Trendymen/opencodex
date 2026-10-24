@@ -3,7 +3,7 @@ title: Fork configuration
 description: Provider, recovery, custom-model and diagnostic controls added by the Trendymen Fork.
 ---
 
-These settings supplement upstream `v2.86.0`. Compatibility behavior is described in [Fork extensions](/reference/fork-extensions/).
+These settings supplement upstream configuration. Compatibility behavior is described in [Fork extensions](/reference/fork-extensions/).
 
 ## Provider settings
 
@@ -16,6 +16,8 @@ These settings supplement upstream `v2.86.0`. Compatibility behavior is describe
 With a valid window and more than 512 estimated tokens remaining, the injected budget is `max(512, min(configured, remaining - headroom))`, with 256–4,096 tokens of headroom. Without that window or with no more than 512 remaining tokens, the configured value is retained so the upstream can reject overflow explicitly.
 
 `agentMessageFormat` and `inferResponsesMessagePhaseModels` use config or the management API. An omitted POST field retains the latest value; PATCH `null` clears it. `agentMessageFormat` POST `null` is rejected. Explicit format conversion preserves identities and the original request/replay objects.
+
+`inferResponsesMessagePhaseModels` also covers ordinary JSON responses for its listed third-party models. When its conditions match, model-scoped inference takes precedence so two buffering rewrites cannot consume the same EOF tail. Other routes retain upstream's provider-level `messagePhaseInference` option for SSE and JSON reconstructed from SSE.
 
 The `opencode-go` preset defaults `preserveResponsesReasoningContent` to `true` only when absent; explicit `false` wins. The refusal sample motivating it came from DeepSeek. Other Responses models on that provider have not all been validated with retained replay.
 

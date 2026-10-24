@@ -18,7 +18,8 @@ import { handleResponses } from "../../src/server/responses/core";
 import { CODEX_PASSTHROUGH_DEFAULTS } from "../../src/fork/codex-passthrough-contract";
 import { markCodexPassthroughResponse, codexPassthroughResponsePermissions, captureCodexPassthroughTurn,
   retainCodexPassthroughTurnSource, materializeCodexPassthroughTurnSource, releaseCodexPassthroughTurnSource, resolveCodexPassthroughAttempt } from "../../src/fork/codex-passthrough-turn";
-import { markResponseNonReplayable, isNonReplayableResponse, markReplayRefusalResponse, isReplayRefusalResponse } from "../../src/lib/upstream-retry";
+import { markResponseNonReplayable, isNonReplayableResponse, markReplayRefusalResponse, isReplayRefusalResponse,
+  markSameTargetRetryHold, isSameTargetRetryHold } from "../../src/lib/upstream-retry";
 
 describe("Codex decoded source ownership", () => {
   for (const kind of ["recovered", "notice"] as const) test(`protected ${kind} edits survive cache reset without restoring unrelated input changes`, async () => {
@@ -187,8 +188,12 @@ describe("Codex decoded source ownership", () => {
         pull(controller) { if (ending === "error") controller.error(new Error("reader failed")); else if (ending === "eof") controller.close(); },
       })), CODEX_PASSTHROUGH_DEFAULTS);
       markResponseNonReplayable(original); markReplayRefusalResponse(original);
+      markSameTargetRetryHold(original);
       const budget = createTranslatorBudget();
-      const wrapped = finalizeAccountLease(finalizeOwnedTranslatorBudget(original, budget), () => { released++; });
+      const finalized = finalizeOwnedTranslatorBudget(original, budget);
+      expect(isSameTargetRetryHold(finalized)).toBe(true);
+      const wrapped = finalizeAccountLease(finalized, () => { released++; });
+      expect(isSameTargetRetryHold(wrapped)).toBe(true);
       expect(codexPassthroughResponsePermissions(wrapped)).toBe(CODEX_PASSTHROUGH_DEFAULTS);
       expect(isNonReplayableResponse(wrapped)).toBe(true);
       expect(isReplayRefusalResponse(wrapped)).toBe(true);

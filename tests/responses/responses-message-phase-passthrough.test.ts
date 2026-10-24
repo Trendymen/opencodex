@@ -25,6 +25,12 @@ const upstreamSse = [
   { type: "response.completed", response: { id: "resp_phase", status: "completed", output: [message] } },
 ].map(event => `data: ${JSON.stringify(event)}\n\n`).join("");
 
+const phaseConfigurations = [
+  { name: "Fork allowlist", models: ["glm-5.3"], messagePhaseInference: undefined },
+  { name: "Fork allowlist and provider inference", models: ["glm-5.3"], messagePhaseInference: true },
+  { name: "provider inference only", models: undefined, messagePhaseInference: true },
+];
+
 beforeEach(() => { releaseSpendHome = acquireOwnedSpendHome(); });
 
 afterEach(() => {
@@ -34,7 +40,7 @@ afterEach(() => {
 });
 
 describe("provider-configured native Responses message phase repair", () => {
-  test("labels a configured provider's terminal message final_answer in the streamed item and snapshot", async () => {
+  for (const { name, models, messagePhaseInference } of phaseConfigurations) test(`labels a configured provider's terminal message final_answer in the streamed item and snapshot (${name})`, async () => {
     globalThis.fetch = (async () => new Response(upstreamSse, {
       status: 200,
       headers: { "content-type": "text/event-stream" },
@@ -47,7 +53,8 @@ describe("provider-configured native Responses message phase repair", () => {
           baseUrl: "https://phase.example.test/v1",
           authMode: "key",
           apiKey: "test-key",
-          inferResponsesMessagePhaseModels: ["glm-5.3"],
+          ...(models ? { inferResponsesMessagePhaseModels: models } : {}),
+          ...(messagePhaseInference === true ? { messagePhaseInference } : {}),
         },
       },
     } as OcxConfig;
@@ -63,6 +70,8 @@ describe("provider-configured native Responses message phase repair", () => {
       { abortSignal: AbortSignal.timeout(5_000) },
     );
     const text = await response.text();
+    expect(text.match(/"type":"response.output_item.done"/g)).toHaveLength(1);
+    expect(text.match(/"type":"response.completed"/g)).toHaveLength(1);
     const done = JSON.parse(text.split("\n").find(line => line.includes('"response.output_item.done"'))!.slice(6));
     const completed = JSON.parse(text.split("\n").find(line => line.includes('"response.completed"'))!.slice(6));
 
@@ -70,7 +79,7 @@ describe("provider-configured native Responses message phase repair", () => {
     expect(completed.response.output[0].phase).toBe("final_answer");
   });
 
-  test("labels a configured provider's terminal message final_answer in a non-stream response", async () => {
+  test.each([undefined, true])("labels a configured provider's terminal message final_answer in a non-stream response (messagePhaseInference=%s)", async messagePhaseInference => {
     globalThis.fetch = (async () => Response.json({
       id: "resp_phase_json",
       status: "completed",
@@ -85,6 +94,7 @@ describe("provider-configured native Responses message phase repair", () => {
           authMode: "key",
           apiKey: "test-key",
           inferResponsesMessagePhaseModels: ["glm-5.3"],
+          ...(messagePhaseInference === true ? { messagePhaseInference } : {}),
         },
       },
     } as OcxConfig;
@@ -104,7 +114,7 @@ describe("provider-configured native Responses message phase repair", () => {
       .toBe("final_answer");
   });
 
-  test("does not infer phase from an assistant role introduced by JSON snapshot repair", async () => {
+  test.each([undefined, true])("does not infer phase from an assistant role introduced by JSON snapshot repair (messagePhaseInference=%s)", async messagePhaseInference => {
     globalThis.fetch = (async () => Response.json({
       id: "resp_user_snapshot",
       status: "completed",
@@ -125,6 +135,7 @@ describe("provider-configured native Responses message phase repair", () => {
           authMode: "key",
           apiKey: "test-key",
           inferResponsesMessagePhaseModels: ["glm-5.3"],
+          ...(messagePhaseInference === true ? { messagePhaseInference } : {}),
           responsesSnapshotRepair: true,
         },
       },
@@ -145,7 +156,7 @@ describe("provider-configured native Responses message phase repair", () => {
     expect(body.output[0]?.phase).toBeUndefined();
   });
 
-  test("labels configured text before a native tool call commentary", async () => {
+  for (const { name, models, messagePhaseInference } of phaseConfigurations) test(`labels configured text before a native tool call commentary (${name})`, async () => {
     const preamble = {
       type: "message",
       id: "msg_preamble",
@@ -181,7 +192,8 @@ describe("provider-configured native Responses message phase repair", () => {
           baseUrl: "https://phase.example.test/v1",
           authMode: "key",
           apiKey: "test-key",
-          inferResponsesMessagePhaseModels: ["glm-5.3"],
+          ...(models ? { inferResponsesMessagePhaseModels: models } : {}),
+          ...(messagePhaseInference === true ? { messagePhaseInference } : {}),
         },
       },
     } as OcxConfig;
@@ -197,6 +209,8 @@ describe("provider-configured native Responses message phase repair", () => {
       { abortSignal: AbortSignal.timeout(5_000) },
     );
     const text = await response.text();
+    expect(text.match(/"type":"response.output_item.done"/g)).toHaveLength(2);
+    expect(text.match(/"type":"response.completed"/g)).toHaveLength(1);
     const done = JSON.parse(text.split("\n").find(line => line.includes('"response.output_item.done"') && line.includes('"msg_preamble"'))!.slice(6));
     const completed = JSON.parse(text.split("\n").find(line => line.includes('"response.completed"'))!.slice(6));
 
@@ -277,7 +291,7 @@ describe("provider-configured native Responses message phase repair", () => {
     expect(text.indexOf('"response.output_item.done"')).toBeLessThan(text.indexOf("data: [DONE]"));
   });
 
-  test("frames an unclassified terminal item at clean EOF when completed is missing", async () => {
+  test.each([undefined, true])("frames an unclassified terminal item at clean EOF when completed is missing (messagePhaseInference=%s)", async messagePhaseInference => {
     const cleanEofUpstream = `data: ${JSON.stringify({
       type: "response.output_item.done",
       output_index: 0,
@@ -296,6 +310,7 @@ describe("provider-configured native Responses message phase repair", () => {
           authMode: "key",
           apiKey: "test-key",
           inferResponsesMessagePhaseModels: ["glm-5.3"],
+          ...(messagePhaseInference === true ? { messagePhaseInference } : {}),
         },
       },
     } as OcxConfig;
@@ -321,7 +336,7 @@ describe("provider-configured native Responses message phase repair", () => {
     expect(text.endsWith("\n\n")).toBe(true);
   });
 
-  test("flushes an unclassified terminal item before a synthetic failed response on reader reset", async () => {
+  test.each([undefined, true])("flushes an unclassified terminal item before a synthetic failed response on reader reset (messagePhaseInference=%s)", async messagePhaseInference => {
     const encoder = new TextEncoder();
     let reads = 0;
     const upstreamBody = new ReadableStream<Uint8Array>({
@@ -350,6 +365,7 @@ describe("provider-configured native Responses message phase repair", () => {
           authMode: "key",
           apiKey: "test-key",
           inferResponsesMessagePhaseModels: ["glm-5.3"],
+          ...(messagePhaseInference === true ? { messagePhaseInference } : {}),
         },
       },
     } as OcxConfig;
@@ -366,6 +382,9 @@ describe("provider-configured native Responses message phase repair", () => {
     );
     const text = await response.text();
     expect(text).toContain('"response.output_item.done"');
+    expect(text.match(/"type":"response.output_item.done"/g)).toHaveLength(1);
+    expect(text.match(/"type":"response.failed"/g)).toHaveLength(1);
+    expect(text).not.toContain('"type":"response.completed"');
     const done = JSON.parse(text.split("\n").find(line => line.includes('"response.output_item.done"'))!.slice(6));
 
     expect(done.item).toEqual(message);

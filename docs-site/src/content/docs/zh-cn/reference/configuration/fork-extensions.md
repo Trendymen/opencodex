@@ -3,7 +3,7 @@ title: Fork 配置
 description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配置补充。
 ---
 
-本页补充上游 `v2.86.0` 配置。兼容行为见 [Fork 扩展](/zh-cn/reference/fork-extensions/)。
+本页补充上游配置。兼容行为见 [Fork 扩展](/zh-cn/reference/fork-extensions/)。
 
 ## Provider 配置
 
@@ -16,6 +16,8 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 有有效窗口且估算剩余 token 超过 512 时，补写预算为 `max(512, min(configured, remaining - headroom))`，余量为 256–4,096 token；无有效窗口或剩余 token 不超过 512 时保留配置值，让上游明确拒绝超窗。
 
 `agentMessageFormat` 和 `inferResponsesMessagePhaseModels` 通过配置或管理 API 使用。POST 省略保留最新值，PATCH `null` 清除；`agentMessageFormat` 的 POST `null` 拒绝。显式格式转换保留身份及原请求/重放对象。
+
+`inferResponsesMessagePhaseModels` 也覆盖名单内第三方模型的普通 JSON 响应。满足其条件时，按模型启用的推断优先，避免两套缓冲改写吞掉同一个 EOF 尾项。其他路由继续使用官方 Provider 级 `messagePhaseInference`，作用于 SSE 及由 SSE 重建的 JSON。
 
 `opencode-go` 预设仅在缺失时补 `preserveResponsesReasoningContent: true`，显式 `false` 优先。推动该默认值的拒绝样本来自 DeepSeek，同 Provider 其他 Responses 模型尚未全部验证保留回放。
 

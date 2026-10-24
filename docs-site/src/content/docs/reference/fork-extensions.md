@@ -3,7 +3,7 @@ title: Trendymen Fork extensions
 description: Compatibility and maintenance differences from the rebased upstream release.
 ---
 
-This appendix describes the Trendymen Fork relative to upstream `v2.86.0`. The other reference pages retain upstream wording; the Fork configuration differences are in [Fork configuration](/reference/configuration/fork-extensions/).
+This appendix describes the Trendymen Fork's additions to upstream. The other reference pages retain upstream wording; the Fork configuration differences are in [Fork configuration](/reference/configuration/fork-extensions/).
 
 ## Compatibility changes
 
@@ -11,7 +11,7 @@ This appendix describes the Trendymen Fork relative to upstream `v2.86.0`. The o
 - Ark GLM/Kimi and BigModel GLM Responses routes lower unsupported tool schemas and handle assistant-prefill restrictions. Ordinary third-party tools drop ChatGPT-only `encrypted` annotations while preserving properties and literal values with that name. OpenAI-operated destinations and explicitly trusted direct relays retain the annotations; combo members do not inherit that direct-route exception.
 - Third-party tool tasks receive progress, code-mode result-display and patch-order guidance. The proxy does not synthesize progress or execute or retry patches.
 - Declared nested `functions.exec` / `web__run` calls and supported `spawn_agent.fork_turns` completions receive bounded repair. Custom tool outputs become strings; Console Go's strict destination deduplicates repeated call outputs. Current tool declarations remain the authority.
-- Native Responses phase inference and content-channel reasoning summary projection cover paths outside the upstream bridge. Summary projection requires an explicit client summary request, preserves raw fields, and keeps passthrough continuation aligned with the delivered response.
+- Model-scoped native Responses phase inference includes ordinary JSON delivery alongside upstream's provider-scoped SSE option. Content-channel reasoning summary projection requires an explicit client summary request, preserves raw fields, and keeps passthrough continuation aligned with the delivered response.
 - Annotation instructions use bare chip directives. Output repair preserves code blocks, but it is not gated by this turn's annotation count and does not handle multiline code spans; native forwarding receives the input rewrite only when its permission allows it.
 - With the corresponding processing permissions enabled, SSE flush and terminal handling preserve usable upstream errors and one final `[DONE]`. Canonical forwarding copies a true Lite header into missing WebSocket metadata without replacing explicit values.
 - Ark quota errors retain the provider's message and reset time while preventing automatic retry. BigModel Codex discovery accepts `models[].slug`; the legacy `deepseek-v4-flash` alias can receive images directly unless operator configuration still excludes it.

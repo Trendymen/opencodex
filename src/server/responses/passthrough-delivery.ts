@@ -1052,7 +1052,8 @@ export async function deliverPassthroughResponse(
         snapshotRepairEnabled
           ? createResponsesSnapshotBlockRewrite(nativeExchange.outboundRequestBody, translatorBudget)
           : undefined,
-        route.provider.messagePhaseInference === true
+        // Model-specific inference takes precedence so the message is buffered only once.
+        route.provider.messagePhaseInference === true && !inferResponsesMessagePhases
           ? createResponsesPhaseInferenceBlockRewrite(translatorBudget)
           : undefined,
         codexPermissions?.repairResponseToolCalls !== false && responseEffects.plaintextV2AgentMessageToolNames.size > 0
