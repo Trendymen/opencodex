@@ -264,7 +264,7 @@ export function prepareForkOfficialBase(options: {
     const head = runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
       ["rev-parse", "HEAD"], ownedPaths).stdout.trim();
     const forkTag = runGit(options.repoRoot,
-      ["rev-parse", "--verify", "--quiet", `refs/tags/v${classification.version}^{commit}`]);
+      ["rev-parse", "--verify", "--quiet", `refs/tags/v${classification.version}~0`]);
     if (forkTag.exitCode !== 0 && forkTag.exitCode !== 1) {
       throw new Error(safeGitDiagnostic("fetch Fork version history", outputOrError(forkTag), ownedPaths));
     }

@@ -361,6 +361,42 @@ describe("Fork CI official baseline preparation", () => {
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
 
+  test("zero-parent revision syntax preserves commit peeling and rejects non-commit tag targets", () => {
+    const fixture = createFixture();
+    const repo = fixture.official;
+    requireGit(repo, ["tag", "-a", "annotated-commit", "-m", "commit", fixture.officialTagCommit]);
+    const tree = requireGit(repo, ["rev-parse", "HEAD^{tree}"]);
+    const blob = requireGit(repo, ["hash-object", "-w", "package.json"]);
+    for (const [name, object] of [["tree", tree], ["blob", blob]] as const) {
+      requireGit(repo, ["tag", name, object]);
+      requireGit(repo, ["tag", "-a", `annotated-${name}`, "-m", name, object]);
+    }
+    for (const [ref, expectedExit] of [
+      ["refs/tags/annotated-commit", 0], ["refs/tags/v2.35.0", 0], [fixture.officialTagCommit, 0],
+      ["refs/tags/tree", 1], ["refs/tags/blob", 1], ["refs/tags/annotated-tree", 1],
+      ["refs/tags/annotated-blob", 1], ["refs/tags/missing", 1],
+    ] as const) {
+      const original = git(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+      const compatible = git(repo, ["rev-parse", "--verify", "--quiet", `${ref}~0`]);
+      expect(original.exitCode).toBe(expectedExit);
+      expect(compatible.exitCode).toBe(original.exitCode);
+      expect(compatible.stdout).toBe(original.stdout);
+      if (expectedExit === 0) expect(compatible.stdout.trim()).toBe(fixture.officialTagCommit);
+    }
+  });
+
+  test("Fork version commit probe uses a cmd-safe Git revision token", () => {
+    const fixture = createReleasedForkFixture();
+    const calls: string[][] = [];
+    prepare(fixture, undefined, (cwd, args) => {
+      calls.push([...args]);
+      return git(cwd, args);
+    }).run();
+    const probe = calls.find(args => args[0] === "rev-parse" && args[1] === "--verify" && args[2] === "--quiet");
+    expect(probe).toEqual(["rev-parse", "--verify", "--quiet", "refs/tags/v2.35.0-ben.2~0"]);
+    expect(probe?.[3]).not.toContain("^");
+  });
+
   test("restores released Fork ancestry across four commits in a real depth-one clone", () => {
     const fixture = createReleasedForkFixture();
     const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
