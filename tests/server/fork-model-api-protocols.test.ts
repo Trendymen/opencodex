@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getDefaultConfig } from "../../src/config";
@@ -6,6 +6,8 @@ import { resetContextRelayActivationForTests } from "../../src/codex/context-com
 import { clearContextSessionOwnersForTests } from "../../src/codex/context-owner";
 import { artifactHttpUrl, createImageBudget, materializeInlineImage } from "../../src/images/artifacts";
 import { getActiveTurnCount } from "../../src/server/lifecycle";
+import * as eagerRelay from "../../src/server/relay-eager";
+import { setRelayPlatformForTests } from "../../src/server/responses/passthrough-delivery";
 import type { OcxConfig } from "../../src/types";
 import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
 import { connectForkModelApiSocket, startForkModelApiFixture, waitForForkModelApi } from "../helpers/fork-model-api-fixture";
@@ -277,7 +279,7 @@ test("Direct search, dictation carrier and context ownership preserve independen
   }
 });
 
-test("SSE EOF, native failure and client cancellation release their admitted turns", async () => {
+test.each(["native", "win32"] as const)("SSE EOF, native failure and client cancellation release their admitted turns (%s)", async relayPlatform => {
   let upstreamCanceled = false;
   const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     const body = await req.json() as { input: string };
@@ -287,7 +289,14 @@ test("SSE EOF, native failure and client cancellation release their admitted tur
     return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(responseEvents()[0])}\n\n`)); }, cancel() { upstreamCanceled = true; } }), { headers: { "content-type": "text/event-stream" } });
   } });
   let fixture: Awaited<ReturnType<typeof startForkModelApiFixture>> | undefined;
+  let restoreRelay: (() => void) | undefined;
   try {
+    setRelayPlatformForTests(relayPlatform === "win32" ? "win32" : undefined);
+    const originalRelay = eagerRelay.relaySseEagerBounded;
+    // Production drains for up to 15s; this fixture retains its 2s cancellation deadline.
+    const relaySpy = spyOn(eagerRelay, "relaySseEagerBounded").mockImplementation((body, upstream, hooks, options) =>
+      originalRelay(body, upstream, hooks, { ...options, postCancelDrainMs: 30 }));
+    restoreRelay = () => relaySpy.mockRestore();
     fixture = await startForkModelApiFixture(config(), { upstreamUrl: upstream.url.toString() });
     for (const input of ["success", "failure"]) {
       const response = await fetch(`${fixture.apiUrl}/v1/responses`, { method: "POST", headers: jsonHeaders, body: JSON.stringify({ model: "fixture-model", input, stream: true }) });
@@ -327,7 +336,10 @@ test("SSE EOF, native failure and client cancellation release their admitted tur
       await waitForForkModelApi(() => upstreamCanceled, "WebSocket upstream cancellation", Math.max(0, cancellationDeadline - performance.now()));
       await waitForForkModelApi(() => getActiveTurnCount() === 0, "WebSocket admitted turn release", Math.max(0, cancellationDeadline - performance.now()));
     } finally { ws.socket.close(); }
-  } finally { try { await fixture?.close(); } finally { await upstream.stop(true); } }
+  } finally {
+    try { try { await fixture?.close(); } finally { await upstream.stop(true); } }
+    finally { setRelayPlatformForTests(undefined); restoreRelay?.(); }
+  }
 });
 
 test("missing native capability credentials and disabled context retain their native refusals", async () => {
