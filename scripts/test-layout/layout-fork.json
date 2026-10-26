@@ -1,4 +1,6 @@
 {
+  "fork-model-api-protocols.test.ts": "server",
+  "fork-model-api-access.test.ts": "server",
   "fork-model-api-listener.test.ts": "server",
   "fork-model-api-port.test.ts": "cli",
   "fork-model-api-listener-config.test.ts": "config",
