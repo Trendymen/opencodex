@@ -1,4 +1,5 @@
 import type { OcxProviderConfig } from "./provider";
+import type { ForkModelApiListenerConfig } from "../fork/model-api-listener-config";
 import type { CodexAccount } from "./accounts";
 import type { AnthropicAccountPoolConfig, OcxAccountPoolRotationStrategy } from "./anthropic-account-pool";
 import type { AnthropicInstanceId } from "../providers/anthropic-instance-id";
@@ -518,6 +519,7 @@ export interface OcxConfig {
   /** Experimental macOS app-server stdout shim; absent or false disables it. */
   chatgptDesktop?: { appServerShim?: boolean };
   port: number;
+  forkModelApiListener?: ForkModelApiListenerConfig;
   /** Runtime topology role. Absence preserves the historical standalone behavior. */
   runtimeRole?: OcxRuntimeRole;
   /** Hub-only public management metadata. Presence is inert outside the hub role. */

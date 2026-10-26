@@ -50,6 +50,8 @@
 
 ## 配置与诊断边界
 
+- `src/fork/model-api-listener-config.ts` 定义可选的 `forkModelApiListener: { enabled: boolean }`，省略或 `false` 保持原主入口。开启时，回环主入口端口必须与 `10100` 不同，resolver 返回 `0.0.0.0:10100` 的 auxiliary 拓扑；非回环主入口必须使用 `10100`，resolver 返回 primary 拓扑。默认地址及 `localhost` / `localhost.` 按原生绑定规则归一化，CLI 的有效主端口优先于配置端口；合同模块只计算和校验，不绑定 socket。
+- `src/config.ts` 在 schema 和修复前严格检查该字段及拓扑，正常、repair、salvage 返回前核对显式开启及主拓扑保留；无法保留时抛出 `ForkModelApiConfigurationError`，不退回关闭状态。未开启时继续使用原有 fallback。`src/config/diagnostics.ts` 的诊断读取在降级前使用同一检查，并对正常、repair、salvage 的结果核对保留；typed 错误返回固定的 schema 诊断，使无关配置编辑不能绕过原始拓扑拒绝。candidate 写入和 `src/config/persist-unlocked.ts` 的统一保存边界也使用同一检查，显式非法端口不会被当作省略值。`src/config/live-topology.ts` 将该字段纳入活动拓扑基线，guarded save 只保存下次启动的 desired 值，保留运行中 config 的旧拓扑。`tests/config/fork-model-api-listener-config.test.ts` 覆盖这些配置边界。
 - 官方 customModels 基础类型、CRUD、catalog 和 modality 判定继续使用。`src/config/custom-models.ts` 补校验、salvage、三方合并和公开字段投影，未知 opaque 字段只在内部保留。
 - `src/server/management/provider-routes.ts` 在 Provider 保存尚未发布便失败时，恢复原 Provider 属性；`setDefault: true` 同时恢复原默认值。遇到 `ConfigWritePublishedError` 保留已发布且与磁盘一致的 Provider 与默认值。上下文上限保存失败由 `src/server/management/provider-context-cap-routes.ts` 回滚该路由字段。
 - `src/fork/debug-persistence.ts`、`src/fork/inbound-response-debug.ts`、`src/fork/outbound-debug.ts` 增加结构抓包。普通 debug 不保存正文/key/工具参数；文本样本同时要求 provider debug 和独立 `providerText`，并执行脱敏及预算限制。

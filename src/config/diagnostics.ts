@@ -13,6 +13,7 @@ import { blockedModelRedirectsError } from "./schema/blocked-model-redirects";
 import { mainAccountHardLockFallbackError } from "./schema/main-account-hard-lock-fallback";
 import { fallbackPolicyError } from "./schema/fallback-policy";
 import type { OcxConfig } from "../types";
+import { assertForkModelApiRawConfig, assertForkModelApiLoadPreserved, ForkModelApiConfigurationError } from "../fork/model-api-listener-config";
 import { anthropicAccountPoolConfigError, anthropicOAuthInstanceConfigError, anthropicSidecarConfigError } from "./schema/anthropic-account-pool";
 import { configCodexPassthroughCandidateError, configReasoningPinsConfigError } from "./provider-validation";
 import { customModelsCandidateError, salvageCustomModelsForLoad } from "./custom-models";
@@ -209,6 +210,7 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown, extra
   const rawForce = rawSubagentModelForce(rawParsed);
   const rawEffort = rawClaudeSubagentEffort(rawParsed);
   const normalized = normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed);
+  assertForkModelApiLoadPreserved(rawParsed, normalized);
   const warnings = [...extraWarnings, ...configPlaceholderWarnings(normalized)];
   if (rawForce !== undefined && !isSubagentModelEntry(rawForce)) warnings.push("claudeCode.subagentModelForce ignored: expected a safe roster-style model id");
   if (normalized.chatgptDesktop?.appServerShim === true && process.platform !== "darwin") {
@@ -786,6 +788,12 @@ function skillsConfigError(value: unknown): string | null {
 }
 
 export function validateConfigCandidate(value: unknown): { ok: true; config: OcxConfig } | { ok: false; error: string } {
+  try {
+    assertForkModelApiRawConfig(value);
+  } catch (error) {
+    if (error instanceof ForkModelApiConfigurationError) return { ok: false, error: error.message };
+    throw error;
+  }
   const chatgptDesktop = rawConfigRecord(value)?.chatgptDesktop;
   if (chatgptDesktop !== undefined && !chatgptDesktopSchema.safeParse(chatgptDesktop).success) {
     return { ok: false, error: "schema_invalid: chatgptDesktop: requires an optional boolean appServerShim and no other fields" };
@@ -872,6 +880,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
 export function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
   try {
     const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    assertForkModelApiRawConfig(parsed);
     sanitizeRemovedOpenCodeFreeForLoad(parsed);
     sanitizeOpenCodeOverridesForLoad(parsed);
     const codexWarnings = sanitizeCodexPassthroughForLoad(parsed);
@@ -918,8 +927,12 @@ export function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
       };
     }
 
+    assertForkModelApiLoadPreserved(parsed, undefined);
     return { config: getDefaultConfig(), source: "fallback", error: schemaDiagnosticsError(result.error) };
-  } catch {
+  } catch (error) {
+    if (error instanceof ForkModelApiConfigurationError) {
+      return { config: getDefaultConfig(), source: "fallback", error: `schema_invalid: ${error.message}` };
+    }
     return { config: getDefaultConfig(), source: "fallback", error: "invalid_json" };
   }
 }

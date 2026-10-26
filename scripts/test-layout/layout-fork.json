@@ -1,4 +1,5 @@
 {
+  "fork-model-api-listener-config.test.ts": "config",
   "account-selection-config.test.ts": "server",
   "adapter-reasoning-summary-projection.test.ts": "responses",
   "agent-message-format.test.ts": "responses",

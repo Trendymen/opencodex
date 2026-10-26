@@ -205,6 +205,7 @@ import {
   warnDroppedConfigSections,
   warnAndBackupInvalidConfig,
 } from "./config/salvage";
+import { assertForkModelApiRawConfig, assertForkModelApiLoadPreserved, ForkModelApiConfigurationError } from "./fork/model-api-listener-config";
 /**
  * Load and validate config.json into an OcxConfig. Missing files reset to
  * defaults and clear stale overlays. Broken existing files also fall back to
@@ -221,9 +222,11 @@ function loadConfigUnobserved(): OcxConfig {
   if (!existsSync(configPath)) {
     return withRefreshedCostOverlays(getDefaultConfig());
   }
+  let parsed: unknown;
   try {
     const raw = readFileSync(configPath, "utf-8").replace(/^\uFEFF/, "");
-    const parsed = JSON.parse(raw);
+    parsed = JSON.parse(raw);
+    assertForkModelApiRawConfig(parsed);
     sanitizeRemovedOpenCodeFreeForLoad(parsed);
     sanitizeOpenCodeOverridesForLoad(parsed);
     sanitizeAliasesForLoad(parsed);
@@ -239,6 +242,7 @@ function loadConfigUnobserved(): OcxConfig {
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       const config = normalizeApiKeyIds(result.data as OcxConfig);
+      assertForkModelApiLoadPreserved(parsed, config);
       warnInheritedFastWireConflicts(configPath, config);
       warnDegradedTopLevelOptIns(parsed, config);
       warnDegradedHostname(parsed, config);
@@ -274,6 +278,7 @@ function loadConfigUnobserved(): OcxConfig {
     const merged = mergeConfigDefaults(parsed);
     const retryResult = configSchema.safeParse(merged);
     if (retryResult.success) {
+      assertForkModelApiLoadPreserved(parsed, retryResult.data);
       warnConfigRepaired(configPath, result.error);
       const config = normalizeApiKeyIds(retryResult.data as OcxConfig);
       warnInheritedFastWireConflicts(configPath, config);
@@ -304,6 +309,7 @@ function loadConfigUnobserved(): OcxConfig {
     // keys and prices over a mistake in one routing profile.
     const salvaged = salvageConfigCandidate(merged, retryResult.error);
     if (salvaged) {
+      assertForkModelApiLoadPreserved(parsed, salvaged.parsed);
       {
         warnDroppedConfigSections(configPath, salvaged.dropped, salvaged.issues);
         const config = normalizeApiKeyIds(salvaged.parsed);
@@ -331,9 +337,12 @@ function loadConfigUnobserved(): OcxConfig {
       }
     }
     // Merge couldn't fix it — truly broken config
+    assertForkModelApiLoadPreserved(parsed, undefined);
     warnAndBackupInvalidConfig(configPath, result.error);
     return getDefaultConfig();
   } catch (error) {
+    if (error instanceof ForkModelApiConfigurationError) throw error;
+    assertForkModelApiLoadPreserved(parsed, undefined);
     warnAndBackupInvalidConfig(configPath, error);
     return getDefaultConfig();
   }
