@@ -39,6 +39,7 @@ export type GitRunner = (cwd: string, args: readonly string[]) => {
 };
 
 export type GitOperation =
+  | "fetch Fork version history"
   | "fetch origin marker"
   | "init official verifier"
   | "fetch official refs"
@@ -260,6 +261,27 @@ export function prepareForkOfficialBase(options: {
     filesystem.chmodSync(globalConfig, 0o600);
     runOrThrow(runGit, "cleanup official verifier", options.repoRoot, ["update-ref", "-d", MARKER_REF], ownedPaths);
     runOrThrow(runGit, "cleanup official verifier", options.repoRoot, ["update-ref", "-d", OFFICIAL_TAG_REF], ownedPaths);
+    const head = runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
+      ["rev-parse", "HEAD"], ownedPaths).stdout.trim();
+    const forkTag = runGit(options.repoRoot,
+      ["rev-parse", "--verify", "--quiet", `refs/tags/v${classification.version}^{commit}`]);
+    if (forkTag.exitCode !== 0 && forkTag.exitCode !== 1) {
+      throw new Error(safeGitDiagnostic("fetch Fork version history", outputOrError(forkTag), ownedPaths));
+    }
+    if (forkTag.exitCode === 0) {
+      const shallow = runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
+        ["rev-parse", "--is-shallow-repository"], ownedPaths).stdout.trim();
+      if (shallow === "true") {
+        const ancestry = runGit(options.repoRoot, ["merge-base", "--is-ancestor", forkTag.stdout.trim(), head]);
+        if (ancestry.exitCode !== 0 && ancestry.exitCode !== 1) {
+          throw new Error(safeGitDiagnostic("fetch Fork version history", outputOrError(ancestry), ownedPaths));
+        }
+        if (ancestry.exitCode === 1) {
+          runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
+            ["fetch", "--unshallow", "--no-tags", "--no-write-fetch-head", "origin", head], ownedPaths);
+        }
+      }
+    }
     runOrThrow(runGit, "fetch origin marker", options.repoRoot, [
       "fetch", "--no-tags", "--no-write-fetch-head", "origin",
       "+refs/heads/upstream-release:" + MARKER_REF,

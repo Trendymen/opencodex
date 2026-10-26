@@ -20,6 +20,7 @@ import {
   safeGitDiagnostic,
 } from "../../scripts/prepare-fork-official-base";
 import { repoRoot as resolveRepoRoot } from "../helpers/repo-root";
+import { forkVersionTagError } from "../../src/fork/version-policy.mjs";
 
 const decoder = new TextDecoder();
 const roots: string[] = [];
@@ -133,6 +134,35 @@ function fetchHeadSnapshot(repo: string): string | undefined {
   const rawPath = requireGit(repo, ["rev-parse", "--git-path", "FETCH_HEAD"]);
   const path = isAbsolute(rawPath) ? rawPath : resolve(repo, rawPath);
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+}
+
+function createReleasedForkFixture(options: { diverged?: boolean; full?: boolean } = {}): Fixture {
+  const fixture = createFixture();
+  const { official, originBare, checkout, officialTagCommit, root } = fixture;
+  if (options.diverged) {
+    requireGit(official, ["checkout", "-b", "other-fork", officialTagCommit]);
+    commit(official, "other-fork");
+  }
+  requireGit(official, ["tag", "-a", "v2.35.0-ben.2", "-m", "released fork",
+    options.diverged ? "HEAD" : officialTagCommit]);
+  requireGit(official, ["checkout", "main"]);
+  commit(official, "main-three");
+  commit(official, "main-four");
+  requireGit(official, ["push", pathToFileURL(originBare).href,
+    "refs/heads/main:refs/heads/main", "refs/tags/v2.35.0-ben.2:refs/tags/v2.35.0-ben.2"]);
+  rmSync(checkout, { recursive: true, force: true });
+  requireGit(root, ["clone", ...(options.full ? [] : ["--depth=1"]), "--no-tags", "--branch", "main",
+    "--single-branch", pathToFileURL(originBare).href, checkout]);
+  requireGit(checkout, ["fetch", ...(options.full ? [] : ["--depth=1"]), "--no-tags", "origin",
+    "refs/tags/v2.35.0-ben.2:refs/tags/v2.35.0-ben.2"]);
+  requireGit(checkout, ["fetch", ...(options.full ? [] : ["--depth=1"]), "--no-tags", pathToFileURL(official).href,
+    "refs/tags/v2.35.0:refs/tags/v2.35.0"]);
+  return fixture;
+}
+
+function releasedForkError(repo: string): string | null {
+  return forkVersionTagError("2.35.0-ben.2", requireGit(repo, ["tag", "--list"]).split("\n"), tag =>
+    git(repo, ["merge-base", "--is-ancestor", `${tag}^{commit}`, "HEAD"]).exitCode === 0);
 }
 
 function assertNoOwnedResidue(
@@ -307,6 +337,7 @@ describe("Fork CI official baseline preparation", () => {
       || arg.startsWith("--shallow") || arg === "--unshallow")).toBe(false);
     const checkoutFetches = calls.filter(args => args.includes("fetch") && !args.includes(pathToFileURL(fixture.official).href));
     expect(checkoutFetches.every(args => args.includes("--no-write-fetch-head"))).toBe(true);
+    expect(calls.some(args => args.includes("--unshallow"))).toBe(false);
     const index = (needle: string) => calls.findIndex(args => args.includes(needle));
     const bareType = calls.findIndex(args => args.includes("cat-file") && args.includes("refs/tags/v2.35.0"));
     const bareRaw = calls.findIndex((args, position) => position > bareType && args.includes("rev-parse") && args.includes("refs/tags/v2.35.0"));
@@ -328,6 +359,127 @@ describe("Fork CI official baseline preparation", () => {
     expect(checkoutRaw).toBeGreaterThan(checkoutType);
     expect(checkoutPeeled).toBeGreaterThan(checkoutRaw);
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("restores released Fork ancestry across four commits in a real depth-one clone", () => {
+    const fixture = createReleasedForkFixture();
+    const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+    const rawTag = requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"]);
+    expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe("true");
+    expect(requireGit(fixture.official, ["rev-list", "--count", "v2.35.0-ben.2..HEAD"])).toBe("4");
+    expect(releasedForkError(fixture.checkout)).toContain("tag is not on HEAD history");
+    const calls: string[][] = [];
+    const prepared = prepare(fixture, undefined, (cwd, args) => {
+      calls.push([...args]);
+      return git(cwd, args);
+    });
+    const refs = requireGit(fixture.checkout, ["show-ref"]);
+    prepared.run();
+    expect(releasedForkError(fixture.checkout)).toBeNull();
+    expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe("false");
+    expect(calls.filter(args => args.includes("--unshallow"))).toEqual([
+      ["fetch", "--unshallow", "--no-tags", "--no-write-fetch-head", "origin", head],
+    ]);
+    expect(requireGit(fixture.checkout, ["rev-parse", "HEAD"])).toBe(head);
+    expect(requireGit(fixture.checkout, ["symbolic-ref", "HEAD"])).toBe("refs/heads/main");
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"])).toBe(rawTag);
+    expect(requireGit(fixture.checkout, ["show-ref"])).toBe(refs);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("complete Fork history and already-proven shallow ancestry need no unshallow fetch", () => {
+    for (const full of [true, false]) {
+      const fixture = createReleasedForkFixture({ full });
+      if (!full) {
+        requireGit(fixture.checkout, ["tag", "-d", "v2.35.0-ben.2"]);
+        requireGit(fixture.checkout, ["tag", "v2.35.0-ben.2", "HEAD"]);
+      }
+      expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe(String(!full));
+      expect(releasedForkError(fixture.checkout)).toBeNull();
+      const calls: string[][] = [];
+      const prepared = prepare(fixture, undefined, (cwd, args) => {
+        calls.push([...args]);
+        return git(cwd, args);
+      });
+      prepared.run();
+      expect(releasedForkError(fixture.checkout)).toBeNull();
+      expect(calls.some(args => args.includes("--unshallow"))).toBe(false);
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    }
+  });
+
+  test("unshallow cannot make a real divergent Fork tag pass the unchanged version guard", () => {
+    const fixture = createReleasedForkFixture({ diverged: true });
+    const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+    const rawTag = requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"]);
+    const prepared = prepare(fixture);
+    const refs = requireGit(fixture.checkout, ["show-ref"]);
+    prepared.run();
+    expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe("false");
+    expect(releasedForkError(fixture.checkout)).toContain("tag is not on HEAD history");
+    expect(requireGit(fixture.checkout, ["rev-parse", "HEAD"])).toBe(head);
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"])).toBe(rawTag);
+    expect(requireGit(fixture.checkout, ["show-ref"])).toBe(refs);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("fatal Fork ancestry queries fail before any fetch with redacted diagnostics and cleanup", () => {
+    const fixture = createReleasedForkFixture();
+    const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+    const calls: string[][] = [];
+    const prepared = prepare(fixture, undefined, (cwd, args) => {
+      calls.push([...args]);
+      if (args[0] === "merge-base") {
+        return { exitCode: 128, stdout: "", stderr: `fatal ancestry query:\n${hostileGitDiagnostic(fixture.checkout)}` };
+      }
+      return git(cwd, args);
+    });
+    const refs = requireGit(fixture.checkout, ["show-ref"]);
+    let message = "";
+    try { prepared.run(); } catch (error) { message = String(error); }
+    expect(message).toContain("fetch Fork version history: fatal ancestry query:");
+    expect(message).toContain("[CREDENTIAL HEADER REDACTED]");
+    expect(message).toContain("[REDACTED_PATH]");
+    expect(message.length).toBeLessThanOrEqual(519);
+    for (const leaked of [fixture.checkout, "secret-token", "Authorization: Bearer", "private-name", "\u0007", "\u2028"]) {
+      expect(message).not.toContain(leaked);
+    }
+    expect(calls.some(args => args.includes("fetch"))).toBe(false);
+    expect(requireGit(fixture.checkout, ["rev-parse", "HEAD"])).toBe(head);
+    expect(requireGit(fixture.checkout, ["show-ref"])).toBe(refs);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("Fork history fetch failure stays closed, redacted, and cleaned up", () => {
+    for (const throws of [false, true]) {
+      const fixture = createReleasedForkFixture();
+      const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+      const rawTag = requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"]);
+      const calls: string[][] = [];
+      const prepared = prepare(fixture, undefined, (cwd, args) => {
+        calls.push([...args]);
+        if (args.includes("--unshallow")) {
+          const stderr = hostileGitDiagnostic(fixture.checkout);
+          if (throws) throw new Error(stderr);
+          return { exitCode: 1, stdout: "", stderr };
+        }
+        return git(cwd, args);
+      });
+      let message = "";
+      try { prepared.run(); } catch (error) { message = String(error); }
+      expect(message).toContain("fetch Fork version history:");
+      expect(message).toContain("[CREDENTIAL HEADER REDACTED]");
+      expect(message).toContain("[REDACTED_PATH]");
+      expect(message.length).toBeLessThanOrEqual(519);
+      for (const leaked of [fixture.checkout, "secret-token", "Authorization: Bearer", "private-name", "\u0007", "\u2028"]) {
+        expect(message).not.toContain(leaked);
+      }
+      expect(calls.some(args => args.includes("fetch") && !args.includes("--unshallow"))).toBe(false);
+      expect(requireGit(fixture.checkout, ["rev-parse", "HEAD"])).toBe(head);
+      expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"])).toBe(rawTag);
+      expect(releasedForkError(fixture.checkout)).toContain("tag is not on HEAD history");
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    }
   });
 
   test("rejects an origin marker that does not equal the verified official tag", () => {
