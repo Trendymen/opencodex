@@ -379,7 +379,7 @@ export function requestPolicyView(
   };
 }
 
-export function assertServerAuthConfig(config: OcxConfig): void {
+export function assertServerAuthConfig(config: RequestPolicyView): void {
   const hasConfiguredDataCredential = !!configuredApiAuthToken(config)
     || (config.apiKeys ?? []).some(entry => !!entry.key.trim());
   if (isApiAuthRequired(config) && !hasConfiguredDataCredential) {

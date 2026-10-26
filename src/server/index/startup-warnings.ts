@@ -1,3 +1,5 @@
+import type { ForkModelApiBinder } from "../../fork/model-api-listener";
+import type { WsData } from "../ws-bridge";
 import {
   carryCodexPassthroughResponse,
   codexPassthroughResponsePermissions,
@@ -168,6 +170,7 @@ export function withCodexResponseHeaders(
 }
 
 export interface StartServerDeps {
+  bindListener?: ForkModelApiBinder<WsData>;
   /** Test-only CONNECT binder; permits kernel-assigned ports without probe-and-release races. */
   startClaudeInterceptProxy?: typeof import("../../claude/intercept/connect-proxy").startConnectProxy;
   /** Test-only seam; production always initializes its own management credential state. */

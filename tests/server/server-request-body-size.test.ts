@@ -1,3 +1,4 @@
+import { repoPath } from "../helpers/repo-root";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync} from "node:fs";
 import assert from "node:assert/strict";
@@ -238,10 +239,10 @@ describe("raised inbound body admission lifetime", () => {
   // both sets is how a raised `maxInboundBodyBytes` route would skip the
   // process-wide reservation while every admission test still passed.
   test("every loopback /v1 route is classified for inbound body admission", async () => {
-    const source = await Bun.file(join(import.meta.dir, "../../src/server/index.ts")).text();
+    const source = await Bun.file(repoPath("src/server/index/loopback-route-allowlist.ts")).text();
     const start = source.indexOf("function loopbackRouteAllowed");
     assert.notEqual(start, -1);
-    const end = source.indexOf("\n  }", start);
+    const end = source.indexOf("\n}\n", start);
     assert.notEqual(end, -1);
     const routes = [...source.slice(start, end).matchAll(/path === "(\/v1\/[^"]+)"/g)].map(match => match[1]);
     assert.ok(routes.length >= 8, `expected the dispatcher to list /v1 routes, saw ${routes.length}`);

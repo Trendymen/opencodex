@@ -1,4 +1,6 @@
 {
+  "fork-model-api-listener.test.ts": "server",
+  "fork-model-api-port.test.ts": "cli",
   "fork-model-api-listener-config.test.ts": "config",
   "account-selection-config.test.ts": "server",
   "adapter-reasoning-summary-projection.test.ts": "responses",
