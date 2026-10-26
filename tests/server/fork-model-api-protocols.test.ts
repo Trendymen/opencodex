@@ -309,8 +309,23 @@ test("SSE EOF, native failure and client cancellation release their admitted tur
     try {
       ws.socket.send(JSON.stringify({ type: "response.create", model: "fixture-model", input: "cancel" }));
       await waitForForkModelApi(() => ws.frames.some(frame => JSON.parse(frame).type === "response.created"), "in-flight WebSocket response");
-      ws.socket.close();
-      await waitForForkModelApi(() => upstreamCanceled && getActiveTurnCount() === 0, "WebSocket cancellation release");
+      const cancellationDeadline = performance.now() + 2_000;
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timer);
+          ws.socket.removeEventListener("close", onClose);
+          ws.socket.removeEventListener("error", onError);
+        };
+        const onClose = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new Error("WebSocket close handshake failed")); };
+        const timer = setTimeout(() => { cleanup(); reject(new Error("Timed out waiting for WebSocket close handshake")); }, 2_000);
+        ws.socket.addEventListener("close", onClose, { once: true });
+        ws.socket.addEventListener("error", onError, { once: true });
+        try { ws.socket.close(); } catch (error) { cleanup(); reject(error); }
+      });
+      expect(ws.socket.readyState).toBe(WebSocket.CLOSED);
+      await waitForForkModelApi(() => upstreamCanceled, "WebSocket upstream cancellation", Math.max(0, cancellationDeadline - performance.now()));
+      await waitForForkModelApi(() => getActiveTurnCount() === 0, "WebSocket admitted turn release", Math.max(0, cancellationDeadline - performance.now()));
     } finally { ws.socket.close(); }
   } finally { try { await fixture?.close(); } finally { await upstream.stop(true); } }
 });
