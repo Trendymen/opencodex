@@ -24,6 +24,7 @@ import type {
   readCodexAppServerState,
 } from "../../codex/app-server-restart-service";
 import type { RequestMetricsSnapshotter } from "../request-metrics";
+import type { ForkModelApiRuntimeSnapshot } from "../../fork/model-api-listener";
 
 import type { RemoteWorkspaceHub } from "../../remote-control/workspace-hub";
 import type { RemoteWorkspaceSessionService } from "../../remote-control/workspace-sessions";
@@ -46,6 +47,7 @@ export interface ManagementRequestIngress {
 }
 
 export interface ManagementApiDeps {
+  forkModelApiRuntime?: () => ForkModelApiRuntimeSnapshot;
   desktopStartupSettings?: import("../../codex/desktop-compatibility/startup-settings").DesktopStartupSettingsService;
   desktopCertificateService?: import("../../codex/desktop-compatibility/certificate-service").DesktopCertificateService;
   desktopCompatibilityRuntime?: import("../../codex/desktop-compatibility/runtime").DesktopCompatibilityRuntime;

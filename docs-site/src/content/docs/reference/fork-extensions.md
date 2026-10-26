@@ -18,6 +18,8 @@ This appendix describes the Trendymen Fork's additions to upstream. The other re
 
 ## Recovery and maintenance
 
+The optional model API listener keeps a loopback management service separate from a LAN data endpoint on port `10100`. It reuses native model routes and credentials, rejects management and pairing on the auxiliary endpoint, and reports actual listener state through a verified local management read. It defaults to off and topology changes require a restart. See [Model API listener](/reference/configuration/fork-extensions/#model-api-listener) for both supported topologies and the native primary-mode boundary.
+
 Encrypted task recovery adds strict backend-envelope handling, one bounded native replay after exhausted transient-5xx retries, and a ciphertext-free notice when an admitted parent `MESSAGE` times out. Unreadable ciphertext is terminal; it is not forwarded to ordinary third-party routes or stored in continuation state. Recovery remains opt-in.
 
 The Fork provides disk diagnostics, independent text-sample controls, and `install:local` package/service/Volta rollback. `ben.N` versions compare the upstream core first and the Fork revision second; a stable release of the same core does not overwrite the Fork. Published tags remain immutable.

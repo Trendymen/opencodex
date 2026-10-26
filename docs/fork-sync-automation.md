@@ -185,6 +185,7 @@ FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维�
 
 ### 验证选择与结果复用
 
+- 相对 rebase 前固定的 Fork SHA 核对模型 API 入口能力清单：默认关闭、两种拓扑、原生数据面/凭据与管理隔离、保存后待重启、真实状态及本机证明。涉及该链路时显式执行 `bun test tests/config/fork-model-api-listener-config.test.ts tests/cli/fork-model-api-port.test.ts tests/server/fork-model-api-listener.test.ts tests/server/fork-model-api-protocols.test.ts tests/server/fork-model-api-access.test.ts tests/server/fork-model-api-status.test.ts`；不能仅凭导入图选择覆盖源码读取、子进程或临时 socket 映射。
 - 实现和冲突修复期间只跑相关定向测试；跨模块时用 `bun scripts/test.ts --changed=origin/dev`，并记录该次 `origin/dev` 的完整 SHA。若远端已经包含候选而使 changed 集合失去覆盖意义，直接指定受影响的测试文件；不能把空集合当作验证通过。源码读取、子进程、fixture 等间接依赖需显式补测。
 - 新官方基线完成适配后，对最终实现运行一次当前官方 `prepush`；它已包含的 typecheck、全量测试、privacy scan 等不再逐项重复执行。GUI 或文档站构建按本轮实际影响和官方规则补充。保持官方 runner 的默认并发，不以降并发、加 timeout 或删除断言替代通过。
 - 同一实现、依赖、测试输入、runner 和环境未变时，复用已通过的检查，不因进入双审、补附件或整理日志重跑。只改说明文字时，先证明其不是测试/构建输入；若文档被源码真值测试读取，重跑对应测试；若影响文档站则构建文档站。更新后的文本仍需 privacy scan 和 `git diff --check`。

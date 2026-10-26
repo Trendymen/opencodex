@@ -33,7 +33,7 @@ export function createForkModelApiListener<T>(topology: ForkModelApiTopology, de
       catch (cause) { throw new AuxiliaryListenerBindError("forkModelApiListener", topology.listener.port, topology.listener.hostname, cause); }
     },
     owns(candidate) { return candidate === server; },
-    snapshot() { return { topology, active: server !== undefined && stopping === undefined, bind: server && !stopping ? { ...topology.listener! } : null }; },
+    snapshot() { return { topology, active: server !== undefined && stopping === undefined, bind: server && !stopping ? { hostname: server.hostname!, port: server.port! } : null }; },
     async stop(close) {
       if (!server) return;
       stopping ??= Promise.resolve().then(() => server!.stop(close));

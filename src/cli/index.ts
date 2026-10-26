@@ -1786,6 +1786,8 @@ async function handleStatus() {
     }
   }
   console.log(`   Dashboard: ${status.json.dashboard.url}${local}`);
+  const modelApi = status.json.forkModelApiListener;
+  console.log(`   Model API listener: ${modelApi.active ? `http://${modelApi.hostname}:${modelApi.port} (active)` : modelApi.inactiveReason}${modelApi.restartRequired ? "; restart required" : ""}${local}`);
   // The dashboard is a build artifact, so a checkout that moved without `bun run build:gui` keeps
   // serving the previous bundle and every feature added since simply does not appear (#5196's
   // usage panel was invisible this way for five days). Reported next to the dashboard URL, which

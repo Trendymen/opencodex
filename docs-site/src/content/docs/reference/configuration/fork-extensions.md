@@ -5,6 +5,42 @@ description: Provider, recovery, custom-model and diagnostic controls added by t
 
 These settings supplement upstream configuration. Compatibility behavior is described in [Fork extensions](/reference/fork-extensions/).
 
+## Model API listener
+
+`forkModelApiListener` accepts only `{ "enabled": boolean }` and defaults to `{ "enabled": false }`. Omission or `false` retains the existing primary service. The listener uses the same process, providers and native data-plane policy as that service.
+
+For a separate LAN API, keep the primary service on loopback at a port other than `10100`. For example:
+
+```json
+{
+  "hostname": "127.0.0.1",
+  "port": 10101,
+  "forkModelApiListener": { "enabled": true }
+}
+```
+
+This auxiliary mode serves the existing dashboard and management API at `http://127.0.0.1:10101` and binds the model API to `0.0.0.0:10100`. Other loopback management ports are valid when they do not conflict with another configured listener. Configure a native data-plane API key or token before enabling it; an admin token alone does not authorize model requests.
+
+When the primary service already binds a non-loopback address, enabling this option requires its port to be `10100`:
+
+```json
+{
+  "hostname": "0.0.0.0",
+  "port": 10100,
+  "forkModelApiListener": { "enabled": true }
+}
+```
+
+This primary mode creates no extra listener. Port `10100` retains the primary service's native management, health/readiness, routing and authentication behavior; the auxiliary restrictions below do not apply to it.
+
+The auxiliary listener accepts the complete native data plane after compatibility-path normalization to `/v1/`: model discovery, Responses, Chat Completions, Messages, token counting, images, audio and supported WebSocket/SSE routes. Availability still follows each native route's provider support and feature settings. There is no separate model or endpoint allowlist, and request bodies, query parameters and business responses keep their native handling. The `/v1/link-management` prefix is rejected.
+
+The auxiliary endpoint returns JSON `404` for the dashboard, management API, session issuance, pairing, health/readiness and Remote Workspace. This also applies to local callers, admin credentials, existing GUI sessions and forged `Host` values. Pair clients and manage accounts through the primary management service. Model credentials retain their native scope, usage, Direct, upstream-credential and audio-credential rules. Credential changes retain native HTTP and WebSocket behavior; this option adds no per-frame revocation mechanism.
+
+Saving a topology change affects the next start. It neither moves an active socket nor changes ports automatically; an invalid topology or occupied required port fails instead of selecting another port. Restart the proxy after saving. `ocx status` shows the primary management URL and model-listener state. `ocx status --json` adds `forkModelApiListener` without changing `schemaVersion: 1`: `enabled` is the desired setting, while `active`, `hostname` and `port` come from the running process. `restartRequired` compares the started topology with the saved topology. With no verified same-process response, `active` and `restartRequired` are `null` and `inactiveReason` is `unverified`; a stopped service reports `active: false` and `not-running`. A disabled running listener reports `disabled`; primary mode reports `primary-non-loopback` because it needs no auxiliary listener. The state contains no credentials.
+
+Local regression tests use temporary ports and fixture providers. They do not establish installation, a restarted user service, external-device connectivity or paid-provider access.
+
 ## Provider settings
 
 | Field | Fork behavior |

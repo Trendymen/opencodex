@@ -323,11 +323,12 @@ function startServerWithSpendLedgerOwner(port: number | undefined, deps: StartSe
 
   const listenPort = port ?? config.port ?? 10100;
   const forkTopology = resolveForkModelApiTopology(config, listenPort);
+  const forkLogicalTopology = config.port === 0 ? resolveForkModelApiTopology(config) : forkTopology;
   if (forkTopology.listener) assertServerAuthConfig(requestPolicyView(config, forkTopology.listener.hostname));
   function bindListener(options: Bun.Serve.Options<WsData>): Server<WsData> {
     return deps.bindListener ? deps.bindListener(options) : Bun.serve<WsData>(options);
   }
-  const forkModelApiListener = createForkModelApiListener<WsData>(forkTopology, { bind: bindListener, track: spendLedgerLifecycle.track });
+  const forkModelApiListener = createForkModelApiListener<WsData>(forkLogicalTopology, { bind: bindListener, track: spendLedgerLifecycle.track });
   setCorsOrigin(listenPort);
 
   // Canonicalize an explicit "localhost" bind (including its fully-qualified spelling) to IPv4
@@ -584,6 +585,7 @@ function startServerWithSpendLedgerOwner(port: number | undefined, deps: StartSe
   let desktopCompatibilityShutdown: (() => Promise<void>) | undefined;
   const managementApiDeps: ManagementApiDeps = {
     ...deps.managementApi,
+    forkModelApiRuntime: () => forkModelApiListener.snapshot(),
     listLowQuotaEvents: limit => backgroundLifecycle?.listLowQuotaEvents(limit) ?? [],
     remoteWorkspaceStopping: () => remoteWorkspaceStopping,
     onRemoteWorkspaceShutdown: shutdown => { remoteWorkspaceShutdown = shutdown; }, linkSupervisor: () => optionalListeners.linkSupervisor(), linkListener: () => optionalListeners,

@@ -13,6 +13,7 @@ import { currentServerFixtureConfig, settleServerAuthFixture } from "./server-au
 
 interface ForkModelApiFixtureOptions {
   upstreamUrl?: string;
+  startPort?: number;
   prepare?: (homes: { home: string; codexHome: string }) => void;
 }
 
@@ -91,7 +92,7 @@ export async function startForkModelApiFixtureWithDeps(config: OcxConfig, deps: 
   try {
     options.prepare?.({ home, codexHome: codex.path });
     saveConfig(currentServerFixtureConfig({ ...config, clientIntegrations: { codex: false } }));
-    const server = startServer(undefined, {
+    const server = startServer(options.startPort, {
       ...deps,
       bindListener(options) {
         logicalBinds.push({ hostname: options.hostname as string, port: options.port as number });

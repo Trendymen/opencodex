@@ -89,12 +89,13 @@ test("second bind failure rolls back the primary socket and owner", async () => 
 test("controller snapshot, owns, bind-once and repeated stop", async () => {
   const topology = resolveForkModelApiTopology(config());
   let calls = 0;
-  const controller = createForkModelApiListener(topology, { bind(options) { calls++; return Bun.serve({ ...options, port: 0 }); }, track: server => server });
+  let bound: ReturnType<typeof Bun.serve> | undefined;
+  const controller = createForkModelApiListener(topology, { bind(options) { calls++; return bound = Bun.serve({ ...options, port: 0 }); }, track: server => server });
   expect(controller.snapshot()).toEqual({ topology, active: false, bind: null });
   controller.start({ fetch: () => new Response("ok") });
   controller.start({ fetch: () => new Response("unused") });
   expect(calls).toBe(1);
-  expect(controller.snapshot()).toEqual({ topology, active: true, bind: { hostname: "0.0.0.0", port: 10100 } });
+  expect(controller.snapshot()).toEqual({ topology, active: true, bind: { hostname: bound!.hostname, port: bound!.port } });
   await controller.stop(true);
   await controller.stop(true);
   expect(controller.snapshot().active).toBe(false);

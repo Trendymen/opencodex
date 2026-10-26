@@ -5,6 +5,42 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 本页补充上游配置。兼容行为见 [Fork 扩展](/zh-cn/reference/fork-extensions/)。
 
+## 模型 API 入口
+
+`forkModelApiListener` 只接受 `{ "enabled": boolean }`，默认 `{ "enabled": false }`。省略或设为 `false` 时保留现有主服务。入口与主服务共用进程、Provider 和原生数据面策略。
+
+需要独立局域网 API 时，主服务保持回环地址并使用 `10100` 以外的端口，例如：
+
+```json
+{
+  "hostname": "127.0.0.1",
+  "port": 10101,
+  "forkModelApiListener": { "enabled": true }
+}
+```
+
+此 auxiliary 模式在 `http://127.0.0.1:10101` 提供现有控制台和管理 API，并把模型 API 绑定到 `0.0.0.0:10100`。其他回环管理端口也有效，但不能与其他配置的 listener 冲突。开启前须配置原生数据面 API Key 或 token；仅有 admin token 不能授权模型请求。
+
+主服务已经绑定非回环地址时，启用该选项要求主端口为 `10100`：
+
+```json
+{
+  "hostname": "0.0.0.0",
+  "port": 10100,
+  "forkModelApiListener": { "enabled": true }
+}
+```
+
+此 primary 模式不创建额外 listener。`10100` 保留主服务原生的管理、health/readiness、路由和鉴权行为；下述辅助入口限制不适用于它。
+
+辅助入口接受兼容路径归一化到 `/v1/` 后的全部原生数据面：模型发现、Responses、Chat Completions、Messages、token 计数、images、audio，以及受支持的 WebSocket/SSE 路由。具体可用性仍取决于原生路由的 Provider 支持和功能配置。不另设模型或端点白名单，请求 body、query 和业务响应沿用原生处理。`/v1/link-management` 前缀被拒绝。
+
+辅助入口对控制台、管理 API、session 签发、配对、health/readiness 和 Remote Workspace 返回 JSON `404`。本机调用、admin 凭据、已有 GUI session 和伪造 `Host` 也不能访问。客户端配对和账号管理应使用主管理服务。模型凭据继续遵守原生 scope、用量、Direct、上游凭据和音频凭据规则；凭据变更沿用原生 HTTP/WebSocket 行为，该选项不增加逐帧撤销机制。
+
+保存拓扑只影响下次启动，不移动当前 socket，也不自动改号；拓扑非法或必需端口被占用时直接失败。保存后重启代理。`ocx status` 显示主管理 URL 和模型 listener 状态。`ocx status --json` 新增 `forkModelApiListener`，保持 `schemaVersion: 1`：`enabled` 表示期望配置，`active`、`hostname` 和 `port` 来自运行中的进程，`restartRequired` 比较启动拓扑与保存拓扑。缺少已验证的同进程响应时，`active` 和 `restartRequired` 为 `null`，`inactiveReason` 为 `unverified`；服务未运行时报告 `active: false` 和 `not-running`。运行中关闭的入口报告 `disabled`；primary 模式报告 `primary-non-loopback`，表示无需辅助 listener。状态不含凭据。
+
+本地回归使用临时端口和夹具 Provider，不代表完成安装、用户服务重启、外部设备连通或付费 Provider 验收。
+
 ## Provider 配置
 
 | 字段 | Fork 行为 |
