@@ -47,10 +47,19 @@ test.each([undefined, true])("WS silence setting %s keeps the local 504 without 
   expect(ws.sent).toBe(1); expect(http).toBe(0); expect(ws.readyState).toBe(3);
 });
 test("disabled WS silence deadline waits beyond ninety seconds while retaining pings", async () => {
-  const pending = start(false); const ws = await opened(); silence(105_000); complete(ws);
+  const pending = start(false); const ws = await opened();
+  expect(ws.pings).toBe(1);
+  const elapsed = 105_000;
+  silence(elapsed);
+  const intervalPings = elapsed / CODEX_WS_LIVENESS_PING_INTERVAL_MS;
+  expect(intervalPings).toBe(7);
+  expect(ws.pings).toBe(1 + intervalPings);
+  complete(ws);
   const response = await pending;
   expect(response.status).toBe(200); expect(await response.text()).toContain("response.completed");
-  expect(ws.pings).toBe(7); expect(ws.sent).toBe(1); expect(http).toBe(0);
+  expect(ws.pings).toBe(2 + intervalPings); expect(ws.sent).toBe(1); expect(http).toBe(0);
+  silence(CODEX_WS_LIVENESS_PING_INTERVAL_MS * 2);
+  expect(ws.pings).toBe(2 + intervalPings);
 });
 test("pong keeps the default silence deadline waiting", async () => {
   const pending = start(); const ws = await opened(); ws.pong = true; silence(105_000); complete(ws);
