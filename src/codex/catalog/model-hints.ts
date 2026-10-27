@@ -59,7 +59,7 @@ import { recordLiveCursorClaudeModels, recordLiveCursorMaxModeModels } from "../
 import { fetchQoderModels } from "../../adapters/qoder/live-models";
 import { resolveQoderProfile } from "../../adapters/qoder/profiles";
 import { fetchDevinUsableModels } from "../../adapters/devin/live-models";
-import { isCanonicalOpenAiForwardProvider, OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
+import { isCanonicalOpenAiForwardProvider, isOpenAiOperatedResponsesDestination, OPENAI_API_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
 import {
   COMBO_NAMESPACE,
   comboModelId,
@@ -274,6 +274,15 @@ export function copyReasoningHintSource(source: CatalogModel, clone: CatalogMode
   return clone;
 }
 
+export function withCanonicalOpenAiForwardAuthDefault(
+  name: string,
+  provider: OcxProviderConfig,
+): OcxProviderConfig {
+  if (name !== OPENAI_CODEX_PROVIDER_ID || provider.authMode !== undefined) return provider;
+  const candidate = { ...provider, authMode: "forward" as const };
+  return isCanonicalOpenAiForwardProvider(candidate) ? candidate : provider;
+}
+
 /** Reapply configured limits and captured wire capabilities without trusting stale discovery hints. */
 export function applyProviderConfigHints(
   name: string,
@@ -306,6 +315,7 @@ export function applyProviderConfigHints(
   const configuredCap = staticPolicy.model.contextWindow ?? configuredContextWindow(prov, model.id);
   const configuredMaxInput = staticPolicy.model.maxInputTokens;
   const azureMetadata = azureVendorModelMetadata(prov.baseUrl, model.id, metadataConfigDir);
+  const progressProvider = withCanonicalOpenAiForwardAuthDefault(name, prov);
   const maxOutputTokens = routedMaxOutputTokens(name, prov, model, model.id, metadataModelIdCaseFold, metadataConfigDir);
   const configuredAutoCompact = configuredAutoCompactTokenLimit(prov, model.id);
   // The resolver owns exact capability precedence and legacy exact/colon-family/case-fold fallback.
@@ -378,6 +388,7 @@ export function applyProviderConfigHints(
     ...(inferredWindow ? { contextWindowInference: inferredWindow } : {}),
     ...(displayName !== undefined ? { displayName } : {}),
     ...(providerAlias !== undefined ? { providerAlias } : {}),
+    routedProgressContractEligible: !isOpenAiOperatedResponsesDestination(progressProvider),
     ...(hintedWindow !== undefined ? { contextWindow: hintedWindow } : {}),
     ...(inputModalities ? { inputModalities } : {}),
     ...(reasoningEfforts !== undefined ? { reasoningEfforts } : {}),

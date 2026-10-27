@@ -373,7 +373,7 @@ async function handleCodexToggle(ctx: ManagementContext): Promise<Response> {
       const runtime = (ctx.deps.readRuntimePort ?? readRuntimePort)(process.pid);
       const port = runtime?.port ?? ctx.config.port;
       const { syncModelsToCodex } = await import("../../codex/sync");
-      const applied = await syncModelsToCodex(port);
+      const applied = await (ctx.deps.syncModelsToCodex ?? syncModelsToCodex)(port);
       if (applied.status === "skipped") {
         return jsonResponse({
           ok: true, clientId: "codex", changed: durable && persisted.status === "committed",

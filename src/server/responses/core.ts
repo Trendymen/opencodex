@@ -5,6 +5,7 @@ import type {
   HandleResponsesOptions,
   ResponsesDispatchers,
 } from "./core-options";
+import { captureCodexPassthroughTurn, codexPassthroughSourceRequired, releaseCodexPassthroughTurnSource } from "../../fork/codex-passthrough-turn";
 import { createTranslatorBudget } from "../../lib/translator-budget";
 import { captureExplicitOpenAiCallerAuth } from "../../providers/openai-sidecar";
 import { captureCallerDirectAuth } from "../../providers/caller-authorization";
@@ -27,14 +28,17 @@ export async function handleResponses(
   const ownsBudget = options.translatorBudget === undefined;
   const translatorBudget = options.translatorBudget ?? createTranslatorBudget();
   const abortSignal = options.abortSignal ?? req.signal;
+  const ownsTurn = options.codexPassthroughTurn === undefined;
+  const codexPassthroughTurn = options.codexPassthroughTurn ?? captureCodexPassthroughTurn(config.providers, options.inboundWire ?? "responses");
   const accountLoad = { lease: null as import("../../oauth/kiro-account-load").AccountLease | null,
     cancelled: abortSignal.aborted };
-  function release() { accountLoad.lease?.release(); accountLoad.lease = null; abortSignal.removeEventListener("abort", cancel); }
+  function release() { accountLoad.lease?.release(); accountLoad.lease = null; if (ownsTurn) releaseCodexPassthroughTurnSource(codexPassthroughTurn); abortSignal.removeEventListener("abort", cancel); }
   function cancel() { accountLoad.cancelled = true; release(); }
-  abortSignal.addEventListener("abort", cancel, { once: true });
+  if (abortSignal.aborted) cancel(); else abortSignal.addEventListener("abort", cancel, { once: true });
   try {
     const response = await runWithCompactionRecovery(req, config, logCtx, {
       ...options, abortSignal,
+      codexPassthroughTurn,
       openAiSidecarAuth: options.openAiSidecarAuth === undefined
         ? captureExplicitOpenAiCallerAuth(req.headers, config) : options.openAiSidecarAuth,
       nativeCallerAuth: options.nativeCallerAuth === undefined
@@ -50,8 +54,8 @@ export async function handleResponses(
       sendBudget: options.sendBudget ?? createInferenceSendBudget(req, logCtx),
     }, (req, config, logCtx, options) => handleResponsesInner(req, config, logCtx, options, requestDispatchers));
     const finalResponse = ownsBudget ? finalizeOwnedTranslatorBudget(response, translatorBudget, abortSignal) : response;
-    if (!accountLoad.lease) { release(); return finalResponse; }
-    return finalizeAccountLease(finalResponse, release);
+    if (!accountLoad.lease && !(ownsTurn && codexPassthroughSourceRequired(codexPassthroughTurn))) { release(); return finalResponse; }
+    return finalizeAccountLease(finalResponse, release, ownsTurn ? () => releaseCodexPassthroughTurnSource(codexPassthroughTurn) : undefined);
   } catch (error) {
     release();
     if (ownsBudget) translatorBudget.dispose();
