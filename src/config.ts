@@ -154,7 +154,9 @@ import { observeInitialConfigState } from "./config/diagnostics";
 import {
   configDiagnosticsFromRaw,
   mergeConfigDefaults,
+  sanitizeCustomModelsForLoad,
   validateConfigCandidate,
+  warnDegradedCustomModels,
 } from "./config/diagnostics";
 // replace path — never publishInitialConfigNoReplace
 import { persistConfigUnlocked, readRawConfigJson } from "./config/persist-unlocked";
@@ -169,7 +171,7 @@ import {
   normalizeClaudeSubagentEffort,
   normalizeNativeSubagentSync,
   sanitizeAliasesForLoad,
-  sanitizeReasoningPinsForLoad,
+  sanitizeReasoningPinsForLoad, sanitizeCodexPassthroughForLoad,
   sanitizeModelDisplayNamesForLoad,
   sanitizeAutoReviewForLoad,
   sanitizeRetryOn429ForLoad,
@@ -203,7 +205,7 @@ import {
   warnDroppedConfigSections,
   warnAndBackupInvalidConfig,
 } from "./config/salvage";
-
+import { assertForkModelApiRawConfig, assertForkModelApiLoadPreserved, ForkModelApiConfigurationError } from "./fork/model-api-listener-config";
 /**
  * Load and validate config.json into an OcxConfig. Missing files reset to
  * defaults and clear stale overlays. Broken existing files also fall back to
@@ -220,12 +222,15 @@ function loadConfigUnobserved(): OcxConfig {
   if (!existsSync(configPath)) {
     return withRefreshedCostOverlays(getDefaultConfig());
   }
+  let parsed: unknown;
   try {
     const bytes = readFileSync(configPath);
-    const parsed = JSON.parse(bytes.toString("utf-8").replace(/^\uFEFF/, ""));
+    parsed = JSON.parse(bytes.toString("utf-8").replace(/^\uFEFF/, ""));
     projectRemovedOpenCodeFreeSnapshot(parsed, { path: configPath, bytes });
+    assertForkModelApiRawConfig(parsed);
     sanitizeOpenCodeOverridesForLoad(parsed);
     sanitizeAliasesForLoad(parsed);
+    for (const warning of sanitizeCodexPassthroughForLoad(parsed)) console.warn(warning);
     sanitizeReasoningPinsForLoad(parsed);
     sanitizeModelDisplayNamesForLoad(parsed);
     sanitizeAutoReviewForLoad(parsed);
@@ -233,14 +238,17 @@ function loadConfigUnobserved(): OcxConfig {
     sanitizeAnthropicSidecarInstanceForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
     sanitizeCapabilityDeclarationsForLoad(parsed);
+    sanitizeCustomModelsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       const config = normalizeApiKeyIds(result.data as OcxConfig);
+      assertForkModelApiLoadPreserved(parsed, config);
       warnInheritedFastWireConflicts(configPath, config);
       warnDegradedTopLevelOptIns(parsed, config);
       warnDegradedHostname(parsed, config);
       warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
+      warnDegradedCustomModels(parsed);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
@@ -270,6 +278,7 @@ function loadConfigUnobserved(): OcxConfig {
     const merged = mergeConfigDefaults(parsed);
     const retryResult = configSchema.safeParse(merged);
     if (retryResult.success) {
+      assertForkModelApiLoadPreserved(parsed, retryResult.data);
       warnConfigRepaired(configPath, result.error);
       const config = normalizeApiKeyIds(retryResult.data as OcxConfig);
       warnInheritedFastWireConflicts(configPath, config);
@@ -277,6 +286,7 @@ function loadConfigUnobserved(): OcxConfig {
       warnDegradedHostname(parsed, config);
       warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
+      warnDegradedCustomModels(parsed);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
       warnDegradedClaudeSubagentEffort(parsed);
@@ -299,6 +309,7 @@ function loadConfigUnobserved(): OcxConfig {
     // keys and prices over a mistake in one routing profile.
     const salvaged = salvageConfigCandidate(merged, retryResult.error);
     if (salvaged) {
+      assertForkModelApiLoadPreserved(parsed, salvaged.parsed);
       {
         warnDroppedConfigSections(configPath, salvaged.dropped, salvaged.issues);
         const config = normalizeApiKeyIds(salvaged.parsed);
@@ -307,6 +318,7 @@ function loadConfigUnobserved(): OcxConfig {
         warnDegradedHostname(parsed, config);
         warnDegradedListeners(parsed, config);
         warnDegradedApiKeys(parsed, config);
+        warnDegradedCustomModels(parsed);
         warnDegradedCodexAccountPriorities(parsed, config);
         warnDegradedCodexQuotaAutoRefresh(parsed, config);
         warnDegradedClaudeSubagentEffort(parsed);
@@ -325,9 +337,12 @@ function loadConfigUnobserved(): OcxConfig {
       }
     }
     // Merge couldn't fix it — truly broken config
+    assertForkModelApiLoadPreserved(parsed, undefined);
     warnAndBackupInvalidConfig(configPath, result.error);
     return getDefaultConfig();
   } catch (error) {
+    if (error instanceof ForkModelApiConfigurationError) throw error;
+    assertForkModelApiLoadPreserved(parsed, undefined);
     warnAndBackupInvalidConfig(configPath, error);
     return getDefaultConfig();
   }

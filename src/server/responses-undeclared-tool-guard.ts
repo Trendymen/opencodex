@@ -726,6 +726,7 @@ function failedBlocks(name: string, newline: string): readonly string[] {
  * @param providerExecutedCallTypes - Call types executed by the provider.
  * @param declaredBare - Explicitly declared bare tool names without namespace provenance.
  * @param declaredCustom - Current bare custom declarations eligible for code-mode recovery.
+ * @param onReject - Called when an undeclared tool call is refused.
  * @returns An SSE block rewrite function.
  */
 export function createUndeclaredToolCallGuardBlockRewrite(
@@ -735,6 +736,7 @@ export function createUndeclaredToolCallGuardBlockRewrite(
   declaredBare?: ReadonlySet<string>,
   declaredCustom?: ReadonlySet<string>,
   options?: { refuseUndeclared?: boolean },
+  onReject?: (name: string) => void,
 ): SseBlockRewrite {
   // Deferred-catalog wires (Chat/Anthropic) keep the default-namespace normalization — the
   // client can only resolve the bare name it declared — while the refusal itself stays off.
@@ -753,6 +755,7 @@ export function createUndeclaredToolCallGuardBlockRewrite(
     if (refuse) {
       const name = undeclaredToolCallName(parsed, declared, declaredNamelessClientCallTypes, providerExecutedCallTypes, declaredBare, declaredCustom);
       if (name !== undefined) {
+        onReject?.(name);
         tripped = true;
         return failedBlocks(name, block.includes("\r\n") ? "\r\n" : "\n");
       }

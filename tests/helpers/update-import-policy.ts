@@ -288,11 +288,10 @@ export const updateStaticImports: Readonly<Record<string, readonly string[]>> = 
     "import { isProcessAlive } from \"../lib/process-control\";"
   ],
   "src/update/transactional-install.mjs": [
-    "import { guardedRenameSync, ownedArtifactRm } from \"./mutation-guard.mjs\";",
-    "import { probeSpawnSync } from \"./mutation-guard.mjs\";",
-    "import { randomBytes } from \"node:crypto\";",
-    "import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from \"node:fs\";",
-    "import { basename, dirname, join } from \"node:path\";"
+    "import { guardedRenameSync, ownedArtifactRm, probeProcessAlive } from \"./mutation-guard.mjs\";",
+    "import { randomBytes, randomUUID } from \"node:crypto\";",
+    "import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from \"node:fs\";",
+    "import { basename, dirname, isAbsolute, join, relative, resolve } from \"node:path\";"
   ],
   "src/update/tray-update-plan.mjs": [],
   "src/update/update-failure-guidance.mjs": [

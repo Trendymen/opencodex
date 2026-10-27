@@ -75,6 +75,90 @@ describe("mandatory-tool reasoning hold deadline", () => {
 });
 
 describe("mandatory native tool preflight commitment", () => {
+  for (const includeCall of [false, true]) test(`permitted response.done ${includeCall ? "retains a required call" : "fails a missing call before commitment"}`, async () => {
+    const guard = createComboRequiredToolStreamGuard({ tools: [{ type: "function", name: "marker" }], tool_choice: "required" },
+      new Set(), undefined, undefined, undefined, { allowResponseDone: true });
+    const output = includeCall ? [{ type: "function_call", name: "marker", call_id: "call-1", status: "completed" }] : [];
+    const raw = `event: response.done\r\ndata: ${JSON.stringify({ type: "response.done", response: {
+      id: "resp_done", status: "completed", output, usage: { input_tokens: 7, output_tokens: 2 },
+    } })}`;
+    const [block] = guard!.blockRewrite(raw);
+    if (includeCall) expect(block).toBe(raw);
+    else expect(block).toContain("required_tool_contract_unsatisfied");
+    const result = await preflight([new TextEncoder().encode(`${block}\r\n\r\n`)]);
+    expect(result.kind).toBe(includeCall ? "accepted" : "failed");
+    if (result.kind === "failed") {
+      expect(result.response.status).toBe(502);
+      expect(await result.response.json()).toMatchObject({ error: { code: "required_tool_contract_unsatisfied" },
+        response: { usage: { input_tokens: 7, output_tokens: 2 } } });
+    } else await result.response.body?.cancel();
+  });
+  test("response.done remains untouched without the explicit terminal permission", () => {
+    const guard = createComboRequiredToolStreamGuard({ tools: [{ type: "function", name: "marker" }], tool_choice: "required" }, new Set());
+    const raw = `event: response.done\ndata: ${JSON.stringify({ type: "response.done", response: { status: "completed", output: [] } })}`;
+    expect(guard!.blockRewrite(raw)).toEqual([raw]);
+  });
+  for (const status of ["failed", "incomplete", null, undefined]) test(`permitted ${String(status)} response.done stays unchanged`, () => {
+    const guard = createComboRequiredToolStreamGuard({ tools: [{ type: "function", name: "marker" }], tool_choice: "required" },
+      new Set(), undefined, undefined, undefined, { allowResponseDone: true });
+    const raw = `event: response.done\ndata: ${JSON.stringify({ type: "response.done", response: { status, output: [] } })}`;
+    expect(guard!.blockRewrite(raw)).toEqual([raw]);
+  });
+  test("response.done without an output array stays unchanged", () => {
+    const guard = createComboRequiredToolStreamGuard({ tools: [{ type: "function", name: "marker" }], tool_choice: "required" },
+      new Set(), undefined, undefined, undefined, { allowResponseDone: true });
+    const raw = `event: response.done\ndata: ${JSON.stringify({ type: "response.done", response: { status: "completed" } })}`;
+    expect(guard!.blockRewrite(raw)).toEqual([raw]);
+  });
+  test("a hosted effect in response.done keeps the failure non-replayable", async () => {
+    const guard = createComboRequiredToolStreamGuard({ tools: [{ type: "function", name: "marker" }], tool_choice: "required" },
+      new Set(), undefined, undefined, undefined, { allowResponseDone: true });
+    const raw = `event: response.done\ndata: ${JSON.stringify({ type: "response.done", response: { status: "completed",
+      output: [{ type: "web_search_call", id: "effect", status: "completed" }] } })}`;
+    const [block] = guard!.blockRewrite(raw);
+    const result = await preflight([new TextEncoder().encode(`${block}\n\n`)]);
+    expect(result.kind).toBe("accepted");
+    expect(await result.response.text()).toContain('"retryable":false');
+  });
+  for (const includeCall of [false, true]) test(`response.done inspection reports ${includeCall ? "completion" : "failure"} once`, () => {
+    const guard = createComboRequiredToolStreamGuard({ tools: [{ type: "function", name: "marker" }], tool_choice: "required" },
+      new Set(), undefined, undefined, undefined, { allowResponseDone: true });
+    const terminals: string[] = [];
+    const inspector = guard!.inspectorFactory({ allowResponseDone: true, onTerminal: status => terminals.push(status),
+      onCompletedResponse: () => terminals.push("cached") });
+    const output = includeCall ? [{ type: "function_call", name: "marker", call_id: "call-1", status: "completed" }] : [];
+    inspector.feed(frame({ type: "response.done", response: { status: "completed", output } }));
+    inspector.finish();
+    inspector.dispose();
+    expect(terminals).toEqual(includeCall ? ["completed", "cached"] : ["failed"]);
+  });
+  test("EOF before response.done does not invent a terminal", async () => {
+    const guard = createComboRequiredToolStreamGuard({ tools: [{ type: "function", name: "marker" }], tool_choice: "required" },
+      new Set(), undefined, undefined, undefined, { allowResponseDone: true });
+    const terminals: string[] = [];
+    const inspector = guard!.inspectorFactory({ allowResponseDone: true, onTerminal: status => terminals.push(status) });
+    const created = { type: "response.created", response: { id: "pending", output: [] } };
+    inspector.feed(frame(created));
+    inspector.finish();
+    inspector.dispose();
+    expect(terminals).toEqual([]);
+    const result = await preflight([frame(created)]);
+    expect(result.kind).toBe("accepted");
+    expect(await result.response.text()).toBe(new TextDecoder().decode(frame(created)));
+  });
+  test("cancelling before response.done does not produce a replacement verdict", async () => {
+    const abort = new AbortController();
+    let cancelled = 0;
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(frame({ type: "response.created", response: { output: [] } })); },
+      cancel() { cancelled++; },
+    }), { headers: { "content-type": "text/event-stream" } });
+    const pending = preflightComboStreamResponse(response, { model: "fixture", provider: "fixture" }, undefined,
+      { requiredToolPrelude: true, signal: abort.signal });
+    abort.abort(new Error("fixture cancelled before response.done"));
+    await expect(pending).rejects.toThrow("fixture cancelled before response.done");
+    expect(cancelled).toBe(1);
+  });
   test("the reserved functions selector keeps a bare call identity", () => {
     const guard = createComboRequiredToolStreamGuard({ tools: [{ type: "function", name: "marker" }],
       tool_choice: { type: "function", namespace: "functions", name: "marker" } }, new Set());

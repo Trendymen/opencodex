@@ -11,7 +11,7 @@ import { clearableDeadline } from "../lib/abort";
 import { debugDroppedFrame } from "../lib/debug";
 import { configuredReasoningEfforts, modelRecordValue } from "../reasoning-effort";
 import { commandCodeReasoningEfforts, refreshCommandCodeReasoningEfforts } from "../providers/command-code-efforts";
-import { identifyRoutedModel } from "./identity";
+import { identifyRoutedModel, identifyRoutedToolPrompt } from "./identity";
 import { buildNonOpenAIToolCatalogNudgeForTools } from "./tool-catalog-nudge";
 import { parseDataUrl } from "./image";
 import { createAdapterPhysicalSend } from "./physical-send";
@@ -710,7 +710,8 @@ export function createCommandCodeAdapter(provider: OcxProviderConfig): ProviderA
       const tools = visibleTools(parsed);
       const toolNudge = buildNonOpenAIToolCatalogNudgeForTools(tools, parsed.options.toolChoice);
       const choiceInstruction = toolChoiceInstruction(parsed);
-      const system = identifyRoutedModel([
+      const identifySystem = toolNudge ? identifyRoutedToolPrompt : identifyRoutedModel;
+      const system = identifySystem([
         ...(parsed.context.systemPrompt ?? []),
         ...(toolNudge ? [toolNudge] : []),
         ...(choiceInstruction ? [choiceInstruction] : []),

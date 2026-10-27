@@ -81,6 +81,16 @@ function configFor(first: () => Response, sent: Array<Record<string, unknown>>) 
   return { port: 0, defaultProvider: "a", providers,
     combos: { fixture: { strategy: "failover", targets: [{ provider: "a", model: "m1" }, { provider: "b", model: "m2" }] } } } as OcxConfig;
 }
+function useCodexDoneFirst(config: OcxConfig, sent: Array<Record<string, unknown>>, first: () => Response) {
+  config.providers.a = Object.assign(provider("openai-responses", "https://chatgpt.com/backend-api/codex", "", {
+    authMode: "forward", upstreamWebsocket: false,
+    codexPassthrough: { synthesizeTerminalFailure: false, repairResponseToolCalls: false,
+      backfillResponseFields: false, redactUpstreamErrors: false, normalizeHostedImages: false },
+  }), { fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return first();
+  }) as typeof globalThis.fetch });
+}
 async function request(config: OcxConfig, choice: unknown, log: RequestLogContext = { model: "", provider: "" }, extra = {}, options = {}) {
   return handleResponses(new Request("http://localhost/v1/responses", {
     method: "POST", headers: { "content-type": "application/json" },
@@ -93,6 +103,69 @@ function terminal(text: string) {
 }
 
 describe("native streaming combo mandatory tools (#7456)", () => {
+  for (const platform of ["win32", "linux"] as const) for (const type of ["response.completed", "response.done"]) for (const includeCall of [false, true]) {
+    test(`${platform}: Codex ${type} ${includeCall ? "preserves the successful call" : "fails over when the required call is missing"}`, async () => {
+      setRelayPlatformForTests(platform);
+      const sent: Array<Record<string, unknown>> = [];
+      const config = configFor(() => { throw new Error("unused first server"); }, sent);
+      const raw = frame({ type, response: completed("m1", includeCall) });
+      useCodexDoneFirst(config, sent, () => new Response(raw, { headers: { "content-type": "text/event-stream" } }));
+      const text = await (await request(config, named)).text();
+      if (includeCall) {
+        expect(sent).toHaveLength(1);
+        expect(text).toBe(raw);
+      } else {
+        expect(sent).toHaveLength(2);
+        expect(text).not.toContain("false success");
+        expect(terminal(text)).toMatchObject([{ type: "response.completed", response: { model: "m2", output: [{ call_id: "call_backup" }] } }]);
+      }
+    });
+  }
+  for (const platform of ["win32", "linux"] as const) test(`${platform}: response.done does not count a tool identity disabled by repair permissions`, async () => {
+    setRelayPlatformForTests(platform);
+    const sent: Array<Record<string, unknown>> = [];
+    const config = configFor(() => { throw new Error("unused first server"); }, sent);
+    const completedPayload = completed("m1", true);
+    const payload = { ...completedPayload, output: [{ ...completedPayload.output[0]!, namespace: "marker_func" }] };
+    const raw = frame({ type: "response.done", response: payload });
+    useCodexDoneFirst(config, sent, () => new Response(raw, { headers: { "content-type": "text/event-stream" } }));
+    const text = await (await request(config, named)).text();
+    expect(sent).toHaveLength(1);
+    expect(terminal(text)).toMatchObject([{ type: "response.failed", response: { error: { code: "required_tool_contract_unsatisfied" } } }]);
+  });
+  for (const platform of ["win32", "linux"] as const) test(`${platform}: EOF before Codex response.done remains unchanged`, async () => {
+    setRelayPlatformForTests(platform);
+    const sent: Array<Record<string, unknown>> = [];
+    const config = configFor(() => { throw new Error("unused first server"); }, sent);
+    const raw = frame({ type: "response.created", response: { id: "pending", output: [], status: "in_progress" } });
+    useCodexDoneFirst(config, sent, () => new Response(raw, { headers: { "content-type": "text/event-stream" } }));
+    expect(await (await request(config, named)).text()).toBe(raw);
+    expect(sent).toHaveLength(1);
+  });
+  for (const platform of ["win32", "linux"] as const) test(`${platform}: cancelling before Codex response.done does not send a backup`, async () => {
+    setRelayPlatformForTests(platform);
+    const sent: Array<Record<string, unknown>> = [];
+    const config = configFor(() => { throw new Error("unused first server"); }, sent);
+    let readStarted!: () => void;
+    const started = new Promise<void>(resolve => { readStarted = resolve; });
+    useCodexDoneFirst(config, sent, () => new Response(new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(new TextEncoder().encode(frame({ type: "response.created", response: { id: "pending", output: [] } })));
+      readStarted();
+    } }), { headers: { "content-type": "text/event-stream" } }));
+    const abort = new AbortController();
+    const pending = request(config, named, undefined, {}, { abortSignal: abort.signal });
+    const startedFirst = await Promise.race([started.then(() => true), pending.then(async response => {
+      await response.text();
+      return false;
+    })]);
+    expect(startedFirst).toBe(true);
+    if (!startedFirst) return;
+    abort.abort(new Error("fixture cancelled before response.done"));
+    const response = await pending;
+    expect(response.status).toBe(499);
+    expect(sent).toHaveLength(1);
+    await response.text();
+  });
   for (const platform of ["win32", "linux"] as const) for (const choice of [
     { type: "function", namespace: "mcp", name: "ping" },
     { type: "function", name: "mcp__ping" },
