@@ -58,12 +58,10 @@ async function readNodeProbe(
     reading = false;
     try { child.kill("SIGKILL"); } catch { /* probe already exited */ }
     try { void reader.cancel().catch(() => {}); } catch { /* reader already released */ }
-    const reapMs = Math.min(100, Math.max(0, deadline - Date.now()));
-    if (reapMs > 0) {
-      let reapTimer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([child.exited, new Promise(resolve => { reapTimer = setTimeout(resolve, reapMs); })]);
-      clearTimeout(reapTimer);
-    }
+    // SIGKILL reaping needs its bounded grace even when the probe deadline expired.
+    let reapTimer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([child.exited, new Promise(resolve => { reapTimer = setTimeout(resolve, 100); })]);
+    clearTimeout(reapTimer);
     if (child.exitCode === null) {
       try { child.unref(); } catch { /* reap handle already closed */ }
     }

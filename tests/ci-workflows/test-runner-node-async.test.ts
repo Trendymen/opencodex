@@ -156,6 +156,45 @@ console.log(JSON.stringify({message, elapsed: Date.now() - started}));`);
   }
 }, { timeout: 7_000 });
 
+test("the final timed-out probe waits for asynchronous reaping after the shared deadline", () => {
+  const root = mkdtempSync(join(tmpdir(), "ocx-node-deadline-reap-"));
+  const driver = join(root, "driver.ts");
+  writeFileSync(driver, `import { spyOn } from "bun:test";
+const { getTestRunnerNodeDirectory } = await import(${JSON.stringify(repoPath("scripts", "lib", "test-runner-node.ts"))});
+const schedule = globalThis.setTimeout; let now = 0; let killed = 0; let reaped = 0; let unreferenced = 0; const delays = [];
+spyOn(Date, "now").mockImplementation(() => now);
+spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) => {
+  if (delay >= 1000) { delays.push(delay); return schedule(() => { now += delay; callback(...args); }, 0); }
+  return schedule(callback, delay, ...args);
+});
+spyOn(Bun, "spawn").mockImplementation(() => {
+  let status = null; let resolveExit;
+  const exited = new Promise(resolve => { resolveExit = resolve; });
+  return { stdout: new ReadableStream(), exited, get exitCode() { return status; },
+    kill() { killed++; schedule(() => { status = 0; reaped++; resolveExit(0); }, 10); },
+    unref() { unreferenced++; } };
+});
+let message = "";
+try { await getTestRunnerNodeDirectory({ PATH: ["first", "second", "third"].join(${JSON.stringify(delimiter)}) }, "sandbox"); }
+catch (error) { message = error.message; }
+console.log(JSON.stringify({ killed, reaped, unreferenced, delays, message }));
+`);
+  try {
+    const child = spawnSync(process.execPath, [driver], {
+      cwd: repoRoot(), env: { ...process.env, OCX_TEST_NO_QUEUE: "1" },
+      encoding: "utf8", timeout: 1_000, killSignal: "SIGKILL",
+    });
+    expect(child.status).toBe(0);
+    const result = JSON.parse(child.stdout);
+    expect(result.delays).toEqual([2_000, 2_000, 1_000]);
+    expect(result.message).toContain("source:ETIMEDOUT=3");
+    expect(result.message).toContain("budgetExhausted=true");
+    expect(result.killed).toBe(3);
+    expect(result.reaped).toBe(3);
+    expect(result.unreferenced).toBe(0);
+  } finally { removeTreeWithRetry(root); }
+});
+
 function createHomeDependentNodeShimFixture(): {
   fixture: string;
   shimDir: string;
