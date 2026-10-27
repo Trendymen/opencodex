@@ -145,6 +145,101 @@ for (const protocol of ["h1", "h2"] as const) {
   }
 }
 
+for (const status of [400, 503] as const) {
+  bounded(`h1 bodyless ${status} refusal preserves keep-alive for the next request`, async wait => {
+    const held = Promise.withResolvers<void>();
+    const left = Promise.withResolvers<void>();
+    const f = await fixture((req, res) => {
+      req.on("error", () => res.destroy()); req.resume();
+      if (req.url === "/held") {
+        req.once("close", () => left.resolve()); held.resolve();
+      } else res.end("ordinary");
+    }, { maxActiveUpstreams: 1 });
+    try {
+      const session = f.h2();
+      let blocker: ClientHttp2Stream | undefined;
+      let blockerClosed: Promise<void> | undefined;
+      if (status === 503) {
+        blocker = session.request({ ":method": "POST", ":path": "/held", ":authority": "claude.ai" });
+        blockerClosed = observeClose(blocker); blocker.write("x"); await wait(held.promise);
+      }
+      const refused = f.h1(status === 400 ? "//[" : "/refused");
+      const firstSocket = Promise.withResolvers<Duplex>();
+      refused.once("socket", firstSocket.resolve);
+      let connection: string | undefined;
+      refused.once("response", res => { connection = res.headers.connection; });
+      const result = h1Result(refused); refused.end();
+      expect(await wait(result)).toEqual({ status, text: "" });
+      expect(connection).toBe("keep-alive");
+      if (blocker) {
+        blocker.close(constants.NGHTTP2_CANCEL); await wait(blockerClosed!); await wait(left.promise);
+      }
+      const next = f.h1("/next");
+      const nextSocket = Promise.withResolvers<Duplex>();
+      next.once("socket", nextSocket.resolve);
+      const nextResult = h1Result(next); next.end();
+      expect(await wait(nextResult)).toEqual({ status: 200, text: "ordinary" });
+      expect(await wait(nextSocket.promise)).toBe(await wait(firstSocket.promise));
+    } finally { await wait(f.close()); }
+  });
+}
+
+bounded("h1 refusal leaves another upload and an h2 sibling serving", async wait => {
+  const admitted = Promise.withResolvers<void>();
+  const events = Promise.withResolvers<void>();
+  let received = "";
+  let sibling: ServerResponse | undefined;
+  const f = await fixture((req, res) => {
+    req.on("error", () => res.destroy());
+    if (req.url === "/held") {
+      req.on("data", chunk => { received += chunk.toString(); admitted.resolve(); });
+      req.once("end", () => res.end("accepted"));
+    } else {
+      req.resume(); sibling = res; res.write("sibling"); events.resolve();
+    }
+  }, { maxActiveUpstreams: 2 });
+  try {
+    const first = f.h1("/held", "POST", { "Content-Length": "8" });
+    const firstResult = h1Result(first); first.write("half"); await wait(admitted.promise);
+    const session = f.h2();
+    const stream = session.request({ ":method": "GET", ":path": "/events", ":authority": "claude.ai" });
+    const siblingResult = h2Result(stream); stream.end(); await wait(events.promise);
+    const refused = f.h1("/refused", "POST", { "Content-Length": String(32 * 1024 * 1024) });
+    const refusedResult = h1Result(refused);
+    const refusedClosed = observeSocketClose(refused);
+    refused.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+    expect(await wait(refusedResult)).toEqual({ status: 503, text: "" });
+    await wait(refusedClosed);
+    expect(sibling!.writableEnded).toBe(false);
+    first.end("done");
+    expect(await wait(firstResult)).toEqual({ status: 200, text: "accepted" });
+    expect(received).toBe("halfdone");
+    sibling!.end();
+    expect(await wait(siblingResult)).toEqual({ status: 200, text: "sibling" });
+  } finally { await wait(f.close()); }
+});
+
+bounded("h1 refused connections close before repeated listener shutdown", async wait => {
+  const f = await fixture((_req, res) => res.end("unexpected"));
+  try {
+    for (let n = 0; n < 3; n++) {
+      const refused = f.h1("//[", "POST", { "Content-Length": "100" });
+      const result = h1Result(refused);
+      const closed = observeSocketClose(refused);
+      refused.flushHeaders();
+      expect(await wait(result)).toEqual({ status: 400, text: "" });
+      await wait(closed);
+    }
+    const idle = f.h1("//[", "POST", { "Content-Length": "100" });
+    const result = h1Result(idle);
+    const closed = observeSocketClose(idle);
+    idle.flushHeaders();
+    expect(await wait(result)).toEqual({ status: 400, text: "" });
+    await wait(Promise.all([f.relay.close(), f.relay.close()]));
+    await wait(closed);
+  } finally { await wait(f.close()); }
+});
+
 bounded("h1 completed upload keeps the same connection alive after an upstream failure", async wait => {
   const body = "complete";
   let received = "";

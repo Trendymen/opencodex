@@ -11,7 +11,11 @@ import { createWebsocketHandler } from "../../src/server/index/websocket-handler
 import type { ServeOptionsContext } from "../../src/server/index/serve-options";
 import { clearRequestLogsForTests } from "../../src/server/request-log";
 import { setRelayPlatformForTests } from "../../src/server/responses/passthrough-delivery";
-import type { WsData } from "../../src/server/ws-bridge";
+import { sendResponseToWebSocket, type WsData } from "../../src/server/ws-bridge";
+import { markCodexPassthroughResponse } from "../../src/fork/codex-passthrough-turn";
+import { resolveCodexPassthroughPermissions } from "../../src/fork/codex-passthrough-contract";
+import { attachResponseToolOwnership, responseToolOwnership } from "../../src/server/responses/response-tool-ownership";
+import { collectProviderExecutedCallTypes } from "../../src/server/responses-undeclared-tool-guard";
 import type { OcxConfig } from "../../src/types";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { createTempHome, type TempHome } from "../helpers/temp-home";
@@ -142,6 +146,35 @@ function fillBusyAndReserve(): AdmissionReservation<ServerWebSocket<WsData>> | n
 const hostedCall = { type: "custom_tool_call", id: "ctc_search", call_id: "xs_call-1",
   name: "x_keyword_search", input: "{}", status: "completed" };
 const clientTool = { type: "function", name: "x_keyword_search", parameters: { type: "object", properties: {} } };
+
+test.each([false, true])("raw done snapshot-only tool waits govern actual capacity reclamation; provider-owned=%s", async providerOwned => {
+  const target = client();
+  const call = providerOwned ? hostedCall : { type: "function_call", id: "fc_raw", call_id: "call_raw", name: "x_keyword_search", arguments: "{}" };
+  const text = JSON.stringify({ type: "response.done", response: { id: "resp_raw_snapshot", status: "completed", output: [call] } });
+  const response = markCodexPassthroughResponse(new Response(`event: response.done\ndata: ${text}\n\n`, {
+    headers: { "content-type": "text/event-stream" },
+  }), resolveCodexPassthroughPermissions({ backfillResponseFields: false, synthesizeTerminalFailure: false }));
+  attachResponseToolOwnership(response, collectProviderExecutedCallTypes({ tools: providerOwned ? [{ type: "x_search" }] : [clientTool] }));
+  const ownership = responseToolOwnership(response);
+  const observed: string[] = [];
+  const finish = target.ws.data.responsesActivity!.beginTurn([]);
+  try {
+    await sendResponseToWebSocket(target.ws, response, () => true, { onSsePayload: payload => {
+      observed.push(payload); target.ws.data.responsesActivity!.observePayload(payload, ownership);
+    } });
+  } finally { finish(); }
+  expect(observed).toEqual([text]); expect(target.sent).toEqual([JSON.parse(text)]);
+  if (!providerOwned) {
+    expect(fillBusyAndReserve()).toBeNull(); expect(target.closed).toEqual([]);
+    upstream = () => Response.json({ id: "resp_raw_result", status: "completed", output: [] });
+    await turn(target, { tools: [clientTool], input: [{ type: "function_call_output", call_id: "call_raw", output: "fixture result" }] });
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].input).toContainEqual({ type: "function_call_output", call_id: "call_raw", output: "fixture result" });
+  }
+  expect(target.ws.data.responsesActivity!.idle).toBe(true);
+  expect(fillBusyAndReserve()).not.toBeNull(); expect(target.closed).toEqual([1001]);
+  expect(clients.slice(1).every(other => other.ws.readyState === 1)).toBe(true);
+});
 
 test.each([false, true])("completed xAI hosted search is reclaimable; route-injected declaration=%s", async injected => {
   const target = client(config(injected ? "https://cli-chat-proxy.grok.com/v1" : "https://api.x.ai/v1", injected));

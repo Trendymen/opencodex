@@ -19,6 +19,7 @@ import type { OcxConfig } from "../../src/types";
 import { ownedServiceHomeInspection } from "../helpers/owned-service-home-inspection";
 import { removeTreeAfterBackgroundWork } from "../helpers/remove-tree";
 import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 import { resetVisionDescriptionCache } from "../../src/vision";
 import { SERVER_BUDGET_MS } from "../helpers/test-budget";
 
@@ -42,6 +43,7 @@ import { saveCodexAccountCredential } from "../../src/codex/account-store";
  */
 
 const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
 const previousOcxHome = process.env.OPENCODEX_HOME;
 const previousCodexHome = process.env.CODEX_HOME;
 const previousDataToken = process.env.OPENCODEX_API_AUTH_TOKEN;
@@ -163,6 +165,7 @@ async function withCursorCaptureServer<T>(
 }
 
 beforeEach(() => {
+  installHttpOnlyCodexWebSocket();
   resetVisionDescriptionCache();
   clearComboTargetCooldowns();
   resetSubagentModelFallbackStateForTests();
@@ -206,6 +209,7 @@ afterEach(async () => {
   if (previousCursorTestToken === undefined) delete process.env.OPENCODEX_CURSOR_TEST_TOKEN;
   else process.env.OPENCODEX_CURSOR_TEST_TOKEN = previousCursorTestToken;
   globalThis.fetch = originalFetch;
+  globalThis.WebSocket = originalWebSocket;
   if (previousOcxHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousOcxHome;
   if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
