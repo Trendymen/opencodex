@@ -25,6 +25,7 @@ const originalWebSocket = globalThis.WebSocket;
 const POOL_ID = "alternate-cancel-pool";
 let root: string;
 let authPath: string;
+let websocketAttempts: string[];
 let previousCodexHome: string | undefined;
 let previousOcxHome: string | undefined;
 let releaseSpendHome: (() => void) | undefined;
@@ -69,6 +70,13 @@ function credentialState() {
 }
 
 beforeEach(() => {
+  websocketAttempts = [];
+  globalThis.WebSocket = new Proxy(originalWebSocket, {
+    construct(_target, args) {
+      websocketAttempts.push(String(args[0]));
+      throw new Error("unexpected upstream WebSocket attempt");
+    },
+  });
   root = mkdtempSync(join(tmpdir(), "ocx-alternate-main-cancel-"));
   const codexHome = join(root, "codex");
   const ocxHome = join(root, "ocx");
@@ -111,6 +119,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  globalThis.WebSocket = originalWebSocket;
   releaseSpendHome?.();
   releaseSpendHome = undefined;
   globalThis.fetch = originalFetch;
@@ -217,6 +226,7 @@ for (const entry of ["retry helper", "messages ingress"] as const) {
           if (scenario !== "success-control") controller.abort(new Error("fixture caller cancelled"));
           release.resolve(refreshReply(scenario === "cancel-terminal"));
           const result = await outcome;
+          expect(websocketAttempts).toEqual([]);
           if (scenario === "success-control") {
             expect(result).toMatchObject({ value: { status: 200 } });
             expect(inference).toEqual([...initialInference, "Bearer fixture-refreshed-main"]);

@@ -52,7 +52,7 @@ describe("retained reasoning public wire contracts", () => {
     const config = keyProviderConfig({ retryOn429: { attempts: 0, intervalMs: 1, maxIntervalMs: 1 } });
     config.reasoningRetention = { enabled: true, maxTokens };
     config.providers.openai = { adapter: "openai-responses", authMode: "forward", codexAccountMode: "direct",
-      baseUrl: "https://chatgpt.com/backend-api/codex" };
+      baseUrl: "https://chatgpt.com/backend-api/codex", upstreamWebsocket: false };
     config.combos = { retained: { targets: [
       { provider: "gw", model: "some-model" }, { provider: "openai", model: "gpt-5.6-luna" },
     ] } };
@@ -105,7 +105,7 @@ describe("retained reasoning public wire contracts", () => {
     const config = keyProviderConfig();
     config.reasoningRetention = { enabled: true };
     config.providers.openai = { adapter: "openai-responses", authMode: "forward", codexAccountMode: "direct",
-      baseUrl: "https://chatgpt.com/backend-api/codex" };
+      baseUrl: "https://chatgpt.com/backend-api/codex", upstreamWebsocket: false };
     Object.assign(config, { reasoningRetention: { enabled: true, maxTokens } });
     const item = { type: "compaction", id: "cmp_retention_opaque", encrypted_content: "  native-opaque+/==\n" };
     const calls: string[] = [];
