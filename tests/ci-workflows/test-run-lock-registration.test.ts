@@ -15,7 +15,7 @@ test.each(["members-directory", "member-file", "inherited"] as const)(
     writeFileSync(driver, `import { acquireTestRunLock } from ${JSON.stringify(repoPath("scripts", "test-run-lock.ts"))};
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs"; import { join } from "node:path";
 const lockPath = ${JSON.stringify(lockPath)};
-const options = { runId: "registration-fixture", lockPath, env: {}, pollMs: 5, maxWaitMs: 50 };
+const options = { runId: "registration-fixture", lockPath, env: {}, processStartBatch: () => new Map(), pollMs: 5, maxWaitMs: 50 };
 const owner = await acquireTestRunLock(options);
 ${fault === "member-file"
   ? 'mkdirSync(join(lockPath, "members", process.pid + "-" + owner.owner!.token), { recursive: true });'
@@ -55,7 +55,7 @@ mock.module("node:fs", () => ({ ...fs, writeFileSync(path, ...args) {
   return write(path, ...args);
 } }));
 const { acquireTestRunLock } = await import(${JSON.stringify(repoPath("scripts", "test-run-lock.ts"))});
-const options = { runId: "member-postcondition", lockPath, env: {}, pollMs: 5, maxWaitMs: 50 };
+const options = { runId: "member-postcondition", lockPath, env: {}, processStartBatch: () => new Map(), pollMs: 5, maxWaitMs: 50 };
 const owner = await acquireTestRunLock(options);
 member = join(lockPath, "members", process.pid + "-" + owner.owner!.token);
 fs.mkdirSync(member, { recursive: true });
@@ -96,7 +96,7 @@ mock.module("node:fs", () => ({ ...fs, writeFileSync(path, ...args) {
   return write(path, ...args);
 } }));
 const { acquireTestRunLock } = await import(${JSON.stringify(repoPath("scripts", "test-run-lock.ts"))});
-const options = { runId: "cas-fixture", lockPath, env: {}, pollMs: 10, maxWaitMs: 200 };
+const options = { runId: "cas-fixture", lockPath, env: {}, processStartBatch: () => new Map(), pollMs: 10, maxWaitMs: 200 };
 await acquireTestRunLock(options); changes = 3;
 let timerFired = false; let waits = 0; setTimeout(() => { timerFired = true; }, 0);
 const joined = await acquireTestRunLock({ ...options, onWait: () => { waits++; } });
@@ -134,7 +134,7 @@ ${fault === "unknown-code" ? `mock.module("node:fs", () => ({ ...fs, writeFileSy
   return write(path, ...args);
 } }));` : ""}
 const { acquireTestRunLock } = await import(${JSON.stringify(repoPath("scripts", "test-run-lock.ts"))});
-const options = { runId: "safe-error-fixture", lockPath, env: {}, pollMs: 5, maxWaitMs: 50 };
+const options = { runId: "safe-error-fixture", lockPath, env: {}, processStartBatch: () => new Map(), pollMs: 5, maxWaitMs: 50 };
 const owner = await acquireTestRunLock(options);
 write(identifiers, JSON.stringify({ token: owner.owner!.token, lockPath }));
 ${fault === "member-file" ? 'fs.mkdirSync(join(lockPath, "members", process.pid + "-" + owner.owner!.token), { recursive: true });' : "fault = true;"}
@@ -166,16 +166,15 @@ const lockPath = join(process.env.OCX_FIXTURE_ROOT!, "isolated.lock"); const wri
 const old = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdout: "ignore", stderr: "ignore" });
 let swap = false; let replacement; let oldDead = false;
 mock.module("node:fs", () => ({ ...fs, writeFileSync(path, ...args) {
-  const result = write(path, ...args);
   if (swap && String(path).startsWith(join(lockPath, "members") + sep)) {
     swap = false; const previous = JSON.parse(read(join(lockPath, "owner.json"), "utf8"));
     replacement = { ...previous, runId: "replacement-live", token: previous.token + "-replacement", pid: process.pid };
     write(join(lockPath, "owner.json"), JSON.stringify(replacement)); fs.rmSync(String(path), { force: true });
   }
-  return result;
+  return write(path, ...args);
 } }));
 const { acquireTestRunLock } = await import(${JSON.stringify(repoPath("scripts", "test-run-lock.ts"))});
-const options = { runId: "old-run", ownerPid: old.pid, lockPath, env: {}, pollMs: 5, maxWaitMs: 50 };
+const options = { runId: "old-run", ownerPid: old.pid, lockPath, env: {}, processStartBatch: () => new Map(), pollMs: 5, maxWaitMs: 50 };
 const owner = await acquireTestRunLock(options);
 fs.mkdirSync(join(lockPath, "members"));
 write(join(lockPath, "members", process.pid + "-" + owner.owner!.token), "");

@@ -84,5 +84,7 @@
   "responses-state-admission.test.ts": "responses",
   "responses-tool-catalog.test.ts": "responses",
   "test-run-lock-registration.test.ts": "ci-workflows",
-  "test-runner-node-async.test.ts": "ci-workflows"
+  "test-runner-node-async.test.ts": "ci-workflows",
+  "fork-test-runner-lifecycle.test.ts": "ci-workflows",
+  "fork-deepseek-vision-route.test.ts": "providers"
 }

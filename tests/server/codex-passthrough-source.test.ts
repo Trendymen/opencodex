@@ -14,6 +14,7 @@ import { codexHeaders, encryptedInput, recoverySse, routedConfig } from "../help
 import { recoverEncryptedAgentTaskWithResult, replaceTimedOutEncryptedAgentTaskWithNotice, resetAgentTaskRecoveryState } from "../../src/server/responses/agent-task-recovery";
 import { concreteComboRequestBody } from "../../src/combos";
 import { finalizeAccountLease, finalizeOwnedTranslatorBudget } from "../../src/server/responses/core-lifetime";
+import { isVerifiedModelNotInPlanResponse, markVerifiedModelNotInPlanResponse } from "../../src/lib/errors";
 import { handleResponses } from "../../src/server/responses/core";
 import { CODEX_PASSTHROUGH_DEFAULTS } from "../../src/fork/codex-passthrough-contract";
 import { markCodexPassthroughResponse, codexPassthroughResponsePermissions, captureCodexPassthroughTurn,
@@ -188,12 +189,14 @@ describe("Codex decoded source ownership", () => {
         pull(controller) { if (ending === "error") controller.error(new Error("reader failed")); else if (ending === "eof") controller.close(); },
       })), CODEX_PASSTHROUGH_DEFAULTS);
       markResponseNonReplayable(original); markReplayRefusalResponse(original);
-      markSameTargetRetryHold(original);
+      markSameTargetRetryHold(original); markVerifiedModelNotInPlanResponse(original);
       const budget = createTranslatorBudget();
       const finalized = finalizeOwnedTranslatorBudget(original, budget);
       expect(isSameTargetRetryHold(finalized)).toBe(true);
+      expect(isVerifiedModelNotInPlanResponse(finalized)).toBe(true);
       const wrapped = finalizeAccountLease(finalized, () => { released++; });
       expect(isSameTargetRetryHold(wrapped)).toBe(true);
+      expect(isVerifiedModelNotInPlanResponse(wrapped)).toBe(true);
       expect(codexPassthroughResponsePermissions(wrapped)).toBe(CODEX_PASSTHROUGH_DEFAULTS);
       expect(isNonReplayableResponse(wrapped)).toBe(true);
       expect(isReplayRefusalResponse(wrapped)).toBe(true);
