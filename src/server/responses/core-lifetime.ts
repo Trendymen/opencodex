@@ -1,6 +1,7 @@
 import type { TranslatorBudget } from "../../lib/translator-budget";
 import { carryResponseToolOwnership } from "./response-tool-ownership";
 import { finalizeTranslatorBudgetResponse } from "../../lib/translator-budget";
+import { carryCodexPassthroughResponse } from "../../fork/codex-passthrough-turn";
 import { carryReplayRefusal, isNonReplayableResponse, markResponseNonReplayable } from "../../lib/upstream-retry";
 import {
   isNativePassthroughSseResponse,
@@ -49,9 +50,7 @@ export function finalizeOwnedTranslatorBudget(response: Response, budget: Transl
     markEagerRelaySseResponse(finalizedResponse);
   }
   if (isPreinspectedJsonResponse(response)) markPreinspectedJsonResponse(finalizedResponse);
-  if (isNonReplayableResponse(response)) markResponseNonReplayable(finalizedResponse);
-  if (runTurnAdapterSseResponses.has(response)) runTurnAdapterSseResponses.add(finalizedResponse);
-  return carryResponseToolOwnership(response, finalizedResponse);
+  return carryLifetimeMarkers(response, finalizedResponse);
 }
 
 /** Release a serving-account slot when the client body ends, errors or is cancelled. */
@@ -71,12 +70,18 @@ export function finalizeAccountLease(response: Response, release: () => void, on
     async cancel(reason) { onCancel?.(); try { await reader.cancel(reason); } finally { finish(); } },
   });
   const wrapped = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
-  if (isNonReplayableResponse(response)) markResponseNonReplayable(wrapped);
   if (isNativePassthroughSseResponse(response)) markNativePassthroughSseResponse(wrapped);
   if (isEagerRelaySseResponse(response)) markEagerRelaySseResponse(wrapped);
   if (isPreinspectedJsonResponse(response)) markPreinspectedJsonResponse(wrapped);
-  if (runTurnAdapterSseResponses.has(response)) runTurnAdapterSseResponses.add(wrapped);
-  return carryResponseToolOwnership(response, carryReplayRefusal(response, wrapped));
+  return carryLifetimeMarkers(response, wrapped);
+}
+
+function carryLifetimeMarkers(source: Response, target: Response): Response {
+  if (isNonReplayableResponse(source)) markResponseNonReplayable(target);
+  carryReplayRefusal(source, target);
+  if (runTurnAdapterSseResponses.has(source)) runTurnAdapterSseResponses.add(target);
+  carryCodexPassthroughResponse(source, target);
+  return carryResponseToolOwnership(source, target);
 }
 
 

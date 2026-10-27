@@ -38,6 +38,8 @@ import { LOCAL_MANAGEMENT_READ_PATHS } from "../lib/local-management-capability"
 import { fetchBoundLocalManagementRead } from "../server/local-management-read-client";
 import { collectAppliedCodexSettingsStatus, type CliAppliedCodexSettingsStatus } from "./status-codex-settings";
 import { installDetectionStatus, type InstallDetectionStatus } from "./status-install";
+import { resolveForkModelApiTopology } from "../fork/model-api-listener-config";
+import { parseForkModelApiRuntimeSnapshot, projectForkModelApiStatus, type ForkModelApiStatus } from "../fork/model-api-listener-status";
 
 /**
  * The state of the data-plane admission secret the SERVICE will use. State only -- never the value.
@@ -119,6 +121,7 @@ export type CliRemoteHubStatus = {
 };
 
 export type CliStatusJson = {
+  forkModelApiListener: ForkModelApiStatus;
   mainAccountHardLock?: CodexMainAccountPolicyHealth;
   /** OCX-11 fallback state; see src/cli/status-fallback.ts. */
   fallback?: import("./status-fallback").StatusFallback;
@@ -856,6 +859,15 @@ export async function collectStatus(options: { mainAccountPolicy?: boolean } = {
   const live = await findLiveProxy({
     configFn: () => ({ port: config.port, hostname: config.hostname }),
   });
+  const modelApiHealth = live ? await fetchBoundLocalManagementRead(
+    live, LOCAL_MANAGEMENT_READ_PATHS.systemHealth, { requireResponseProof: true },
+  ) : null;
+  let modelApiRuntime = null;
+  if (modelApiHealth?.kind === "response" && modelApiHealth.response.ok) {
+    try { modelApiRuntime = parseForkModelApiRuntimeSnapshot((await modelApiHealth.response.json()).forkModelApiListener); }
+    catch { /* An unreadable same-process response leaves the listener unverified. */ }
+  }
+  const forkModelApiListener = projectForkModelApiStatus(resolveForkModelApiTopology(config), modelApiRuntime, Boolean(live));
   const mainAccountHardLock = options.mainAccountPolicy && live
     ? (await (await import("../oauth/health")).fetchCodexHealthFromLiveProxy(undefined, async () => live)).mainAccountHardLock
     : undefined;
@@ -1023,6 +1035,7 @@ export async function collectStatus(options: { mainAccountPolicy?: boolean } = {
       ...(mainAccountHardLock ? { mainAccountHardLock } : {}),
       ...(fallback ? { fallback } : {}),
       schemaVersion: 1,
+      forkModelApiListener,
       runtimeRole: config.runtimeRole ?? "standalone",
       proxy: {
         running: Boolean(live) || Boolean(pid && health.ok),

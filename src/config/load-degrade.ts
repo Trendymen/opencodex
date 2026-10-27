@@ -1,3 +1,4 @@
+import { readCodexPassthroughConfig } from "../fork/codex-passthrough-contract";
 import { setCodexWsReuseAcrossTurns } from "./codex-ws-reuse-setting";
 import { isSubagentModelEntry, rawSubagentModelForce } from "./subagent-models";
 import { chmodSync, existsSync } from "node:fs";
@@ -26,6 +27,7 @@ import { redactSecretString } from "../lib/redact";
 import { isValidProviderName } from "./provider-name";
 import { MODEL_ALIAS_PATTERN } from "../providers/default-aliases";
 import { MODEL_DISCOVERY_MAX_MODELS } from "../providers/model-discovery-limits";
+import { isReservedNativeOpenAiAlias } from "../providers/openai-model-identity";
 import { getProviderRegistryEntry, providerMatchesRegistryTransport, registryModelServiceTierCapabilityApplies } from "../providers/registry";
 import { providerFastSwitchOff } from "../providers/fast-opt-in";
 import { isCodexReasoningEffort } from "../reasoning-effort";
@@ -53,6 +55,20 @@ import {
   chatgptDesktopConfigIssue,
 } from "./schema/leaf-validators";
 import { hasWarnedInheritedFastWireConflict, markWarnedInheritedFastWireConflict } from "./warn-memo";
+
+export function sanitizeCodexPassthroughForLoad(parsed: unknown): string[] {
+  const root = rawConfigRecord(parsed);
+  const providers = rawConfigRecord(root?.providers);
+  const warnings: string[] = [];
+  for (const value of Object.values(providers ?? {})) {
+    const provider = rawConfigRecord(value);
+    if (!provider || provider.codexPassthrough === undefined) continue;
+    const result = readCodexPassthroughConfig(provider.codexPassthrough);
+    provider.codexPassthrough = result.value;
+    warnings.push(...result.warnings);
+  }
+  return warnings;
+}
 
 export function hardenExistingSecret(path: string): void {
   if (existsSync(path) && !isPassiveRead()) {
@@ -1027,7 +1043,7 @@ export function sanitizeAliasesForLoad(raw: unknown): void {
     for (const [id, value] of Object.entries(aliases)) {
       const lower = typeof value === "string" ? value.toLowerCase() : "";
       if (typeof value !== "string" || !MODEL_ALIAS_PATTERN.test(value) || claimed.has(lower)
-        || nativeIds.has(lower) || comboAliases.has(lower) || /^(?:gpt-|o1-|o3-|o4-|codex-)/i.test(value)) {
+        || nativeIds.has(lower) || comboAliases.has(lower) || isReservedNativeOpenAiAlias(value)) {
         console.warn(`Ignoring invalid or colliding model alias for ${id} in config.json`);
         delete aliases[id];
       } else claimed.add(lower);

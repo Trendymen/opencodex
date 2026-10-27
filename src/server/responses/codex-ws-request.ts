@@ -3,6 +3,7 @@ import {
   CODEX_RESPONSES_LITE_HEADER,
   CODEX_RESPONSES_LITE_METADATA_KEY,
 } from "../../codex/forward-transport-headers";
+import type { CodexPassthroughPermissions } from "../../fork/codex-passthrough-contract";
 
 /** Per-turn headers the WebSocket carries in `client_metadata` of each frame, not in the upgrade. */
 export const CODEX_WS_FRAME_HEADERS = ["x-codex-turn-state", "x-codex-turn-metadata"] as const;
@@ -24,21 +25,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function applyLiteMetadata(body: Record<string, unknown>, headers: Headers): boolean {
+function applyLiteMetadata(body: Record<string, unknown>, headers: Headers, permissions?: CodexPassthroughPermissions): boolean {
+  if (permissions?.bridgeLiteMetadata === false && permissions.normalizeRequestParameters === false) return true;
   const metadata = body.client_metadata;
   // Native client metadata is a string map. Do not spread malformed input or
   // turn boolean/number values into plausible but invented protocol strings.
   if (metadata !== undefined && (!isRecord(metadata)
     || Object.values(metadata).some(value => typeof value !== "string"))) return false;
   const lite = headers.get(CODEX_RESPONSES_LITE_HEADER);
-  if (lite === "true" || lite === "false") {
+  if (permissions?.bridgeLiteMetadata !== false && (lite === "true" || lite === "false")) {
     body.client_metadata = { ...(metadata as Record<string, string> | undefined),
       [CODEX_RESPONSES_LITE_METADATA_KEY]: lite };
   }
   for (const name of CODEX_WS_FRAME_HEADERS) {
     const value = headers.get(name);
     const current = body.client_metadata as Record<string, string> | undefined;
-    if (value !== null && !Object.hasOwn(current ?? {}, name)) {
+    if (permissions?.normalizeRequestParameters !== false && value !== null && !Object.hasOwn(current ?? {}, name)) {
       body.client_metadata = { ...current, [name]: value };
     }
   }
@@ -46,17 +48,17 @@ function applyLiteMetadata(body: Record<string, unknown>, headers: Headers): boo
 }
 
 /** Pure preparation; null keeps malformed requests on the existing HTTP fallback path. */
-export function prepareCodexHttpInit(url: string, init: RequestInit): RequestInit {
+export function prepareCodexHttpInit(url: string, init: RequestInit, permissions?: CodexPassthroughPermissions): RequestInit {
   if (url !== CODEX_RESPONSES_HTTP_URL || typeof init.body !== "string") return init;
   const headers = new Headers(init.headers);
   let body: unknown;
   try { body = JSON.parse(init.body); } catch { /* malformed body cannot authorize a hint */ }
-  applyCodexRoutingHint(headers, body);
+  if (permissions?.synthesizeRoutingHint !== false) applyCodexRoutingHint(headers, body);
   return { ...init, headers };
 }
 
 /** Null refuses only WS conversion; canonical HTTP normalization is independently reusable. */
-export function prepareCodexWsRequest(url: string, init: RequestInit): PreparedCodexWsRequest | null {
+export function prepareCodexWsRequest(url: string, init: RequestInit, permissions?: CodexPassthroughPermissions): PreparedCodexWsRequest | null {
   if (typeof init.body !== "string") return null;
   try {
     const parsed: unknown = JSON.parse(init.body);
@@ -65,8 +67,8 @@ export function prepareCodexWsRequest(url: string, init: RequestInit): PreparedC
     const canonical = url === CODEX_RESPONSES_HTTP_URL;
     const httpHeaders = new Headers(init.headers);
     if (canonical) {
-      if (!applyLiteMetadata(body, httpHeaders)) return null;
-      applyCodexRoutingHint(httpHeaders, body);
+      if (!applyLiteMetadata(body, httpHeaders, permissions)) return null;
+      if (permissions?.synthesizeRoutingHint !== false) applyCodexRoutingHint(httpHeaders, body);
     }
     const httpInit = { ...init, headers: httpHeaders };
     // WS is implicitly streaming; retain every other caller field except type.
