@@ -487,8 +487,8 @@ export async function deliverPassthroughResponse(
     nestedExecRepairCoordinator,
     nestedExecInspection,
     inboundDebugObserver,
-    rememberClientVisiblePassthroughResponse,
   } = nativeExchange;
+  const rememberClientVisiblePassthroughResponse = nativeExchange.rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked;
   const { commitReasoningReplayServingRoute, recordTerminalOutcomes } = responseEffects;
   const { parsed, subagentQuotaFailureModel, clientRequestedStream, translatorBudget, inboundWire } = requestState;
   const { openAiSidecar } = sidecarState;
@@ -1347,7 +1347,7 @@ export async function deliverPassthroughResponse(
           commitReasoningReplayServingRoute(nativeExchange.request.headers);
           rawBytes = undefined;
           if (client.terminal.status === "completed") {
-            (rememberClientVisiblePassthroughResponse ?? rememberPassthroughResponseChecked)(client.terminal.response);
+            rememberClientVisiblePassthroughResponse(client.terminal.response);
             nestedExecRepairCoordinator?.markClientCommitted();
           }
           if (downstreamObserver) {
