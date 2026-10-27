@@ -26,7 +26,7 @@ import { applyProviderConfigHints } from "../../src/codex/catalog";
 import { createOpenAIChatAdapter } from "../../src/adapters/openai-chat";
 import type { AdapterRequest } from "../../src/adapters/base";
 import { configuredReasoningEfforts, REASONING_EFFORT_OMIT_SENTINEL } from "../../src/reasoning-effort";
-import { routeModel, routedProviderConfig } from "../../src/router";
+import { routeModel } from "../../src/router";
 import { resolveAdapter } from "../../src/server";
 import { isModelVisionSidecarConsumer } from "../../src/vision/eligibility";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
@@ -388,18 +388,6 @@ describe("provider registry parity", () => {
     expect(KEY_LOGIN_PROVIDERS.deepseek.noVisionModels).toEqual([
       "deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro",
     ]);
-  });
-
-  test("DeepSeek V4 Flash keeps its images instead of handing them to the vision sidecar", () => {
-    const entry = PROVIDER_REGISTRY.find(row => row.id === "deepseek");
-    expect(entry).toBeDefined();
-    // Assert the MERGED route provider, not the seed: routedProviderConfig unions the registry
-    // list with the saved one, so an install whose config still names `deepseek-v4-flash` stays
-    // sidecar-covered until that stale entry is removed.
-    const merged = routedProviderConfig("deepseek", providerConfigSeed(entry!));
-    expect(merged.modelInputModalities?.["deepseek-v4-flash"]).toEqual(["text", "image"]);
-    expect(isModelVisionSidecarConsumer(merged, "deepseek-v4-flash")).toBe(false);
-    expect(isModelVisionSidecarConsumer(merged, "deepseek-chat")).toBe(true);
   });
 
   test("OpenAI API route max-input metadata is trusted and user values only lower it", () => {

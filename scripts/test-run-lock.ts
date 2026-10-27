@@ -933,7 +933,6 @@ export async function acquireTestRunLock(options: AcquireTestRunLockOptions): Pr
   try {
     for (;;) {
       const attempt = gate.run(tryAcquire);
-      if (attempt?.value === "retry" && Date.now() - startedAt < maxWaitMs) continue;
       if (attempt?.value && attempt.value !== "retry") {
         if (attempt.value.acquired && announced) options.onAcquiredAfterWait?.(Date.now() - startedAt);
         return attempt.value;
