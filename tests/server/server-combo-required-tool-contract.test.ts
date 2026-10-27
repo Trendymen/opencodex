@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ManagementRequest as Request } from "../helpers/management-auth";
@@ -17,11 +17,12 @@ import {
   flushResponseState,
   responseStatePersistPendingForTests,
 } from "../../src/responses/state";
-import type { OcxConfig } from "../../src/types";
+import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 import { item as hostedImage } from "../fixtures/hosted-image-display";
 import { createTestTranslatorBudget } from "../helpers/translator-budget";
 import { deliverPassthroughResponse } from "../../src/server/responses/passthrough-delivery";
 import { encryptedInput } from "../helpers/agent-task-recovery";
+import { captureCodexPassthroughTurn } from "../../src/fork/codex-passthrough-turn";
 
 /**
  * #7456: a Responses combo child that answers a `tool_choice`-required request with a buffered
@@ -316,6 +317,38 @@ describe("combo required-tool contract on buffered children (#7456)", () => {
     expect(settled).toMatchObject({ inputTokens: 7, outputTokens: 2 });
     expect(effects).toBe(0);
   });
+  for (const enabled of [undefined, true, false]) for (const stream of [undefined, false]) for (const named of [false, true]) {
+    test(`buffered combo image permission ${enabled}, stream=${stream}, named=${named}`, async () => {
+      const remembered: Record<string, unknown>[] = [];
+      let commits = 0; let effects = 0;
+      const body = { model: "combo/free", input: "synthetic image", ...(stream === undefined ? {} : { stream }),
+        tools: [...tools, { type: "image_generation" }], tool_choice: named ? { type: "function", name: "shell" } : "required" };
+      const request = new Request("http://localhost/v1/responses", { method: "POST",
+        headers: { "content-type": "application/json", originator: "Codex Desktop" }, body: JSON.stringify(body) });
+      const response = await deliverCanonicalBufferedImage(request, hostedImage, () => { effects++; }, { model: "", provider: "" },
+        { normalizeHostedImages: enabled, remember: payload => { remembered.push(payload); }, commit: () => { commits++; } });
+      const result = await response.json() as { output?: Array<Record<string, any>>; error?: { code: string } };
+      const artifacts = join(testDir, "artifacts");
+      if (named) {
+        expect(response.status).toBe(400); expect(result.error?.code).toBe("required_tool_contract_unsatisfied");
+        expect(response.headers.get("x-should-retry")).toBe("false");
+        expect(existsSync(artifacts)).toBe(false); expect(remembered).toEqual([]); expect(commits).toBe(0); expect(effects).toBe(0);
+      } else {
+        expect(response.status).toBe(200);
+        expect(result.output?.[0]?.type).toBe(enabled === false ? "image_generation_call" : "message");
+        if (enabled === false) {
+          expect(result.output).toEqual([hostedImage]); expect(existsSync(artifacts)).toBe(false);
+        } else {
+          expect(result.output?.[0]?.phase).toBe("final_answer");
+          expect(result.output?.[0]?.content[0]?.text).toContain("Generated image");
+          const files = readdirSync(artifacts); expect(files).toHaveLength(1);
+          expect(readFileSync(join(artifacts, files[0]!))).toEqual(Buffer.from(hostedImage.result, "base64"));
+        }
+        expect(remembered).toHaveLength(1); expect(remembered[0]).toMatchObject({ id: "resp_image_required", status: "completed", output: [hostedImage] });
+        expect(JSON.stringify(remembered)).not.toContain("img-codex-"); expect(commits).toBe(1); expect(effects).toBeGreaterThan(0);
+      }
+    });
+  }
   test("buffered image display validation precedes completion effects", async () => {
     let effects = 0;
     const request = requiredRequest({ tools: [{ type: "image_generation" }], tool_choice: "required" });
@@ -716,29 +749,32 @@ describe("combo required-tool contract on buffered children (#7456)", () => {
 const { handleResponses } = await import("../../src/server/responses");
 
 // The canonical forward lane buffers SSE for JSON clients; noncanonical SSE stays streaming.
-async function deliverCanonicalBufferedImage(request: Request, image: Record<string, unknown> = hostedImage, observed = () => {}, logCtx: RequestLogContext = { model: "", provider: "" }): Promise<Response> {
+async function deliverCanonicalBufferedImage(request: Request, image: Record<string, unknown> = hostedImage, observed = () => {}, logCtx: RequestLogContext = { model: "", provider: "" }, settings?: { normalizeHostedImages?: boolean; remember?: (payload: Record<string, unknown>) => void; commit?: () => void }): Promise<Response> {
   const rawBody = await request.json();
+  const imageProvider: OcxProviderConfig = { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex",
+    ...(settings ? { codexPassthrough: { normalizeHostedImages: settings.normalizeHostedImages } } : {}) };
+  const codexPassthroughTurn = settings ? captureCodexPassthroughTurn({ fixture: imageProvider }, "responses") : undefined;
   const payload = { id: "resp_image_required", object: "response", status: "completed", model: "m1", output: [image],
     usage: { input_tokens: 7, output_tokens: 2, total_tokens: 9 } };
   const upstream = new AbortController();
   return deliverPassthroughResponse(
-    { req: request, config: { providers: {} }, logCtx, options: { comboAttempt: true,
+    { req: request, config: { providers: {} }, logCtx, options: { comboAttempt: true, codexPassthroughTurn,
       admission: { kind: "loopback", source: "loopback" }, inboundWire: "responses" } } as Parameters<typeof deliverPassthroughResponse>[0],
     { authCtx: { kind: "none" } } as Parameters<typeof deliverPassthroughResponse>[1],
-    { parsed: { stream: true, modelId: "m1", _rawBody: rawBody }, clientRequestedStream: false,
-      translatorBudget: createTestTranslatorBudget(), route: { provider: { adapter: "openai-responses", authMode: "forward",
-        baseUrl: "https://chatgpt.com/backend-api/codex" }, providerName: "fixture", modelId: "m1", staticPolicy: { model: {} } } } as Parameters<typeof deliverPassthroughResponse>[2],
+    { parsed: { stream: true, modelId: "m1", _rawBody: rawBody }, inboundWire: "responses", clientRequestedStream: rawBody.stream,
+      translatorBudget: createTestTranslatorBudget(), route: { provider: imageProvider, providerName: "fixture", modelId: "m1", staticPolicy: { model: {} } } } as Parameters<typeof deliverPassthroughResponse>[2],
     { requestBindings: new Map() } as Parameters<typeof deliverPassthroughResponse>[3], {} as Parameters<typeof deliverPassthroughResponse>[4],
     { plaintextV2AgentMessageToolNames: new Set(), plaintextV2AgentMessageAliasedToolNames: new Set(),
       routedMuseToolNameAliases: new Map(), routedNamespaceToolAliases: new Map(),
-      commitReasoningReplayServingRoute() {}, recordTerminalOutcomes: false } as Parameters<typeof deliverPassthroughResponse>[5],
+      commitReasoningReplayServingRoute() { settings?.commit?.(); }, recordTerminalOutcomes: false } as Parameters<typeof deliverPassthroughResponse>[5],
     { upstreamResponse: new Response(`data: ${JSON.stringify({ type: "response.completed", response: payload })}\n\ndata: [DONE]\n\n`,
         { headers: { "content-type": "text/event-stream" } }), upstream, request, connectMs: 0,
       imageGenCallAliases: new Map(), selfNamedNamespaceScrubAuthorization: new Set(), authorizedBareNamespaceToolAliases: new Map(),
       routedCustomToolNames: new Set(), routedCustomToolRepairNames: new Set(), declaredWireToolNames: new Set(["shell"]),
       routedToolSearchNames: new Set(), functionRepairSchemas: new Map(), declaredNamelessClientCallTypes: new Set(),
       providerExecutedCallTypes: new Set(), declaredBareWireToolNames: new Set(), recoverableBareCustomWireToolNames: new Set(),
-      undeclaredToolGuardActive: true, rememberPassthroughResponse: false, rememberPassthroughResponseChecked() {}, noteInspectedPayload: observed,
+      undeclaredToolGuardActive: true, rememberPassthroughResponse: false, rememberPassthroughResponseChecked() {},
+      rememberClientVisiblePassthroughResponse: settings?.remember, noteInspectedPayload: observed,
       normalizeFunctionCompletionJson: (value: string) => value, outboundRequestBody: "{}" } as Parameters<typeof deliverPassthroughResponse>[6],
   );
 }
