@@ -12,6 +12,7 @@ import {
 } from "../jev-decision-service";
 import type { ModelOption, ProviderOption } from "./combo-workspace-types";
 import { JEV_SESSION_PIN_TTL_MIN_MS, JEV_SESSION_PIN_TTL_MAX_MS } from "../../../src/combos/jev-session-pin-config";
+import { isCanonicalOpenAiForwardProvider } from "../../../src/providers/openai-tiers-destination";
 
 /** Localized validation message, with the bounds or the decision-service reason filled in. */
 export function comboDraftErrorText(
@@ -58,10 +59,7 @@ export function isChatGptForwardOption(p: ProviderOption | undefined): boolean {
   if (!p) return false;
   const id = p.name.toLowerCase();
   if (id !== "openai" && id !== "chatgpt") return false;
-  if ((p.authMode ?? "").toLowerCase() !== "forward") return false;
-  if ((p.adapter ?? "").toLowerCase() !== "openai-responses") return false;
-  const base = (p.baseUrl ?? "").replace(/\/+$/, "");
-  return !base || base.includes("chatgpt.com/backend-api/codex");
+  return isCanonicalOpenAiForwardProvider(p);
 }
 
 export function modelsForProvider(

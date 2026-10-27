@@ -48,11 +48,12 @@ let quotaRefreshes: number;
 let savedCallbacks: number;
 let addedProviderNames: string[];
 let notifications: Array<{ message: string; ok?: boolean }>;
+let selectedConfig: Config;
 
 function Harness() {
   editor = useJsonConfigEditor({
     apiBase: "/editor",
-    config,
+    config: selectedConfig,
     notify: (message, ok) => { notifications.push({ message, ok }); },
     fetchConfig: async () => { configRefreshes += 1; },
     fetchProviderQuotas: async () => { quotaRefreshes += 1; },
@@ -89,6 +90,7 @@ beforeEach(() => {
   addedProviderNames = [];
   notifications = [];
   responseFactory = async () => Response.json({ success: true });
+  selectedConfig = config;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     requests.push({
       url: String(input),
@@ -165,6 +167,26 @@ test("successful batch registration reports new names for model-selection guidan
   await act(async () => { expect(await editor!.saveConfig()).toBe(true); });
   expect(addedProviderNames).toEqual(["gamma"]);
   expect(savedCallbacks).toBe(1);
+});
+
+test("Codex permissions survive baseline projection, atomic edits and a stale-baseline refusal", async () => {
+  selectedConfig = structuredClone(config);
+  selectedConfig.providers.alpha.codexPassthrough = { normalizeEncryptedContent: true, localErrorPolicies: { resetReplayRefusal: false } };
+  await mountHook(); await act(async () => { editor!.openJsonEditor(); });
+  const baseline = JSON.parse(editor!.draft);
+  expect(baseline.providers.alpha.codexPassthrough).toEqual(selectedConfig.providers.alpha.codexPassthrough);
+  expect(baseline.providers.beta).not.toHaveProperty("codexPassthrough");
+  const next = structuredClone(baseline);
+  next.providers.alpha.codexPassthrough.bridgeLiteMetadata = false;
+  await act(async () => { editor!.setDraft(JSON.stringify(next)); });
+  responseFactory = async () => Response.json({ error: "stale baseline" }, { status: 409 });
+  await act(async () => { expect(await editor!.saveConfig()).toBe(false); });
+  expect(requests[0]?.body).toEqual({ baseline, next });
+  expect(JSON.parse(editor!.draft)).toEqual(next); expect(editor!.jsonEditorOpen).toBe(true);
+  expect(notifications.at(-1)).toEqual({ message: "stale baseline", ok: false });
+  responseFactory = async () => Response.json({ success: true });
+  await act(async () => { expect(await editor!.saveConfig()).toBe(true); });
+  expect(requests[1]?.body).toEqual({ baseline, next }); expect(configRefreshes).toBe(1);
 });
 
 test("parse failures stay distinct from server failures and failed saves do not refresh", async () => {

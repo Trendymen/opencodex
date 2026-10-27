@@ -114,6 +114,43 @@ test.each(["diagnostics", "admission"])("%s disk reads preserve original retired
   });
 });
 
+for (const port of [10101, 10100]) {
+  for (const reader of ["load", "diagnostics", "admission"] as const) {
+    test(`retired provider backup and listener topology survive ${reader} at port ${port}`, () => {
+      withLegacyConfig({ hostname: "127.0.0.1", port, forkModelApiListener: { enabled: true } }, bytes => {
+        const backup = `${getConfigPath()}.pre-opencode-free-removal.bak`;
+        const checkDiagnostics = (diagnostics: ReturnType<typeof readConfigDiagnostics>) => {
+          if (port === 10101) {
+            expect(diagnostics.source).toBe("file");
+            expect(diagnostics.config.forkModelApiListener).toEqual({ enabled: true });
+            expect(diagnostics.config.port).toBe(port);
+            expect(diagnostics.config.providers["opencode-free"]).toBeUndefined();
+          } else {
+            expect(diagnostics.source).toBe("fallback");
+            expect(diagnostics.error).toContain("forkModelApiListener: loopback main port must differ from model API port 10100");
+          }
+        };
+        checkDiagnostics(readConfigDiagnostics({ passive: true }));
+        expect(existsSync(backup)).toBe(false);
+        if (reader === "load") {
+          if (port === 10101) {
+            const config = loadConfig();
+            expect(config.forkModelApiListener).toEqual({ enabled: true });
+            expect(config.port).toBe(port);
+            expect(config.providers["opencode-free"]).toBeUndefined();
+          } else {
+            expect(() => loadConfig()).toThrow("forkModelApiListener: loopback main port must differ from model API port 10100");
+          }
+        } else {
+          checkDiagnostics(reader === "diagnostics" ? readConfigDiagnostics() : readConfigAdmissionSnapshot().diagnostics);
+        }
+        expect(readFileSync(backup)).toEqual(Buffer.from(bytes));
+        expect(readFileSync(getConfigPath(), "utf8")).toBe(bytes);
+      });
+    });
+  }
+}
+
 test.skipIf(process.platform === "win32")("retirement backup is owner-only on POSIX", () => {
   withLegacyConfig({}, () => {
     loadConfig();

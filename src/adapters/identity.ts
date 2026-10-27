@@ -1,4 +1,5 @@
 import type { OcxContext } from "../types";
+import { finalizeRoutedToolPrompt } from "../fork/routed-progress-contract";
 
 /**
  * Central routed-model identity repair.
@@ -289,6 +290,11 @@ export function stripRoutedIdentity(text: string): string {
     .replace(NEUTRAL_IDENTITY_RE, () => "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/** Identity repair plus the tool-task progress contract at an explicit third-party prompt seam. */
+export function identifyRoutedToolPrompt(systemText: string, modelName: string): string {
+  return finalizeRoutedToolPrompt(identifyRoutedModel(systemText, modelName));
 }
 
 /** The catalog (static, on-disk) replacement for `base_instructions`. Same neutral wording. */

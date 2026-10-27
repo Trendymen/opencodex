@@ -1,4 +1,5 @@
 import type { OcxProviderConfig } from "./provider";
+import type { ForkModelApiListenerConfig } from "../fork/model-api-listener-config";
 import type { CodexAccount } from "./accounts";
 import type { AnthropicAccountPoolConfig, OcxAccountPoolRotationStrategy } from "./anthropic-account-pool";
 import type { AnthropicInstanceId } from "../providers/anthropic-instance-id";
@@ -548,6 +549,7 @@ export interface OcxConfig {
   /** Experimental macOS app-server stdout shim; absent or false disables it. */
   chatgptDesktop?: { appServerShim?: boolean };
   port: number;
+  forkModelApiListener?: ForkModelApiListenerConfig;
   /** Runtime topology role. Absence preserves the historical standalone behavior. */
   runtimeRole?: OcxRuntimeRole;
   /** Hub-only public management metadata. Presence is inert outside the hub role. */
@@ -961,10 +963,14 @@ export interface OcxConfig {
   /** Experimental, default-off ChatGPT recovery for encrypted V2 routed tasks. */
   agentTaskRecovery?: {
     enabled?: boolean;
-    /** ChatGPT model used by the recovery request. Default: gpt-5.6-sol. */
+    /** ChatGPT model used by the recovery request. Default: gpt-5.6-luna. */
     model?: string;
-    /** Recovery request timeout in milliseconds. Default: 45000. */
+    /** Reasoning effort sent to the recovery model. Default: medium. */
+    reasoningEffort?: string;
+    /** Per-attempt recovery request timeout in milliseconds. Default: 120000. */
     timeoutMs?: number;
+    /** Number of bounded timeout retries after the first attempt. Default: 2. */
+    maxRetries?: number;
     /** Maximum in-memory ciphertext-to-assignment entries. Default: 200. */
     cacheEntries?: number;
     /**

@@ -2,6 +2,7 @@ import { MAIN_ACCOUNT_HARD_LOCK_MIN_PERCENT } from "../../codex/quota-types";
 import { validRemainingQuotaAccountIds } from "../../codex/account-use-remaining";
 import * as z from "zod/v4";
 import { isAppendOnlyToolLoadingModels } from "../../claude/inbound-tool-loading";
+import { forkModelApiListenerSchema } from "../../fork/model-api-listener-config";
 import { accountPauseStateSchema } from "./account-auto-pause";
 import { anthropicAccountPoolSchema } from "./anthropic-account-pool";
 import { compactionRecoverySchema } from "./compaction-recovery";
@@ -79,7 +80,7 @@ import { redactSecretString } from "../../lib/redact";
 import { openRouterRoutingConfigError } from "../../providers/openrouter-routing";
 import { vercelGatewayRoutingConfigError } from "../../providers/vercel-gateway-routing";
 import { type OcxApiKeyEntry, type OcxProviderConfig } from "../../types";
-import { OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
+import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
 import { modelAutoCompactTokenLimitsConfigError } from "../../providers/auto-compact-budget";
 import { hasFastWireCapabilityConflict } from "../../providers/fastwire";
 import { parseDesktopProfile } from "../../claude/desktop-profile";
@@ -104,6 +105,7 @@ export const configSchema = z.object({
   codexNativeSteering: z.boolean().optional().catch(false),
   codexNativeInjection: z.boolean().optional().catch(false),
   port: z.number().int().min(0).max(65535).default(10100),
+  forkModelApiListener: forkModelApiListenerSchema.optional(),
   // A malformed hand edit must disable only remote-role behavior, not discard
   // providers or data-plane keys. Live writes are rejected explicitly below.
   runtimeRole: runtimeRoleSchema.optional().catch(undefined),
@@ -389,6 +391,7 @@ export const configSchema = z.object({
   // Degrade malformed hand edits locally; candidate writes reject them before parsing.
   // An invalid native preference retains the legacy route instead of enabling native by default.
   anthropicAccountPool: anthropicAccountPoolSchema,
+  customModels: z.unknown().optional(),
   // Same degrade-don't-reject rationale as the fields above: a hand-edited
   // non-string must not trip the backup-and-defaults repair path. Unset then
   // takes the canonical sideband path (src/server/live.ts normalizeSidebandRoot).
@@ -816,14 +819,21 @@ export const configSchema = z.object({
         message: toolReasoningOptOutError,
       });
     }
+    const phaseInferenceError = nonBlankStringArrayConfigError(
+      (provider as { inferResponsesMessagePhaseModels?: unknown }).inferResponsesMessagePhaseModels,
+      "inferResponsesMessagePhaseModels",
+    );
+    if (phaseInferenceError) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["providers", redactSecretString(name), "inferResponsesMessagePhaseModels"],
+        message: phaseInferenceError,
+      });
+    }
     if (Object.hasOwn(provider, "codexAccountMode") && provider.codexAccountMode !== undefined) {
       // Persisted account mode is valid ONLY on the canonical built-in `openai` forward provider.
       // Old openai-multi rows stay parseable (they never carry a mode) so startup can migrate them.
-      const canonicalOpenAiShape = name === "openai"
-        && provider.adapter === "openai-responses"
-        && (provider as { authMode?: unknown }).authMode === "forward"
-        && typeof provider.baseUrl === "string"
-        && provider.baseUrl.replace(/\/+$/, "") === "https://chatgpt.com/backend-api/codex";
+      const canonicalOpenAiShape = name === "openai" && isCanonicalOpenAiForwardProvider(provider);
       if (!canonicalOpenAiShape) {
         ctx.addIssue({
           code: "custom",
