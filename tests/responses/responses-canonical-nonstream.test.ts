@@ -476,6 +476,33 @@ describe("canonical ChatGPT transport for non-streaming Responses callers (#6162
     expect(source.slice(branch, deferredCommit)).not.toContain("commitReasoningReplayServingRoute(");
   });
 
+  test("canonical buffered completion uses the client-visible replay and debug finalizers", () => {
+    const source = readFileSync(repoPath("src/server/responses/passthrough-delivery.ts"), "utf8");
+    const branch = source.indexOf("if (canonicalBufferedJson) {");
+    const branchEnd = source.indexOf("\n      const relayPlatform", branch);
+    const buffered = source.slice(branch, branchEnd);
+    expect(buffered).toContain("rememberClientVisiblePassthroughResponse(client.terminal.response);");
+    expect(buffered).toContain("downstreamObserver.noteJsonResponse(client.terminal.response);");
+    expect(buffered).toContain("persistDownstreamOnce();");
+    expect(buffered).toContain("const disposeBufferedState = (): void =>");
+    expect(buffered).toContain("reasoningReplayProjection?.dispose();");
+    expect(buffered).toContain("nestedExecInspection?.dispose();");
+    expect(buffered).toContain("nestedExecRepairCoordinator?.dispose();");
+    expect(buffered).toContain("effectInspector.dispose();\n          if (!effectInspectionFinished) disposeBufferedState();");
+    const completedBlock = buffered.indexOf('if (client.terminal.status === "completed") {');
+    const downstreamObserver = buffered.indexOf("downstreamObserver.noteJsonResponse(client.terminal.response);");
+    expect(downstreamObserver).toBeGreaterThan(completedBlock);
+    expect(buffered.slice(completedBlock, downstreamObserver)).not.toContain("downstreamObserver.noteJsonResponse");
+    const finalization = buffered.indexOf("commitReasoningReplayServingRoute(nativeExchange.request.headers);");
+    const finalizationCleanup = buffered.indexOf("disposeBufferedState();", finalization);
+    const finalizationTry = buffered.lastIndexOf("try {", finalization);
+    expect(finalizationCleanup).toBeGreaterThan(finalization);
+    expect(finalizationTry).toBeGreaterThan(-1);
+    expect(finalizationTry).toBeLessThan(finalization);
+    expect(buffered.slice(finalizationCleanup - 80, finalizationCleanup + 40)).toContain("finally");
+    expect(buffered).not.toContain("rememberPassthroughResponseChecked(client.terminal.response);");
+  });
+
   test("leaves stream:true callers on the SSE relay", async () => {
     let outbound: Record<string, unknown> | undefined;
     globalThis.fetch = (async (_input, init) => {
@@ -533,20 +560,43 @@ describe("canonical ChatGPT transport for non-streaming Responses callers (#6162
       totalTimeoutMs: BUFFERED_RESPONSES_TOTAL_TIMEOUT_MS,
     });
 
+    let releaseTerminal!: () => void;
+    const terminalReady = new Promise<void>(resolve => { releaseTerminal = resolve; });
+    let notePull!: () => void;
+    const pullStarted = new Promise<void>(resolve => { notePull = resolve; });
+    let pulls = 0;
+    let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        setTimeout(() => {
-          controller.enqueue(new TextEncoder().encode(sseEvent("response.completed", {
-            response: { id: "resp_delayed", status: "completed", output: [] },
-          })));
-          controller.close();
-        }, 10);
+      async pull(controller) {
+        pulls++;
+        notePull();
+        await terminalReady;
+        if (cancelled) return;
+        controller.enqueue(new TextEncoder().encode(sseEvent("response.completed", {
+          response: { id: "resp_delayed", status: "completed", output: [] },
+        })));
+        controller.close();
       },
-    });
-    const result = await collectBufferedResponsesSse(body, new AbortController(), {
+      cancel() {
+        cancelled = true;
+        releaseTerminal();
+      },
+    }, { highWaterMark: 0 });
+    await Promise.resolve();
+    expect(pulls).toBe(0);
+    const pending = collectBufferedResponsesSse(body, new AbortController(), {
       read: bufferedResponsesReadOptions(0, 100),
     });
-    expect(result).toMatchObject({ ok: true, terminal: { status: "completed" } });
+    try {
+      const readStarted = await Promise.race([pullStarted.then(() => true), pending.then(() => false)]);
+      expect(readStarted).toBe(true);
+      expect(pulls).toBe(1);
+      releaseTerminal();
+      const result = await pending;
+      expect(result).toMatchObject({ ok: true, terminal: { status: "completed" } });
+    } finally {
+      releaseTerminal();
+    }
 
     // A later validation pass must inherit the original absolute deadline instead of receiving
     // a fresh totalTimeoutMs window merely because it constructed a new collector.

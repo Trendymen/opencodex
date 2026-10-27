@@ -306,6 +306,7 @@ function nativeConfig(): OcxConfig {
         baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "forward",
         codexAccountMode: "direct",
+        upstreamWebsocket: false,
       },
     },
   } as OcxConfig;

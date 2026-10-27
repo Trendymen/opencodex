@@ -24,8 +24,10 @@ import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { INTERNAL_DEADLINE_MS, SERVER_BUDGET_MS } from "../helpers/test-budget";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 
 const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
 const previousOpencodexHome = process.env.OPENCODEX_HOME;
 const previousApiToken = process.env.OPENCODEX_API_AUTH_TOKEN;
 const REPLAY_TTL_MS = RESPONSE_TTL_MS;
@@ -277,6 +279,7 @@ async function runForwardScenario(
 }
 
 beforeEach(() => {
+  installHttpOnlyCodexWebSocket();
   testHome = mkdtempSync(join(tmpdir(), "ocx-issue-702-"));
   process.env.OPENCODEX_HOME = testHome;
   delete process.env.OPENCODEX_API_AUTH_TOKEN;
@@ -287,6 +290,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  globalThis.WebSocket = originalWebSocket;
   clearResponseStateForTests();
   setResponseStateByteCapForTests(null);
   resetSubagentModelFallbackStateForTests();

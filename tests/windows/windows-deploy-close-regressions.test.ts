@@ -29,8 +29,10 @@ describe("update-job restart avoids the shell-less .cmd EINVAL (Windows, bun/sou
     // Service reinstall still runs (with bake) even when reclaim warns; direct start refuses to hop.
     expect(src).toContain("refusing to hop");
     expect(src).toContain("runtimeTrusted");
-    expect(read("src/cli/index.ts")).toContain("allowEphemeralFallback: !hardPin");
-    expect(read("src/cli/index.ts")).toContain("preferRetryMs: hardPin ? 5_000 : 750");
+    const listenPort = read("src/cli/index.ts");
+    expect(listenPort).toContain('const hardPin = (requestedPort !== undefined && requestedPort > 0) || topology.mode !== "disabled";');
+    expect(listenPort).toContain("allowEphemeralFallback: preferred === 0 || !hardPin");
+    expect(listenPort).toContain("preferRetryMs: hardPin ? 5_000 : 750");
     expect(read("src/cli/dispatch.ts")).toContain("Not opening the GUI");
     expect(read("src/server/ports.ts")).toContain("allowEphemeralFallback");
   });
@@ -119,14 +121,14 @@ describe("server bind canonicalizes explicit localhost but preserves wildcards (
     // loopback-only, so a bare substring ban would forbid the fix rather than the defect.
     // Pin the assertion to the public serve call instead: it must take bindHost and nothing
     // else.
-    // Wrapper-aware, because the public listener is now handed to a lifecycle registrar as it is
-    // created. Both halves of the original claim are kept: the serve call's argument object is
-    // pinned exactly, so the public bind still takes bindHost and nothing else, and `server` is
-    // still what that call is assigned to, through at most one registrar call.
-    expect(src).toContain("Bun.serve<WsData>({ ...serveOptions, port: listenPort, hostname: bindHost })");
+    // The primary bind keeps its exact options and one lifecycle registrar. The factory's
+    // production branch must pass those options unchanged to Bun.serve.
+    expect(src).toContain("bindListener({ ...serveOptions, port: listenPort, hostname: bindHost })");
     expect(src).toMatch(
-      /\bserver = (?:[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\()?Bun\.serve<WsData>\(\{ \.\.\.serveOptions, port: listenPort, hostname: bindHost \}\)/,
+      /\bserver = spendLedgerLifecycle\.track\(bindListener\(\{ \.\.\.serveOptions, port: listenPort, hostname: bindHost \}\)\);/,
     );
+    expect(src).toContain("function bindListener(options: Bun.Serve.Options<WsData>): Server<WsData> {");
+    expect(src).toContain("return deps.bindListener ? deps.bindListener(options) : Bun.serve<WsData>(options);");
     expect(src).not.toMatch(/port: listenPort,\s*\n\s*hostname: "127\.0\.0\.1"/);
     expect(src).not.toContain("port: listenPort, hostname: \"127.0.0.1\"");
   });

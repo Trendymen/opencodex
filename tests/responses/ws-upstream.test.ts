@@ -35,6 +35,7 @@ import { BOUNDED_WS_RUNTIME, codexWsUpstreamFetch, shouldUseCodexWsUpstream, str
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { installCompactionRoutingAclFixture as installRoutingAclFixture } from "../helpers/compaction-routing-fixtures";
 installRoutingAclFixture();
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 
 const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
 
@@ -659,6 +660,7 @@ describe("handleResponses Codex WS relay selection", () => {
   // `blockRewrites`, so observing its transformation is what proves
   // `clientBlockRewrite !== undefined`, hence `needsClientRewrite === true`.
   test("the registered rewrite chain transforms the client stream, so needsClientRewrite is true", async () => {
+    installHttpOnlyCodexWebSocket();
     const upstreamEvent = {
       type: "response.completed",
       response: {

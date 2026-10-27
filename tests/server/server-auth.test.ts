@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { logsFromApiBody } from "../helpers/logs-api";
 import { timeoutGatedErrorBody } from "../helpers/timeout-gated-error-body";
 import { abortableSseUpstream } from "../helpers/abortable-sse-upstream";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
@@ -1479,6 +1480,7 @@ describe("server local API auth", () => {
       return originalGlobalFetch(input, init);
     }) as typeof fetch;
     globalThis.fetch = matrixFetch;
+    installHttpOnlyCodexWebSocket();
 
     const request = (server: ReturnType<typeof startServer>, headers?: HeadersInit, model = "gpt-test") => {
       const requestHeaders = new Headers(headers);
@@ -2013,39 +2015,36 @@ describe("server local API auth", () => {
         return Response.json({ id: "resp_test", object: "response", status: "completed", output: [] });
       },
     });
-    redirectCanonicalCodexTo(upstream.url.toString());
     const now = 1_800_000_000_000;
-    saveConfig({
-      port: 0,
-      defaultProvider: "openai",
-      openaiProviderTierVersion: 2,
-      websockets: true,
-      providers: poolProviders(),
-      codexAccounts: [
-        { id: "main", email: "main@example.test", isMain: true },
-        { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
-      ],
-      activeCodexAccountId: "pool-a",
-    } as OcxConfig);
-    saveCodexAccountCredential("pool-a", {
-      accessToken: "pool-access-token",
-      refreshToken: "pool-refresh-token",
-      expiresAt: now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 10 * 60_000,
-      chatgptAccountId: "acct-pool-a",
-    });
     const originalNow = Date.now;
-    // Pin the clock BEFORE startServer, not after. `startServer` returns synchronously but
-    // arms an async pool-quota prime (src/server/index.ts:2054-2064) that outlives its
-    // return, and that prime decides staleness with `Date.now() - quota.updatedAt >=
-    // POOL_CACHE_TTL` (src/codex/auth-api.ts:1334-1337), where a MISSING entry is stale too.
-    // Seeding the quota after the pin is what actually keeps the prime quiet: a seed written
-    // before the pin stamps `updatedAt` with the real clock, which reads as months of cache
-    // age against this 2027 `now` and sends the prime off to fetch and rotate the credential
-    // out from under the assertions.
-    Date.now = () => now;
-    updateAccountQuota("pool-a", 10, 5);
-    const server = startServer(0);
+    const originalFetch = globalThis.fetch;
+    let server: ReturnType<typeof startServer> | undefined;
     try {
+      redirectCanonicalCodexTo(upstream.url.toString());
+      saveConfig({
+        port: 0,
+        defaultProvider: "openai",
+        openaiProviderTierVersion: 2,
+        websockets: true,
+        providers: poolProviders(),
+        codexAccounts: [
+          { id: "main", email: "main@example.test", isMain: true },
+          { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
+        ],
+        activeCodexAccountId: "pool-a",
+      } as OcxConfig);
+      saveCodexAccountCredential("pool-a", {
+        accessToken: "pool-access-token",
+        refreshToken: "pool-refresh-token",
+        expiresAt: now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 10 * 60_000,
+        chatgptAccountId: "acct-pool-a",
+      });
+      // startServer schedules an asynchronous pool-quota prime. Seed a fresh
+      // quota under the same fake clock so that prime performs no real WHAM I/O.
+      Date.now = () => now;
+      updateAccountQuota("pool-a", 10, 5);
+      expect(getAccountQuota("pool-a")?.updatedAt).toBe(now);
+      server = startServer(0);
       for (const threadId of ["expired-http", "expired-compact", "expired-ws"]) {
         const response = await fetch(new URL("/v1/responses", server.url), {
           method: "POST",
@@ -2061,6 +2060,8 @@ describe("server local API auth", () => {
       expect(upstreamRequests).toBe(3);
 
       Date.now = () => now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 1;
+      updateAccountQuota("pool-a", 10, 5);
+      expect(getAccountQuota("pool-a")?.updatedAt).toBe(now + CODEX_THREAD_AFFINITY_IDLE_TTL_MS + 1);
       const httpResponse = await fetch(new URL("/v1/responses", server.url), {
         method: "POST",
         headers: {
@@ -2109,8 +2110,12 @@ describe("server local API auth", () => {
       expect(upstreamRequests).toBe(3);
     } finally {
       Date.now = originalNow;
-      await server.stop(true);
-      await upstream.stop(true);
+      globalThis.fetch = originalFetch;
+      try {
+        if (server) await server.stop(true);
+      } finally {
+        await upstream.stop(true);
+      }
     }
   });
 
@@ -2133,49 +2138,38 @@ describe("server local API auth", () => {
         );
       },
     });
-    redirectCanonicalCodexTo(upstream.url.toString());
     const now = 1_800_000_000_000;
-    saveConfig({
-      port: 0,
-      defaultProvider: "openai",
-      openaiProviderTierVersion: 2,
-      websockets: true,
-      providers: poolProviders(),
-      codexAccounts: [
-        { id: "main", email: "main@example.test", isMain: true },
-        { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
-      ],
-      codexAccountNamespaces: { "ws-refresh": "pool-a" },
-      activeCodexAccountId: "pool-a",
-    } as OcxConfig);
     const originalNow = Date.now;
     const originalFetch = globalThis.fetch;
-    // Both the clock and the fetch stub go up before `startServer`. The async pool-quota
-    // prime it arms (src/server/index.ts:2054-2064) reads the clock AND fetches, so leaving
-    // either real for the width of two dynamic `import()` resolutions is what made this test
-    // fail on loaded CI runners while passing locally: the prime judged `pool-a` stale
-    // against a 2027 clock versus a `updatedAt` stamped in real time, then refreshed the
-    // credential before the first turn was served — so `seenAuth[0]` was already the new
-    // token. The failure diff was always the first element, never the second.
-    Date.now = () => now;
-    // Seed the credential and quota AFTER the clock is pinned.
-    //
-    // Both writes stamp real time when they run before the pin: `updateAccountQuota` sets
-    // `updatedAt: Date.now()`, and `saveCodexAccountCredential` sets `replacedAt`. The
-    // startup pool-quota prime then compares those stamps
-    // against this 2027 `now` and judges stale — so it refreshes the credential before the
-    // first turn is served and `seenAuth[0]` is already the new token. Pinning the clock
-    // and the fetch stub first (#3139) closed the window for the prime's own reads, but not
-    // for a timestamp written before either was in place, which is why this kept flaking on
-    // loaded runners after that fix.
-    saveCodexAccountCredential("pool-a", {
-      accessToken: "old-access-token",
-      refreshToken: "old-refresh-token",
-      expiresAt: now + 120_000,
-      chatgptAccountId: "acct-pool-a",
-    });
-    updateAccountQuota("pool-a", 10, 5);
-    globalThis.fetch = (async (input, init) => {
+    let server: ReturnType<typeof startServer> | undefined;
+    try {
+      redirectCanonicalCodexTo(upstream.url.toString());
+      const redirectedFetch = globalThis.fetch;
+      saveConfig({
+        port: 0,
+        defaultProvider: "openai",
+        openaiProviderTierVersion: 2,
+        websockets: true,
+        providers: poolProviders(),
+        codexAccounts: [
+          { id: "main", email: "main@example.test", isMain: true },
+          { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "acct-pool-a" },
+        ],
+        codexAccountNamespaces: { "ws-refresh": "pool-a" },
+        activeCodexAccountId: "pool-a",
+      } as OcxConfig);
+      // Keep the startup quota prime inside one coherent fixture clock/network:
+      // quota timestamps, staleness reads, and any refresh all use these fakes.
+      Date.now = () => now;
+      saveCodexAccountCredential("pool-a", {
+        accessToken: "old-access-token",
+        refreshToken: "old-refresh-token",
+        expiresAt: now + 120_000,
+        chatgptAccountId: "acct-pool-a",
+      });
+      updateAccountQuota("pool-a", 10, 5);
+      expect(getAccountQuota("pool-a")?.updatedAt).toBe(now);
+      globalThis.fetch = (async (input, init) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         if (url === "https://auth.openai.com/oauth/token") {
           return new Response(JSON.stringify({
@@ -2184,19 +2178,18 @@ describe("server local API auth", () => {
             expires_in: 3600,
           }), { status: 200 });
         }
-        return originalFetch(input, init);
-    }) as typeof fetch;
-    const server = startServer(0);
-    const wsUrl = new URL("/v1/responses", server.url);
-    wsUrl.protocol = "ws:";
-    try {
+        return redirectedFetch(input, init);
+      }) as typeof fetch;
+      server = startServer(0);
+      const wsUrl = new URL("/v1/responses", server.url);
+      wsUrl.protocol = "ws:";
       const ws = new WebSocket(wsUrl);
       const waitForOpen = new Promise<void>((resolve, reject) => {
         ws.addEventListener("open", () => resolve(), { once: true });
         ws.addEventListener("error", () => reject(new Error("websocket failed to open")), { once: true });
       });
       const waitForTerminal = () => new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), watchdogMs(1000));
+        const timer = setTimeout(() => reject(new Error("websocket terminal timeout")), INTERNAL_DEADLINE_MS);
         const onMessage = (event: MessageEvent) => {
           const text = typeof event.data === "string" ? event.data : "";
           if (text.includes('"type":"response.completed"')) {
@@ -2209,11 +2202,13 @@ describe("server local API auth", () => {
       });
 
       await waitForOpen;
+      const firstTerminal = waitForTerminal();
       ws.send(JSON.stringify({ type: "response.create", model: "ws-refresh/gpt-test", input: "hello" }));
-      await waitForTerminal();
+      await firstTerminal;
       Date.now = () => now + 180_000;
+      const secondTerminal = waitForTerminal();
       ws.send(JSON.stringify({ type: "response.create", model: "ws-refresh/gpt-test", input: "again" }));
-      await waitForTerminal();
+      await secondTerminal;
       ws.close();
 
       expect(seenAuth).toEqual(["Bearer old-access-token", "Bearer new-access-token"]);
@@ -2222,8 +2217,11 @@ describe("server local API auth", () => {
     } finally {
       Date.now = originalNow;
       globalThis.fetch = originalFetch;
-      await server.stop(true);
-      await upstream.stop(true);
+      try {
+        if (server) await server.stop(true);
+      } finally {
+        await upstream.stop(true);
+      }
     }
   });
 
@@ -3377,26 +3375,17 @@ describe("server local API auth", () => {
     }
   }, { timeout: SERVER_BUDGET_MS });
 
-  // #2398 changed what the caller sees here, and this test had to move with it.
-  //
-  // The invariant this test exists for is unchanged and still asserted: an oversized 400
-  // must NOT authorize a pool retry, so exactly one account is dispatched and neither
-  // account is marked unhealthy. What changed is the body. Relaying 65 KiB of
-  // attacker-controlled bytes back to the client is precisely what #2398 stopped, so the
-  // caller now gets #452's bounded status-only JSON instead of the original prefix
-  // (pinned from the other side by "oversized passthrough errors become bounded
-  // status-only JSON" in tests/codex-integration/issue-452-empty-503.test.ts).
-  //
-  // The upstream's own headers still survive, which is what keeps pool-retry diagnostics
-  // honest — that part is still checked below.
+  // An oversized error cannot authorize another account send. With injected Pool
+  // credentials, delivery also requires a bounded, complete body for protection.
   test("oversized 400 body never authorizes a pool retry", async () => {
     const hostileSuffix = "x".repeat(65_536);
     const body = `${unsupportedModelBody()}${hostileSuffix}`;
     const harness = await startPoolRetryHarness(() => rejectionResponse(body));
     try {
       const response = await harness.request();
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(502);
       const text = await response.text();
+      expect(JSON.parse(text).error.code).toBe("upstream_error_protection_failed");
       expect(text).not.toContain(hostileSuffix);
       expect(text.length).toBeLessThan(1_024);
 
@@ -3457,7 +3446,9 @@ describe("server local API auth", () => {
     const body = '{"detail":';
     const harness = await startPoolRetryHarness(() => rejectionResponse(body));
     try {
-      await expectOriginal400(await harness.request(), body);
+      const response = await harness.request();
+      expect(response.status).toBe(502);
+      expect((await response.json()).error.code).toBe("upstream_error_protection_failed");
       expect(harness.dispatches).toEqual(["acct-pool-a"]);
     } finally {
       await stopPoolRetryHarness(harness);

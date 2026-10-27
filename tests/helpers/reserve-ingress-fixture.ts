@@ -14,16 +14,20 @@ import { clearAccountQuota } from "../../src/codex/quota";
 import { clearMainAccountInfoCache, observeMainQuotaCredential } from "../../src/codex/main-account-cache";
 import { reconcileMainCodexAccountRuntimeState, resetMainCodexAccountIdentityTrackingForTests } from "../../src/codex/account-lifecycle";
 import { clearCodexUpstreamHealth, clearThreadAccountMap } from "../../src/codex/routing";
-import { isNativeMainTrafficBlocked, waitForNativeMainStartupGate } from "../../src/codex/native-profile-startup";
+import { isNativeMainTrafficBlocked, nativeMainStartupGateSnapshot, waitForNativeMainStartupGate } from "../../src/codex/native-profile-startup";
 import { startServer } from "../../src/server";
 import { resetLifecycleDrainStateForTests } from "../../src/server/lifecycle";
 import { findAvailablePort } from "../../src/server/ports";
-import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests } from "../../src/lib/windows-secret-acl";
+import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests, windowsSecretAclReapPendingAtOrBelow } from "../../src/lib/windows-secret-acl";
+import { assertSpendLedgerOwnerHeld, spendLedgerOwnerSnapshot } from "../../src/lib/spend-ledger-owner";
+import { pendingBackgroundWork } from "../../src/lib/background-work";
+import { closeRequestHistoryIndex } from "../../src/routing/history/indexer";
+import { clearResponseStateForTests, flushResponseState } from "../../src/responses/state";
 import { isTestHomeGuardArmed } from "../../src/lib/test-home-guard";
 import type { OcxConfig } from "../../src/types";
 import { fakeChatGptJwt } from "./fake-chatgpt-jwt";
 import { ownedServiceHomeInspection } from "./owned-service-home-inspection";
-import { removeTreeWithRetry } from "./remove-tree";
+import { removeTreeAfterBackgroundWork } from "./remove-tree";
 import { INTERNAL_DEADLINE_MS } from "./test-budget";
 
 export const PROXY_KEY = "ocx_data_reserve_ingress_fixture";
@@ -40,6 +44,18 @@ export function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(done => { resolve = done; });
   return { promise, resolve };
+}
+
+export async function withReserveIngressCleanup<T>(body: () => T | Promise<T>, ...cleanups: Array<() => unknown>): Promise<T> {
+  const errors: unknown[] = [];
+  let result!: T;
+  try { result = await body(); } catch (error) { errors.push(error); }
+  for (const cleanup of cleanups) {
+    try { await cleanup(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "Reserve ingress body or cleanup failed");
+  return result;
 }
 
 function clearState(): void {
@@ -92,25 +108,83 @@ export async function reserveIngressFixture(options: {
   const sockets = new Set<WebSocket>();
   const unexpected: string[] = [];
 
-  const close = async () => {
-    holdUsage?.resolve();
-    holdCredential?.resolve();
-    for (const socket of sockets) socket.close();
-    try { await server?.stop(true); }
-    finally {
-      globalThis.fetch = nativeFetch;
-      for (const restore of restores.reverse()) restore();
-      clearState();
-      try { await flushConfigDirHardeningForTests(); }
-      finally {
-        setIcaclsRunnerForTests(null); setAsyncIcaclsRunnerForTests(null);
-        for (const [name, value] of oldEnv) {
-          if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  const observe = <T>(read: () => T): T | "unavailable" => {
+    try { return read(); } catch { return "unavailable"; }
+  };
+  const ownerState = () => {
+    const gate = observe(() => {
+      const current = nativeMainStartupGateSnapshot();
+      return {
+        nativeGate: current.status === "ready" || current.status === "blocked" ? current.status : "unavailable",
+        homeIdIsNull: current.homeId === null ? true : typeof current.homeId === "string" ? false : "unavailable",
+      };
+    });
+    return {
+      spend: observe(() => {
+        const current = spendLedgerOwnerSnapshot().ownership;
+        return current === "held" || current === "unheld" ? current : "unavailable";
+      }),
+      targetSpend: observe(() => {
+        try { assertSpendLedgerOwnerHeld(configHome); return "held"; }
+        catch (error) {
+          return error instanceof Error && "code" in error && error.code === "SPEND_LEDGER_OWNER_NOT_HELD"
+            ? "not-held" : "unavailable";
         }
-        removeTreeWithRetry(root);
-      }
-    }
-    expect(unexpected).toEqual([]);
+      }),
+      ...(gate === "unavailable" ? { nativeGate: "unavailable", homeIdIsNull: "unavailable" } : gate),
+      nativeOwner: "unavailable",
+    };
+  };
+  const close = async () => {
+    let serverStop = "not-started";
+    let hardening = "not-started";
+    let beforeStop: ReturnType<typeof ownerState> | "not-started" = "not-started";
+    let afterStop: ReturnType<typeof ownerState> | "not-started" = "not-started";
+    await withReserveIngressCleanup(
+      () => { holdUsage?.resolve(); holdCredential?.resolve(); },
+      ...[...sockets].map(socket => () => socket.close()),
+      async () => {
+        beforeStop = ownerState();
+        serverStop = server ? "rejected" : "not-started";
+        try {
+          await server?.stop(true);
+          if (server) serverStop = "fulfilled";
+        } finally { afterStop = ownerState(); }
+      },
+      closeRequestHistoryIndex,
+      flushResponseState,
+      clearResponseStateForTests,
+      () => { globalThis.fetch = nativeFetch; },
+      ...restores.reverse(),
+      clearState,
+      async () => { hardening = "rejected"; await flushConfigDirHardeningForTests(); hardening = "fulfilled"; },
+      () => { setIcaclsRunnerForTests(null); },
+      () => { setAsyncIcaclsRunnerForTests(null); },
+      ...oldEnv.map(([name, value]) => () => {
+        if (value === undefined) delete process.env[name]; else process.env[name] = value;
+      }),
+      async () => {
+        try { await removeTreeAfterBackgroundWork(root); }
+        catch (error) {
+          try {
+            const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+            const safeCode = ["EBUSY", "EPERM", "EACCES", "ENOTEMPTY"].includes(code ?? "") ? code : "other";
+            const state = {
+              beforeStop, afterStop, atFailure: ownerState(),
+              backgroundPending: observe(() => pendingBackgroundWork().length > 0),
+              aclPending: observe(() => {
+                const pending = windowsSecretAclReapPendingAtOrBelow(root);
+                return typeof pending === "boolean" ? pending : "unavailable";
+              }),
+              registeredSockets: Math.min(sockets.size, 1_000_000),
+            };
+            console.warn(`[reserve-ingress-cleanup] server-stop=${serverStop} config-hardening=${hardening} remove-tree=rejected code=${safeCode} state=${JSON.stringify(state)}`);
+          } catch { /* Diagnostic reads and output must preserve the removal error. */ }
+          throw error;
+        }
+      },
+      () => { expect(unexpected).toEqual([]); },
+    );
   };
 
   try {
@@ -264,5 +338,5 @@ export async function reserveIngressFixture(options: {
         expect(readFileSync(join(configHome, "config.json"), "utf8")).toBe(baselineDisk);
       },
     };
-  } catch (error) { await close(); throw error; }
+  } catch (error) { return withReserveIngressCleanup(() => { throw error; }, close); }
 }
