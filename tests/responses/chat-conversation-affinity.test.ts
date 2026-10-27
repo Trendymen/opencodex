@@ -9,10 +9,12 @@ import type { OcxConfig } from "../../src/types";
 import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 // #3433 transport contract only: these client-assigned fixture IDs are not a capture of Hermes.
 const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
 const identityHeaders = ["session_id", "session-id", "thread-id", "x-codex-parent-thread-id"];
 let isolated: IsolatedCodexHome;
 let home: string;
@@ -20,6 +22,7 @@ let previousHome: string | undefined;
 let releaseSpendHome: (() => void) | undefined;
 
 beforeEach(() => {
+  installHttpOnlyCodexWebSocket();
   isolated = installIsolatedCodexHome("ocx-chat-identity-");
   previousHome = process.env.OPENCODEX_HOME;
   home = mkdtempSync(join(tmpdir(), "ocx-chat-identity-config-"));
@@ -32,6 +35,7 @@ afterEach(() => {
   releaseSpendHome?.();
   releaseSpendHome = undefined;
   globalThis.fetch = originalFetch;
+  globalThis.WebSocket = originalWebSocket;
   isolated.restore();
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;

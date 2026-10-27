@@ -271,7 +271,7 @@ describe("xAI policy-refusal 403", () => {
     const dispatch = await readFile(repoPath("src/server/responses/adapter-dispatch.ts"), "utf8");
     const passthrough = await readFile(repoPath("src/server/responses/passthrough-delivery.ts"), "utf8");
     for (const source of [dispatch, passthrough]) {
-      const overflow = source.indexOf("if (upstreamResponse.status === 413)");
+      const overflow = source.indexOf("if (upstreamResponse.status === 413");
       const rewrite = source.indexOf("rewriteUpstreamPolicyRefusal({", overflow);
       expect(overflow).toBeGreaterThan(-1);
       expect(rewrite).toBeGreaterThan(overflow);

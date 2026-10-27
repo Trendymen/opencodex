@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   assertClientLifecycleHeld, withClientLifecycle, withClientLifecycleSync,
@@ -16,7 +17,7 @@ let lockPath = "";
 const children = new Set<ReturnType<typeof Bun.spawn>>();
 
 beforeEach(() => {
-  root = mkdtempSync(join(import.meta.dir, ".tmp-client-lifecycle-"));
+  root = mkdtempSync(join(tmpdir(), ".tmp-client-lifecycle-"));
   lockPath = join(root, "lock.sqlite");
 });
 
@@ -88,6 +89,11 @@ function contender(path: string, sync: boolean) {
     } catch (error) { console.log(JSON.stringify({ ran, code: error.code })); }
   `);
 }
+
+test("lock fixture stays in system temporary storage outside the repository tests tree", () => {
+  expect(root.startsWith(`${tmpdir()}${sep}`)).toBe(true);
+  expect(root.startsWith(`${repoPath("tests")}${sep}`)).toBe(false);
+});
 
 test("async and sync leases are valid only during their own callback", async () => {
   let asyncLease!: ClientLifecycleHeld;

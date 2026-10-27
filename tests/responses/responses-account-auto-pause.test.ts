@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { recoverAutoPausedAccount } from "../../src/server/responses/account-auto-pause-recovery";
+import { markAccountAutoPaused, markPermanentAccountRefusal, wasAccountAutoPaused, wasPermanentAccountRefusal } from "../../src/lib/account-auto-pause-response";
+import { trackProviderRequestSlotBody } from "../../src/providers/request-pacing";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -228,3 +231,55 @@ for (const wire of ["chat", "messages"] as const) for (const distributed of [fal
     expect(config.providers.fixture!.apiKeyPool![0]!.disabled).toBe(true);
   });
 }
+
+for (const stop of ["remaining", "reserve", "refresh", "locked"] as const) {
+  test(`auto-pause recovery preserves the owned failure when ${stop} prevents replacement`, async () => {
+    const response = new Response("synthetic original", { status: 403 });
+    const reader = stop === "locked" ? response.body!.getReader() : undefined;
+    let fetched = false;
+    const result = await recoverAutoPausedAccount({ requestKey: {}, response, signal: new AbortController().signal,
+      remaining: stop === "remaining" ? 0 : 1,
+      reserve: () => ({ allowed: stop !== "reserve" }),
+      refresh: async () => stop !== "refresh", refetch: async () => { fetched = true; return response; }, setPermit() {},
+    });
+    expect(result).toBeUndefined(); expect(fetched).toBe(false);
+    if (reader) {
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe("synthetic original");
+      expect((await reader.read()).done).toBe(true); reader.releaseLock();
+    } else expect(await response.text()).toBe("synthetic original");
+  });
+}
+
+for (const oversized of [false, true]) {
+  test(`auto-pause retains a bounded failure and releases its lease before refetch (oversized=${oversized})`, async () => {
+    let released = false, cancelled = false;
+    const text = oversized ? "x".repeat(65_537) : "synthetic original";
+    const response = trackProviderRequestSlotBody({ leased: true, bodyTracked: false, released: false, release() { released = true; } },
+      new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(text)); if (!oversized) controller.close(); },
+        cancel() { cancelled = true; } }), { status: 403, headers: { "content-length": String(text.length), "content-encoding": "gzip", "x-fixture": "keep" } }));
+    markAccountAutoPaused(response); markPermanentAccountRefusal(response);
+    const result = await recoverAutoPausedAccount({ requestKey: {}, response, signal: new AbortController().signal,
+      reserve: () => ({ allowed: true }), refresh: async () => true,
+      refetch: async retained => {
+        expect(released).toBe(true); expect(retained.status).toBe(403);
+        expect(retained.headers.has("content-length")).toBe(false); expect(retained.headers.has("content-encoding")).toBe(false);
+        expect(retained.headers.get("x-fixture")).toBe("keep");
+        expect(wasAccountAutoPaused(retained)).toBe(true); expect(wasPermanentAccountRefusal(retained)).toBe(true);
+        expect(await retained.text()).toBe(oversized ? "" : text); return "replacement";
+      }, setPermit() {},
+    });
+    expect(result).toBe("replacement"); expect(cancelled).toBe(oversized);
+  });
+}
+
+test("auto-pause abort cancels a pending bounded read and never refetches", async () => {
+  const abort = new AbortController(); let cancelled = false, fetched = false, released = false;
+  const response = new Response(new ReadableStream({ cancel() { cancelled = true; } }));
+  const pending = recoverAutoPausedAccount({ requestKey: {}, response, signal: abort.signal,
+    reserve: () => ({ allowed: true, permit: { sendClass: "auth-recovery", use: () => true, assumeCharge: () => true, release() { released = true; } } }),
+    refresh: async () => true, refetch: async () => { fetched = true; }, setPermit() {},
+  });
+  await Promise.resolve(); abort.abort(new Error("synthetic recovery abort"));
+  await expect(pending).rejects.toThrow("synthetic recovery abort");
+  expect(cancelled).toBe(true); expect(fetched).toBe(false); expect(released).toBe(true);
+});
