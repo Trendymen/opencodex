@@ -401,7 +401,8 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       if (normalizeParameters) outBody = repairLegacyDottedToolCallNames(outBody);
       // Shared HTTP/WS outbound projection, including concrete combo/fallback destinations.
       if (isOpenAiOperatedResponsesDestination(provider)) {
-        outBody = repairUrlCitationAnnotations(stripProviderInputItemMetadata(outBody));
+        outBody = stripProviderInputItemMetadata(outBody);
+        if (normalizeParameters) outBody = repairUrlCitationAnnotations(outBody);
       }
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         if (provider.preserveResponsesMessageMetadata !== true) {
@@ -637,7 +638,8 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         validateFinalCustomToolCompatibility(finalBody, provider.supportsResponsesCustomTools);
       }
       let wireBody = applyGithubCopilotContextTier(finalBody, provider, parsed.modelId, incoming.providerName);
-      if (isOpenAiOperatedResponsesDestination(provider) || provider.reasoningWireFormat !== "gateway-object") {
+      if (normalizeParameters
+        && (isOpenAiOperatedResponsesDestination(provider) || provider.reasoningWireFormat !== "gateway-object")) {
         wireBody = stripInternalReasoningEnabled(wireBody);
       }
       const body = JSON.stringify(wireBody);

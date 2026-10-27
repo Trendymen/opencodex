@@ -26,6 +26,53 @@ const body = { model: "gpt-5.6-sol", stream: false, temperature: 0.2, max_output
   unknown_valid_field: { order: [3, 1, 2], annotations: [{ type: "custom", field: "keep" }] } };
 
 describe("official request permission controls", () => {
+  for (const enabled of [undefined, true, false]) for (const destination of ["canonical", "api", "gateway", "gateway-object"] as const) {
+    test(`body normalization permission ${enabled} at ${destination}`, () => {
+      const canonical = destination === "canonical";
+      const operated = canonical || destination === "api";
+      const raw = { model: body.model, stream: true, store: false,
+        reasoning: { enabled: false, effort: "high" },
+        input: [{ type: "message", role: "assistant", status: "completed", extra_content: { vendor: "keep raw metadata" },
+          content: [{ type: "output_text", text: "synthetic citation", annotations: [
+            { type: "url_citation", url: "https://citation.example.test/source", start_index: "3", end_index: "9", unknown: "keep" },
+          ] }] }] };
+      const before = structuredClone(raw);
+      const provider = { adapter: "openai-responses" as const, authMode: canonical ? "forward" as const : "key" as const,
+        baseUrl: canonical ? "https://chatgpt.com/backend-api/codex" : destination === "api" ? "https://api.openai.com/v1" : "https://gateway.example.test/v1",
+        ...(destination === "gateway-object" ? { reasoningWireFormat: "gateway-object" as const } : {}) };
+      const budget = createTranslatorBudget();
+      try {
+        const request = createResponsesPassthroughAdapter(provider).buildRequest({ modelId: raw.model, context: { messages: [] },
+          stream: true, options: {}, _rawBody: raw }, { headers: new Headers(), translatorBudget: budget,
+          codexPassthroughPermissions: resolveCodexPassthroughPermissions({ normalizeRequestParameters: enabled }) });
+        try {
+          const sent = JSON.parse(request.body as string);
+          const normalize = !canonical || enabled !== false;
+          const annotation = raw.input[0]!.content[0]!.annotations[0]!;
+          expect(sent.input[0].content[0].annotations).toEqual([operated && normalize
+            ? { ...annotation, title: annotation.url, start_index: 3, end_index: 9 } : annotation]);
+          expect(sent.reasoning).toEqual(normalize && destination !== "gateway-object" ? { effort: "high" } : raw.reasoning);
+          if (operated) expect(sent.input[0]).not.toHaveProperty("extra_content");
+          expect(raw).toEqual(before);
+          if (canonical) {
+            const expected = structuredClone(raw) as Record<string, any>;
+            delete expected.input[0].extra_content;
+            if (normalize) {
+              expected.reasoning = { effort: "high" };
+              expected.input[0].content[0].annotations = [{ ...annotation, title: annotation.url, start_index: 3, end_index: 9 }];
+            }
+            expect(sent).toEqual(expected);
+            const ws = prepareCodexWsRequest(request.url, { method: request.method, headers: request.headers, body: request.body });
+            expect(ws).not.toBeNull();
+            const { type, ...frameBody } = JSON.parse(ws!.frameText);
+            const { stream: _stream, ...expectedFrame } = sent;
+            expect(type).toBe("response.create"); expect(frameBody).toEqual(expectedFrame);
+            expect(JSON.parse(ws!.httpInit.body as string)).toEqual(sent);
+          }
+        } finally { request.releaseBodyObservation?.(); }
+      } finally { budget.dispose(); }
+    });
+  }
   test("hosted history automatic projection follows only the parameter permission", () => {
     const history = [{ type: "web_search_call", id: "synthetic-search", status: "completed", action: { type: "search", query: "synthetic", queries: ["synthetic"] } }];
     for (const nativeCompaction of [false, true]) for (const declared of ["none", "tools", "additional_tools"] as const) {
