@@ -133,6 +133,7 @@ describe("status version skew projection", () => {
         if (json) {
           const parsed = JSON.parse(result.stdout);
           expect(parsed.schemaVersion).toBe(1);
+          expect(parsed.forkModelApiListener).toEqual({ enabled: false, active: null, hostname: null, port: null, inactiveReason: "unverified", restartRequired: null });
           expect(Object.keys(parsed.versionSkew).sort()).toEqual(["cliVersion", "proxyVersion", "relation", "skewed", "warning"]);
           expect(parsed.versionSkew.cliVersion).toBe(packageVersion());
           // Health identity carries only bounded semver; arbitrary listener text

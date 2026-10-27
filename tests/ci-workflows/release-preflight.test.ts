@@ -10,7 +10,7 @@
  * `scripts/ci/release-preflight.sh` against a real tag set with fake `gh` and `npm`.
  */
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -85,10 +85,10 @@ type Scenario = {
   resume?: boolean;
 };
 
-// The script checks the real version sources (package.json and the desktop manifests) through its own
-// repository root, so the scenarios release the checkout's own version; only the tag set, dev, gh
-// and npm are fixtures.
-const OWN_VERSION = (JSON.parse(readFileSync(repoPath("package.json"), "utf8")) as { version: string }).version;
+// The official release script accepts stable and preview versions, while a Fork checkout may
+// carry a ben.N package version. Exercise a copied script against matching fixture version sources.
+const manifest = JSON.parse(readFileSync(repoPath("package.json"), "utf8")) as { name: string; version: string };
+const OWN_VERSION = manifest.version.replace(/-ben\.[1-9]\d*$/, "");
 const [MAJOR, MINOR] = OWN_VERSION.split(/[.-]/).map(Number) as [number, number];
 const OWN_IS_PREVIEW = OWN_VERSION.includes("-preview.");
 const OWN_REF = OWN_IS_PREVIEW ? "refs/heads/preview" : "refs/heads/main";
@@ -125,6 +125,23 @@ function preflight(scenario: Scenario): { status: number | null; output: string;
     const bin = join(directory, "bin");
     mkdirSync(repo);
     mkdirSync(bin);
+    mkdirSync(join(repo, "scripts", "ci"), { recursive: true });
+    mkdirSync(join(repo, "desktop", "src-tauri"), { recursive: true });
+    const version = scenario.version ?? OWN_VERSION;
+    const preflightScript = join(repo, "scripts", "ci", "release-preflight.sh");
+    copyFileSync(PREFLIGHT, preflightScript);
+    copyFileSync(repoPath("scripts", "release-version-sources.ts"), join(repo, "scripts", "release-version-sources.ts"));
+    copyFileSync(repoPath("scripts", "version-line.ts"), join(repo, "scripts", "version-line.ts"));
+    writeFileSync(join(repo, "desktop", "src-tauri", "tauri.conf.json"), JSON.stringify({ version }));
+    writeFileSync(join(repo, "desktop", "src-tauri", "Cargo.toml"), `[package]\nname = "opencodex-desktop"\nversion = "${version}"\n`);
+    writeFileSync(join(repo, "desktop", "src-tauri", "Cargo.lock"), `[[package]]\nname = "opencodex-desktop"\nversion = "${version}"\n`);
+    const nodeProbe = Bun.spawnSync(["node", "-p", "process.execPath"], {
+      env: { ...process.env, HOME: process.env.OCX_REAL_HOME ?? process.env.HOME },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (nodeProbe.exitCode !== 0) throw new Error(`node executable unavailable: ${nodeProbe.stderr.toString()}`);
+    symlinkSync(nodeProbe.stdout.toString().trim(), join(bin, "node"));
     writeFileSync(join(bin, "gh"), FAKE_GH, { mode: 0o755 });
     writeFileSync(join(bin, "npm"), FAKE_NPM, { mode: 0o755 });
     const gitEnv = {
@@ -137,7 +154,7 @@ function preflight(scenario: Scenario): { status: number | null; output: string;
       GIT_COMMITTER_EMAIL: "fixture@example.test",
     };
     run(repo, gitEnv, "git", "init", "-q", "-b", "release");
-    writeFileSync(join(repo, "package.json"), JSON.stringify({ version: scenario.version ?? OWN_VERSION }));
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ name: manifest.name, version }));
     run(repo, gitEnv, "git", "add", "package.json");
     run(repo, gitEnv, "git", "commit", "-q", "-m", "release");
     const head = run(repo, gitEnv, "git", "rev-parse", "HEAD");
@@ -151,12 +168,12 @@ function preflight(scenario: Scenario): { status: number | null; output: string;
     }
     const summary = join(directory, "summary.md");
     writeFileSync(summary, "");
-    const result = Bun.spawnSync(["bash", PREFLIGHT], {
+    const result = Bun.spawnSync(["bash", preflightScript], {
       cwd: repo,
       env: {
         ...gitEnv,
         PATH: `${bin}${delimiter}${gitEnv.PATH}`,
-        RELEASE_VERSION: scenario.version ?? OWN_VERSION,
+        RELEASE_VERSION: version,
         NPM_DIST_TAG: scenario.distTag ?? OWN_TAG,
         GITHUB_REF: scenario.ref ?? OWN_REF,
         GITHUB_SHA: head,
