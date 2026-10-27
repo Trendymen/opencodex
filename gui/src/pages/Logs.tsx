@@ -141,6 +141,7 @@ interface LogAttempt extends LogFailureAttribution {
   model: string;
   adapter: string;
   status: number;
+  upstreamHttpStatus?: number;
   durationMs: number;
   sendCount: number;
   recoveryKinds: AttemptRecoveryKind[];
@@ -190,6 +191,7 @@ export interface LogEntry extends LogFailureAttribution {
   wireModel?: string;
   modelSupportsServiceTier?: boolean;
   status: number;
+  upstreamHttpStatus?: number;
   durationMs: number;
   errorCode?: string;
   upstreamError?: string;
@@ -347,6 +349,7 @@ const ESTIMATE_REASON_KEYS = {
  */
 const RECOVERY_KIND_KEYS = {
   "transient-5xx": "logs.detail.attempt.recovery.transient5xx",
+  "agent-task-recovery": "logs.detail.attempt.recovery.agentTaskRecovery",
   "connection-reset": "logs.detail.attempt.recovery.connectionReset",
   "oauth-401": "logs.detail.attempt.recovery.oauth401",
   "oauth-account-403": "logs.detail.attempt.recovery.oauthAccount403",
@@ -1020,6 +1023,12 @@ function LogDetailDialog({
   const reasoningWire = reasoningWireLabel(detail);
   const detailFailure = failureAttributionLabels(detail, t);
   const summary = failureSummary(detail, detailInfo, t);
+  const localDeliveryFailure = detail.failureCause === "local-refusal" && [
+    "private-sse-read-timeout", "private-body-timeout", "private-invalid-json", "private-invalid-utf8",
+    "private-oversized", "private-budget", "private-header-name", "private-body-unreadable",
+  ].includes(detail.errorCode ?? "");
+  const summaryLabel = localDeliveryFailure && detailInfo ? t("logs.detail.localFailure") : summary.label;
+  const summaryDescription = localDeliveryFailure && detailInfo ? t("logs.detail.localFailureDesc") : summary.description;
 
   const copyRequestId = async () => {
     if (!detail.requestId) return;
@@ -1044,11 +1053,11 @@ function LogDetailDialog({
         <div className="modal-head">
           <h3 id="log-detail-title">
             <span className="mono" style={{ color: statusColor(detail.status) }}>{detail.status}</span>
-            {summary.label && <span className="logs-detail-info">{summary.label}</span>}
+            {summaryLabel && <span className="logs-detail-info">{summaryLabel}</span>}
           </h3>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.cancel")}><IconX /></button>
         </div>
-        {summary.description && <p className="modal-desc">{summary.description}</p>}
+        {summaryDescription && <p className="modal-desc">{summaryDescription}</p>}
 
         <section className="log-detail-section" aria-labelledby="log-detail-basic">
           <h4 id="log-detail-basic" className="log-detail-section-title">{t("logs.detail.section.basic")}</h4>
@@ -1113,7 +1122,8 @@ function LogDetailDialog({
               <><span className="muted">{t("logs.col.effort")}</span><span className="mono">{effortLabel(detail)}{reasoningWire ? ` (${reasoningWire})` : ""}</span></>
             )}
             {detail.errorCode && (<><span className="muted">{t("logs.col.error")}</span><span className="mono">{detail.errorCode}</span></>)}
-            {detail.upstreamError && (<><span className="muted">{t("logs.col.upstreamReason")}</span><span className="mono log-detail-break">{detail.upstreamError}</span></>)}
+            {detail.upstreamHttpStatus !== undefined && (<><span className="muted">{t("logs.col.upstreamHttpStatus")}</span><span className="mono">{detail.upstreamHttpStatus}</span></>)}
+            {detail.upstreamError && (<><span className="muted">{t(localDeliveryFailure ? "logs.col.localReason" : "logs.col.upstreamReason")}</span><span className="mono log-detail-break">{detail.upstreamError}</span></>)}
           </div>
         </section>
 

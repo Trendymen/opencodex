@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { StartCommandExit } from "./start-command-exit";
+import { resolveForkModelApiTopology } from "../fork/model-api-listener-config";
 import { serviceStayOutExitCode, WINDOWS_WRAPPER_PROTOCOL_ENV } from "../service/windows-wrapper-exit";
 import { isSupervisedServiceChild, serviceChildOwnershipDecisionForClassifiedChild } from "../service/service-child-ownership";
 import { SERVICE_MANAGED_ENV } from "../service/state";
@@ -255,20 +257,14 @@ async function waitForProxy(timeoutMs = 8_000, keepWaiting?: () => boolean): Pro
   return waitForLiveProxy({ find: findLiveProxy, timeoutMs, keepWaiting });
 }
 
-class StartCommandExit extends Error {
-  constructor(readonly exitCode: number) {
-    super(`start command exited with code ${exitCode}`);
-    this.name = "StartCommandExit";
-  }
-}
-
 async function chooseListenPort(
   requestedPort?: number,
   options: { sibling?: boolean } = {},
 ): Promise<number> {
   const config = loadConfig();
   const preferred = requestedPort ?? config.port ?? 10100;
-  const hardPin = requestedPort !== undefined && requestedPort > 0;
+  const topology = resolveForkModelApiTopology(config, preferred);
+  const hardPin = (requestedPort !== undefined && requestedPort > 0) || topology.mode !== "disabled";
   // Only an EXPLICITLY ported listener reserves a port. The companion form (`{enabled:true}`
   // with no port) deliberately shares the public port on 127.0.0.1, so treating it as a
   // reservation — via `effectiveLoopbackListenerPort` — would refuse every start on a
@@ -285,7 +281,7 @@ async function chooseListenPort(
       `Port ${preferred} is reserved for unauthenticatedLoopbackListener; choose a different proxy port.`,
     );
   }
-  await (await import("./auxiliary-listener-preflight")).assertAuxiliaryListenerPortsAvailable(config);
+  await (await import("./auxiliary-listener-preflight")).assertAuxiliaryListenerPortsAvailable(config, preferred);
   // Soft start: brief prefer-retry then ephemeral hop.
   // Explicit `--port` (service wrappers / update restart): wait for the pinned port
   // to free without killing any listener (healthy ocx / foreign). Never hop.
@@ -308,13 +304,14 @@ async function chooseListenPort(
       // the reclaim deadline and the final listen. Still never hop off `--port`.
       preferRetryMs: hardPin ? 5_000 : 750,
       preferRetryIntervalMs: 50,
-      allowEphemeralFallback: !hardPin,
+      allowEphemeralFallback: preferred === 0 || !hardPin,
       // Never hand the public listener the port the loopback listener is configured to
       // bind (#1102). Without this, `--port <loopback port>` binds the public listener
       // first and the loopback bind then fails, rolling back a startup that was only
       // ever a config collision.
       ...(reservedLoopbackPort !== undefined ? { reservedPort: reservedLoopbackPort } : {}),
     });
+    resolveForkModelApiTopology(config, selected);
     if (selected !== preferred) {
       // The hop used to be automatic, and that is how a bare `start` beside a healthy
       // proxy produced a second one (#5004): nothing on this path ever asked who held the
@@ -583,7 +580,7 @@ async function handleStart(options: { block?: boolean } = {}) {
               console.error(`❌ ${err.message}`);
               throw new StartCommandExit(1);
             }
-            if (err instanceof AuxiliaryListenerBindError || !isAddrInUse(err) || attempt >= 2) throw err;
+            if (config.forkModelApiListener?.enabled || err instanceof AuxiliaryListenerBindError || !isAddrInUse(err) || attempt >= 2) throw err;
             if (requestedPort !== undefined) {
               console.log(`⚠️  Port ${port} was taken while starting; waiting to retry the same port...`);
               const hostname = config.hostname ?? "127.0.0.1";
@@ -1778,6 +1775,8 @@ async function handleStatus() {
     }
   }
   console.log(`   Dashboard: ${status.json.dashboard.url}${local}`);
+  const modelApi = status.json.forkModelApiListener;
+  console.log(`   Model API listener: ${modelApi.active ? `http://${modelApi.hostname}:${modelApi.port} (active)` : modelApi.inactiveReason}${modelApi.restartRequired ? "; restart required" : ""}${local}`);
   // The dashboard is a build artifact, so a checkout that moved without `bun run build:gui` keeps
   // serving the previous bundle and every feature added since simply does not appear (#5196's
   // usage panel was invisible this way for five days). Reported next to the dashboard URL, which

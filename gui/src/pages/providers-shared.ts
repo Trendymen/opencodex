@@ -1,3 +1,5 @@
+import type { CodexPassthroughConfig } from "../../../src/fork/codex-passthrough-contract";
+
 export interface ProvidersConfig {
   port: number;
   defaultProvider: string;
@@ -8,6 +10,7 @@ export interface ProvidersConfig {
     hasHeaders?: boolean;
     defaultModel?: string;
     models?: string[];
+    modelAdapters?: Record<string, string>;
     liveModels?: boolean;
     upstreamHttpVersion?: "auto" | "http1.1" | "h1" | "http2" | "h2";
     reasoningWireFormat?: "gateway-object";
@@ -18,6 +21,7 @@ export interface ProvidersConfig {
     initialModelSelection?: { status: "pending" | "ready" | "all-off"; modelCount?: number };
     discovery?: import("../models-groups").ProviderDiscoverySummary;
     note?: string;
+    codexPassthrough?: CodexPassthroughConfig;
     codexAccountMode?: "direct" | "pool";
     xaiResponsesOptInState?: boolean | "mixed";
   }>;

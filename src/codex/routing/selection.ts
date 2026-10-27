@@ -6,6 +6,7 @@ import { codexSelectionPriorityLookup } from "../account-preservation";
 import { isSelectableCodexPoolAccount } from "../account-id";
 import { isAccountNeedsReauth } from "../account-runtime-state";
 import { isCodexAccountUsable, type CodexAccountUsabilityOptions } from "../account-usability";
+export type CodexAccountSelectionOptions = CodexAccountUsabilityOptions & { skipOrdinaryCachedQuotaPrecheck?: boolean };
 import { isCodexPoolRefreshCooling } from "../pool-refresh-backoff";
 import {
   normalizeAccountPoolStickyLimit,
@@ -94,7 +95,7 @@ export function isCodexAccountHeldAtUsageLimit(
   config: OcxConfig,
   accountId: string,
   now: number,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): boolean {
   return isCodexAccountHeldForCredits(
     config,
@@ -110,7 +111,7 @@ export function isCodexAccountRotationExcluded(
   config: OcxConfig,
   accountId: string,
   now: number,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): boolean {
   return isCodexAccountPlanExcluded(config, accountId)
     || isCodexAccountHeldAtUsageLimit(config, accountId, now, selectionOptions);
@@ -121,16 +122,21 @@ export function isCodexAccountSelectable(
   accountId: string,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): boolean {
   return !isCodexAccountPaused(config, accountId)
     && !isCodexAccountPlanExcluded(config, accountId)
     && !isCodexAccountHeldAtUsageLimit(config, accountId, now, selectionOptions)
-    && getCodexQuotaHealthSnapshot(accountId, quotaScope, now) === null
-    && !isCodexQuotaAvoided(accountId, quotaScope, now)
+    && (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true || getCodexQuotaHealthSnapshot(accountId, quotaScope, now) === null)
+    && (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true || !isCodexQuotaAvoided(accountId, quotaScope, now))
     && !isCodexAccountSoftAvoided(accountId, now)
     && !isCodexPoolRefreshCooling(accountId, now)
     && isCodexAccountUsable(config, accountId, selectionOptions);
+}
+
+export function codexAccountHasNonQuotaHealthBlock(config: OcxConfig, accountId: string, now = Date.now()): boolean {
+  return isCodexAccountSoftAvoided(accountId, now) || isCodexPoolRefreshCooling(accountId, now)
+    || shouldFailover(config, accountId, now) || failureWindowSteersNewThreads(config, accountId, now);
 }
 
 /**
@@ -148,13 +154,13 @@ export function codexAccountBlockReason(
   accountId: string,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): CodexAffinityReason | undefined {
   if (isCodexAccountPaused(config, accountId)) return "paused";
   if (isCodexAccountPlanExcluded(config, accountId)) return "plan_excluded";
   if (isCodexAccountHeldAtUsageLimit(config, accountId, now, selectionOptions)) return "credits_off";
-  if (getCodexQuotaHealthSnapshot(accountId, quotaScope, now) !== null) return "cooldown";
-  if (isCodexQuotaAvoided(accountId, quotaScope, now)) return "quota_avoided";
+  if (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true && getCodexQuotaHealthSnapshot(accountId, quotaScope, now) !== null) return "cooldown";
+  if (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true && isCodexQuotaAvoided(accountId, quotaScope, now)) return "quota_avoided";
   if (isCodexAccountSoftAvoided(accountId, now)) return "transient";
   if (isCodexPoolRefreshCooling(accountId, now)) return "transient";
   if (!isCodexAccountUsable(config, accountId, selectionOptions)) return "unusable";
@@ -199,7 +205,7 @@ export function getEligiblePoolAccounts(
   excludeId?: string,
   now = Date.now(),
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   skipFailoverReadyCandidates = false,
 ): readonly string[] {
   const excludedPlans = excludedCodexPoolPlanKeys(config);
@@ -211,10 +217,10 @@ export function getEligiblePoolAccounts(
       && !isCodexAccountHeldAtUsageLimit(config, account.id, now, selectionOptions)
       && !isAccountNeedsReauth(account.id)
       && (!skipFailoverReadyCandidates || !shouldFailover(config, account.id, now)))
-    .filter(account => getCodexQuotaHealthSnapshot(account.id, quotaScope, now) === null)
+    .filter(account => selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true || getCodexQuotaHealthSnapshot(account.id, quotaScope, now) === null)
     .filter(account => !isCodexAccountSoftAvoided(account.id, now))
     .filter(account => !failureWindowSteersNewThreads(config, account.id, now))
-    .filter(account => !isCodexQuotaAvoided(account.id, quotaScope, now))
+    .filter(account => selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true || !isCodexQuotaAvoided(account.id, quotaScope, now))
     .filter(account => !isCodexPoolRefreshCooling(account.id, now))
     .filter(account => isCodexAccountUsable(config, account.id, selectionOptions))
     .map(account => account.id);
@@ -223,7 +229,7 @@ export function getEligiblePoolAccounts(
   if (
     excludeId !== MAIN_CODEX_ACCOUNT_ID
     && !isCodexAccountPaused(config, MAIN_CODEX_ACCOUNT_ID)
-    && getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, quotaScope, now) === null
+    && (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true || getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, quotaScope, now) === null)
     && !isCodexAccountSoftAvoided(MAIN_CODEX_ACCOUNT_ID, now)
     && !failureWindowSteersNewThreads(config, MAIN_CODEX_ACCOUNT_ID, now)
     // The main login is not in `config.codexAccounts`, so it never passes through the
@@ -231,7 +237,7 @@ export function getEligiblePoolAccounts(
     // this the window a refusal announced applies to the pool but not to the account that
     // earned it: the cooldown caps at fifteen minutes, the window runs up to six hours, and
     // in between the main account returns as a first-class candidate.
-    && !isCodexQuotaAvoided(MAIN_CODEX_ACCOUNT_ID, quotaScope, now)
+    && (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true || !isCodexQuotaAvoided(MAIN_CODEX_ACCOUNT_ID, quotaScope, now))
     && !isCodexPoolRefreshCooling(MAIN_CODEX_ACCOUNT_ID, now)
     && !isCodexAccountHeldAtUsageLimit(config, MAIN_CODEX_ACCOUNT_ID, now, selectionOptions)
     && (!skipFailoverReadyCandidates || !shouldFailover(config, MAIN_CODEX_ACCOUNT_ID, now))
@@ -259,7 +265,7 @@ function listEligibleCodexAccountIds(
   config: OcxConfig,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): readonly string[] {
   return getEligiblePoolAccounts(config, undefined, now, quotaScope, selectionOptions);
 }
@@ -287,7 +293,7 @@ function stickyLimitForConfig(config: OcxConfig): number {
 export function hasCodexQuotaHeadroom(
   config: OcxConfig,
   accountId: string,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   now: number = Date.now(),
 ): boolean {
   const threshold = getEffectiveCodexAutoSwitchThreshold(config, accountId);
@@ -335,7 +341,7 @@ export function hasCodexSharedStateQuotaHeadroom(
   config: OcxConfig,
   accountId: string,
   quotaScope: CodexQuotaScope | undefined,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   now: number = Date.now(),
 ): boolean {
   if (
@@ -358,7 +364,7 @@ export function pickResetFirstCodexAccount(
   config: OcxConfig,
   ids: readonly string[],
   now: number,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   const available = ids.filter(id => hasCodexQuotaHeadroom(config, id, selectionOptions, now));
   if (available.length === 0) return pickLowestUsageAmong(config, ids, selectionOptions, now);
@@ -387,7 +393,7 @@ function pickFillFirstCodexAccount(
   config: OcxConfig,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   const eligible = listEligibleCodexAccountIds(config, now, quotaScope, selectionOptions);
   if (eligible.length === 0) return null;
@@ -406,7 +412,7 @@ function pickNextFillFirstCodexAccount(
   afterId: string | null,
   eligible: readonly string[] = listEligibleCodexAccountIds(config, Date.now()),
   now = Date.now(),
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   if (eligible.length === 0) return null;
   const ordered = [...eligible].sort((a, b) => a.localeCompare(b));
@@ -465,7 +471,7 @@ export function pickUnboundStrategyAccount(
   now: number,
   commit: boolean,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   commitSharedActive = commit,
   commitAffinity = commit,
 ): string | null {
@@ -525,7 +531,7 @@ export function getPoolAccountPlan(config: OcxConfig, accountId: string): string
 export function getPoolAccountPlanForSelection(
   config: OcxConfig,
   accountId: string,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | undefined {
   if (
     accountId === MAIN_CODEX_ACCOUNT_ID
@@ -539,9 +545,9 @@ export function getPoolAccountPlanForSelection(
 
 /** Shared routing state must ignore a request-scoped entitlement roster. */
 export function sharedStateSelectionOptions(
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): Pick<
-  CodexAccountUsabilityOptions,
+  CodexAccountSelectionOptions,
   "nativeMainSelectionOnly" | "isMainAccountTokenLive" | "requestOwnedMainCredential"
 > | undefined {
   if (!selectionOptions) return undefined;
@@ -561,13 +567,14 @@ export function sharedStateSelectionOptions(
 /**
  * A main that is live only through this request's own credential serves this request alone.
  * Recording it as the shared active account would route later requests through a credential
- * they do not carry (see CodexAccountUsabilityOptions.requestOwnedMainCredential).
+ * they do not carry (see CodexAccountSelectionOptions.requestOwnedMainCredential).
  */
 export function sharesActiveSelection(
   accountId: string,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): boolean {
-  return !(accountId === MAIN_CODEX_ACCOUNT_ID && selectionOptions?.requestOwnedMainCredential === true);
+  return selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true
+    && !(accountId === MAIN_CODEX_ACCOUNT_ID && selectionOptions?.requestOwnedMainCredential === true);
 }
 
 export function pickLowerUsageAccount(
@@ -576,7 +583,7 @@ export function pickLowerUsageAccount(
   activeUsage: number,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   skipFailoverReadyCandidates = false,
 ): string {
   let best = active;
@@ -607,7 +614,7 @@ export function pickLowerUsageAccount(
 export function pickLowestUsageAmong(
   config: OcxConfig,
   ids: readonly string[],
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   now: number = Date.now(),
 ): string | null {
   let best: string | null = null;
@@ -632,7 +639,7 @@ export function pickLowestUsageCodexAccount(
   excludeId?: string,
   now = Date.now(),
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   return pickLowestUsageAmong(
     config,
@@ -652,7 +659,7 @@ export function pickAlternateCodexAccount(
   excludeId: string,
   now = Date.now(),
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   const strategy = accountPoolStrategyForScope(config, quotaScope);
   // The exclusion is passed into eligibility rather than post-filtered off its
@@ -690,7 +697,7 @@ export function peekAlternateCodexAccount(
   excludeId: string,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   if (accountPoolStrategyForScope(config, quotaScope) === "round-robin") {
     const eligible = getEligiblePoolAccounts(config, excludeId, now, quotaScope, selectionOptions);
@@ -730,7 +737,7 @@ export function preferModelEntitledAccount(
   active: string,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string {
   const denied = selectionOptions?.deniedModelAccountIds;
   if (denied === undefined || !denied.has(active)) return active;
@@ -755,7 +762,7 @@ export function pickPriorityPreemption(
   active: string,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   const eligible = getEligiblePoolAccounts(config, undefined, now, quotaScope, selectionOptions);
   if (eligible.length === 0 || eligible.includes(active)) return null;
@@ -785,7 +792,7 @@ export function applyQuotaAutoSwitch(
   active: string,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   commitSharedSelection = true,
 ): string {
   const threshold = getEffectiveCodexAutoSwitchThreshold(config, active);
@@ -827,7 +834,7 @@ export function isHealthySharedCodexSelection(
   accountId: string,
   now: number,
   quotaScope: CodexQuotaScope | undefined,
-  selectionOptions: CodexAccountUsabilityOptions | undefined,
+  selectionOptions: CodexAccountSelectionOptions | undefined,
 ): boolean {
   return isCodexAccountSelectable(config, accountId, now, quotaScope, selectionOptions)
     && hasCodexSharedStateQuotaHeadroom(config, accountId, quotaScope, selectionOptions, now)
@@ -839,8 +846,8 @@ export function strategySelectionOptionsForModelDetour(
   config: OcxConfig,
   now: number,
   quotaScope: CodexQuotaScope | undefined,
-  selectionOptions: CodexAccountUsabilityOptions | undefined,
-): CodexAccountUsabilityOptions | undefined {
+  selectionOptions: CodexAccountSelectionOptions | undefined,
+): CodexAccountSelectionOptions | undefined {
   if (selectionOptions?.modelEligibleAccountIds === undefined) return selectionOptions;
   const sharedSelectionOptions = sharedStateSelectionOptions(selectionOptions) ?? {};
   return {
@@ -864,7 +871,7 @@ export function applyFailureFailover(
   active: string,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   commitSharedSelection = true,
 ): string {
   if (!shouldFailover(config, active, now) && !failureWindowSteersNewThreads(config, active, now)) return active;

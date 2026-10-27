@@ -3,14 +3,17 @@
  * old-complete or new-complete, never a partial skeleton, across every injected fault.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   bootRestoreProbe,
+  launcherUsableAfterNpmUpdate,
   transactionalNpmUpdate,
   verifyInstallTree,
 } from "../../src/update/transactional-install.mjs";
+import { npmUpdateFailureGuidance } from "../../src/update/update-failure-guidance.mjs";
+import { planStoppedRuntimeRecovery } from "../../src/update/runtime-ownership.mjs";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 const PKG = "@bitkyc08/opencodex";
@@ -166,6 +169,145 @@ describe("#1942 transactional update", () => {
     expect(result.ok).toBe(false);
     expect(result.phase).toBe("verify");
     expect(liveVersion(packageDir)).toBe("1.0.0");
+  });
+
+  for (const outcome of ["false", "throw", "promise"] as const) {
+    test(`final swap authorization rejects ${outcome} after publishing its pending marker`, () => {
+      let authorizations = 0;
+      let renames = 0;
+      const result = transactionalNpmUpdate({
+        packageDir, pkgName: PKG, targetVersion: "2.0.0", tag: "latest",
+        runNpm: stagingNpm("2.0.0"),
+        mayReplacePackage: (() => {
+          if (++authorizations === 1) return true;
+          if (outcome === "throw") throw new Error("private authority detail");
+          return outcome === "promise" ? Promise.resolve(true) : false;
+        }) as () => boolean,
+        deps: { rename: () => { renames += 1; } },
+      });
+      expect(result).toMatchObject({ ok: false, phase: "authorize" });
+      expect(JSON.stringify(result)).not.toContain("private authority detail");
+      expect(authorizations).toBe(2);
+      expect(renames).toBe(0);
+      expect(liveVersion(packageDir)).toBe("1.0.0");
+      expect(readdirSync(scopeDir)).toEqual(["opencodex"]);
+      expect(launcherUsableAfterNpmUpdate(result)).toBe(true);
+    });
+  }
+
+  for (const allowed of [false, true]) {
+    test(`a marker replaced during ${allowed ? "allowed" : "refused"} authorization is preserved`, () => {
+      let authorizations = 0;
+      let renames = 0;
+      let foreignMarker = "";
+      const markerPath = join(scopeDir, ".ocx-transaction.json");
+      const result = transactionalNpmUpdate({
+        packageDir, pkgName: PKG, targetVersion: "2.0.0", tag: "latest",
+        runNpm: stagingNpm("2.0.0"),
+        mayReplacePackage: () => {
+          if (++authorizations === 1) return true;
+          const marker = JSON.parse(readFileSync(markerPath, "utf8"));
+          foreignMarker = JSON.stringify({ ...marker, id: "foreign-transaction" });
+          writeFileSync(markerPath, foreignMarker);
+          return allowed;
+        },
+        deps: { rename: () => { renames += 1; } },
+      });
+      expect(result).toMatchObject({ ok: false, phase: "pending-owner", recoveryUnsafe: true });
+      expect(renames).toBe(0);
+      expect(liveVersion(packageDir)).toBe("1.0.0");
+      expect(readFileSync(markerPath, "utf8")).toBe(foreignMarker);
+      expect(launcherUsableAfterNpmUpdate(result)).toBe(false);
+    });
+  }
+
+  test("a retryable backup rename rechecks package authority before trying again", () => {
+    let authorizations = 0;
+    let renames = 0;
+    const result = transactionalNpmUpdate({
+      packageDir, pkgName: PKG, targetVersion: "2.0.0", tag: "latest",
+      runNpm: stagingNpm("2.0.0"),
+      mayReplacePackage: () => ++authorizations < 3,
+      deps: {
+        rename: () => {
+          renames += 1;
+          throw Object.assign(new Error("locked"), { code: "EBUSY" });
+        },
+      },
+    });
+    expect(result).toMatchObject({ ok: false, phase: "authorize" });
+    expect(authorizations).toBe(3);
+    expect(renames).toBe(1);
+    expect(liveVersion(packageDir)).toBe("1.0.0");
+    expect(readdirSync(scopeDir)).toEqual(["opencodex"]);
+  });
+
+  test("safe pending-marker failure keeps the old launcher and reports the old version", () => {
+    const result = transactionalNpmUpdate({
+      packageDir, pkgName: PKG, targetVersion: "2.0.0", tag: "latest",
+      runNpm: stagingNpm("2.0.0"),
+      deps: { writeFile: () => { throw new Error("marker write failed"); } },
+    });
+    expect(result).toMatchObject({ ok: false, phase: "pending-marker" });
+    expect(result.recoveryUnsafe).not.toBe(true);
+    expect(liveVersion(packageDir)).toBe("1.0.0");
+    expect(readdirSync(scopeDir)).toEqual(["opencodex"]);
+    expect(launcherUsableAfterNpmUpdate(result)).toBe(true);
+    expect(npmUpdateFailureGuidance({ ...result, pkgName: PKG }).previousVersionKept).toBe(true);
+
+    const unsafe = { ...result, recoveryUnsafe: true };
+    expect(launcherUsableAfterNpmUpdate(unsafe)).toBe(false);
+    const guidance = npmUpdateFailureGuidance({ ...unsafe, pkgName: PKG });
+    expect(guidance.previousVersionKept).toBe(false);
+    expect(guidance.lines.join(" ")).toContain("uncertain recovery state");
+    expect(guidance.lines.join(" ")).not.toContain("run 'ocx update' again");
+  });
+
+  test.skipIf(process.platform === "win32")("a dangling pending-marker symlink remains unsafe after publication fails", () => {
+    const markerPath = join(scopeDir, ".ocx-transaction.json");
+    symlinkSync(join(scopeDir, "missing-marker-target"), markerPath);
+    const result = transactionalNpmUpdate({
+      packageDir, pkgName: PKG, targetVersion: "2.0.0", tag: "latest",
+      runNpm: stagingNpm("2.0.0"),
+    });
+    expect(result).toMatchObject({ ok: false, phase: "pending-marker", recoveryUnsafe: true });
+    expect(lstatSync(markerPath).isSymbolicLink()).toBe(true);
+    expect(liveVersion(packageDir)).toBe("1.0.0");
+    expect(launcherUsableAfterNpmUpdate(result)).toBe(false);
+    expect(npmUpdateFailureGuidance({ ...result, pkgName: PKG }).previousVersionKept).toBe(false);
+  });
+
+  test("a restored package with an uncleared marker cannot drive automatic recovery", () => {
+    const markerPath = join(scopeDir, ".ocx-transaction.json");
+    const result = transactionalNpmUpdate({
+      packageDir, pkgName: PKG, targetVersion: "2.0.0", tag: "latest",
+      runNpm: stagingNpm("2.0.0"),
+      deps: {
+        rename: (from, to) => {
+          if (to === packageDir && from.includes(".ocx-staging-")) throw new Error("staged rename failed");
+          renameSync(from, to);
+        },
+        remove: (path, options) => {
+          if (path === markerPath) throw new Error("marker cleanup failed");
+          rmSync(path, options);
+        },
+      },
+    });
+    expect(result).toMatchObject({ ok: false, phase: "double-fault", rolledBack: true, recoveryUnsafe: true, markerCleanupFailed: true });
+    expect(liveVersion(packageDir)).toBe("1.0.0");
+    expect(existsSync(markerPath)).toBe(true);
+    const launcherUsable = launcherUsableAfterNpmUpdate(result);
+    expect(launcherUsable).toBe(false);
+    for (const serviceInstalled of [false, true]) {
+      expect(planStoppedRuntimeRecovery({
+        stopAttempted: true, ownership: null, sameOwner: true, liveness: "dead", serviceInstalled,
+        launcherUsable, hadRuntimeState: true,
+      })).toEqual({ action: "manual", reason: "launcher-unavailable" });
+    }
+    const guidance = npmUpdateFailureGuidance({ ...result, pkgName: PKG });
+    expect(guidance.previousVersionKept).toBe(true);
+    expect(guidance.lines.join(" ")).toContain("transaction recovery is unsafe");
+    expect(guidance.lines.join(" ")).not.toContain("run 'ocx update' again");
   });
 
   test("swap-live failure rolls back to the old tree (D4 locked-file row)", () => {

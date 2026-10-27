@@ -40,6 +40,8 @@ import { collectAppliedCodexSettingsStatus, type CliAppliedCodexSettingsStatus }
 import { installDetectionStatus, type InstallDetectionStatus } from "./status-install";
 import { collectLocalCredentials, type LocalCredentialSnapshot } from "../local-credentials/inventory";
 import { collectLinkConnectionGeneration } from "./status-link";
+import { resolveForkModelApiTopology } from "../fork/model-api-listener-config";
+import { parseForkModelApiRuntimeSnapshot, projectForkModelApiStatus, type ForkModelApiStatus } from "../fork/model-api-listener-status";
 
 /**
  * The state of the data-plane admission secret the SERVICE will use. State only -- never the value.
@@ -129,6 +131,7 @@ export type CliStatusJson = {
   localCredentials?: LocalCredentialSnapshot;
   /** On a Remote Link Child: the current tunnel connection (`src/cli/status-link.ts`). Omitted when unknown. */
   link?: { connectionGeneration: string };
+  forkModelApiListener: ForkModelApiStatus;
   mainAccountHardLock?: CodexMainAccountPolicyHealth;
   /** OCX-11 fallback state; see src/cli/status-fallback.ts. */
   fallback?: import("./status-fallback").StatusFallback;
@@ -924,6 +927,15 @@ export async function collectStatus(options: { mainAccountPolicy?: boolean } = {
   const live = await findLiveProxy({
     configFn: () => ({ port: config.port, hostname: config.hostname }),
   });
+  const modelApiHealth = live ? await fetchBoundLocalManagementRead(
+    live, LOCAL_MANAGEMENT_READ_PATHS.systemHealth, { requireResponseProof: true },
+  ) : null;
+  let modelApiRuntime = null;
+  if (modelApiHealth?.kind === "response" && modelApiHealth.response.ok) {
+    try { modelApiRuntime = parseForkModelApiRuntimeSnapshot((await modelApiHealth.response.json()).forkModelApiListener); }
+    catch { /* An unreadable same-process response leaves the listener unverified. */ }
+  }
+  const forkModelApiListener = projectForkModelApiStatus(resolveForkModelApiTopology(config), modelApiRuntime, Boolean(live));
   const mainAccountHardLock = options.mainAccountPolicy && live
     ? (await (await import("../oauth/health")).fetchCodexHealthFromLiveProxy(undefined, async () => live)).mainAccountHardLock
     : undefined;
@@ -1096,6 +1108,7 @@ export async function collectStatus(options: { mainAccountPolicy?: boolean } = {
       ...(localCredentials === undefined ? {} : { localCredentials }),
       ...(connectionGeneration === undefined ? {} : { link: { connectionGeneration } }),
       schemaVersion: 1,
+      forkModelApiListener,
       runtimeRole: config.runtimeRole ?? "standalone",
       proxy: {
         running: Boolean(live) || Boolean(pid && health.ok),

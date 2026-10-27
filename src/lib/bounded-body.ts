@@ -92,7 +92,7 @@ function bodyDeadline(ms: number, onTimeout: () => void): { clear: () => void } 
 	// A non-positive budget is the "disabled" sentinel (same rule as fetchWithHeaderTimeout and
 	// clearableDeadline): arm no timer so a slow-but-alive body — e.g. a local model streaming a
 	// buffered JSON response over many seconds — is bounded only by the caller's abort signal.
-	if (!(ms > 0)) {
+	if (!(ms > 0) || ms === Infinity) {
 		return { clear: () => {} };
 	}
 	const timer = setTimeout(onTimeout, ms);
