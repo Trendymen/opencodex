@@ -1283,7 +1283,8 @@ export async function deliverPassthroughResponse(
         }
         if (signal.aborted) return cancelAfterValidation();
         let clientJson = JSON.stringify(client.terminal.response);
-        if (options.comboAttempt && isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) {
+        if (codexPermissions?.normalizeHostedImages !== false && options.comboAttempt
+          && isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) {
           const display = createHostedImageDisplayRewrite();
           try { clientJson = display.json(clientJson); }
           catch (error) {
