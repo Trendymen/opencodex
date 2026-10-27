@@ -689,12 +689,7 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: test-runner # See the Bun roles contract above test.
-
-      - name: Prepare verified Fork official base
-        env:
-          OCX_CANDIDATE_CI_LANE: ${{ github.event.inputs.lane }}
-        run: bun scripts/prepare-fork-official-base.ts
-
+      - { name: Prepare verified Fork official base, env: { OCX_CANDIDATE_CI_LANE: "${{ github.event.inputs.lane }}" }, run: bun scripts/prepare-fork-official-base.ts }
       # The GUI install is NOT optional here, however unrelated it looks to a
       # test shard. Several files under tests/ import JSX-bearing modules from
       # gui/src (ProviderRail and friends), and React is declared only in
@@ -938,12 +933,7 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: test-runner # See the Bun roles contract above test.
-
-      - name: Prepare verified Fork official base
-        env:
-          OCX_CANDIDATE_CI_LANE: ${{ github.event.inputs.lane }}
-        run: bun scripts/prepare-fork-official-base.ts
-
+      - { name: Prepare verified Fork official base, env: { OCX_CANDIDATE_CI_LANE: "${{ github.event.inputs.lane }}" }, run: bun scripts/prepare-fork-official-base.ts }
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile
@@ -1014,12 +1004,7 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: test-runner # See the Bun roles contract above test.
-
-      - name: Prepare verified Fork official base
-        env:
-          OCX_CANDIDATE_CI_LANE: ${{ github.event.inputs.lane }}
-        run: bun scripts/prepare-fork-official-base.ts
-
+      - { name: Prepare verified Fork official base, env: { OCX_CANDIDATE_CI_LANE: "${{ github.event.inputs.lane }}" }, run: bun scripts/prepare-fork-official-base.ts }
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile
@@ -1163,12 +1148,7 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: test-runner # See the Bun roles contract above test.
-
-      - name: Prepare verified Fork official base
-        env:
-          OCX_CANDIDATE_CI_LANE: ${{ github.event.inputs.lane }}
-        run: bun scripts/prepare-fork-official-base.ts
-
+      - { name: Prepare verified Fork official base, env: { OCX_CANDIDATE_CI_LANE: "${{ github.event.inputs.lane }}" }, run: bun scripts/prepare-fork-official-base.ts }
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile

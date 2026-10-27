@@ -1,3 +1,4 @@
+import { isWin32EagerRewrite } from "../../src/lib/bun-stream-caps";
 import {
   codexWsUpstreamFetch as rawCodexWsUpstreamFetch,
   shouldUseCodexWsUpstream as rawShouldUseCodexWsUpstream,
@@ -32,3 +33,6 @@ export function streamingInit(body: Record<string, unknown> = {}): RequestInit {
     body: JSON.stringify({ model: "gpt-5.5", stream: true, ...body }),
   };
 }
+
+export const EAGER_RELAY_FORCED_BY_PLATFORM = isWin32EagerRewrite(process.platform, true);
+export { isWin32EagerRewrite };
