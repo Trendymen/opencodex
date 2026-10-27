@@ -730,9 +730,23 @@ function registerMember(lockPath: string, owner: TestRunLockOwner, pid: number, 
     } catch (error) {
       if (errorCode(error) !== "EEXIST") throw error;
     }
+    const member = lstatSync(path);
+    if (!member.isFile()) {
+      throw Object.assign(new Error("The lock member is not a regular file."), {
+        code: member.isDirectory() ? "EISDIR" : "EINVAL",
+      });
+    }
   } catch (error) {
-    if (errorCode(error) === "ENOENT") return false;
-    throw error;
+    if (!ownsLock(lockPath, owner)) return false;
+    const code = errorCode(error);
+    const safeCode = ["EACCES", "EPERM", "ENOENT", "ENOTDIR", "EISDIR", "EEXIST", "EROFS", "ENOSPC", "EMFILE", "ENFILE", "EIO"]
+      .includes(code) ? code : "filesystem-error";
+    throw new Error(
+      `Cannot register a member of the live Bun test lock (${safeCode}). `
+        + "Check its members directory and file permissions before retrying.",
+      { cause: { code: safeCode } },
+    );
+
   }
   if (sameGeneration(lockPath, generation) && ownsLock(lockPath, owner)) return true;
   // A nonparticipating old executable may replace the canonical directory.
