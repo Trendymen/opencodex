@@ -1517,5 +1517,7 @@
   "codex-passthrough-private-deadline.test.ts": "server",
   "request-log-upstream-http-status.test.ts": "usage",
   "codex-passthrough-private-error-deadline.test.ts": "server",
-  "codex-passthrough-ws-deadline.test.ts": "responses"
+  "codex-passthrough-ws-deadline.test.ts": "responses",
+  "fork-test-runner-lifecycle.test.ts": "ci-workflows",
+  "fork-deepseek-vision-route.test.ts": "providers"
 }
