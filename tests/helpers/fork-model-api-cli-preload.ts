@@ -2,19 +2,39 @@ import { Server, Socket } from "node:net";
 import { appendFileSync, readFileSync } from "node:fs";
 import { mock } from "bun:test";
 import * as reclaim from "../../src/server/port-reclaim";
+import * as direct from "../../src/server/direct-local-http";
 
-type Mapping = { scenario: "preflight-busy" | "bind-race" | "primary-busy"; primaryPort: number; busyPort: number; log: string; networkLog: string };
+type Mapping = { scenario: "preflight-busy" | "bind-race" | "primary-busy" | "owner-unknown"; primaryPort: number; busyPort: number; log: string; networkLog: string; probeLog: string };
 const mapping: Mapping = JSON.parse(readFileSync(process.env.OCX_FORK_CLI_MAPPING!, "utf8"));
 function unmapped(message: string): never { console.error(`Unmapped ${message}`); process.exit(97); }
 const networkRecord = (kind: string, hostname: string, port: number, actualPort: number) => {
   appendFileSync(mapping.networkLog, JSON.stringify({ kind, hostname, port, actualHostname: "127.0.0.1", actualPort }) + "\n");
 };
 let selectedPrimaryPort: number | undefined;
+let enteredPortSelection = false;
 const primaryPort = (port: number) => port === 10101 || (mapping.primaryPort === 0 && (port === 0 || port === selectedPrimaryPort));
 const record = (kind: "node" | "bun", hostname: string, port: number) => {
   appendFileSync(mapping.log, JSON.stringify({ kind, hostname, port }) + "\n");
   if (port !== 10100 && !primaryPort(port)) unmapped(`fixed-topology bind: ${kind} ${hostname}:${port}`);
+  enteredPortSelection = true;
 };
+// Both synthetic loopback probes are available regardless of host IPv6 support.
+mock.module("../../src/lib/loopback-family", () => ({ loopbackFamilyAvailability: () => "available" }));
+const directLocalHttpFetch = direct.directLocalHttpFetch;
+mock.module("../../src/server/direct-local-http", () => ({ ...direct,
+  directLocalHttpFetch: async (input: string | URL | Request, init?: RequestInit, io?: Parameters<typeof directLocalHttpFetch>[2]) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+    if (!enteredPortSelection && url.pathname === "/healthz") {
+      if (url.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(url.hostname)
+        || (port !== 10100 && !primaryPort(port))) unmapped(`owner probe: ${url.origin}`);
+      const result = mapping.scenario === "owner-unknown" ? "fixture" : "ECONNREFUSED";
+      appendFileSync(mapping.probeLog, JSON.stringify({ hostname: url.hostname, port, result }) + "\n");
+      if (result === "ECONNREFUSED") throw Object.assign(new Error("fixture connection refused"), { code: result });
+    }
+    return directLocalHttpFetch(input, init, io);
+  },
+}));
 const originalListen = Server.prototype.listen;
 Server.prototype.listen = function (...args: unknown[]) {
   const options = args[0] as { host?: string; port?: number };

@@ -154,10 +154,8 @@ describe("native streaming combo mandatory tools (#7456)", () => {
     } }), { headers: { "content-type": "text/event-stream" } }));
     const abort = new AbortController();
     const pending = request(config, named, undefined, {}, { abortSignal: abort.signal });
-    const startedFirst = await Promise.race([started.then(() => true), pending.then(async response => {
-      await response.text();
-      return false;
-    })]);
+    const startedFirst = await Promise.race([started.then(() => true), pending.then(() => false)]);
+    if (!startedFirst) await (await pending).text();
     expect(startedFirst).toBe(true);
     if (!startedFirst) return;
     abort.abort(new Error("fixture cancelled before response.done"));

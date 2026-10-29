@@ -39,6 +39,8 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 保存拓扑只影响下次启动，不移动当前 socket，也不自动改号；拓扑非法或必需端口被占用时直接失败。保存后重启代理。`ocx status` 显示主管理 URL 和模型 listener 状态。`ocx status --json` 新增 `forkModelApiListener`，保持 `schemaVersion: 1`：`enabled` 表示期望配置，`active`、`hostname` 和 `port` 来自运行中的进程，`restartRequired` 比较启动拓扑与保存拓扑。缺少已验证的同进程响应时，`active` 和 `restartRequired` 为 `null`，`inactiveReason` 为 `unverified`；服务未运行时报告 `active: false` 和 `not-running`。运行中关闭的入口报告 `disabled`；primary 模式报告 `primary-non-loopback`，表示无需辅助 listener。状态不含凭据。
 
+配置文件包含已移除的 OpenCode Free provider 时，主动文件读取会尝试备份原始字节，并从加载视图中移除退休条目；passive 诊断不创建副本。有效的已启用 listener 拓扑会保留；显式配置的非法拓扑会被拒绝，不会静默关闭。
+
 本地回归使用临时端口和夹具 Provider，不代表完成安装、用户服务重启、外部设备连通或付费 Provider 验收。
 
 ## Provider 配置
@@ -90,6 +92,10 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 | `privateErrorBodyReadDeadline` | 为使用私有凭据保护的 HTTP 错误正文保留固定 5 秒总期限、首字节及停滞期限。关闭后取消固定总期限，首字节和停滞等待使用 `stallTimeoutSec`；取消、64 KiB 上限和凭据遮盖继续生效。 |
 | `synthesizeTerminalFailure` | 没有可用终态事件时，执行既有合成失败终态处理。 |
 | `normalizeHostedImages` | 为受支持客户端转换 hosted-image 返回，并清理后续输入中的显示路径。 |
+
+原生 Responses 流式 Combo 尝试中，即使 `synthesizeTerminalFailure: false`，真实 `response.done` 的 `response.status: "completed"` 且包含 output 数组时仍须遵守官方必选工具合同。检查不会改动有效 block。`repairResponseToolCalls: false` 时，检查器不能把客户端未收到的修复后名称当作履约。缺少必选调用仅可在提交前且重放安全时重试；观察到 hosted 工具效果时禁止重放。
+
+生效的 `maxInboundBodyBytes` 大于 256 MiB 时，共享的 `maxConcurrentInboundBodyBytes` 准入预算生效。解压及序列化大小会在转移 Fork 请求文本 lease 前更新 reservation。保留的 JSON 文本使用独立的 translator-budget lease。准入 reservation 持有到响应 EOF、错误或取消完成；文本 lease 在请求来源完成、错误、取消或 abort 时释放。官方限制与适用范围见[入站正文准入](/zh-cn/reference/inbound-body-admission/)。
 
 ### 请求与返回头
 
@@ -223,3 +229,5 @@ ocx debug provider-text off
 主日志与引用工件在 UTC 日期/小时目录下共用 4 MiB 分组，两个根目录的可管理数据最多保留七天和 20 GiB。清理先删最旧主日志，再删工件；unsafe/不可读旁路条目不计入该预算。样本脱敏并限制单字符串/每轮额度。手动删除前先停代理，再一起删除 `provider-debug` 和 `provider-debug-artifacts`，只删工件会损坏保留引用。
 
 `bun run install:local` 是须明确请求的本机维护操作：离线 staging 并验证依赖闭包，同步 Volta，服务 ready 后才提交替换。macOS 补写 `OCX_DEBUG=1` / `OCX_PROVIDER_TEXT_DEBUG=1`；`--no-restart` 的服务配置只写磁盘 plist，不 reload 服务。字体栈补丁保留，旧滚动 CSS 补丁已退役。
+
+共享安装事务要求同步授权包替换，并在每次移动 live 包前的授权调用前后核对 pending marker 身份。恢复状态不安全时，即使报告已回滚，也会拒绝 launcher 和服务恢复。只有旧包未改且确认 marker 不存在，`pending-marker` 失败才视为安全；否则应在重试前检查事务状态。

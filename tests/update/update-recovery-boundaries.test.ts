@@ -110,6 +110,32 @@ test("npm authorization refusal preserves the usable launcher and previous-versi
   expect(npmUpdateFailureGuidance({ ...failure, pkgName: "@fixture/opencodex", tag: "latest" }).previousVersionKept).toBe(true);
 });
 
+test("source-body harness executes the real Fork version guard", () => {
+  const guard = section(node, "  const forkDecision = forkUpdateDecision(", "  const integrity = checkRegistryPackageIntegrity(");
+  const run = updateSourceFunction("deps", `with (deps) { ${guard}; return "proceed"; }`);
+  for (const scenario of [
+    { current: "2.40.0-ben.3", latest: "2.39.0", exit: 1, message: "refusing to downgrade" },
+    { current: "2.40.0-ben.3", latest: "garbage", exit: 1, message: "could not resolve" },
+    { current: "2.40.0-ben.3", latest: "2.40.0", exit: 0, message: "Already on the latest" },
+    { current: "1.0.0", latest: "2.0.0", exit: null, message: "" },
+  ]) {
+    const exits: number[] = [], messages: string[] = [];
+    const deps = {
+      current: scenario.current, latest: scenario.latest, tag: "latest",
+      process: { exit: (code: number) => { exits.push(code); throw new Error("fixture exit"); } },
+      console: { log: (line: string) => messages.push(line), error: (line: string) => messages.push(line) },
+    };
+    if (scenario.exit === null) {
+      expect(run(deps)).toBe("proceed");
+      expect(exits).toEqual([]);
+    } else {
+      expect(() => run(deps)).toThrow("fixture exit");
+      expect(exits).toEqual([scenario.exit]);
+      expect(messages.join(" ")).toContain(scenario.message);
+    }
+  }
+});
+
 for (const outcome of ["false", "throw", "promise"] as const) test(`async transaction fails closed on ${outcome} authorization`, async () => {
   const temp = createTempHome("ocx-swap-refusal-");
   try {

@@ -139,6 +139,18 @@ export function codexAccountHasNonQuotaHealthBlock(config: OcxConfig, accountId:
     || shouldFailover(config, accountId, now) || failureWindowSteersNewThreads(config, accountId, now);
 }
 
+export function codexQuotaPrecheckSnapshot(
+  config: OcxConfig,
+  accountId: string,
+  quotaScope: CodexQuotaScope | undefined,
+  selectionOptions?: Pick<CodexAccountSelectionOptions, "skipOrdinaryCachedQuotaPrecheck">,
+  hasTransientProbe = false,
+): ReturnType<typeof getCodexQuotaHealthSnapshot> {
+  if (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true
+    && (hasTransientProbe || !codexAccountHasNonQuotaHealthBlock(config, accountId))) return null;
+  return getCodexQuotaHealthSnapshot(accountId, quotaScope);
+}
+
 /**
  * Which guard in {@link isCodexAccountSelectable} refused this account, if any.
  *
