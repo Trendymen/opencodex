@@ -231,3 +231,5 @@ ocx debug provider-text off
 `bun run install:local` 是须明确请求的本机维护操作：离线 staging 并验证依赖闭包，同步 Volta，服务 ready 后才提交替换。macOS 补写 `OCX_DEBUG=1` / `OCX_PROVIDER_TEXT_DEBUG=1`；`--no-restart` 的服务配置只写磁盘 plist，不 reload 服务。字体栈补丁保留，旧滚动 CSS 补丁已退役。
 
 共享安装事务要求同步授权包替换，并在每次移动 live 包前的授权调用前后核对 pending marker 身份。恢复状态不安全时，即使报告已回滚，也会拒绝 launcher 和服务恢复。只有旧包未改且确认 marker 不存在，`pending-marker` 失败才视为安全；否则应在重试前检查事务状态。
+
+启动恢复同样先用 `lstat` 检查 marker 目录项，只有 `ENOENT` 表示不存在。符号链接、非普通文件或 stat/read/parse 失败都会阻止自动清理和恢复，保留 marker、包备份与 recovery 记录。发现目录项后再读取失败，不会改判为不存在。
