@@ -462,9 +462,16 @@ function pathIdentity(path, deps = {}) {
 }
 
 function readPendingMarker(scopeDir) {
-  if (!existsSync(pendingMarkerPath(scopeDir))) return { state: "absent" };
+  const markerPath = pendingMarkerPath(scopeDir);
+  let markerStat;
   try {
-    const parsed = JSON.parse(readFileSync(pendingMarkerPath(scopeDir), "utf8"));
+    markerStat = lstatSync(markerPath);
+  } catch (error) {
+    return { state: error?.code === "ENOENT" ? "absent" : "invalid" };
+  }
+  try {
+    if (!markerStat.isFile() || markerStat.isSymbolicLink()) return { state: "invalid" };
+    const parsed = JSON.parse(readFileSync(markerPath, "utf8"));
     if (!parsed || parsed.state !== "pending" || typeof parsed.id !== "string" || parsed.id.length === 0
       || !Number.isSafeInteger(parsed.ownerPid) || parsed.ownerPid <= 0
       || typeof parsed.live !== "string" || typeof parsed.backup !== "string") return { state: "invalid" };
