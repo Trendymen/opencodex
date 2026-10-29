@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -263,6 +263,40 @@ function instrumentRecoveryLauncher(source: string, directory: string): string {
   replaceOnce('const clearHandlers = () => {', 'child.on("spawn", () => fixtureStatus("runtime-spawned", { pid: child.pid }));\nconst clearHandlers = () => {');
   return source;
 }
+
+function replaceRecoveryHomeSeam(source: string, needle: string, replacement: string): string {
+  if (source.split(needle).length !== 2) throw new Error("recovery home fixture: source seam changed");
+  return source.replace(needle, () => replacement);
+}
+
+function instrumentRecoveryHomeLauncher(source: string, launcher: string, probe: string): string {
+  const entry = 'join(dirname(launcherPath), "..", "src", "update", "service-home-probe-entry.ts")';
+  return replaceRecoveryHomeSeam(source, entry,
+    `(launcherPath === ${JSON.stringify(launcher)} ? ${JSON.stringify(probe)} : ${entry})`);
+}
+
+function recoveryHomeProbeSource(source: string): string {
+  const entryImport = 'import { inspectUpdateServiceHome } from "./service-home-authority";';
+  // A sandboxed HOME does not isolate the host user's service-manager registration.
+  const fixtureImport = `import { inspectUpdateServiceHome } from "./src/update/service-home-authority.ts";
+function fixtureManagerRun(file, args) {
+  if (process.platform === "darwin" && file === "/bin/launchctl" && args.length === 2 && args[0] === "print"
+      && ["gui/" + process.getuid() + "/com.opencodex.proxy", "user/" + process.getuid() + "/com.opencodex.proxy"].includes(args[1])) {
+    return { status: 113, stdout: "", stderr: "", timedOut: false, spawnFailed: false };
+  }
+  if (process.platform === "linux" && file === "systemctl" && JSON.stringify(args) === JSON.stringify([
+    "--user", "show", "opencodex-proxy", "-p", "LoadState", "-p", "ActiveState", "-p", "FragmentPath", "-p", "NeedDaemonReload",
+  ])) {
+    return { status: 0, stdout: "LoadState=not-found\\nActiveState=inactive\\nFragmentPath=\\nNeedDaemonReload=no\\n", stderr: "", timedOut: false, spawnFailed: false };
+  }
+  throw new Error("unexpected service manager query in recovery fixture");
+}`;
+  const withImport = replaceRecoveryHomeSeam(source, entryImport, fixtureImport);
+  const withPolicy = replaceRecoveryHomeSeam(withImport,
+    'import { isUpdateHomeProbe } from "./service-home-policy.mjs";',
+    'import { isUpdateHomeProbe } from "./src/update/service-home-policy.mjs";');
+  return replaceRecoveryHomeSeam(withPolicy, "...inspectUpdateServiceHome()", "...inspectUpdateServiceHome({ run: fixtureManagerRun })");
+}
 const updateSource = readFileSync(join(repoRoot, "src", "update", "index.ts"), "utf8");
 const launcherSource = readFileSync(join(repoRoot, "bin", "ocx.mjs"), "utf8");
 // The three /healthz identity assertions below read the route handler, which moved into the
@@ -361,6 +395,40 @@ describe("bounded recovery diagnostics", () => {
       expect(() => instrumentRecoveryLauncher(`${launcherSource}\n${seam}`, "/fixture"))
         .toThrow("recovery diagnostic fixture: launcher seam changed");
     }
+  });
+
+  test("recovery home fixture applies only to its launcher and rejects changed seams", () => {
+    const entry = 'join(dirname(launcherPath), "..", "src", "update", "service-home-probe-entry.ts")';
+    const launcher = "/fixture/package/bin/ocx.mjs";
+    const probe = "/fixture/package/recovery-home-probe.ts";
+    const select = new Function("launcherPath", "dirname", "join",
+      instrumentRecoveryHomeLauncher(`return ${entry};`, launcher, probe)) as (path: string, dir: typeof dirname, joinPath: typeof join) => string;
+    expect(select(launcher, dirname, join)).toBe(probe);
+    expect(select("/other/package/bin/ocx.mjs", dirname, join))
+      .toBe("/other/package/src/update/service-home-probe-entry.ts");
+    for (const source of ["", `${entry}\n${entry}`]) {
+      expect(() => instrumentRecoveryHomeLauncher(source, launcher, probe)).toThrow("recovery home fixture: source seam changed");
+    }
+    const original = readFileSync(join(repoRoot, "src", "update", "service-home-probe-entry.ts"), "utf8");
+    for (const seam of ['import { inspectUpdateServiceHome } from "./service-home-authority";',
+      'import { isUpdateHomeProbe } from "./service-home-policy.mjs";', "...inspectUpdateServiceHome()"]) {
+      expect(() => recoveryHomeProbeSource(original.replace(seam, ""))).toThrow("recovery home fixture: source seam changed");
+      expect(() => recoveryHomeProbeSource(`${original}\n${seam}`)).toThrow("recovery home fixture: source seam changed");
+    }
+    const fixture = recoveryHomeProbeSource(original);
+    const from = fixture.indexOf("function fixtureManagerRun(");
+    const to = fixture.indexOf("\n}", from) + 2;
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const makeRunner = new Function("process", `${fixture.slice(from, to)}; return fixtureManagerRun;`);
+    const launchd = makeRunner({ platform: "darwin", getuid: () => 42 });
+    expect(launchd("/bin/launchctl", ["print", "gui/42/com.opencodex.proxy"]).status).toBe(113);
+    expect(() => launchd("/bin/launchctl", ["bootout", "gui/42/com.opencodex.proxy"])).toThrow();
+    expect(() => launchd("/bin/launchctl", ["print", "gui/42/other"])).toThrow();
+    const systemd = makeRunner({ platform: "linux" });
+    expect(systemd("systemctl", ["--user", "show", "opencodex-proxy", "-p", "LoadState", "-p", "ActiveState",
+      "-p", "FragmentPath", "-p", "NeedDaemonReload"]).stdout).toContain("LoadState=not-found");
+    expect(() => systemd("systemctl", ["--user", "stop", "opencodex-proxy"])).toThrow();
   });
 
   test("generated capture wrapper preserves spawn options, return/error identity and FD finally", () => {
@@ -649,6 +717,7 @@ describe("update stops the running proxy before replacing files", () => {
       try {
         // Bind the actual child environment, not merely HOME, to this case.
         expect(resolveCodexHomeDir({ env })).toBe(join(root, ".codex"));
+        expect(env.OCX_TEST_HOME_GUARD).toBe("1");
         const port = await freePort();
         expect(existsSync(bundledBun)).toBe(true);
         mkdirSync(dirname(launcher), { recursive: true });
@@ -660,7 +729,12 @@ describe("update stops the running proxy before replacing files", () => {
         for (const name of ["stdout", "stderr", "status"]) {
           writeFileSync(join(diagnostics, name), "", { mode: 0o600, flag: "wx" });
         }
-        writeFileSync(launcher, instrumentRecoveryLauncher(launcherSource, diagnostics));
+        const ownedPackage = realpathSync(packageRoot);
+        const ownedLauncher = join(ownedPackage, "bin", "ocx.mjs");
+        const ownedProbe = join(ownedPackage, "recovery-home-probe.ts");
+        const entry = readFileSync(join(repoRoot, "src", "update", "service-home-probe-entry.ts"), "utf8");
+        writeFileSync(ownedProbe, recoveryHomeProbeSource(entry), { mode: 0o600, flag: "wx" });
+        writeFileSync(launcher, instrumentRecoveryHomeLauncher(instrumentRecoveryLauncher(launcherSource, diagnostics), ownedLauncher, ownedProbe));
         chmodSync(launcher, 0o755);
         symlinkSync(join(repoRoot, "src"), join(packageRoot, "src"), "dir");
         symlinkSync(bundledBun, join(packageRoot, "node_modules", "bun"), "dir");
@@ -694,6 +768,7 @@ esac
 
         expect(result.exitCode).toBe(1);
         expect(output).toContain("Stopping the running proxy before updating");
+        expect(output).toContain("npm staging install failed (1)");
         expect(output).toContain("restarting the previous version directly");
         expect(output).toContain("'ocx status'");
         expect(output).toContain("let any in-progress recovery finish");
