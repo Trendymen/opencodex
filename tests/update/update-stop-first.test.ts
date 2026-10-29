@@ -405,7 +405,7 @@ describe("bounded recovery diagnostics", () => {
       instrumentRecoveryHomeLauncher(`return ${entry};`, launcher, probe)) as (path: string, dir: typeof dirname, joinPath: typeof join) => string;
     expect(select(launcher, dirname, join)).toBe(probe);
     expect(select("/other/package/bin/ocx.mjs", dirname, join))
-      .toBe("/other/package/src/update/service-home-probe-entry.ts");
+      .toBe(join("/other", "package", "src", "update", "service-home-probe-entry.ts"));
     for (const source of ["", `${entry}\n${entry}`]) {
       expect(() => instrumentRecoveryHomeLauncher(source, launcher, probe)).toThrow("recovery home fixture: source seam changed");
     }
