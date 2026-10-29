@@ -4,6 +4,7 @@ import { guardedUpdateIo } from "./update-guarded-io.mjs";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { forkUpdateDecision } from "../../src/fork/version-policy.mjs";
 import { createUpdateServiceHomePolicy, parseUpdateWorkerHome, UPDATE_PACKAGE_ONLY_EXIT_CODE } from "../../src/update/service-home-policy.mjs";
 import { inspectPackageRuntimeLiveness, planUpdateRuntimeHandling } from "../../src/update/runtime-ownership.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../../src/update/tray-update-plan.mjs";
@@ -26,7 +27,7 @@ process.on("exit", () => process.stdout.write(`NODE_HOME_PROBE:${JSON.stringify(
 const dependencies = {
   process: { argv: [process.execPath, launcher, "update", ...argv], env: process.env, execPath: process.execPath, platform: process.platform, exit: code => process.exit(code) },
   console, PKG: "@bitkyc08/opencodex", here: dirname(launcher), dirname, join, resolve, fileURLToPath,
-  currentPackageVersion: () => "1.0.0", updateTag: () => "latest",
+  currentPackageVersion: () => "1.0.0", updateTag: () => "latest", forkUpdateDecision,
   npmInvocation: args => ({ file: "fixture-npm", args }),
   spawnSync: (_bin, args) => {
     if (args[0] === "view") return { status: 0, stdout: "99.0.0\n" };
