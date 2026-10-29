@@ -71,6 +71,7 @@
 - 当前版本 Fork Tag 已在本地但浅克隆无法证明祖先时，准备步骤固定 HEAD 并只从 origin 补全该 commit 的历史；不改分支、Tag 或 FETCH_HEAD。版本 guard 继续拒绝补全后的非祖先。`tests/ci-workflows/fork-ci-official-baseline.test.ts` 使用真实本地浅克隆覆盖补全、分叉和失败清理。
 - `scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts` 在离线验证后的同卷 stage 上替换包；根 manifest 保持冻结。Volta、服务、readiness、plist 和包字节共用失败回滚边界。
 - `src/update/transactional-install.mjs` 在 stage 验证后及每次 live→backup rename 重试前要求 `mayReplacePackage` 同步返回 `true`；重试时在该调用前后复核 Fork pending marker 身份。marker 身份不符时保留现有 marker 并报告 `pending-owner`；`recoveryUnsafe: true` 优先拒绝 launcher/服务恢复，即使 `rolledBack: true`。只有旧包未改且 `lstat` 确认 marker 不存在时，`pending-marker` 失败才按安全状态处理。`tests/update/update-transactional.test.ts` 包含授权、marker 身份和恢复判定回归。
+- `readPendingMarker` 统一供事务和 `bootRestoreProbe` 使用，只把 `lstat` 抛出的 `ENOENT` 判为 absent。符号链接、非普通文件、其他 stat 错误及随后的读取/解析失败都判 invalid；启动恢复在此状态下不清理或替换 live、backup、pending marker 和 recovery 记录。`tests/update/update-transactional.test.ts` 交叉覆盖健康/损坏 live、悬空链接、指向有效 marker 的链接、目录和读取失败。
 - 停服、包回滚和 plist 恢复全部确认成功后，才恢复原先已加载的服务；不安全/未知状态拒绝继续 restart。Windows pending transaction 的 wrapper 和 probe 成对维护。
 - macOS `install:local` 补写 `OCX_DEBUG=1` / `OCX_PROVIDER_TEXT_DEBUG=1`，运行安装命令须当前用户明确授权。普通自更新保留官方同步/异步事务路径及 Windows 安装进程树退出屏障，字体补丁不扩展为滚动 CSS 改写。
 - `src/fork/version-policy.mjs` 维护 `ben.N` 单调版本。更新、通知和 launcher 使用同一规则；Tag/Release 见 [Fork 维护补充](../FORK_MAINTAINERS.md) 和同步政策。

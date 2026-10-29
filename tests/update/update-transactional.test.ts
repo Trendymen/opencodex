@@ -3,7 +3,8 @@
  * old-complete or new-complete, never a partial skeleton, across every injected fault.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -15,6 +16,7 @@ import {
 import { npmUpdateFailureGuidance } from "../../src/update/update-failure-guidance.mjs";
 import { planStoppedRuntimeRecovery } from "../../src/update/runtime-ownership.mjs";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { repoPath } from "../helpers/repo-root";
 
 const PKG = "@bitkyc08/opencodex";
 
@@ -38,6 +40,16 @@ function liveVersion(packageDir: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function pendingMarkerReadWithLstat(scopeDir: string, inspect: typeof lstatSync): { state: string } {
+  const source = readFileSync(repoPath("src/update/transactional-install.mjs"), "utf8");
+  const start = source.indexOf("function readPendingMarker(scopeDir) {");
+  const end = source.indexOf("\nfunction pendingMarkerMatches(", start);
+  if (start < 0 || end < 0) throw new Error("pending marker reader boundary changed");
+  const load = new Function("existsSync", "lstatSync", "readFileSync", "pendingMarkerPath",
+    `${source.slice(start, end)}\nreturn readPendingMarker;`);
+  return load(existsSync, inspect, readFileSync, (dir: string) => join(dir, ".ocx-transaction.json"))(scopeDir);
 }
 
 /** npm stub that materializes a GLOBAL-style staged tree (deps nested inside the package). */
@@ -265,16 +277,38 @@ describe("#1942 transactional update", () => {
 
   test.skipIf(process.platform === "win32")("a dangling pending-marker symlink remains unsafe after publication fails", () => {
     const markerPath = join(scopeDir, ".ocx-transaction.json");
-    symlinkSync(join(scopeDir, "missing-marker-target"), markerPath);
+    const stage = stagingNpm("2.0.0");
+    let publications = 0;
     const result = transactionalNpmUpdate({
       packageDir, pkgName: PKG, targetVersion: "2.0.0", tag: "latest",
-      runNpm: stagingNpm("2.0.0"),
+      runNpm: args => {
+        const staged = stage(args);
+        symlinkSync(join(scopeDir, "missing-marker-target"), markerPath);
+        return staged;
+      },
+      deps: { linkMarker: (from, to) => { publications += 1; linkSync(from, to); } },
     });
     expect(result).toMatchObject({ ok: false, phase: "pending-marker", recoveryUnsafe: true });
+    expect(publications).toBe(1);
     expect(lstatSync(markerPath).isSymbolicLink()).toBe(true);
     expect(liveVersion(packageDir)).toBe("1.0.0");
     expect(launcherUsableAfterNpmUpdate(result)).toBe(false);
     expect(npmUpdateFailureGuidance({ ...result, pkgName: PKG }).previousVersionKept).toBe(false);
+  });
+
+  test.skipIf(process.platform === "win32")("a pre-existing dangling marker refuses before staging", () => {
+    const markerPath = join(scopeDir, ".ocx-transaction.json");
+    symlinkSync(join(scopeDir, "missing-marker-target"), markerPath);
+    let installs = 0;
+    const result = transactionalNpmUpdate({
+      packageDir, pkgName: PKG, targetVersion: "2.0.0", tag: "latest",
+      runNpm: () => { installs += 1; return { status: 1 }; },
+    });
+    expect(result).toMatchObject({ ok: false, phase: "pending-existing", recoveryUnsafe: true });
+    expect(installs).toBe(0);
+    expect(lstatSync(markerPath).isSymbolicLink()).toBe(true);
+    expect(liveVersion(packageDir)).toBe("1.0.0");
+    expect(launcherUsableAfterNpmUpdate(result)).toBe(false);
   });
 
   test("a restored package with an uncleared marker cannot drive automatic recovery", () => {
@@ -348,6 +382,83 @@ describe("#1942 transactional update", () => {
     expect(result.phase).toBe("double-fault");
     const marker = JSON.parse(readFileSync(join(scopeDir, ".ocx-recovery.json"), "utf8"));
     expect(marker.restore).toContain("opencodex");
+  });
+
+  for (const live of ["healthy", "broken"] as const) {
+    for (const markerKind of ["directory", "dangling symlink", "symlink to marker"] as const) {
+      test.skipIf(markerKind !== "directory" && process.platform === "win32")(
+        `boot probe preserves ${live} live and recovery evidence for ${markerKind}`,
+        () => {
+          const backupRoot = join(scopeDir, ".ocx-backup-unknown");
+          const backup = join(backupRoot, "opencodex");
+          const marker = join(scopeDir, ".ocx-transaction.json");
+          const recovery = join(scopeDir, ".ocx-recovery.json");
+          const target = join(scopeDir, "other-marker.json");
+          writeTree(backup, "0.9.0");
+          const recoveryBytes = Buffer.from('{"reason":"manual recovery evidence"}\n');
+          writeFileSync(recovery, recoveryBytes);
+          if (markerKind === "directory") {
+            mkdirSync(marker);
+            writeFileSync(join(marker, "evidence"), "directory marker bytes");
+          } else {
+            if (markerKind === "symlink to marker") {
+              writeFileSync(target, JSON.stringify({ state: "pending", id: "other", ownerPid: process.pid, live: packageDir, backup }));
+            }
+            symlinkSync(target, marker, "file");
+          }
+          if (live === "broken") rmSync(join(packageDir, "bin", "ocx.mjs"));
+          const files = ["package.json", "bin/ocx.mjs", "node_modules/bun/package.json", "node_modules/bun/bun.exe", "node_modules/zod/package.json"];
+          const digest = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+          const backupBytes = files.map(file => digest(join(backup, file)));
+          const liveManifest = readFileSync(join(packageDir, "package.json"));
+          const liveLauncher = live === "healthy" ? readFileSync(join(packageDir, "bin", "ocx.mjs")) : undefined;
+          const identity = (path: string) => {
+            const { dev, ino, mode } = lstatSync(path);
+            return { dev, ino, mode };
+          };
+          const entries = readdirSync(scopeDir).sort();
+          const identities = [packageDir, backupRoot, backup, marker, recovery].map(identity);
+          const markerEvidence = markerKind === "directory" ? readFileSync(join(marker, "evidence"), "utf8") : readlinkSync(marker);
+          const targetBytes = markerKind === "symlink to marker" ? readFileSync(target) : undefined;
+          const renames: string[][] = [];
+
+          const probe = bootRestoreProbe(packageDir, { rename: (from, to) => { renames.push([from, to]); renameSync(from, to); } });
+
+          expect(probe).toEqual({ action: "failed", error: "pending transaction marker is invalid" });
+          expect(renames).toEqual([]);
+          expect(readdirSync(scopeDir).sort()).toEqual(entries);
+          expect([packageDir, backupRoot, backup, marker, recovery].map(identity)).toEqual(identities);
+          expect(files.map(file => digest(join(backup, file)))).toEqual(backupBytes);
+          expect(readFileSync(recovery)).toEqual(recoveryBytes);
+          expect(readFileSync(join(packageDir, "package.json"))).toEqual(liveManifest);
+          if (liveLauncher) expect(readFileSync(join(packageDir, "bin", "ocx.mjs"))).toEqual(liveLauncher);
+          else expect(existsSync(join(packageDir, "bin", "ocx.mjs"))).toBe(false);
+          if (markerKind === "directory") expect(readFileSync(join(marker, "evidence"), "utf8")).toBe(markerEvidence);
+          else expect(readlinkSync(marker)).toBe(markerEvidence);
+          if (targetBytes) expect(readFileSync(target)).toEqual(targetBytes);
+        },
+      );
+    }
+  }
+
+  test("pending marker lstat failure other than ENOENT remains invalid", () => {
+    const marker = join(scopeDir, ".ocx-transaction.json");
+    writeFileSync(marker, JSON.stringify({ state: "pending", id: "known", ownerPid: process.pid, live: packageDir, backup: "backup" }));
+    const denied = (() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); }) as typeof lstatSync;
+    expect(pendingMarkerReadWithLstat(scopeDir, denied)).toEqual({ state: "invalid" });
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  test("pending marker removed after lstat is invalid rather than absent", () => {
+    const marker = join(scopeDir, ".ocx-transaction.json");
+    writeFileSync(marker, JSON.stringify({ state: "pending", id: "known", ownerPid: process.pid, live: packageDir, backup: "backup" }));
+    const vanishing = ((path: Parameters<typeof lstatSync>[0]) => {
+      const stat = lstatSync(path);
+      rmSync(path);
+      return stat;
+    }) as typeof lstatSync;
+    expect(pendingMarkerReadWithLstat(scopeDir, vanishing)).toEqual({ state: "invalid" });
+    expect(existsSync(marker)).toBe(false);
   });
 
   test("boot probe restores the backup over a broken live tree (D4 power-loss rows)", () => {
