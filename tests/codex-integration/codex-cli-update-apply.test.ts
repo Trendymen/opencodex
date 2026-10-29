@@ -41,9 +41,41 @@ async function approved(f: ReturnType<typeof fixture>, deps = depsFor(f)) {
   expect(plan.applicable, JSON.stringify(plan)).toBe(true); expect(plan.planId).toMatch(/^[0-9a-f]{32}$/);
   return plan.planId!;
 }
-function cli(f: ReturnType<typeof fixture>, args: string[]) {
-  const result = spawnSync(Bun.which("node")!, [repoPath("bin", "ocx.mjs"), "system", "codex-cli-update", ...args, "--json"], {
-    cwd: repoRoot(), encoding: "utf8", env: f.env, timeout: 60_000,
+type ProcessFixture = "empty" | "active" | "failure";
+function publishedNodeArgs(f: ReturnType<typeof fixture>, args: string[], processFixture: ProcessFixture = "empty") {
+  const launcher = repoPath("bin", "ocx.mjs");
+  if (process.platform !== "darwin") return [launcher, ...args];
+  const preload = join(mkdtempSync(join(f.root, "node-launcher-")), "preload.cjs");
+  const cliEntry = repoPath("src", "cli", "index.ts");
+  const bunPreload = repoPath("tests", "helpers", "fork-codex-cli-process-preload.ts");
+  const bun = process.execPath;
+  const target = realpathSync.native(f.launcher);
+  writeFileSync(preload, `const fs = require("node:fs"), cp = require("node:child_process"), spawn = cp.spawn;
+const root = ${JSON.stringify(f.root)}, launcher = ${JSON.stringify(launcher)}, expected = ${JSON.stringify(args)};
+const bun = ${JSON.stringify(bun)}, entry = ${JSON.stringify(cliEntry)}, target = ${JSON.stringify(target)};
+if (fs.realpathSync(root) !== root || process.argv[1] !== launcher || JSON.stringify(process.argv.slice(2)) !== JSON.stringify(expected)
+  || process.env.HOME !== root + "/home" || process.env.OPENCODEX_HOME !== root + "/home/ocx"
+  || process.env.CODEX_CLI_PATH !== root + "/prefix/bin/codex" || fs.realpathSync(process.env.CODEX_CLI_PATH) !== target
+  || !target.startsWith(root + "/prefix/lib/node_modules/@openai/codex/") || process.env.OPENCODEX_BUN_PATH !== bun) {
+  throw new Error("unexpected published CLI fixture identity");
+}
+cp.spawn = function (file, args, options) {
+  if (file !== bun && (!Array.isArray(args) || args[0] !== entry)) return spawn.call(this, file, args, options);
+  if (file !== bun || !Array.isArray(args) || args[0] !== entry
+    || !/^--ocx-internal-launch-proof=[A-Za-z0-9_-]{43}$/.test(args[1] || "")
+    || JSON.stringify(args.slice(2)) !== JSON.stringify(expected)) throw new Error("unexpected published CLI fixture Bun launch");
+  return spawn.call(this, file, ["--preload", ${JSON.stringify(bunPreload)}, ...args], {
+    ...options, env: { ...options.env, OCX_FIXTURE_CODEX_PROCESS_MODE: ${JSON.stringify(processFixture)} },
+  });
+};
+require("node:module").syncBuiltinESMExports();
+`);
+  return ["--require", preload, launcher, ...args];
+}
+function cli(f: ReturnType<typeof fixture>, args: string[], processFixture: ProcessFixture = "empty") {
+  const publishedArgs = ["system", "codex-cli-update", ...args, "--json"];
+  const result = spawnSync(Bun.which("node")!, publishedNodeArgs(f, publishedArgs, processFixture), {
+    cwd: repoRoot(), encoding: "utf8", env: { ...f.env, NODE_OPTIONS: undefined }, timeout: 60_000,
   });
   expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
   return JSON.parse(result.stdout);
@@ -64,6 +96,9 @@ function managementTestEnv(f: ReturnType<typeof fixture>) {
   if (!node) throw new Error("fixture node executable unavailable");
   const home = f.home;
   const configDir = join(home, "ocx");
+  mkdirSync(configDir, { recursive: true });
+  const configFile = join(configDir, "config.json");
+  if (!existsSync(configFile)) writeFileSync(configFile, JSON.stringify({ port: 0, hostname: "127.0.0.1" }));
   const env: NodeJS.ProcessEnv = {
     PATH: [join(f.root, "bin"), join(f.prefix, "bin"), dirname(node), "/usr/bin", "/bin"].join(":"),
     HOME: home, CODEX_HOME: join(home, ".codex"), TMPDIR: f.temporaryRoot, TEMP: f.temporaryRoot, TMP: f.temporaryRoot,
@@ -90,7 +125,7 @@ async function reserveLoopbackPort(): Promise<number> {
 function startFixtureManagementServer(f: ReturnType<typeof fixture>, port: number, gate: string) {
   const { node, env } = managementTestEnv(f);
   env.OCX_FIXTURE_NPM_GATE = gate;
-  const child = spawn(node, [repoPath("bin", "ocx.mjs"), "start", "--port", String(port)], {
+  const child = spawn(node, publishedNodeArgs(f, ["start", "--port", String(port)]), {
     cwd: f.root, env, detached: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -326,6 +361,49 @@ describe.skipIf(!posix)("Codex CLI private-prefix POSIX apply", () => {
     expect(calls[0]!.filter(arg => arg.includes("@file:"))).toHaveLength(2);
     expect(calls[0]!.join(" ")).not.toContain("@latest");
     expect(existsSync(join(f.prefix, ".ocx-codex-cli-apply.lock"))).toBe(false);
+  }, 120_000);
+
+  test.skipIf(process.platform !== "darwin").each([
+    ["active", "blocked_active_session", { state: "active", matches: 1 }],
+    ["failure", "blocked_process_state_unknown", { state: "unknown", matches: null }],
+  ] as const)("published CLI refuses a synthetic %s process-table observation", (processFixture, refusal, session) => {
+    const f = fixture();
+    const plan = cli(f, ["plan"], processFixture);
+    expect(plan).toMatchObject({ applicable: false, managed: true, refusal, session });
+    expect(readFileSync(f.trace, "utf8")).toBe("");
+  }, 120_000);
+
+  test.skipIf(process.platform !== "darwin")("process fixture forwards unrelated commands and does not change the parent", () => {
+    const source = `import { execFile } from "node:child_process";
+const run = (file, args) => new Promise((resolve, reject) => execFile(file, args, { encoding: "utf8" },
+  (error, stdout) => error ? reject(error) : resolve(stdout.trim())));
+postMessage({ text: await run("/usr/bin/printf", ["real-command"]),
+  pid: await run("/bin/ps", ["-p", String(process.pid), "-o", "pid="]), expectedPid: String(process.pid) });`;
+    const preload = repoPath("tests", "helpers", "fork-codex-cli-process-preload.ts");
+    const script = `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(source)}], { type: "text/javascript" })),
+  { preload: ${JSON.stringify(preload)} }); worker.onmessage = event => { console.log(JSON.stringify(event.data)); worker.terminate(); };`;
+    const child = spawnSync(process.execPath, ["-e", script], { encoding: "utf8", timeout: 10_000,
+      env: { ...process.env, NODE_OPTIONS: undefined, OCX_FIXTURE_CODEX_PROCESS_MODE: "active" } });
+    expect(child.error).toBeUndefined(); expect(child.status).toBe(0);
+    const result = JSON.parse(child.stdout) as { text: string; pid: string; expectedPid: string };
+    expect(result.text).toBe("real-command"); expect(result.pid).toBe(result.expectedPid);
+    const parent = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "pid="], { encoding: "utf8" });
+    expect(parent.status).toBe(0); expect(parent.stdout.trim()).toBe(String(process.pid));
+  });
+
+  test.skipIf(process.platform !== "darwin")("published fixture rejects a different package, Bun, or launcher argv", () => {
+    const f = fixture();
+    const args = publishedNodeArgs(f, ["system", "codex-cli-update", "plan", "--json"]);
+    const wrongArgs = [...args]; wrongArgs[wrongArgs.length - 2] = "check";
+    for (const [argv, env] of [
+      [wrongArgs, f.env], [args, { ...f.env, CODEX_CLI_PATH: "/usr/bin/true" }],
+      [args, { ...f.env, OPENCODEX_BUN_PATH: "/usr/bin/true" }],
+    ] as const) {
+      const child = spawnSync(Bun.which("node")!, argv, { encoding: "utf8", timeout: 10_000,
+        env: { ...env, NODE_OPTIONS: undefined } });
+      expect(child.error).toBeUndefined(); expect(child.status).not.toBe(0);
+      expect(child.stderr).toContain("unexpected published CLI fixture identity");
+    }
   }, 120_000);
 
   test("published Node launcher -> isolated management plan, lost-response apply retry, and CLI status", async () => {
