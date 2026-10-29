@@ -39,6 +39,8 @@ The auxiliary endpoint returns JSON `404` for the dashboard, management API, ses
 
 Saving a topology change affects the next start. It neither moves an active socket nor changes ports automatically; an invalid topology or occupied required port fails instead of selecting another port. Restart the proxy after saving. `ocx status` shows the primary management URL and model-listener state. `ocx status --json` adds `forkModelApiListener` without changing `schemaVersion: 1`: `enabled` is the desired setting, while `active`, `hostname` and `port` come from the running process. `restartRequired` compares the started topology with the saved topology. With no verified same-process response, `active` and `restartRequired` are `null` and `inactiveReason` is `unverified`; a stopped service reports `active: false` and `not-running`. A disabled running listener reports `disabled`; primary mode reports `primary-non-loopback` because it needs no auxiliary listener. The state contains no credentials.
 
+When a file contains the retired OpenCode Free provider, an active file read attempts a recovery copy of the original bytes while removing the retired entries from the loaded view. Passive diagnostics create no copy. A valid enabled listener topology is retained; an invalid explicit topology is rejected rather than silently disabled.
+
 Local regression tests use temporary ports and fixture providers. They do not establish installation, a restarted user service, external-device connectivity or paid-provider access.
 
 ## Provider settings
@@ -90,6 +92,10 @@ The paths in these tables are relative to `codexPassthrough`. All defaults are `
 | `privateErrorBodyReadDeadline` | Keep the fixed 5-second total, first-byte and inactivity deadlines for HTTP error bodies protected with private credentials. When disabled, remove the fixed total deadline and use `stallTimeoutSec` for first-byte and inactivity waits; cancellation, the 64 KiB limit and credential masking remain active. |
 | `synthesizeTerminalFailure` | Apply existing synthetic terminal-failure handling when no usable terminal event arrives. |
 | `normalizeHostedImages` | Convert supported hosted-image results for the client and clean their display paths from subsequent input. |
+
+For a native Responses streaming combo attempt, `synthesizeTerminalFailure: false` still subjects a real `response.done` with `response.status: "completed"` and an output array to the upstream required-tool contract. The check leaves a valid block unchanged. With `repairResponseToolCalls: false`, it cannot count a repaired name the client did not receive as fulfillment. A missing required call can be retried only before commitment and when replay is safe; observed hosted-tool effects prevent replay.
+
+When the resolved `maxInboundBodyBytes` exceeds 256 MiB, the shared `maxConcurrentInboundBodyBytes` admission budget applies. Its reservation is updated for decompressed and serialized size before any Fork request-text lease is transferred. The retained JSON text has a separate translator-budget lease. The admission reservation lasts through response EOF, error or settled cancellation; the text lease is released with its request source on completion, error, cancellation or abort. See [inbound body admission](/reference/inbound-body-admission/) for the upstream limits and scope.
 
 ### Headers
 
@@ -223,3 +229,5 @@ ocx debug provider-text off
 Journals and referenced artifacts share 4 MiB groups under UTC date/hour directories. The two roots retain at most seven days and 20 GiB of managed data; cleanup removes the oldest journal before its artifacts. Unsafe or unreadable unrelated entries remain outside that managed bound. Samples are redacted and limited per string/turn. Stop the proxy before manually removing both `provider-debug` and `provider-debug-artifacts`; removing artifacts alone breaks retained references.
 
 `bun run install:local` is an explicitly requested local maintenance action. It stages and validates the dependency closure offline, synchronizes Volta and checks service readiness before committing replacement. On macOS it enables `OCX_DEBUG=1` and `OCX_PROVIDER_TEXT_DEBUG=1`; `--no-restart` writes service configuration to the on-disk plist without reloading the service. The font-stack patch remains, and the old scrolling CSS patch is retired.
+
+The shared installation transaction requires synchronous replacement authorization and checks pending-marker identity before and after that authorization for each live-package swap attempt. An unsafe recovery state prevents launcher and service recovery even if rollback was reported. A `pending-marker` failure is considered safe only when the old package was untouched and the marker is confirmed absent; otherwise inspect the transaction state before retrying.

@@ -50,7 +50,7 @@ import {
   type CodexThreadResolution,
   type TransientProbeGrant,
 } from "./routing";
-import { codexAccountHasNonQuotaHealthBlock, type CodexAccountSelectionOptions } from "./routing/selection";
+import { codexQuotaPrecheckSnapshot, type CodexAccountSelectionOptions } from "./routing/selection";
 // The half-open TRANSIENT-HOLD lease (#4701). Not the quota-cooldown probe lease imported from
 // ./routing above -- different module, different domain, and a request never holds both.
 import { releaseTransientProbe } from "../routing/probe-lease";
@@ -158,7 +158,7 @@ export function requestOwnedMainPinState(
     preserve: candidate && !(callerMatchesObservedMain(headers)
       && (isMainAccountHardLocked(policy)
         || mainCreditsHoldResetAt(policy) !== undefined
-        || (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true || codexAccountHasNonQuotaHealthBlock(config, MAIN_CODEX_ACCOUNT_ID)) && getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, quotaScope)?.cooldownUntil)),
+        || codexQuotaPrecheckSnapshot(config, MAIN_CODEX_ACCOUNT_ID, quotaScope, selectionOptions)?.cooldownUntil)),
   };
 }
 
@@ -1026,8 +1026,7 @@ export function shouldMarkAccountNeedsReauthForCodexAuthFailure(cause: unknown):
     && !(cause instanceof ConfigMutationLockError);
 }
 
-export interface ResolveCodexAuthContextOptions {
-  skipOrdinaryCachedQuotaPrecheck?: boolean;
+export interface ResolveCodexAuthContextOptions extends Pick<CodexAccountSelectionOptions, "skipOrdinaryCachedQuotaPrecheck"> {
   admission?: Pick<DataPlaneAdmission, "source">;
   /** Live policy owner when the routing config is a caller-specific replay snapshot. */
   codexAuthPolicy?: CodexAuthPolicyConfig;
@@ -1181,8 +1180,8 @@ async function resolveCodexAuthContextUnannotated(
   // Pool pins and fallback must not resurrect an observed main credential that is cooling
   // down. Unrelated caller-owned credentials and explicit Direct keep their own policy.
   // The identity match and scoped health read are memory-only; never probe the auth file.
-  const callerOwnedMainPoolCooldown = () => mode === "pool" && callerMatchesObservedMain(headers) && (options.skipOrdinaryCachedQuotaPrecheck !== true || codexAccountHasNonQuotaHealthBlock(config, MAIN_CODEX_ACCOUNT_ID))
-    ? getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, quotaScope)
+  const callerOwnedMainPoolCooldown = () => mode === "pool" && callerMatchesObservedMain(headers)
+    ? codexQuotaPrecheckSnapshot(config, MAIN_CODEX_ACCOUNT_ID, quotaScope, options)
     : null;
   const assertCallerOwnedMainPoolNotCooled = () => {
     const cooldown = callerOwnedMainPoolCooldown();
@@ -1641,9 +1640,7 @@ async function resolveCodexAuthContextUnannotated(
   }
   // Snapshot (not just the deadline) so a refused request can report WHY it is cooled:
   // a literal Retry-After reads very differently to a user than a reset-derived guess.
-  const skipQuotaPrecheck = options.skipOrdinaryCachedQuotaPrecheck === true
-    && (transientProbe !== undefined || !codexAccountHasNonQuotaHealthBlock(config, accountId));
-  const cooldown = skipQuotaPrecheck ? null : getCodexQuotaHealthSnapshot(accountId, quotaScope);
+  const cooldown = codexQuotaPrecheckSnapshot(config, accountId, quotaScope, options, transientProbe !== undefined);
   const cooldownUntil = cooldown?.cooldownUntil;
   // A granted transient trial keeps its existing recovery lease when ordinary quota checks
   // are skipped. Without that grant, mixed health retains the old cooldown refusal.
