@@ -473,11 +473,11 @@ test("a recovery that remains multiply linked is never certified", () => {
   });
 });
 
-test.each([5, 500])("overlapping loads preserve protected originals with a %i ms publisher delay", async delay => {
+test.each(["released", "held"])("overlapping loads preserve protected originals with publisher %s", async schedule => {
   const home = createTempHome("ocx-recovery-overlap-");
   const ready = home.path("publisher-ready");
   const release = home.path("publisher-release");
-  const exhausted = home.path("recheck-budget-spent");
+  const published = home.path("publisher-finished");
   const backup = `${getConfigPath()}.pre-opencode-free-removal.bak`;
   const module = pathToFileURL(repoPath("src/config.ts")).href;
   const bytes = Buffer.from(JSON.stringify({ ...getDefaultConfig(), providers: { "opencode-free": {} } }));
@@ -494,47 +494,52 @@ test.each([5, 500])("overlapping loads preserve protected originals with a %i ms
           if (Date.now() >= until) process.exit(2);
           Bun.sleepSync(5);
         }
-        // The long case publishes only once the overlapping load has spent its whole recheck budget.
-        // A fixed sleep raced the rechecks on loaded runners (dev batch 40824593871, macOS).
-        if (${delay} === 500) {
-          const spent = Date.now() + 20000;
-          while (!real.existsSync(${JSON.stringify(exhausted)})) {
-            if (Date.now() >= spent) process.exit(3);
-            Bun.sleepSync(5);
-          }
-        } else Bun.sleepSync(${delay});
       }
     }})); const { loadConfig } = await import(${JSON.stringify(module)});
-    if (loadConfig().providers['opencode-free']) throw new Error('retired provider retained');`;
+    if (loadConfig().providers['opencode-free']) throw new Error('retired provider retained');
+    real.writeFileSync(${JSON.stringify(published)}, 'finished');`;
   const first = Bun.spawn([process.execPath, "--eval", firstScript], { env: { ...process.env }, stdout: "ignore", stderr: "pipe" });
+  const firstOutput = new Response(first.stderr).text();
   let second: ReturnType<typeof Bun.spawn> | undefined;
+  let secondOutput: Promise<string> | undefined;
   try {
     const until = Date.now() + 15000;
     while (!existsSync(ready) && Date.now() < until) await Bun.sleep(5);
     expect(existsSync(ready)).toBe(true);
     expect(statSync(backup).nlink).toBe(2);
-    // Start the finite publisher delay at the first recheck. Keep real bounded
-    // sleeps: waiting for unlink here would hide exhaustion of the retry budget.
     const secondScript = `import * as fs from 'node:fs'; const sleep = Bun.sleepSync; let retries = 0;
       Bun.sleepSync = ms => {
         if (ms !== 10 || ++retries > 9) throw new Error('unbounded recovery recheck');
-        if (retries === 1) fs.writeFileSync(${JSON.stringify(release)}, 'release');
+        if (retries === 1 && ${JSON.stringify(schedule)} === 'released') {
+          fs.writeFileSync(${JSON.stringify(release)}, 'release');
+          const until = Date.now() + 20000, waiter = new Int32Array(new SharedArrayBuffer(4));
+          while (!fs.existsSync(${JSON.stringify(published)})) {
+            if (Date.now() >= until) throw new Error('publisher completion timed out');
+            Atomics.wait(waiter, 0, 0, 5);
+          }
+        }
         sleep(ms);
       }; const { loadConfig } = await import(${JSON.stringify(module)});
       if (loadConfig().providers['opencode-free']) throw new Error('retired provider retained');
-      if (retries === 0 || (${delay} === 500 && retries !== 9)) throw new Error('overlap schedule missed');
-      // Release the publisher only after every recheck observed the held original.
-      fs.writeFileSync(${JSON.stringify(exhausted)}, 'spent');`;
+      if (retries !== (${JSON.stringify(schedule)} === 'held' ? 9 : 1)) throw new Error('overlap schedule missed');`;
     second = Bun.spawn([process.execPath, "--eval", secondScript], { env: { ...process.env }, stdout: "ignore", stderr: "pipe" });
+    secondOutput = new Response(second.stderr).text();
     expect(await second.exited).toBe(0);
+    if (schedule === "held") {
+      expect(statSync(backup).nlink).toBe(2);
+      const pendingCopies = readdirSync(home.root).filter(name => /^config\.json\.pre-opencode-free-removal(?:\..+)?\.bak$/.test(name));
+      expect(pendingCopies).toHaveLength(2);
+      const sibling = pendingCopies.find(name => name !== "config.json.pre-opencode-free-removal.bak");
+      expect(sibling).toBeDefined();
+      const path = home.path(sibling!);
+      expect(readFileSync(path)).toEqual(bytes);
+      expect(statSync(path).nlink).toBe(1);
+      recoveryProtection(path);
+    }
     writeFileSync(release, "release");
     expect(await first.exited).toBe(0);
     const copies = readdirSync(home.root).filter(name => /^config\.json\.pre-opencode-free-removal(?:\..+)?\.bak$/.test(name));
-    if (delay === 5) expect(copies).toHaveLength(1);
-    else {
-      expect(copies.length).toBeGreaterThanOrEqual(1);
-      expect(copies.length).toBeLessThanOrEqual(2);
-    }
+    expect(copies).toHaveLength(schedule === "released" ? 1 : 2);
     expect(readdirSync(home.root).filter(name => name.endsWith(".tmp"))).toEqual([]);
     for (const name of copies) {
       const path = home.path(name);
@@ -542,8 +547,7 @@ test.each([5, 500])("overlapping loads preserve protected originals with a %i ms
       expect(statSync(path).nlink).toBe(1);
       recoveryProtection(path);
     }
-    for (const child of [first, second]) {
-      const output = await new Response(child.stderr).text();
+    for (const output of [await firstOutput, await secondOutput]) {
       const notices = output.split("\n").filter(line => line.includes("the original file was saved to"));
       expect(notices).toHaveLength(1);
       const name = notices[0]!.match(/config\.json\.pre-opencode-free-removal(?:\.[\w-]+)?\.bak/)?.[0];
@@ -551,6 +555,12 @@ test.each([5, 500])("overlapping loads preserve protected originals with a %i ms
       expect(copies).toContain(name!);
       expect(existsSync(home.path(name!))).toBe(true);
     }
+  } catch (error) {
+    writeFileSync(release, "release");
+    await first.exited;
+    if (second) await second.exited;
+    const redact = (output: string) => output.replaceAll(home.root, "<test-home>");
+    throw new Error(`overlap test failed: ${String(error)}\nfirst stderr: ${redact(await firstOutput)}\nsecond stderr: ${redact(await secondOutput ?? "")}`, { cause: error });
   } finally {
     writeFileSync(release, "release");
     await first.exited;
