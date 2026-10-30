@@ -260,13 +260,17 @@ for (const mode of ["abort", "deadline"] as const) {
     const exited = hold<void>();
     const controller = new AbortController();
     let child: childProcess.ChildProcess | undefined;
+    const script = "if (process.platform !== 'win32') process.on('SIGTERM', () => {}); console.log('READY'); setInterval(() => {}, 20);";
     const actualExec = childProcess.execFile;
     const spawn = spyOn(childProcess, "execFile").mockImplementation(((...args: Parameters<typeof actualExec>) => {
-      child = actualExec(...args);
-      let output = "";
-      child.stdout?.on("data", chunk => { output += String(chunk); if (output.includes("READY")) ready.resolve(); });
-      child.once("exit", () => exited.resolve());
-      return child;
+      const spawned = actualExec(...args);
+      if (args[0] === process.execPath && Array.isArray(args[1]) && args[1].length === 2 && args[1][0] === "-e" && args[1][1] === script) {
+        child = spawned;
+        let output = "";
+        spawned.stdout?.on("data", chunk => { output += String(chunk); if (output.includes("READY")) ready.resolve(); });
+        spawned.once("exit", () => exited.resolve());
+      }
+      return spawned;
     }) as typeof actualExec);
     const set = globalThis.setTimeout;
     // Arm the deadline only after the child has installed its signal handler.
@@ -277,7 +281,6 @@ for (const mode of ["abort", "deadline"] as const) {
       }
       return set(fn, delay, ...args);
     }) as typeof setTimeout);
-    const script = "if (process.platform !== 'win32') process.on('SIGTERM', () => {}); console.log('READY'); setInterval(() => {}, 20);";
     const pending = runtime.execCodexFileAsync(process.execPath, ["-e", script], {
       encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: mode === "deadline" ? 1234 : 10_000,
       windowsHide: true, signal: controller.signal,
