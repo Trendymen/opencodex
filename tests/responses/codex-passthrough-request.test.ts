@@ -25,6 +25,26 @@ const body = { model: "gpt-5.6-sol", stream: false, temperature: 0.2, max_output
   input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "original" }] }],
   unknown_valid_field: { order: [3, 1, 2], annotations: [{ type: "custom", field: "keep" }] } };
 
+function additionalToolsRequest(topTools: "absent" | "empty" | "present") {
+  const tool = (name: string) => ({ type: "function", name, parameters: { type: "object", properties: {} } });
+  const existingTools = topTools === "present" ? [tool("existing_first"), tool("existing_second")] : [];
+  const addedTools = [tool("added_first"), tool("added_second")];
+  const messages = ["before", "between", "after"].map(content => ({ type: "message", role: "user", content }));
+  const raw = {
+    model: body.model,
+    stream: false,
+    ...(topTools !== "absent" ? { tools: existingTools } : {}),
+    input: [
+      messages[0],
+      { type: "additional_tools", role: "developer", tools: [addedTools[0]] },
+      messages[1],
+      { type: "additional_tools", role: "developer", tools: [addedTools[1]] },
+      messages[2],
+    ],
+  };
+  return { raw, messages, existingTools, addedTools };
+}
+
 describe("official request permission controls", () => {
   for (const enabled of [undefined, true, false]) for (const destination of ["canonical", "api", "gateway", "gateway-object"] as const) {
     test(`body normalization permission ${enabled} at ${destination}`, () => {
@@ -73,6 +93,71 @@ describe("official request permission controls", () => {
       } finally { budget.dispose(); }
     });
   }
+  for (const row of [
+    { label: "canonical disabled", destination: "canonical", permission: "off", optIn: true, promoted: false },
+    { label: "canonical all off", destination: "canonical", permission: "all-off", optIn: true, promoted: false },
+    { label: "canonical default", destination: "canonical", permission: "default", optIn: true, promoted: true },
+    { label: "canonical enabled", destination: "canonical", permission: "on", optIn: true, promoted: true },
+    { label: "canonical without opt-in", destination: "canonical", permission: "default", optIn: false, promoted: false },
+    { label: "gateway opt-in", destination: "gateway", permission: "all-off", optIn: true, promoted: true },
+    { label: "forward gateway opt-in", destination: "forward-gateway", permission: "all-off", optIn: true, promoted: true },
+    { label: "xAI automatic", destination: "xai", permission: "all-off", optIn: false, promoted: true },
+    { label: "Go automatic", destination: "go", permission: "all-off", optIn: false, promoted: true },
+    { label: "gateway without opt-in", destination: "gateway", permission: "all-off", optIn: false, promoted: false },
+  ] as const) for (const topTools of ["absent", "empty", "present"] as const) {
+    test(`additional_tools promotion permission: ${row.label}, top tools ${topTools}`, () => {
+      const { raw, messages, existingTools, addedTools } = additionalToolsRequest(topTools);
+      const before = structuredClone(raw);
+      const canonical = row.destination === "canonical";
+      const provider = {
+        adapter: "openai-responses" as const,
+        authMode: canonical || row.destination === "forward-gateway" ? "forward" as const : "key" as const,
+        baseUrl: canonical ? "https://chatgpt.com/backend-api/codex"
+          : row.destination === "xai" ? "https://api.x.ai/v1"
+            : row.destination === "go" ? "https://opencode.ai/zen/go/v1"
+              : "https://gateway.example.test/v1",
+        ...(row.optIn ? { promoteAdditionalTools: true } : {}),
+      };
+      const permissions = row.permission === "default" ? undefined : resolveCodexPassthroughPermissions(
+        row.permission === "all-off" ? disabledCodexPassthrough() : { normalizeRequestParameters: row.permission === "on" },
+      );
+      const budget = createTranslatorBudget();
+      try {
+        const request = createResponsesPassthroughAdapter(provider).buildRequest({
+          modelId: raw.model, context: { messages: [] }, stream: false, options: {}, _rawBody: raw,
+        }, { headers: new Headers(), translatorBudget: budget, codexPassthroughPermissions: permissions });
+        try {
+          const sent = JSON.parse(request.body as string);
+          expect(sent.input).toEqual(row.promoted ? messages : raw.input);
+          expect(Object.hasOwn(sent, "tools")).toBe(topTools !== "absent" || row.promoted);
+          if (topTools !== "absent" || row.promoted) {
+            expect(sent.tools).toEqual(row.promoted ? [...existingTools, ...addedTools] : existingTools);
+          }
+          expect(raw).toEqual(before);
+        } finally { request.releaseBodyObservation?.(); }
+      } finally { budget.dispose(); }
+    });
+  }
+
+  for (const mode of ["direct", "pool"] as const) for (const topTools of ["absent", "empty", "present"] as const) {
+    test(`all-off preserves additional_tools with Provider opt-in (${mode}, top tools ${topTools})`, async () => {
+      const { raw } = additionalToolsRequest(topTools);
+      const before = structuredClone(raw);
+      const fixture = await createCodexPassthroughFixture({ mode, upstream, configure(config) {
+        config.providers.openai!.promoteAdditionalTools = true;
+        config.providers.openai!.codexPassthrough = disabledCodexPassthrough();
+      } });
+      try {
+        const response = await fixture.request(raw);
+        const responseText = await response.text();
+        expect(response.status, responseText).toBe(200);
+        expect(fixture.seen).toHaveLength(1);
+        expect(fixture.seen[0]!.body).toEqual(raw);
+        expect(raw).toEqual(before);
+      } finally { await fixture.close(); }
+    });
+  }
+
   test("hosted history automatic projection follows only the parameter permission", () => {
     const history = [{ type: "web_search_call", id: "synthetic-search", status: "completed", action: { type: "search", query: "synthetic", queries: ["synthetic"] } }];
     for (const nativeCompaction of [false, true]) for (const declared of ["none", "tools", "additional_tools"] as const) {
