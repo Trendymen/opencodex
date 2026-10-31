@@ -41,6 +41,7 @@
 
 ## 响应与恢复边界
 
+- `src/types/agent-task-recovery.ts` 保存 `OcxConfig.agentTaskRecovery` 的原有七个可选字段及默认值说明；`src/types/config.ts` 通过 `import type` 引用，不增加运行时依赖或改变配置结构。
 - `src/server/responses/passthrough-dispatch-types.ts` 与 `src/server/responses/adapter-dispatch-types.ts` 分别保存对应 dispatch 的参数类型，母文件通过 `import type` 引用，发送预算、取消和恢复逻辑仍在母文件中。
 - `src/server/responses/account-auto-pause-recovery.ts` 只在预算允许且已选中替补后，按现有有界错误读取保存失败响应、释放旧 body 的 pacing slot，再进入替补发送。没有预算、没有替补或 body 被外部 reader 锁定时不读取原 body；重建失败使用保留的失败响应，请求取消仍沿用 abort 路径。
 - `src/server/responses-reasoning-summary-rewrite.ts` 仅在客户端请求 summary 且路由满足条件时投影；已有 summary 不重复投影。保留 raw reasoning、终态字段和原始存储对象，passthrough continuation 记录客户端实际收到的形状。
