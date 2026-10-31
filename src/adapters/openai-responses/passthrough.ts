@@ -502,14 +502,14 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         // Last, so promoted namespace children are also cleared of Codex-private fields.
         outBody = stripCanonicalOnlyToolFields(outBody, provider.supportsOpenAiWebSearchToolFields === false);
       }
-      if (
+      if (normalizeParameters && (
         provider.promoteAdditionalTools === true
         || (!forward && (
           isOpenCodeGoResponsesUrl(url)
           || isXaiResponsesDestination(provider)
           || isXaiResponsesUrl(url)
         ))
-      ) {
+      )) {
         outBody = promoteResponsesAdditionalTools(outBody);
       }
       // Same native-v2/portable predicate as the routedCompaction gate in handleResponses():
