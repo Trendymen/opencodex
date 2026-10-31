@@ -345,7 +345,7 @@ fn invalidation_and_stopped_source_discard_late_catalogs() {
 async function loadCase(change,phase) {
   let current = phase!=='before-call', release, entered, executions=0;
   const enteredPromise=new Promise(resolve=>{entered=resolve});
-  const deps={commandCandidates:()=>['C:\\fixture\\codex.exe'],
+  const deps={commandCandidates:()=>[selected.command],
     execFile:()=>new Promise(resolve=>{executions++;release=resolve;entered()})};
   const pending=bundled.loadBundledCodexCatalogAsync(deps,()=>current);
   const mutate=()=>{if(change==='invalidate')bundled.invalidateBundledCatalogCache();else current=false};
@@ -475,11 +475,11 @@ fn refresh_deadline_settles_an_uncooperative_executor_and_allows_the_next_load()
 const realTimeout = globalThis.setTimeout;
 globalThis.setTimeout = (callback,delay,...args)=>realTimeout(callback,delay===45000?20:delay,...args);
 const keepAlive = setInterval(()=>{},100);
-const expired = await bundled.loadBundledCodexCatalogAsync({commandCandidates:()=>['C:\\fixture\\codex.exe'],
+const expired = await bundled.loadBundledCodexCatalogAsync({commandCandidates:()=>[selected.command],
   execFile:()=>new Promise(()=>{})});
 clearInterval(keepAlive);
 globalThis.setTimeout = realTimeout;
-const fresh = await bundled.loadBundledCodexCatalogAsync({commandCandidates:()=>['C:\\fixture\\codex.exe'],
+const fresh = await bundled.loadBundledCodexCatalogAsync({commandCandidates:()=>[selected.command],
   execFile:async()=>JSON.stringify(catalog)});
 return {expired:expired===null,fresh:fresh?.models.map(row=>row.slug)};
 "#,
