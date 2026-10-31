@@ -19,6 +19,11 @@ import { handleResponses } from "../../src/server/responses/core";
 import { CODEX_PASSTHROUGH_DEFAULTS } from "../../src/fork/codex-passthrough-contract";
 import { markCodexPassthroughResponse, codexPassthroughResponsePermissions, captureCodexPassthroughTurn,
   retainCodexPassthroughTurnSource, materializeCodexPassthroughTurnSource, releaseCodexPassthroughTurnSource, resolveCodexPassthroughAttempt } from "../../src/fork/codex-passthrough-turn";
+import { codexLocalFailure, markCodexLocalFailure } from "../../src/fork/codex-passthrough-local-errors";
+import { isCodexAccountCooldownResponse, markCodexAccountCooldownResponse } from "../../src/codex/account-cooldown-response";
+import { CodexAccountCooldownError } from "../../src/codex/auth-context";
+import { mapCodexAuthContextErrorToResponse } from "../../src/server/responses/codex-auth-error";
+import { consumeComboFailure } from "../../src/server/responses/core-combo-failure";
 import { markResponseNonReplayable, isNonReplayableResponse, markReplayRefusalResponse, isReplayRefusalResponse,
   markSameTargetRetryHold, isSameTargetRetryHold } from "../../src/lib/upstream-retry";
 
@@ -190,22 +195,57 @@ describe("Codex decoded source ownership", () => {
       })), CODEX_PASSTHROUGH_DEFAULTS);
       markResponseNonReplayable(original); markReplayRefusalResponse(original);
       markSameTargetRetryHold(original); markVerifiedModelNotInPlanResponse(original);
+      markCodexAccountCooldownResponse(original);
+      const localFailure = { kind: "reset-refusal", reason: "timeout", sentAmbiguously: true } as const;
+      markCodexLocalFailure(original, localFailure);
       const budget = createTranslatorBudget();
       const finalized = finalizeOwnedTranslatorBudget(original, budget);
-      expect(isSameTargetRetryHold(finalized)).toBe(true);
-      expect(isVerifiedModelNotInPlanResponse(finalized)).toBe(true);
       const wrapped = finalizeAccountLease(finalized, () => { released++; });
-      expect(isSameTargetRetryHold(wrapped)).toBe(true);
-      expect(isVerifiedModelNotInPlanResponse(wrapped)).toBe(true);
-      expect(codexPassthroughResponsePermissions(wrapped)).toBe(CODEX_PASSTHROUGH_DEFAULTS);
-      expect(isNonReplayableResponse(wrapped)).toBe(true);
-      expect(isReplayRefusalResponse(wrapped)).toBe(true);
+      for (const response of [finalized, wrapped]) {
+        expect(isCodexAccountCooldownResponse(response)).toBe(true);
+        expect(codexPassthroughResponsePermissions(response)).toBe(CODEX_PASSTHROUGH_DEFAULTS);
+        expect(codexLocalFailure(response)).toBe(localFailure);
+        expect(isSameTargetRetryHold(response)).toBe(true);
+        expect(isVerifiedModelNotInPlanResponse(response)).toBe(true);
+        expect(isNonReplayableResponse(response)).toBe(true);
+        expect(isReplayRefusalResponse(response)).toBe(true);
+      }
       if (ending === "cancel") await wrapped.body!.cancel();
       else if (ending === "error") await expect(wrapped.text()).rejects.toThrow("reader failed");
       else await wrapped.text();
       expect(released).toBe(1);
       budget.dispose();
     }
+  });
+
+  test("local account cooldown survives both wrappers and combo failure reconstruction", async () => {
+    const now = 1_800_000_000_000;
+    const original = mapCodexAuthContextErrorToResponse(new CodexAccountCooldownError("synthetic-local", now + 84_692_000), { now });
+    if (!original) throw new Error("cooldown error did not map to a response");
+    markCodexPassthroughResponse(original, CODEX_PASSTHROUGH_DEFAULTS);
+    expect(original.status).toBe(429);
+    expect(isReplayRefusalResponse(original)).toBe(false);
+    const budget = createTranslatorBudget();
+    let released = 0;
+    try {
+      const finalized = finalizeOwnedTranslatorBudget(original, budget);
+      const wrapped = finalizeAccountLease(finalized, () => { released++; });
+      for (const response of [finalized, wrapped]) {
+        expect(isCodexAccountCooldownResponse(response)).toBe(true);
+        expect(codexPassthroughResponsePermissions(response)).toBe(CODEX_PASSTHROUGH_DEFAULTS);
+        expect(codexLocalFailure(response)).toBeUndefined();
+        expect(isReplayRefusalResponse(response)).toBe(false);
+      }
+      const consumed = await consumeComboFailure(wrapped, undefined, now);
+      expect(isCodexAccountCooldownResponse(consumed.response)).toBe(true);
+      expect(codexPassthroughResponsePermissions(consumed.response)).toBe(CODEX_PASSTHROUGH_DEFAULTS);
+      expect(codexLocalFailure(consumed.response)).toBeUndefined();
+      expect(isReplayRefusalResponse(consumed.response)).toBe(false);
+      expect(consumed.retryAfter).toBe("84692");
+      expect(consumed.response.headers.get("retry-after")).toBe("84692");
+      await consumed.response.text();
+      expect(released).toBe(1);
+    } finally { budget.dispose(); }
   });
 
   test("source cancel cleanup keeps the serving-account release after producer shutdown", async () => {

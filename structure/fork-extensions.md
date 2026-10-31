@@ -13,6 +13,7 @@
 
 - GPT 家族和官方目的地分开判断。官方 Responses 保持原生消息/schema；Lite header 到 WS metadata 的映射在对应许可允许时只补缺失字段。
 - `agentMessageFormat`、GLM/Kimi lowering 和 `encrypted` 注解清理在出站副本上运行，保持原 input、工具授权和重放状态。可信直接 key-auth relay 的注解例外不扩大到 combo。
+- `src/adapters/openai-responses/tool-output-recovery.ts` 将孤儿工具输出转为用户消息时，同时保留官方 item provenance 与 Fork 的合法来源标签；历史工具声明继续按官方当前轮目录判断。
 - nested exec 和 `spawn_agent.fork_turns` 修复须由当前工具声明授权，保留 preview、完成项和 continuation 的区别。`fork_turns` 只解包一层合法字段值，重复键/未知 schema 跳过。
 - tool-catalog 提示只使用当前可见工具；代理不合成进度、不执行或自动重试补丁，空成功输出的提示不能覆盖失败输出。
 - `src/claude/intercept/picker-listener.ts` 的上传拒绝与有界 linger 沿用[官方 picker 合同](clients/claude-desktop.md#picker-mode-the-desktop-egress-proxy)。`tests/claude-integration/claude-picker-upload.test.ts` 补充无 body 的 HTTP/1.1 400/503 同 socket 复用、其他上传与 HTTP/2 sibling 不受拒绝影响、拒绝后重复 shutdown 的外部回归。
@@ -22,7 +23,7 @@
 - `src/fork/codex-passthrough-contract.ts` 是配置、面板和运行时共用的纯 23 项目录。默认 `true` 只允许既有处理，仍受原功能开关约束；配置说明统一见 [Fork 配置](../docs-site/src/content/docs/reference/configuration/fork-extensions.md#gpt-subscription-processing)。
 - `src/adapters/openai-responses/passthrough.ts` 对未声明 hosted-search 工具的请求做自动历史投影时，检查 `normalizeRequestParameters`；显式 `projectResponsesLiteHostedSearchHistory` 沿用独立的 Provider opt-in 条件。非 canonical 路径继续采用官方默认处理。
 - `codex-passthrough-turn.ts` 按 turn 冻结 Provider 覆盖值，最终 native Responses + canonical forward 目的地才解析许可；Direct、Pool、模型级 adapter 和 fallback 使用同一判断。它按当前许可、目的地和客户端偏好计算上游流模式与 JSON 客户端的 HTTP 选择；发送、恢复、预算和取消仍由 dispatch 管理。响应携带实际尝试的许可，非官方目的地不能继承父目标许可。
-- `src/server/responses/core-lifetime.ts` 的预算与账号 lease 包装共用 marker 搬运，保留官方 same-target retry hold、模型计划拒绝标记、禁止重放状态及 Fork 的实际订阅许可和本地失败身份；包装后的响应继续使用原有 EOF、错误与取消释放路径。
+- `src/server/responses/core-lifetime.ts` 的预算与账号 lease 包装共用 marker 搬运，保留官方 same-target retry hold、模型计划拒绝、本地账号冷却标记、禁止重放状态及 Fork 的实际订阅许可和本地失败身份；包装后的响应继续使用原有 EOF、错误与取消释放路径。
 - `src/adapters/openai-responses/transport.ts` 在共享传输构建点转发 caller 的 routing hint。关闭 hint 合成时，Provider 静态同名头优先；开启时仍按最终 body 合成。`normalizeEncryptedContent: false` 跳过 OCX1 解封装和 native compaction 密文规范化；默认开启时沿用官方身份切换清理条件。
 - `src/server/responses/core-pipeline.ts` 为准备阶段的早退响应附上 admission 许可；路由确定后为实际尝试的响应附上许可，包括 retention 交付后的响应与无效摘要的 502。retention 的 prepare、deliver、dispose 和发送资源释放仍由官方 pipeline 管理。
 - `src/server/responses/core-combo.ts` 采用 child 的预检结果时携带原响应的订阅许可、内部 `null` 哨兵和本地失败/重放身份，覆盖 SSE 回放与失败投影；不以父路由默认值覆盖 child，官方工具 ownership 的携带规则保持不变。`tests/responses/codex-passthrough-ws.test.ts` 覆盖真实 Combo 到最终 WS 的 raw terminal 和预检失败交付。
