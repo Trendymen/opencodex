@@ -516,7 +516,8 @@ export async function deliverPassthroughResponse(
   } else delete logCtx.upstreamHttpStatus;
   const codexPermissions = resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire });
   const privateGuard = codexPermissions ? createCodexPrivateCredentialGuard({ outboundHeaders: nativeExchange.request.headers,
-    callerHeaders: req.headers, sources: codexPrivateCredentialSources(admissionState.authCtx, requestState.substituteMainCredential, route.provider.headers), translatorBudget }) : undefined;
+    callerHeaders: req.headers, sources: codexPrivateCredentialSources(admissionState.authCtx, requestState.substituteMainCredential, route.provider.headers),
+    configuredHeaders: route.provider.headers, translatorBudget }) : undefined;
   const privateErrorReadOptions = { privateErrorBodyReadDeadline: codexPermissions?.privateErrorBodyReadDeadline,
     stallTimeoutMs: resolveStallTimeoutMs(config.stallTimeoutSec, { localUpstream: nativeExchange.localUpstream }) };
   let privateFailureNoted = false;

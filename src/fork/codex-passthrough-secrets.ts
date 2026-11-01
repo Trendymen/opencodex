@@ -62,17 +62,41 @@ export function codexPrivateProtectionFailure(): Response {
 }
 
 export function createCodexPrivateCredentialGuard(input: {
-  outboundHeaders: Headers | Readonly<Record<string, string>>; callerHeaders: Headers; sources: ReadonlyMap<string, PrivateCredentialSource>; translatorBudget: TranslatorBudget;
+  outboundHeaders: Headers | Readonly<Record<string, string>>; callerHeaders: Headers; sources: ReadonlyMap<string, PrivateCredentialSource>;
+  configuredHeaders?: Readonly<Record<string, string>>; translatorBudget: TranslatorBudget;
 }): CodexPrivateCredentialGuard | undefined {
-  const held = new Set([...input.callerHeaders].filter(([name]) => SENSITIVE_KEY_PATTERN.test(name)).map(([name, value]) => credential(name, value)));
+  const normalize = (name: string, value: string | null): string | null => value === null ? null : new Headers([[name, value]]).get(name);
+  const held = new Set([...input.callerHeaders].filter(([name]) => SENSITIVE_KEY_PATTERN.test(name))
+    .map(([name, value]) => credential(name, normalize(name, value)!)));
   const privateHeaders: Record<string, string> = {};
   const wireHeaders = input.outboundHeaders instanceof Headers ? input.outboundHeaders : new Headers(input.outboundHeaders);
+  const configuredGroups = new Map<string, Array<[string, string]>>();
+  for (const [name, value] of Object.entries(input.configuredHeaders ?? {})) {
+    const key = name.toLowerCase();
+    if (input.sources.get(key) !== "configuration" || !SENSITIVE_KEY_PATTERN.test(name)) continue;
+    const group = configuredGroups.get(key) ?? []; group.push([name, value]); configuredGroups.set(key, group);
+  }
+  const matchedGroups = new Set<string>();
+  for (const [name, group] of configuredGroups) {
+    const wire = normalize(name, wireHeaders.get(name));
+    if (wire === null) continue;
+    let configured: string | null;
+    try { configured = normalize(name, new Headers(Object.fromEntries(group)).get(name)); }
+    catch (error) { if (!(error instanceof TypeError)) throw error; continue; }
+    if (wire !== configured) continue;
+    matchedGroups.add(name);
+    if (wire === normalize(name, input.callerHeaders.get(name))) continue;
+    for (const [key, rawValue] of group) {
+      const value = normalize(key, rawValue)!;
+      if (value && !held.has(credential(key, value))) privateHeaders[key] = value;
+    }
+  }
   const outbound = input.outboundHeaders instanceof Headers ? [...input.outboundHeaders] : Object.entries(input.outboundHeaders);
   for (const [name, rawValue] of outbound) {
     const source = input.sources.get(name.toLowerCase()) ?? input.sources.get(name);
-    if (!source || source === "caller" || !SENSITIVE_KEY_PATTERN.test(name)
-      || wireHeaders.get(name) === input.callerHeaders.get(name)) continue;
-    const value = input.outboundHeaders instanceof Headers ? rawValue : new Headers([[name, rawValue]]).get(name)!;
+    if (!source || source === "caller" || !SENSITIVE_KEY_PATTERN.test(name) || matchedGroups.has(name.toLowerCase())
+      || normalize(name, wireHeaders.get(name)) === normalize(name, input.callerHeaders.get(name))) continue;
+    const value = normalize(name, rawValue)!;
     if (!value || held.has(credential(name, value))) continue;
     privateHeaders[name] = value;
   }

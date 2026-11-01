@@ -146,6 +146,63 @@ test("partial caller ownership leaves only the other actual header value private
   finally { budget.dispose(); }
 });
 
+for (const asHeaders of [false, true]) test(`normalized configured groups respect caller ownership with ${asHeaders ? "Headers" : "Record"}`, () => {
+  const owned = "caller, owned"; const secret = 'private,"quoted", value';
+  const configuredHeaders = { "session-token": `  ${owned}  `, "Session-Token": `  ${secret}  `, "sESSION-token": "" };
+  const wire = new Headers(configuredHeaders);
+  const outboundHeaders = asHeaders ? wire : Object.fromEntries(wire);
+  const budget = createTranslatorBudget();
+  const sources = new Map([["session-token", "configuration"]] as const);
+  try {
+    expect(createCodexPrivateCredentialGuard({ outboundHeaders, configuredHeaders, callerHeaders: new Headers(wire), sources, translatorBudget: budget })).toBeUndefined();
+    const guard = createCodexPrivateCredentialGuard({ outboundHeaders, configuredHeaders,
+      callerHeaders: new Headers({ "session-token": owned }), sources, translatorBudget: budget })!;
+    expect(guard.mask(`${owned} | ${secret}`)).toBe(`${owned} | [REDACTED]`);
+    expect(guard.mask("quoted")).toBe("quoted");
+    expect(guard.protectJson(JSON.stringify({ value: secret })).text).toBe('{"value":"[REDACTED]"}');
+    const duplicate = { "session-token": ` ${owned} `, "Session-Token": owned };
+    const duplicateWire = new Headers(duplicate);
+    expect(createCodexPrivateCredentialGuard({ outboundHeaders: asHeaders ? duplicateWire : Object.fromEntries(duplicateWire),
+      configuredHeaders: duplicate, callerHeaders: new Headers({ "session-token": owned }), sources, translatorBudget: budget })).toBeUndefined();
+  } finally { budget.dispose(); }
+});
+
+test("configured candidates must match the sent group and respect selected authorization", () => {
+  const budget = createTranslatorBudget();
+  try {
+    const configuredHeaders = { "session-token": "unsent-config-one", "Session-Token": "unsent-config-two", authorization: "Bearer unsent-config-auth" };
+    const guard = createCodexPrivateCredentialGuard({ outboundHeaders: new Headers({ "session-token": "unsent-config-one, actual-wire-value", authorization: "Bearer selected-pool-auth" }),
+      configuredHeaders, callerHeaders: new Headers(), sources: new Map([["session-token", "configuration"], ["authorization", "pool"]] as const), translatorBudget: budget })!;
+    expect(guard.mask("unsent-config-one unsent-config-two unsent-config-auth")).toBe("unsent-config-one unsent-config-two unsent-config-auth");
+    expect(guard.mask("unsent-config-one, actual-wire-value selected-pool-auth")).toBe("[REDACTED] [REDACTED]");
+  } finally { budget.dispose(); }
+});
+
+test("configured mixed-case credentials stay protected after a rebuilt send", async () => {
+  const first = 'private-first,"quoted"'; const second = "private-second, item";
+  const configured = { "session-token": `  ${first} `, "Session-Token": ` ${second}  ` };
+  const entries: RequestLogEntry[] = []; const unobserve = observeRequestLogsForTests(entry => entries.push(entry));
+  let sends = 0;
+  const fixture = await createCodexPassthroughFixture({ mode: "pool", configure(config) {
+    config.providers.openai!.codexPassthrough = disabledCodexPassthrough();
+    config.providers.openai!.headers = configured;
+    config.providers.openai!.reasoningEfforts = ["high", "xhigh"];
+  }, upstream: async () => {
+    sends++;
+    return sends === 1
+      ? Response.json({ error: { param: "reasoning.effort", message: "unsupported reasoning effort" } }, { status: 400 })
+      : Response.json({ error: { code: "retained", first, second } }, { status: 400 });
+  } });
+  try {
+    const response = await fixture.request({ ...input, reasoning: { effort: "xhigh" } });
+    expect(response.status).toBe(400);
+    expect(fixture.seen).toHaveLength(2);
+    for (const attempt of fixture.seen) expect(attempt.headers.get("session-token")).toBe(new Headers(configured).get("session-token"));
+    expect(await response.json()).toEqual({ error: { code: "retained", first: "[REDACTED]", second: "[REDACTED]" } });
+    expect(entries.at(-1)?.attempts?.some(attempt => attempt.recoveryKinds.includes("reasoning-effort-downgrade"))).toBe(true);
+  } finally { unobserve(); await fixture.close(); }
+});
+
 test("configured header protection matches the actual whitespace-normalized wire value", async () => {
   const secret = "synthetic-private";
   const fixture = await createCodexPassthroughFixture({ mode: "pool", configure(config) {
