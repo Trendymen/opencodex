@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -16,6 +16,7 @@ import {
   defaultLocalPackageStageOptions,
   prepareBundledLocalPackage,
   probeBundledBunBinary,
+  type LocalPackageStageOptions,
 } from "../../scripts/install-local-vendor";
 import { localGlobalInstallCommand } from "../../scripts/install-local";
 
@@ -82,11 +83,70 @@ function fixture(options: { omitTransitive?: boolean; optional?: "present" | "mi
   return root;
 }
 
+const stageErrnos = new Set(["EACCES", "EBUSY", "EEXIST", "EINVAL", "EIO", "ELOOP", "EMFILE", "ENAMETOOLONG",
+  "ENFILE", "ENOENT", "ENOEXEC", "ENOSPC", "ENOTDIR", "ENOTEMPTY", "EPERM", "EPIPE", "ESRCH", "ETIMEDOUT"]);
+
+function stageLog(message: string): void {
+  try { console.error(`[local-package-stage] ${message}`); } catch { /* Preserve the test outcome. */ }
+}
+
+function stageFailure(error: unknown): string {
+  try {
+    if (!(error instanceof Error)) return "type=non-error errno=unknown reason=other";
+    const type = error instanceof TypeError ? "TypeError" : error instanceof RangeError ? "RangeError" : "Error";
+    const code = (error as NodeJS.ErrnoException).code;
+    const errno = typeof code === "string" && stageErrnos.has(code) ? code : "unknown";
+    const reason = /^npm pack failed \(-?\d{1,3}\)$/.test(error.message) ? "pack-failed"
+      : /^offline package validation failed \(-?\d{1,3}\)$/.test(error.message) ? "offline-install-failed" : "other";
+    return `type=${type} errno=${errno} reason=${reason}`;
+  } catch { return "type=unknown errno=unknown reason=other"; }
+}
+
+function withLocalStageDiagnostics<T>(operation: () => T): T {
+  try { return operation(); }
+  catch (error) {
+    try {
+      if (error instanceof AggregateError) {
+        stageLog(`primary ${stageFailure(error.errors[0])}`);
+        stageLog(`cleanup ${stageFailure(error.errors[1])}`);
+      } else stageLog(`failure ${stageFailure(error)}`);
+    } catch { stageLog("failure details unavailable"); }
+    throw error;
+  }
+}
+
+function stageDiagnosticOptions(base: LocalPackageStageOptions = defaultLocalPackageStageOptions): LocalPackageStageOptions {
+  return {
+    ...base,
+    run(command, cwd, env, settings) {
+      const phase = command[0] === "npm" && command[1] === "pack" ? "npm-pack"
+        : command[0] === "npm" && command[1] === "install" ? "npm-install" : "binary-probe";
+      const started = performance.now(); stageLog(`${phase} start`);
+      try {
+        const result = base.run(command, cwd, env, settings);
+        const exit = Number.isInteger(result.exitCode) && result.exitCode >= 0 && result.exitCode <= 255 ? result.exitCode : "unknown";
+        stageLog(`${phase} end exit=${exit} timedOut=${result.timedOut === true} elapsedMs=${(performance.now() - started).toFixed(2)}`);
+        return result;
+      } catch (error) { stageLog(`${phase} failed ${stageFailure(error)}`); throw error; }
+    },
+    removeTree(path) {
+      const started = performance.now(); stageLog("cleanup start");
+      try {
+        base.removeTree(path);
+        stageLog(`cleanup end elapsedMs=${(performance.now() - started).toFixed(2)}`);
+      } catch (error) { stageLog(`cleanup failed ${stageFailure(error)}`); throw error; }
+    },
+  };
+}
+
 describe("Fork local package staging", () => {
   test("packs and validates an offline self-contained package without mutating root metadata", () => {
     const root = fixture();
     const before = readFileSync(join(root, "package.json"), "utf8");
-    const prepared = prepareBundledLocalPackage(root);
+    const prepared = withLocalStageDiagnostics(() => {
+      stageLog("prepare start");
+      return prepareBundledLocalPackage(root, stageDiagnosticOptions());
+    });
     const stageRoot = dirname(dirname(prepared.tarball));
     try {
       expect(readFileSync(join(root, "package.json"), "utf8")).toBe(before);
@@ -115,6 +175,49 @@ describe("Fork local package staging", () => {
     }
     expect(existsSync(stageRoot)).toBe(false);
     expect(readFileSync(join(root, "package.json"), "utf8")).toBe(before);
+  });
+
+  test("stage diagnostics retain errors and omit private details", () => {
+    const secret = "synthetic-stage-private-sentinel";
+    const primary = Object.assign(new Error(secret), { code: "EACCES" });
+    const cleanup = Object.assign(new Error(secret), { code: "EBUSY" });
+    const original = new AggregateError([Object.assign(new Error("npm pack failed (1)"), { code: "EACCES" }),
+      Object.assign(new Error(secret), { code: secret })], secret);
+    const messages: string[] = [];
+    const capture = spyOn(console, "error").mockImplementation((...args) => { messages.push(args.map(String).join(" ")); });
+    let prepared: ReturnType<typeof prepareBundledLocalPackage> | undefined;
+    let stage: string | undefined;
+    let packs = 0; let removals = 0;
+    try {
+      let rethrown: unknown;
+      try { withLocalStageDiagnostics(() => { throw original; }); } catch (error) { rethrown = error; }
+      expect(rethrown).toBe(original);
+
+      let failure: unknown;
+      try {
+        prepared = withLocalStageDiagnostics(() => prepareBundledLocalPackage(fixture(), stageDiagnosticOptions({
+          ...defaultLocalPackageStageOptions,
+          makeTempRoot(prefix) { stage = defaultLocalPackageStageOptions.makeTempRoot(prefix); return stage; },
+          run(command, cwd, env, options) {
+            const result = defaultLocalPackageStageOptions.run(command, cwd, env, options);
+            if (command[0] === "npm" && command[1] === "pack") { packs++; expect(result.exitCode).toBe(0); throw primary; }
+            return result;
+          },
+          removeTree(path) { removals++; defaultLocalPackageStageOptions.removeTree(path); throw cleanup; },
+        })));
+      } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors[0]).toBe(primary);
+      expect((failure as AggregateError).errors[1]).toBe(cleanup);
+      expect(packs).toBe(1); expect(removals).toBe(1); expect(stage).toBeDefined(); expect(existsSync(stage!)).toBe(false);
+      const output = messages.join("\n");
+      expect(output).toContain("npm-pack start"); expect(output).toContain("cleanup start");
+      expect(output).toContain("primary type=Error errno=EACCES reason=pack-failed");
+      expect(output).toContain("primary type=Error errno=EACCES reason=other");
+      expect(output).toContain("cleanup type=Error errno=EBUSY reason=other");
+      expect(output).toContain("cleanup type=Error errno=unknown reason=other");
+      expect(output).not.toContain(secret);
+    } finally { try { prepared?.cleanup(); } finally { capture.mockRestore(); } }
   });
 
   test("an incomplete bundled dependency closure fails offline and cleans its owned stage", () => {
