@@ -39,7 +39,32 @@ export function registerComboForcedEffortCases<Server>({
       await response.text();
       expect(bodies[0]?.reasoning_effort).toBe("medium");
       const { log, usage } = await latestAttemptReceipts(config);
-      for (const row of [log, usage]) expect(row).toMatchObject({ sessionEffortObservation: { clientEffort: "high", sessionEffort: "max", status: "visible" } });
+      for (const row of [log, usage]) expect(row).toMatchObject({
+        sessionEffortObservation: { clientEffort: "high", sessionEffort: "max", status: "visible" },
+        requestedEffort: "high->medium", effectiveEffort: "medium", reasoningWireField: "reasoning_effort", reasoningWireValue: "medium",
+      });
+    } finally { await server.stop(true); }
+  });
+
+  test("Responses combo force changes the wire effort while preserving the initial observation", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const upstream = serve(async request => { bodies.push(await request.json() as Record<string, unknown>); return chatSuccess("ok", "m1"); });
+    const config = comboConfig({ a: provider("openai-chat", baseUrl(upstream), "key-a", { reasoningEfforts: ["low", "medium", "high", "max"] }) }, undefined,
+      { defaultEffort: "max", defaultEffortMode: "force" });
+    saveConfig(config);
+    const server = startServer(0);
+    try {
+      const response = await fetch(new URL("/v1/responses", server.url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+        model: "combo/free", stream: false, reasoning: { effort: "high" }, input: [{ type: "configuration_update", reasoning: { effort: "max" } }, { role: "user", content: "hello" }],
+      }) });
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(bodies[0]?.reasoning_effort).toBe("max");
+      const { log, usage } = await latestAttemptReceipts(config);
+      for (const row of [log, usage]) expect(row).toMatchObject({
+        sessionEffortObservation: { clientEffort: "high", sessionEffort: "max", status: "visible" },
+        requestedEffort: "high", effectiveEffort: "max", reasoningWireField: "reasoning_effort", reasoningWireValue: "max",
+      });
     } finally { await server.stop(true); }
   });
 

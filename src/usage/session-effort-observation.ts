@@ -28,12 +28,15 @@ export function observeSessionEffort(body: unknown): SessionEffortObservation | 
 }
 
 export function normalizeSessionEffortObservation(value: unknown): SessionEffortObservation | undefined {
-  if (!record(value)) return undefined;
-  if (value.clientEffort !== "unknown" && !efforts.has(value.clientEffort)) return undefined;
-  if (value.status === "visible") {
-    if (!efforts.has(value.sessionEffort)) return undefined;
-  } else if ((value.status !== "not_in_input" && value.status !== "unrecognized") || value.sessionEffort !== "unknown") {
-    return undefined;
-  }
-  return { clientEffort: value.clientEffort as SafeEffort | "unknown", sessionEffort: value.sessionEffort as SafeEffort | "unknown", status: value.status };
+  try {
+    if (!record(value)) return undefined;
+    const { clientEffort, sessionEffort, status } = value;
+    if (clientEffort !== "unknown" && !efforts.has(clientEffort)) return undefined;
+    if (status === "visible") {
+      if (!efforts.has(sessionEffort)) return undefined;
+    } else if ((status !== "not_in_input" && status !== "unrecognized") || sessionEffort !== "unknown") {
+      return undefined;
+    }
+    return { clientEffort: clientEffort as SafeEffort | "unknown", sessionEffort: sessionEffort as SafeEffort | "unknown", status };
+  } catch { return undefined; }
 }

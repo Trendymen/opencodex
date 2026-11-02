@@ -19,7 +19,8 @@ import { codexPoolAffinityKey } from "../../src/codex/auth-context";
 import { parseRequest } from "../../src/responses/parser";
 import { handleResponses, hasUnreadableEncryptedAgentTask } from "../../src/server/responses";
 import { recoverEncryptedAgentTaskWithResult, resetAgentTaskRecoveryState } from "../../src/server/responses/agent-task-recovery";
-import type { RequestLogContext } from "../../src/server/request-log";
+import { addFinalRequestLog, clearRequestLogsForTests, getRequestLogEntries, type RequestLogContext } from "../../src/server/request-log";
+import { readUsageEntries } from "../../src/usage/log";
 import { normalizeSessionEffortObservation, observeSessionEffort } from "../../src/usage/session-effort-observation";
 import { clearResponseStateForTests, flushResponseState, rememberResponseState } from "../../src/responses/state";
 import { appendFinalCacheDiagnostic, cacheDiagnosticPath } from "../../src/usage/cache-diagnostic";
@@ -56,6 +57,7 @@ beforeEach(() => {
 afterEach(() => {
   releaseSpendHome?.();
   releaseSpendHome = undefined;
+  clearRequestLogsForTests();
   globalThis.fetch = originalFetch;
   isolated.restore();
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
@@ -107,8 +109,8 @@ async function drive(
   cfg: OcxConfig,
   model: string,
   input: unknown[],
-  options: { headers?: Record<string, string>; promptCacheKey?: string; reasoning?: unknown; previousResponseId?: string; clientInitialResponses?: boolean } = {},
-): Promise<{ status: number; logCtx: RequestLogContext }> {
+  options: { headers?: Record<string, string>; promptCacheKey?: string; reasoning?: unknown; previousResponseId?: string; clientInitialResponses?: boolean; finalizeLog?: boolean } = {},
+): Promise<{ status: number; logCtx: RequestLogContext; text: string }> {
   const token = fakeChatGptJwt({ chatgpt_account_id: "acct-0164", exp: Math.floor(Date.now() / 1000) + 86_400 });
   const logCtx: RequestLogContext = { model: "", provider: "" };
   const response = await handleResponses(new Request("http://localhost/v1/responses", {
@@ -126,8 +128,9 @@ async function drive(
       ...(options.promptCacheKey === undefined ? {} : { prompt_cache_key: options.promptCacheKey }),
     }),
   }), cfg, logCtx, { clientInitialResponses: options.clientInitialResponses });
-  await response.text();
-  return { status: response.status, logCtx };
+  const text = await response.text();
+  if (options.finalizeLog) addFinalRequestLog("initial-effort-fixture", Date.now(), logCtx, response.status);
+  return { status: response.status, logCtx, text };
 }
 
 function identityOf(wire: Wire): Record<string, string | null> {
@@ -278,31 +281,43 @@ describe("configuration_update input item", () => {
 
   test("continuation replay never promotes cached updates into the initial observation", async () => {
     const seen = captureWire();
-    const cfg = config({ authMode: "key", apiKey: "gw-key", baseUrl: "https://gateway.example/v1" });
-    rememberResponseState({ input: [{ type: "configuration_update", reasoning: { effort: "max" } }, user("cached")], store: true },
+    const cfg = config({ authMode: "key", apiKey: "fixture-key", baseUrl: "https://api.openai.com/v1" });
+    rememberResponseState({ input: [{ type: "configuration_update", reasoning: { effort: "max" } }, user("other-session-fixture")], store: true },
       { id: "fixture-history", status: "completed", output: [] }, undefined, { clientThreadId: "owner" });
     try {
       for (const [id, owner] of [["fixture-history", "owner"], ["missing-history", "owner"], ["fixture-history", "other"]]) {
         const result = await drive(cfg, "p/gw-model", [user("delta")], { previousResponseId: id, headers: { "x-codex-parent-thread-id": owner }, reasoning: { effort: "high" }, clientInitialResponses: true });
         expect(result.logCtx.sessionEffortObservation).toEqual({ clientEffort: "high", sessionEffort: "unknown", status: "not_in_input" });
-        if (owner === "other") { expect(result.status).toBe(400); expect(seen).toHaveLength(2); }
+        if (id === "fixture-history" && owner === "owner") {
+          expect(result.status).toBe(200);
+          expect(seen[0]!.body.input).toContainEqual({ type: "configuration_update", reasoning: { effort: "max" } });
+          expect(JSON.stringify(seen[0]!.body.input)).toContain("other-session-fixture");
+        } else {
+          expect(result.text).not.toContain("other-session-fixture");
+          if (id === "missing-history") expect(JSON.stringify(seen[1]!.body)).not.toContain("other-session-fixture");
+          else { expect(result.status).toBe(400); expect(seen).toHaveLength(2); }
+        }
       }
       const missing = await drive(canonical(), "p/gpt-5.6-luna", [user("delta")], { previousResponseId: "canonical-missing", headers: rootHeaders, reasoning: { effort: "high" }, clientInitialResponses: true });
       expect(missing.status).toBe(400);
+      expect(missing.text).not.toContain("other-session-fixture");
       expect(missing.logCtx.sessionEffortObservation).toEqual({ clientEffort: "high", sessionEffort: "unknown", status: "not_in_input" });
     } finally { await flushResponseState(); clearResponseStateForTests(); }
   });
 
   test("logs the client's initial top-level effort and last visible session update", async () => {
+    clearRequestLogsForTests();
     const seen = captureWire();
     const items = [user("one"), { type: "configuration_update", reasoning: { effort: "max" } }, user("two")];
     const { status, logCtx } = await drive(canonical(), "p/gpt-5.6-luna", items, {
-      headers: rootHeaders, reasoning: { effort: "high" }, clientInitialResponses: true,
+      headers: rootHeaders, reasoning: { effort: "high" }, clientInitialResponses: true, finalizeLog: true,
     });
     expect(status).toBe(200);
     expect((logCtx as unknown as Record<string, unknown>).sessionEffortObservation).toEqual({
       clientEffort: "high", sessionEffort: "max", status: "visible",
     });
+    expect(getRequestLogEntries().at(-1)?.sessionEffortObservation).toEqual({ clientEffort: "high", sessionEffort: "max", status: "visible" });
+    expect(readUsageEntries().at(-1)?.sessionEffortObservation).toEqual({ clientEffort: "high", sessionEffort: "max", status: "visible" });
     expect(seen[0]!.body.input).toEqual(items);
     expect(seen[0]!.body.reasoning).toEqual({ effort: "high" });
   }, 20_000);

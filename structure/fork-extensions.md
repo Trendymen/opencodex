@@ -11,8 +11,8 @@
 
 ## 请求与工具边界
 
-- `src/server/index/serve-options.ts` 和 `src/server/index/websocket-handler.ts` 标记外部 Responses 初始请求；`src/server/responses/request-prepare.ts` 在改写或续接展开前通过 `src/usage/session-effort-observation.ts` 观察顶层强度及直接输入中的更新。未知更新使结果未知，后续合法更新可恢复确定性；续接 ID 不用于推断历史。组合和重试保留逻辑请求的初始观察。
-- `src/server/request-log.ts` 与 `src/usage/log.ts` 只保留强度枚举和固定状态，写入内存前复制并校验，旧记录可缺省。`gui/src/pages/Logs.tsx` 分开显示初始顶层和更新；观察不证明转发或上游采用，WebSocket 后续帧可能改变设置。
+- `src/server/index/serve-options.ts` 和 `src/server/index/websocket-handler.ts` 标记外部 Responses 初始请求；`src/server/responses/request-prepare.ts` 在改写或续接展开前通过 `src/usage/session-effort-observation.ts` 观察顶层强度及直接输入中的更新。未知更新使结果未知，后续合法更新可恢复确定性；续接 ID 不用于推断历史。`src/server/responses/policy-fallback.ts` 在策略重试间共享捕获状态，包括初次没有观察的情况；组合和重试保留逻辑请求的初始观察。
+- `src/server/request-log.ts` 与 `src/usage/log.ts` 只保留强度枚举和固定状态，写入内存前复制并校验，旧记录可缺省。观察字段各仅读取一次，访问器或代理读取失败时丢弃该观察。`gui/src/pages/Logs.tsx` 分开显示初始顶层和更新；观察不证明转发或上游采用，WebSocket 后续帧可能改变设置。
 - GPT 家族和官方目的地分开判断。官方 Responses 保持原生消息/schema；Lite header 到 WS metadata 的映射在对应许可允许时只补缺失字段。
 - `agentMessageFormat`、GLM/Kimi lowering 和 `encrypted` 注解清理在出站副本上运行，保持原 input、工具授权和重放状态。可信直接 key-auth relay 的注解例外不扩大到 combo。
 - `src/adapters/openai-responses/tool-output-recovery.ts` 将孤儿工具输出转为用户消息时，同时保留官方 item provenance 与 Fork 的合法来源标签；历史工具声明继续按官方当前轮目录判断。

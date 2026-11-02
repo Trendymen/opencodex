@@ -15,6 +15,7 @@ import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { closeRequestHistoryIndex } from "../../src/routing/history/indexer";
 import { routeModel } from "../../src/router";
 import { PolicyCandidateUnavailableError, policyCandidateRefusalResponse } from "../../src/server/responses/policy-request-scope";
+import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 const originalFetch = globalThis.fetch;
 let home: string;
@@ -104,6 +105,37 @@ async function execute(config: OcxConfig, options: {
 }
 
 describe("policy scope through real request preparation", () => {
+  test.each([true, false])("policy retry keeps the initial effort observation (visible update=%s)", async withUpdate => {
+    const config = configFor(["a", "b"]);
+    config.compactionRouting = { model: "policy/daily", reasoningEffort: "medium", triggers: ["manual"] };
+    const sends: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sends.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return sends.length === 1 ? Response.json({ error: { type: "rate_limit_error", message: "fixture busy" } }, { status: 429 })
+        : Response.json({ id: "completion", object: "chat.completion", model: "model", choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }] });
+    }) as typeof fetch;
+    const release = acquireOwnedSpendHome();
+    const log: RequestLogContext = { model: "", provider: "" };
+    let parsedCount = 0;
+    try {
+      const input = [{ role: "user", content: "hello" }, ...(withUpdate ? [{ type: "configuration_update", reasoning: { effort: "max" } }] : []), { type: "compaction_trigger" }];
+      const response = await handleResponsesWithPolicyFallback(new Request("http://localhost/v1/responses", {
+        method: "POST", headers: { "content-type": "application/json", "x-codex-turn-metadata": JSON.stringify({ request_kind: "compaction", compaction: { trigger: "manual" } }) },
+        body: JSON.stringify({ model: "a/model", input, reasoning: { effort: "high" }, stream: false, store: false }),
+      }), config, log, { clientInitialResponses: true, onRequestBodyParsed(body) {
+        if (!withUpdate && parsedCount++ === 0) (body as { input: unknown[] }).input.push({ type: "configuration_update", reasoning: { effort: "max" } });
+      } });
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(sends).toHaveLength(2);
+      expect(sends.map(body => body.reasoning_effort)).toEqual(["medium", "medium"]);
+      expect(log.sessionEffortObservation).toEqual(withUpdate ? { clientEffort: "high", sessionEffort: "max", status: "visible" } : undefined);
+      const rows: RequestLogEntry[] = [];
+      addFinalRequestLog("policy-effort-fixture", Date.now(), log, response.status, undefined, row => rows.push(row));
+      expect(rows[0]?.sessionEffortObservation).toEqual(withUpdate ? { clientEffort: "high", sessionEffort: "max", status: "visible" } : undefined);
+    } finally { release(); }
+  });
+
   test.each([false, true])("a concrete retry ignores a colliding combo alias (redirects=%s)", async redirects => {
     const config = configFor();
     config.combos = { hijack: { alias: "b/model", strategy: "round-robin", targets: [

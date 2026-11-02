@@ -14,6 +14,7 @@ import { jsonUtf8Bytes } from "../../src/lib/json-byte-size";
 import type { AdapterEvent, OcxConfig, OcxParsedRequest } from "../../src/types";
 import type { RequestLogContext } from "../../src/server/request-log";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
+import { probeSessionEffortSource } from "../helpers/session-effort-source-probe";
 
 const originalFetch = globalThis.fetch;
 const sourceError: AdapterEvent = { type: "error", status: 400, code: "invalid_argument", message: "Source rejected compact fixture" };
@@ -101,6 +102,19 @@ afterEach(() => {
 });
 
 describe("routed compaction emergency integration", () => {
+  test.each([false, true])("compact synthetic Responses is not a client observation (forced marker=%s)", async forced => {
+    sourceEvents = [{ type: "text_delta", text: "Preserve the user's goal." }, { type: "done" }];
+    const probe = probeSessionEffortSource(options => options.compactionRecoveryKind === "compaction-v1", forced);
+    try {
+      const response = await handleResponsesCompact(request(body(false, false), "responses/compact"), settings(), { model: "", provider: "" });
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(probe.calls).toHaveLength(1);
+      expect(probe.calls[0]!.marker).not.toBe(true);
+      expect(probe.calls[0]!.observation).toEqual(forced ? { clientEffort: "high", sessionEffort: "max", status: "visible" } : undefined);
+    } finally { probe.restore(); }
+  });
+
   test("recovery replay retains the observation captured before the request body changes", async () => {
     const payload = body();
     payload.reasoning = { effort: "high" };

@@ -613,7 +613,7 @@
       "tier": 4,
       "title": "Trendymen Fork Extensions",
       "scope": "Fork-only runtime, diagnostics and maintenance contracts.",
-      "documents": ["src/fork/", "src/types/agent-task-recovery.ts", "src/claude/intercept/picker-listener.ts", ".github/workflows/ci.yml", "src/server/responses/core-combo.ts", "src/codex/websocket-activity.ts", "src/usage/session-effort-observation.ts", "src/server/responses/request-prepare.ts", "src/server/request-log.ts", "src/usage/log.ts", "src/server/index/serve-options.ts", "src/server/index/websocket-handler.ts", "gui/src/pages/Logs.tsx"],
+      "documents": ["src/fork/", "src/types/agent-task-recovery.ts", "src/claude/intercept/picker-listener.ts", ".github/workflows/ci.yml", "src/server/responses/core-combo.ts", "src/codex/websocket-activity.ts", "src/usage/session-effort-observation.ts", "src/server/responses/request-prepare.ts", "src/server/responses/policy-fallback.ts", "src/server/request-log.ts", "src/usage/log.ts", "src/server/index/serve-options.ts", "src/server/index/websocket-handler.ts", "gui/src/pages/Logs.tsx"],
       "forkOnly": true
     },
     {

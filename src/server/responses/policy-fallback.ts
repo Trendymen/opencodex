@@ -186,6 +186,7 @@ async function handleResponsesWithPolicyFallbackInner(
   let rawBody: Record<string, unknown> | null = null;
   const coreOptions: CoreOptions = {
     ...options,
+    sessionEffortCapture: options.sessionEffortCapture ?? (options.clientInitialResponses ? { captured: false } : undefined),
     advisorAdmissionPolicy: options.advisorAdmissionPolicy ?? captureAdmissionPolicy(config, options.admission, options.admissionScope),
     policyRequestScope: policyScope,
     openAiSidecarAuth: options.openAiSidecarAuth === undefined

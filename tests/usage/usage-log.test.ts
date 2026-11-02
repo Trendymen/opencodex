@@ -48,6 +48,43 @@ afterEach(() => {
 });
 
 describe("usage log", () => {
+  test("untrusted observation properties are read once and throwing accessors are rejected", async () => {
+    const makeObservation = (changing: "clientEffort" | "sessionEffort" | "status") => {
+      const reads = { count: 0 };
+      const row: Record<string, unknown> = { clientEffort: "high", sessionEffort: "max", status: "visible" };
+      const original = row[changing];
+      Object.defineProperty(row, changing, { enumerable: true, get() { return ++reads.count === 1 ? original : "private-canary"; } });
+      return { row, reads };
+    };
+    const expected = { clientEffort: "high", sessionEffort: "max", status: "visible" };
+    const base = { requestId: "getter", timestamp: 1, provider: "mock", model: "model", status: 200, durationMs: 1, usageStatus: "unreported" as const };
+    clearRequestLogsForTests();
+    try {
+      for (const field of ["clientEffort", "sessionEffort", "status"] as const) {
+        const direct = makeObservation(field);
+        addRequestLog(log({ requestId: `ring-${field}`, sessionEffortObservation: direct.row as never }));
+        expect(direct.reads.count).toBe(1);
+        expect(getRequestLogEntries().at(-1)?.sessionEffortObservation).toEqual(expected);
+        const persisted = makeObservation(field);
+        appendUsageEntry({ ...base, requestId: `disk-${field}`, sessionEffortObservation: persisted.row as never });
+        expect(persisted.reads.count).toBe(1);
+        expect(readUsageEntries().at(-1)?.sessionEffortObservation).toEqual(expected);
+        const projected = makeObservation(field);
+        expect(normalizePersistedUsageRow({ ...base, sessionEffortObservation: projected.row })?.sessionEffortObservation).toEqual(expected);
+        expect(projected.reads.count).toBe(1);
+      }
+      const throwing = new Proxy({}, { get() { throw new Error("private-canary"); } });
+      expect(normalizePersistedUsageRow({ ...base, sessionEffortObservation: throwing })?.sessionEffortObservation).toBeUndefined();
+      expect(() => addRequestLog(log({ requestId: "throwing", sessionEffortObservation: throwing as never }))).not.toThrow();
+      expect(() => appendUsageEntry({ ...base, requestId: "throwing-disk", sessionEffortObservation: throwing as never })).not.toThrow();
+      expect(readUsageEntries().at(-1)?.sessionEffortObservation).toBeUndefined();
+      const url = new URL("http://localhost/api/logs");
+      const response = await handleManagementAPI(new ManagementRequest(url), url, { providers: {} } as OcxConfig);
+      expect(JSON.stringify(await response!.json())).not.toContain("private-canary");
+      expect(readFileSync(usageLogPath(), "utf8")).not.toContain("private-canary");
+    } finally { clearRequestLogsForTests(); }
+  });
+
   test("direct request-log ingress copies bounded observations before memory and disk", async () => {
     clearRequestLogsForTests();
     try {

@@ -8,6 +8,7 @@ import { clearRequestLogsForTests, getRequestLogEntries } from "../../src/server
 import type { OcxConfig } from "../../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { probeSessionEffortSource } from "../helpers/session-effort-source-probe";
 
 let testDir = "";
 let previousHome: string | undefined;
@@ -79,6 +80,21 @@ const statelessTurn = {
     { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "file body" }] },
   ],
 };
+
+test.each([false, true])("translated Anthropic ingress ignores observable internal input (forced marker=%s)", async forced => {
+  const upstream = mockChatUpstream();
+  saveConfig(routedConfig(new URL("/v1", upstream.server.url).href));
+  const server = startServer(0);
+  const probe = probeSessionEffortSource(options => options.inboundWire === "anthropic" && !options.comboAttempt, forced);
+  try {
+    const response = await fetch(new URL("/v1/messages", server.url), { method: "POST", headers, body: JSON.stringify(statelessTurn) });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(probe.calls).toHaveLength(1);
+    expect(probe.calls[0]!.marker).not.toBe(true);
+    expect(probe.calls[0]!.observation).toEqual(forced ? { clientEffort: "high", sessionEffort: "max", status: "visible" } : undefined);
+  } finally { probe.restore(); await server.stop(true); upstream.server.stop(true); }
+});
 
 test("a translated route refuses message threads with Claude Code's unsupported code before inference", async () => {
   const upstream = mockChatUpstream();
