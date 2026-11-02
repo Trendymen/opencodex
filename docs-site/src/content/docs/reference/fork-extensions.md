@@ -7,6 +7,7 @@ This appendix describes the Trendymen Fork's additions to upstream. The other re
 
 ## Compatibility changes
 
+- Pool account identity rewriting escapes turn metadata characters above U+00FF before writing HTTP headers, preserving valid Latin-1 characters and JSON values. This avoids local header errors for metadata containing Chinese characters or emoji; account identity isolation still applies when compatibility processing is disabled.
 - Native GPT subscription Responses requests have 23 provider-level processing permissions, all enabled by default. They cover request/response compatibility, generated headers and optional local errors, including Direct and Pool accounts. Existing feature conditions still apply; other destinations and translated ingress keep their behavior. See [GPT subscription processing](/reference/configuration/fork-extensions/#gpt-subscription-processing) for individual controls and retained recovery, budget and credential protections.
 - Ark GLM/Kimi and BigModel GLM Responses routes lower unsupported tool schemas and handle assistant-prefill restrictions. Ordinary third-party tools drop ChatGPT-only `encrypted` annotations while preserving properties and literal values with that name. OpenAI-operated destinations and explicitly trusted direct relays retain the annotations; combo members do not inherit that direct-route exception.
 - Third-party tool tasks receive progress, code-mode result-display and patch-order guidance. The proxy does not synthesize progress or execute or retry patches.

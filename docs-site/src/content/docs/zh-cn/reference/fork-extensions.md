@@ -7,6 +7,7 @@ description: 相对已 rebase 上游版本的兼容与维护差异。
 
 ## 兼容差异
 
+- Pool 账号身份改写将 turn metadata 中超出 U+00FF 的字符转为 JSON 转义后再写入 HTTP header，保留合法 Latin-1 字符和 JSON 值，避免中文或 emoji 导致本地请求头错误；关闭兼容处理时，账号身份隔离仍然生效。
 - 原生 GPT 官方订阅 Responses 请求提供 23 项 Provider 级处理许可，全部默认开启，覆盖请求/响应兼容、生成头和可选本地错误，包含 Direct 与 Pool 账号。各功能仍受原条件约束，其他目的地和转译入站沿用既有行为。逐项配置及保留的恢复、预算和凭据保护见 [GPT 官方订阅处理](/zh-cn/reference/configuration/fork-extensions/#gpt-官方订阅处理)。
 - Ark GLM/Kimi 和 BigModel GLM 的 Responses 路由降低不支持的工具 schema，并处理 assistant prefill 限制。普通第三方工具清理 ChatGPT 专用 `encrypted` 注解，保留同名属性和 literal。官方目的地和显式可信直接 relay 保留注解，combo 不继承直接路由例外。
 - 第三方工具任务接收进度、code-mode 结果回显和补丁顺序提示；代理不合成进度，不执行或自动重试补丁。

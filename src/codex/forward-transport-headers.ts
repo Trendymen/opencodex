@@ -49,7 +49,8 @@ export function isolateCodexPoolAccountHeaders(headers: Headers, chatgptAccountI
   }
   const turnMeta = headers.get(CODEX_TURN_METADATA_HEADER);
   if (turnMeta) {
-    headers.set(CODEX_TURN_METADATA_HEADER, rewriteTurnMetadataInstallationId(turnMeta, chatgptAccountId));
+    headers.set(CODEX_TURN_METADATA_HEADER, rewriteTurnMetadataInstallationId(turnMeta, chatgptAccountId)
+      .replace(/[\u0100-\uffff]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`));
   }
 }
 

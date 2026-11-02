@@ -20,6 +20,7 @@
 
 ## 官方订阅逐项许可
 
+- `src/codex/forward-transport-headers.ts` 仅在写回 HTTP header 时，将 Pool 身份改写后的 turn metadata 中超出 U+00FF 的字符转为 JSON 转义，保留合法 Latin-1 字符和其他字段的 JSON 值；请求体 metadata 沿用原序列化，避免转义扩张影响重复投影。账号身份隔离仍独立于兼容处理许可，回归见 `tests/codex-integration/codex-installation-wire.test.ts`。
 - `src/fork/codex-passthrough-contract.ts` 是配置、面板和运行时共用的纯 23 项目录。默认 `true` 只允许既有处理，仍受原功能开关约束；配置说明统一见 [Fork 配置](../docs-site/src/content/docs/reference/configuration/fork-extensions.md#gpt-subscription-processing)。
 - `src/adapters/openai-responses/passthrough.ts` 对未声明 hosted-search 工具的请求做自动历史投影时，检查 `normalizeRequestParameters`；显式 `projectResponsesLiteHostedSearchHistory` 沿用独立的 Provider opt-in 条件。非 canonical 路径继续采用官方默认处理。
 - canonical forward 的 `additional_tools` 提升同样检查 `normalizeRequestParameters`；关闭该许可或全关时保留输入条目及顶层 `tools` 的值、存在性和顺序。其他目的地沿用官方自动提升及 Provider opt-in 条件。
