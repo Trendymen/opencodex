@@ -40,3 +40,9 @@ export function normalizeSessionEffortObservation(value: unknown): SessionEffort
     return { clientEffort: clientEffort as SafeEffort | "unknown", sessionEffort: sessionEffort as SafeEffort | "unknown", status };
   } catch { return undefined; }
 }
+
+export function readSessionEffortObservation(value: unknown): SessionEffortObservation | undefined {
+  try {
+    return record(value) ? normalizeSessionEffortObservation(value.sessionEffortObservation) : undefined;
+  } catch { return undefined; }
+}

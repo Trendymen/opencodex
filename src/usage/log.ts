@@ -7,7 +7,7 @@ import { enforceAppOwnedMemoryBudget } from "../lib/app-owned-memory";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
 import { redactSecretString, sanitizeLogMetadataString } from "../lib/redact";
 import { usageDisplayTotalTokens } from "./totals";
-import { normalizeSessionEffortObservation, type SessionEffortObservation } from "./session-effort-observation";
+import { readSessionEffortObservation, type SessionEffortObservation } from "./session-effort-observation";
 import {
   normalizePersistedJevDecision,
   type PersistedJevDecisionV1,
@@ -985,7 +985,7 @@ export function normalizeUsageEntryForTest(entry: PersistedUsageEntry): Persiste
 }
 
 function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
-  const sessionEffortObservation = normalizeSessionEffortObservation(entry.sessionEffortObservation);
+  const sessionEffortObservation = readSessionEffortObservation(entry);
   const attempts = normalizedAttempts(entry.attempts);
   const tierOutcome = entry.tierOutcome ? normalizeAttemptTierOutcome(entry.tierOutcome) : undefined;
   const callerServiceTier = sanitizeLogMetadataString(entry.callerServiceTier);

@@ -30,7 +30,7 @@ import type { RequestSpendSettlement } from "./responses/request-spend";
 import type { AdapterTierMetadata } from "../providers/fastwire";
 import { UPSTREAM_RESET_REPLAY_REFUSED_CODE } from "../lib/upstream-retry";
 import { redactSecretString, sanitizeLogMetadataString } from "../lib/redact";
-import { normalizeSessionEffortObservation, type SessionEffortObservation } from "../usage/session-effort-observation";
+import { readSessionEffortObservation, type SessionEffortObservation } from "../usage/session-effort-observation";
 import {
   appendUsageEntry,
   classifyCacheTelemetryProvenance,
@@ -479,7 +479,7 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
   const claudeCompatibility = normalizeClaudeCompatibilityUsageLog(entry.claudeCompatibility);
   const spend = normalizeRequestSpend(entry.spend);
   const protocolTrace = parseProtocolTraceV1(entry.protocolTrace);
-  const sessionEffortObservation = normalizeSessionEffortObservation(entry.sessionEffortObservation);
+  const sessionEffortObservation = readSessionEffortObservation(entry);
   return {
     requestId: entry.requestId,
     ...(isLogicalRequestId(entry.logicalRequestId) ? { logicalRequestId: entry.logicalRequestId } : {}),
@@ -621,6 +621,17 @@ export function rehydrateRequestLogsAfterLedgerReplacement(
   return hydrateRequestLogsFromDisk(reader);
 }
 
+function snapshotRequestLogEntry(entry: RequestLogEntry): RequestLogEntry {
+  const source = entry as unknown as Record<PropertyKey, unknown>;
+  const retained = {} as Record<PropertyKey, unknown>;
+  for (const key of Reflect.ownKeys(entry)) {
+    if (key === "sessionEffortObservation" || !Object.prototype.propertyIsEnumerable.call(entry, key)) continue;
+    if (key === "__proto__") Object.defineProperty(retained, key, { value: source[key], enumerable: true, writable: true, configurable: true });
+    else retained[key] = source[key];
+  }
+  return retained as unknown as RequestLogEntry;
+}
+
 export function addRequestLog(entry: RequestLogEntry) {
   // Sanitize ONCE, at the ingress, and use that one value for both destinations.
   //
@@ -634,29 +645,22 @@ export function addRequestLog(entry: RequestLogEntry) {
   const servedModel = modelIdentityLogFields(entry).servedModel;
   const claudeCompatibility = normalizeClaudeCompatibilityUsageLog(entry.claudeCompatibility);
   const jevDecision = normalizePersistedJevDecision(entry.jevDecision);
-  const sessionEffortObservation = normalizeSessionEffortObservation(entry.sessionEffortObservation);
+  const sessionEffortObservation = readSessionEffortObservation(entry);
   const attempts = normalizedAttempts(entry.attempts);
   const attemptsDropped = Array.isArray(entry.attempts) && attempts.length < entry.attempts.length;
-  const retained: RequestLogEntry = shadowCallRewrittenFrom === entry.shadowCallRewrittenFrom
-    && servedModel === entry.servedModel
-    && entry.claudeCompatibility === undefined
-    && entry.jevDecision === undefined
-    && entry.sessionEffortObservation === undefined
-    && !attemptsDropped
-    ? entry
-    : { ...entry, ...(entry.attemptNormalizationDropped === true || attemptsDropped ? { attemptNormalizationDropped: true } : {}),
-      ...(shadowCallRewrittenFrom ? { shadowCallRewrittenFrom } : {}) };
-  if (!shadowCallRewrittenFrom && retained !== entry) delete retained.shadowCallRewrittenFrom;
-  if (!servedModel && retained !== entry) {
+  const retained = snapshotRequestLogEntry(entry);
+  if (entry.attemptNormalizationDropped === true || attemptsDropped) retained.attemptNormalizationDropped = true;
+  if (shadowCallRewrittenFrom) retained.shadowCallRewrittenFrom = shadowCallRewrittenFrom;
+  else delete retained.shadowCallRewrittenFrom;
+  if (!servedModel) {
     delete retained.servedModel;
     if (retained.resolvedModel === entry.servedModel) delete retained.resolvedModel;
   }
   if (claudeCompatibility) retained.claudeCompatibility = claudeCompatibility;
-  else if (retained !== entry) delete retained.claudeCompatibility;
+  else delete retained.claudeCompatibility;
   if (jevDecision) retained.jevDecision = jevDecision;
-  else if (retained !== entry) delete retained.jevDecision;
+  else delete retained.jevDecision;
   if (sessionEffortObservation) retained.sessionEffortObservation = sessionEffortObservation;
-  else if (retained !== entry) delete retained.sessionEffortObservation;
   entry = retained;
   retainRequestLogEntry(entry);
   for (const observer of requestLogObserversForTests) {
