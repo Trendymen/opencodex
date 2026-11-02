@@ -8,6 +8,8 @@
 
 ## 请求与工具兼容
 
+Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSON 转义，保留合法 Latin-1 字符及中文、emoji 和其他字段的 JSON 值，避免写回 HTTP header 时触发本地 `TypeError`。账号身份隔离继续生效。实现见[身份头](src/codex/forward-transport-headers.ts)，回归见 [Unicode 与账号隔离](tests/codex-integration/codex-installation-wire.test.ts)。
+
 | 剩余能力 | 实现入口 | 主要回归 |
 | --- | --- | --- |
 | GPT 官方订阅的原生 Responses 提供 23 项请求、响应、头字段和本地错误许可，全部默认开启并保留原功能条件。Direct/Pool（含新增账号）共用 Provider 配置，按每次最终目的地判断；第三方及转译入站不受影响。私有 SSE 5 秒、上游 WS 静默 90 秒及私有 HTTP 错误正文 5 秒期限可分别关闭，恢复重发与凭据保护保留；同名配置头合并时，按实际出站组核对原成员和 caller 持有情况。日志区分本地保护失败与原始上游 HTTP 状态。需保护私有值的未分类成功正文在交付前安全拒绝。 | [配置合同](src/fork/codex-passthrough-contract.ts)、[turn](src/fork/codex-passthrough-turn.ts)、[私有值保护](src/fork/codex-passthrough-secrets.ts)、[面板](gui/src/components/provider-workspace/CodexPassthroughSettings.tsx) | [跨路径合同](tests/responses/codex-passthrough-contract.test.ts)、[请求](tests/responses/codex-passthrough-request.test.ts)、[响应](tests/responses/codex-passthrough-response.test.ts)、[本地错误](tests/responses/codex-passthrough-local-errors.test.ts)、[私有凭据](tests/server/codex-passthrough-private-credentials.test.ts)、[私有 SSE 期限](tests/server/codex-passthrough-private-deadline.test.ts)、[私有错误正文期限](tests/server/codex-passthrough-private-error-deadline.test.ts)、[上游 WS 静默期限](tests/responses/codex-passthrough-ws-deadline.test.ts)、[原始 HTTP 状态](tests/usage/request-log-upstream-http-status.test.ts) |
