@@ -1486,6 +1486,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           let response: Response;
           try {
             response = await handleResponses(sessionReq, config, logCtx, {
+              clientInitialResponses: true,
               codexSessionIdSynthesized: !req.headers.has("session_id") && sessionReq.headers.has("session_id"),
               turnAdmissionLease,
               admission,

@@ -180,6 +180,9 @@ export interface HandleResponsesOptions {
    * it. Omitted means a genuine Responses inbound.
    */
   inboundWire?: InboundWire;
+  /** Trusted external Responses ingress; never inferred from a synthetic request body. */
+  clientInitialResponses?: boolean;
+  sessionEffortCapture?: { captured: boolean };
   /**
    * Set by a translating ingress (Chat / Anthropic) when the client sent an explicit empty
    * tool catalog. Those wires may defer tool delivery, so their translated body carries no

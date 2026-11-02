@@ -30,6 +30,7 @@ import type { RequestSpendSettlement } from "./responses/request-spend";
 import type { AdapterTierMetadata } from "../providers/fastwire";
 import { UPSTREAM_RESET_REPLAY_REFUSED_CODE } from "../lib/upstream-retry";
 import { redactSecretString, sanitizeLogMetadataString } from "../lib/redact";
+import { normalizeSessionEffortObservation, type SessionEffortObservation } from "../usage/session-effort-observation";
 import {
   appendUsageEntry,
   classifyCacheTelemetryProvenance,
@@ -183,6 +184,7 @@ export interface RequestLogContext extends UpstreamErrorDiagnostics {
   shadowCallRewrittenFrom?: string;
   /** Internal structural combo identity; omitted from RequestLogEntry/JSONL. */
   comboId?: string;
+  sessionEffortObservation?: SessionEffortObservation;
   requestedEffort?: string;
   effectiveEffort?: string;
   reasoningWireField?: string;
@@ -334,6 +336,7 @@ export interface RequestLogEntry extends UpstreamErrorDiagnostics {
   requestedAlias?: string;
   /** Original bare helper model when the opt-in shadow-call route rewrote this request. */
   shadowCallRewrittenFrom?: string;
+  sessionEffortObservation?: SessionEffortObservation;
   requestedEffort?: string;
   effectiveEffort?: string;
   reasoningWireField?: string;
@@ -476,6 +479,7 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
   const claudeCompatibility = normalizeClaudeCompatibilityUsageLog(entry.claudeCompatibility);
   const spend = normalizeRequestSpend(entry.spend);
   const protocolTrace = parseProtocolTraceV1(entry.protocolTrace);
+  const sessionEffortObservation = normalizeSessionEffortObservation(entry.sessionEffortObservation);
   return {
     requestId: entry.requestId,
     ...(isLogicalRequestId(entry.logicalRequestId) ? { logicalRequestId: entry.logicalRequestId } : {}),
@@ -496,6 +500,7 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
       ? { shadowCallRewrittenFrom: entry.shadowCallRewrittenFrom }
       : {}),
     ...(entry.requestedEffort ? { requestedEffort: entry.requestedEffort } : {}),
+    ...(sessionEffortObservation ? { sessionEffortObservation } : {}),
     ...(entry.effectiveEffort ? { effectiveEffort: entry.effectiveEffort } : {}),
     ...(entry.reasoningWireField ? { reasoningWireField: entry.reasoningWireField } : {}),
     ...(entry.reasoningWireValue !== undefined ? { reasoningWireValue: entry.reasoningWireValue } : {}),
@@ -629,12 +634,14 @@ export function addRequestLog(entry: RequestLogEntry) {
   const servedModel = modelIdentityLogFields(entry).servedModel;
   const claudeCompatibility = normalizeClaudeCompatibilityUsageLog(entry.claudeCompatibility);
   const jevDecision = normalizePersistedJevDecision(entry.jevDecision);
+  const sessionEffortObservation = normalizeSessionEffortObservation(entry.sessionEffortObservation);
   const attempts = normalizedAttempts(entry.attempts);
   const attemptsDropped = Array.isArray(entry.attempts) && attempts.length < entry.attempts.length;
   const retained: RequestLogEntry = shadowCallRewrittenFrom === entry.shadowCallRewrittenFrom
     && servedModel === entry.servedModel
     && entry.claudeCompatibility === undefined
     && entry.jevDecision === undefined
+    && entry.sessionEffortObservation === undefined
     && !attemptsDropped
     ? entry
     : { ...entry, ...(entry.attemptNormalizationDropped === true || attemptsDropped ? { attemptNormalizationDropped: true } : {}),
@@ -648,6 +655,8 @@ export function addRequestLog(entry: RequestLogEntry) {
   else if (retained !== entry) delete retained.claudeCompatibility;
   if (jevDecision) retained.jevDecision = jevDecision;
   else if (retained !== entry) delete retained.jevDecision;
+  if (sessionEffortObservation) retained.sessionEffortObservation = sessionEffortObservation;
+  else if (retained !== entry) delete retained.sessionEffortObservation;
   entry = retained;
   retainRequestLogEntry(entry);
   for (const observer of requestLogObserversForTests) {
@@ -691,6 +700,7 @@ export function addRequestLog(entry: RequestLogEntry) {
         ? { shadowCallRewrittenFrom: entry.shadowCallRewrittenFrom }
         : {}),
       ...(entry.requestedEffort ? { requestedEffort: entry.requestedEffort } : {}),
+      ...(entry.sessionEffortObservation ? { sessionEffortObservation: entry.sessionEffortObservation } : {}),
       ...(entry.effectiveEffort ? { effectiveEffort: entry.effectiveEffort } : {}),
       ...(entry.reasoningWireField ? { reasoningWireField: entry.reasoningWireField } : {}),
       ...(entry.reasoningWireValue !== undefined ? { reasoningWireValue: entry.reasoningWireValue } : {}),
@@ -1543,6 +1553,7 @@ export function addFinalRequestLog(
     ...(logCtx.requestedAlias ? { requestedAlias: logCtx.requestedAlias } : {}),
     ...(shadowCallRewrittenFrom ? { shadowCallRewrittenFrom } : {}),
     ...(logCtx.requestedEffort ? { requestedEffort: logCtx.requestedEffort } : {}),
+    ...(logCtx.sessionEffortObservation ? { sessionEffortObservation: logCtx.sessionEffortObservation } : {}),
     ...(logCtx.effectiveEffort ? { effectiveEffort: logCtx.effectiveEffort } : {}),
     ...(logCtx.reasoningWireField ? { reasoningWireField: logCtx.reasoningWireField } : {}),
     ...(logCtx.reasoningWireValue !== undefined ? { reasoningWireValue: logCtx.reasoningWireValue } : {}),

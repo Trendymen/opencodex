@@ -101,6 +101,24 @@ afterEach(() => {
 });
 
 describe("routed compaction emergency integration", () => {
+  test("recovery replay retains the observation captured before the request body changes", async () => {
+    const payload = body();
+    payload.reasoning = { effort: "high" };
+    (payload.input as unknown[]).unshift({ type: "configuration_update", reasoning: { effort: "max" } });
+    const log: RequestLogContext = { model: "", provider: "" };
+    const response = await handleResponses(request(payload), settings(), log, {
+      clientInitialResponses: true,
+      onRequestBodyParsed(parsed) {
+        const input = (parsed as { input: Array<{ type?: string }> }).input;
+        input.splice(0, 1);
+      },
+    });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(calls.map(call => call.model)).toEqual(["swe-2", "rescue"]);
+    expect(log.sessionEffortObservation).toEqual({ clientEffort: "high", sessionEffort: "max", status: "visible" });
+  });
+
   test("text-only compaction projects historical images before the strip step", async () => {
     sourceEvents = [{ type: "text_delta", text: "Keep the chart result." }, { type: "done" }];
     const config = settings();

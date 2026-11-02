@@ -124,6 +124,7 @@ test("a translated route refuses message threads with Claude Code's unsupported 
     });
     expect(resent.status).toBe(200);
     await resent.text();
+    expect(getRequestLogEntries().at(-1)?.sessionEffortObservation).toBeUndefined();
     expect(upstream.captured).toHaveLength(1);
     const sent = JSON.stringify(upstream.captured[0]);
     expect(sent).toContain("You are a subagent.");

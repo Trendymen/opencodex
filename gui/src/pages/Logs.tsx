@@ -28,6 +28,7 @@ import "./logs-decode-rate.css";
 import { formatEstimatedUsd, formatEstimatedUsdValue, summarizeEstimatedCosts } from "./logs-cost-format";
 import { cacheSplit, isCursorUsageProvider, tokensTitle } from "./logs-token-title";
 import type { LogSurface } from "./logs-surface-filter";
+import type { SessionEffortObservation } from "../../../src/usage/session-effort-observation";
 import {
   sanitizeLogEntryRouteDecision,
   validCachedRouteDecision,
@@ -159,6 +160,7 @@ interface LogAttempt extends LogFailureAttribution {
 }
 
 export interface LogEntry extends LogFailureAttribution {
+  sessionEffortObservation?: SessionEffortObservation;
   requestId?: string;
   timestamp: number;
   model: string;
@@ -288,6 +290,11 @@ function effortLabel(log: ReasoningLogFields): string {
 function reasoningWireLabel(log: ReasoningLogFields): string | undefined {
   if (!log.reasoningWireField || log.reasoningWireValue === undefined) return undefined;
   return `${log.reasoningWireField}=${log.reasoningWireValue}`;
+}
+
+export function SessionEffortIndicator({ observation, t }: { observation?: SessionEffortObservation; t: TFn }) {
+  if (!observation) return null;
+  return <>{" · "}<span title={t("logs.effort.initialUpdate")}>{observation.status === "visible" ? observation.sessionEffort : t("logs.effort.unknown")}</span></>;
 }
 
 function servedModelLabel(log: { model: string; resolvedModel?: string; servedModel?: string; wireModel?: string }): ReactNode {
@@ -940,7 +947,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                   {/* The wire field (reasoning_effort=high) stays in the title and the detail
                       dialog; as a second line it repeated the label and, in mono, outgrew the
                       9% column and painted over the provider cell. */}
-                  <td className="mono log-reasoning-cell" title={reasoningWire}>{effortLabel(log)}</td>
+                  <td className="mono log-reasoning-cell" title={reasoningWire}>{effortLabel(log)}<SessionEffortIndicator observation={log.sessionEffortObservation} t={t} /></td>
                   <td className="muted">{formatProviderDisplayName(log.provider, t)}</td>
                   <td>
                     <span className="log-status-cell">
@@ -1002,7 +1009,7 @@ function useModalDialog(open: boolean) {
   return ref;
 }
 
-function LogDetailDialog({
+export function LogDetailDialog({
   detail, detailInfo, localeCode, localeTag, serverTimeZone, t, onClose, onFilterConversation,
 }: {
   detail: LogEntry;
@@ -1121,10 +1128,15 @@ function LogDetailDialog({
             {(detail.requestedEffort || detail.effectiveEffort) && (
               <><span className="muted">{t("logs.col.effort")}</span><span className="mono">{effortLabel(detail)}{reasoningWire ? ` (${reasoningWire})` : ""}</span></>
             )}
+            {detail.sessionEffortObservation && <>
+              <span className="muted">{t("logs.effort.initialTopLevel")}</span><span className="mono">{detail.sessionEffortObservation.clientEffort === "unknown" ? t("logs.effort.unknown") : detail.sessionEffortObservation.clientEffort}</span>
+              <span className="muted">{t("logs.effort.initialUpdate")}</span><span className="mono">{detail.sessionEffortObservation.status === "visible" ? detail.sessionEffortObservation.sessionEffort : t(detail.sessionEffortObservation.status === "not_in_input" ? "logs.effort.notInInput" : "logs.effort.unrecognized")}</span>
+            </>}
             {detail.errorCode && (<><span className="muted">{t("logs.col.error")}</span><span className="mono">{detail.errorCode}</span></>)}
             {detail.upstreamHttpStatus !== undefined && (<><span className="muted">{t("logs.col.upstreamHttpStatus")}</span><span className="mono">{detail.upstreamHttpStatus}</span></>)}
             {detail.upstreamError && (<><span className="muted">{t(localDeliveryFailure ? "logs.col.localReason" : "logs.col.upstreamReason")}</span><span className="mono log-detail-break">{detail.upstreamError}</span></>)}
           </div>
+          {detail.sessionEffortObservation && <p className="log-detail-notes-line muted">{t("logs.effort.observationBoundary")}</p>}
         </section>
 
         <section className="log-detail-section" aria-labelledby="log-detail-route">

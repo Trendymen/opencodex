@@ -3058,7 +3058,7 @@ describe("server combo failover 030 activation matrix", () => {
   });
 
   registerComboForcedEffortCases({
-    serve, baseUrl, chatSuccess, chatStream, provider, comboConfig, post, latestAttemptReceipts,
+    serve, baseUrl, chatSuccess, chatStream, provider, comboConfig, post, postLogged, latestAttemptReceipts,
   });
 
   test("bare third-party defaultModel keeps max off the native clamp path", async () => {

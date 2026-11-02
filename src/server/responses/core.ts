@@ -39,6 +39,7 @@ export async function handleResponses(
   try {
     const response = await runWithCompactionRecovery(req, config, logCtx, {
       ...options, abortSignal,
+      sessionEffortCapture: options.sessionEffortCapture ?? (options.clientInitialResponses ? { captured: false } : undefined),
       advisorAdmissionPolicy: options.advisorAdmissionPolicy ?? captureAdmissionPolicy(config, options.admission, options.admissionScope),
       codexPassthroughTurn,
       openAiSidecarAuth: options.openAiSidecarAuth === undefined

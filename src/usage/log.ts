@@ -7,6 +7,7 @@ import { enforceAppOwnedMemoryBudget } from "../lib/app-owned-memory";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
 import { redactSecretString, sanitizeLogMetadataString } from "../lib/redact";
 import { usageDisplayTotalTokens } from "./totals";
+import { normalizeSessionEffortObservation, type SessionEffortObservation } from "./session-effort-observation";
 import {
   normalizePersistedJevDecision,
   type PersistedJevDecisionV1,
@@ -298,6 +299,7 @@ export function normalizeRequestSpend(value: unknown): PersistedRequestSpend | u
 }
 
 export interface PersistedUsageEntry {
+  sessionEffortObservation?: SessionEffortObservation;
   upstreamHttpStatus?: number;
   requestedAlias?: string;
   requestId: string;
@@ -983,6 +985,7 @@ export function normalizeUsageEntryForTest(entry: PersistedUsageEntry): Persiste
 }
 
 function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
+  const sessionEffortObservation = normalizeSessionEffortObservation(entry.sessionEffortObservation);
   const attempts = normalizedAttempts(entry.attempts);
   const tierOutcome = entry.tierOutcome ? normalizeAttemptTierOutcome(entry.tierOutcome) : undefined;
   const callerServiceTier = sanitizeLogMetadataString(entry.callerServiceTier);
@@ -1008,6 +1011,7 @@ function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
   const spend = normalizeRequestSpend(entry.spend);
   const protocolTrace = parseProtocolTraceV1(entry.protocolTrace);
   const normalized: PersistedUsageEntry = {
+    ...(sessionEffortObservation ? { sessionEffortObservation } : {}),
     requestId: entry.requestId,
     ...(isLogicalRequestId(entry.logicalRequestId) ? { logicalRequestId: entry.logicalRequestId } : {}),
     timestamp: entry.timestamp,

@@ -87,6 +87,7 @@ import { configuredAnthropicInstance } from "../../providers/anthropic-instance"
 import { isTranslatorBudgetExceededError } from "../../lib/translator-budget";
 import { bindTurnTerminationScope, rememberDeliveredFinalAnswer } from "../../responses/turn-termination";
 import { noteCodexSelectionAffinity, observeCacheDiagnosticInbound, rebindCacheDiagnosticBody, requestLogSpeedLabel, readConfiguredCodexServiceTier } from "../request-log";
+import { observeSessionEffort } from "../../usage/session-effort-observation";
 import type { RouteResult } from "../../router";
 import {
   captureRouteStaticPolicy,
@@ -253,6 +254,10 @@ export async function prepareResponsesRequest(
       return clientCancelledResponse();
     }
     return decodeRequestErrorResponse(err, "responses");
+  }
+  if (options.clientInitialResponses && options.sessionEffortCapture && !options.sessionEffortCapture.captured) {
+    options.sessionEffortCapture.captured = true;
+    logCtx.sessionEffortObservation = observeSessionEffort(body);
   }
   // Remove display-only artifact paths before helpers, combo dispatch and upstream replay.
   redactHostedImageDisplayPaths(body);

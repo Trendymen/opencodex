@@ -24,6 +24,12 @@ import {
   type PersistedUsageEntry,
 } from "../../src/usage/log";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { addRequestLog, clearRequestLogsForTests, getRequestLogEntries, hydrateRequestLogsFromDisk } from "../../src/server/request-log";
+import { log } from "../helpers/request-log-entry";
+import { handleManagementAPI } from "../../src/server/management-api";
+import { ManagementRequest } from "../helpers/management-auth";
+import { logsFromApiBody } from "../helpers/logs-api";
+import type { OcxConfig } from "../../src/types";
 
 let testDir = "";
 let previousHome: string | undefined;
@@ -42,6 +48,54 @@ afterEach(() => {
 });
 
 describe("usage log", () => {
+  test("direct request-log ingress copies bounded observations before memory and disk", async () => {
+    clearRequestLogsForTests();
+    try {
+      const raw = { clientEffort: "high", sessionEffort: "max", status: "visible", secret: "private-canary" };
+      addRequestLog(log({ requestId: "safe", sessionEffortObservation: raw as never }));
+      raw.sessionEffort = "low";
+      const continuation = { clientEffort: "high", sessionEffort: "unknown", status: "not_in_input" } as const;
+      const unknownUpdate = { clientEffort: "unknown", sessionEffort: "unknown", status: "unrecognized" } as const;
+      addRequestLog(log({ requestId: "continuation", sessionEffortObservation: continuation }));
+      addRequestLog(log({ requestId: "unknown-update", sessionEffortObservation: unknownUpdate }));
+      addRequestLog(log({ requestId: "invalid", sessionEffortObservation: { clientEffort: "secret", sessionEffort: "max", status: "visible" } as never }));
+      addRequestLog(log({ requestId: "bad-state", sessionEffortObservation: { clientEffort: "high", sessionEffort: "max", status: "not_in_input" } }));
+      addRequestLog(log({ requestId: "legacy" }));
+      const expected = { clientEffort: "high", sessionEffort: "max", status: "visible" };
+      expect(getRequestLogEntries().map(row => row.sessionEffortObservation)).toEqual([expected, continuation, unknownUpdate, undefined, undefined, undefined]);
+      expect(readUsageEntries().map(row => row.sessionEffortObservation)).toEqual([expected, continuation, unknownUpdate, undefined, undefined, undefined]);
+      expect(readFileSync(usageLogPath(), "utf8")).not.toContain("private-canary");
+      const url = new URL("http://localhost/api/logs");
+      const response = await handleManagementAPI(new ManagementRequest(url), url, { providers: {} } as OcxConfig);
+      const apiRows = logsFromApiBody(await response!.json());
+      expect(apiRows.find(row => row.requestId === "safe")?.sessionEffortObservation).toEqual(expected);
+      expect(apiRows.find(row => row.requestId === "invalid")?.sessionEffortObservation).toBeUndefined();
+      expect(apiRows.find(row => row.requestId === "bad-state")?.sessionEffortObservation).toBeUndefined();
+      expect(apiRows.find(row => row.requestId === "continuation")?.sessionEffortObservation).toEqual(continuation);
+      expect(JSON.stringify(apiRows)).not.toContain("private-canary");
+      clearRequestLogsForTests();
+      expect(hydrateRequestLogsFromDisk(() => readUsageEntries())).toBe(6);
+      expect(getRequestLogEntries().map(row => row.sessionEffortObservation)).toEqual([expected, continuation, unknownUpdate, undefined, undefined, undefined]);
+    } finally { clearRequestLogsForTests(); }
+  });
+
+  test("persists and reloads only the bounded initial session effort observation", () => {
+    const observation = { clientEffort: "high", sessionEffort: "max", status: "visible", secret: "private-canary" };
+    const base = { requestId: "session-effort", timestamp: 1, provider: "mock", model: "model",
+      status: 200, durationMs: 1, usageStatus: "unreported" };
+    appendUsageEntry({ ...base, sessionEffortObservation: observation } as unknown as PersistedUsageEntry);
+    observation.sessionEffort = "low";
+    resetUsageReadCacheForTests();
+    expect((readUsageEntries()[0] as unknown as Record<string, unknown>).sessionEffortObservation).toEqual({
+      clientEffort: "high", sessionEffort: "max", status: "visible",
+    });
+    expect(readFileSync(usageLogPath(), "utf8")).not.toContain("private-canary");
+    const invalid = normalizePersistedUsageRow({ ...base, sessionEffortObservation: {
+      clientEffort: "high", sessionEffort: "max", status: "not_in_input",
+    } });
+    expect((invalid as unknown as Record<string, unknown>).sessionEffortObservation).toBeUndefined();
+  });
+
   test("Claude shadow metadata round trips as closed codes and a regenerated reason", () => {
     const evidence = normalizeClaudeCompatibilityUsageLog({
       decision: "shadow", featureCodes: ["unknown_beta", "documents", "documents", "private-header", "__proto__"],
