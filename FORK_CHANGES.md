@@ -10,6 +10,8 @@
 
 Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSON 转义，保留合法 Latin-1 字符及中文、emoji 和其他字段的 JSON 值，避免写回 HTTP header 时触发本地 `TypeError`。账号身份隔离继续生效。实现见[身份头](src/codex/forward-transport-headers.ts)，回归见 [Unicode 与账号隔离](tests/codex-integration/codex-installation-wire.test.ts)。
 
+会话强度的 [WebSocket 续接回归](tests/responses/ws-steering-completion.test.ts) 在仓库外运行时使用独立进程和临时目录，避免访问调用方的配置目录。
+
 | 剩余能力 | 实现入口 | 主要回归 |
 | --- | --- | --- |
 | 日志区分客户端初始 Responses 顶层强度与初始输入中最后一个可识别的 `configuration_update`；策略回退和压缩恢复保留初始观察。使用 `previous_response_id` 或 `conversation` 续接时，初始输入没有可见更新则显示未知；后续更新无法识别时也显示未知。WebSocket 后续帧不在初始观察内，观察不证明更新已转发或被上游采用。 | [观察](src/usage/session-effort-observation.ts)、[入口](src/server/responses/request-prepare.ts)、[策略回退](src/server/responses/policy-fallback.ts)、[日志](src/server/request-log.ts)、[界面](gui/src/pages/Logs.tsx) | [输入与续接](tests/responses/codex-0164-request-compat.test.ts)、[WebSocket](tests/responses/ws-native-steering.test.ts)、[WS 续接](tests/responses/ws-steering-completion.test.ts)、[日志持久化](tests/usage/usage-log.test.ts)、[组合](tests/helpers/combo-forced-effort-cases.ts)、[策略回退](tests/routing/routing-policy-dispatch-scope.test.ts)、[压缩恢复](tests/responses/responses-compaction-recovery.test.ts)、[界面](gui/tests/logs-effort-cell.test.ts)、[窄屏布局](gui/tests/shared-scroll-browser.ts) |
