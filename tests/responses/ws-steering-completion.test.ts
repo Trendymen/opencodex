@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { NativeSteeringChannel } from "../../src/server/responses/native-steering";
 import { createSteeringSettingsNormalizer } from "../../src/server/responses/native-steering-policy";
 import { validSteeringSettings } from "../../src/server/responses/native-steering-settings";
 import { nativeResponseControlEligible } from "../../src/server/responses/native-response-control";
+import { getRequestLogEntries } from "../../src/server/request-log";
+import { readUsageEntries, usageLogPath } from "../../src/usage/log";
 import { beginInjection, injectionConfig, installInjectionFixture, waitForInjection, InjectionSocket,
   advertiseInjection, savedResult, type Frame } from "../helpers/native-injection-fixture";
 import type { OcxConfig, OcxParsedRequest, OcxProviderConfig } from "../../src/types";
@@ -19,6 +22,37 @@ function pending(socket: InjectionSocket, id: string, number = 1) {
   socket.emit({ type: "response.completed", response: { id, status: "completed", output: [call] } });
   socket.emit({ type: "response.steer.pending", steer: { id: `steer-${number}`, previous_response_id: id },
     reason: "waiting_for_required_input", required_input: [{ type: "function_call_output", call_id: `call-${number}` }] });
+}
+
+for (const { name, conversation, valid } of [
+  { name: "string", conversation: " fixture-conversation-string ", valid: true },
+  { name: "object", conversation: { id: " fixture-conversation-object ", extra: "private-canary" }, valid: true },
+  { name: "empty string", conversation: "  ", valid: false },
+  { name: "empty object ID", conversation: { id: "  " }, valid: false },
+  { name: "non-string object ID", conversation: { id: 7 }, valid: false },
+  { name: "null", conversation: null, valid: false },
+  { name: "array", conversation: ["fixture-conversation"], valid: false },
+]) for (const withUpdate of [false, true]) {
+  test(`WebSocket conversation ${name}, initial update=${withUpdate}`, async () => {
+    const input = [...(withUpdate ? [{ type: "configuration_update", reasoning: { effort: "max" } }] : []),
+      { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] }];
+    const c = await begin(true, { conversation, reasoning: { effort: "high" }, input });
+    expect(c.socket.frames[0].conversation).toEqual(conversation);
+    expect(c.socket.frames[0].input).toEqual(input);
+    c.socket.emit({ type: "response.completed", response: { id: c.id, status: "completed", output: [] } });
+    await waitForInjection(() => getRequestLogEntries().length > 0);
+    const expected = withUpdate ? { clientEffort: "high", sessionEffort: "max", status: "visible" }
+      : valid ? { clientEffort: "high", sessionEffort: "unknown", status: "not_in_input" } : undefined;
+    const memory = getRequestLogEntries().at(-1)?.sessionEffortObservation;
+    const persisted = readUsageEntries().at(-1)?.sessionEffortObservation;
+    expect(memory).toEqual(expected);
+    expect(persisted).toEqual(expected);
+    expect(JSON.stringify([memory, persisted])).not.toContain("fixture-conversation");
+    expect(JSON.stringify([memory, persisted])).not.toContain("private-canary");
+    expect(JSON.stringify(getRequestLogEntries())).not.toContain("fixture-conversation");
+    expect(readFileSync(usageLogPath(), "utf8")).not.toContain("fixture-conversation");
+    expect(readFileSync(usageLogPath(), "utf8")).not.toContain("private-canary");
+  });
 }
 
 test("public API steering is ineligible because retained successors bypass per-request admission", async () => {

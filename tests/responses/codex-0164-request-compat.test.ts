@@ -18,9 +18,10 @@ import { codexConversationIdentity } from "../../src/codex/lineage";
 import { codexPoolAffinityKey } from "../../src/codex/auth-context";
 import { parseRequest } from "../../src/responses/parser";
 import { handleResponses, hasUnreadableEncryptedAgentTask } from "../../src/server/responses";
+import { createServeOptions } from "../../src/server/index/serve-options";
 import { recoverEncryptedAgentTaskWithResult, resetAgentTaskRecoveryState } from "../../src/server/responses/agent-task-recovery";
 import { addFinalRequestLog, clearRequestLogsForTests, getRequestLogEntries, type RequestLogContext } from "../../src/server/request-log";
-import { readUsageEntries } from "../../src/usage/log";
+import { readUsageEntries, usageLogPath } from "../../src/usage/log";
 import { normalizeSessionEffortObservation, observeSessionEffort } from "../../src/usage/session-effort-observation";
 import { clearResponseStateForTests, flushResponseState, rememberResponseState } from "../../src/responses/state";
 import { appendFinalCacheDiagnostic, cacheDiagnosticPath } from "../../src/usage/cache-diagnostic";
@@ -131,6 +132,18 @@ async function drive(
   const text = await response.text();
   if (options.finalizeLog) addFinalRequestLog("initial-effort-fixture", Date.now(), logCtx, response.status);
   return { status: response.status, logCtx, text };
+}
+
+function httpRouter(cfg: OcxConfig) {
+  const options = createServeOptions({
+    config: cfg, deps: {}, managementApiDeps: {}, ingressForServer: () => "public",
+    packageTreeIntegrity: { status: () => ({ ok: true }) },
+    runAdmittedHttpTurn: (_req: Request, _policy: unknown, work: () => Promise<Response>) => work(),
+  } as unknown as Parameters<typeof createServeOptions>[0]);
+  const server = { timeout() {} } as unknown as Parameters<typeof options.fetch>[1];
+  return (body: Record<string, unknown>) => options.fetch(new Request("http://localhost/v1/responses", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  }), server);
 }
 
 function identityOf(wire: Wire): Record<string, string | null> {
@@ -263,6 +276,97 @@ describe("configuration_update input item", () => {
     }
     expect(normalizeSessionEffortObservation({ clientEffort: "high", sessionEffort: "max", status: "visible", secret: "private" }))
       .toEqual({ clientEffort: "high", sessionEffort: "max", status: "visible" });
+  });
+
+  test("conversation continuation requires a non-empty string ID and keeps update precedence", () => {
+    const update = { type: "configuration_update", reasoning: { effort: "max" } };
+    const unknown = { clientEffort: "high", sessionEffort: "unknown", status: "not_in_input" };
+    const visible = { clientEffort: "high", sessionEffort: "max", status: "visible" };
+    for (const conversation of [" fixture-conversation ", { id: " fixture-conversation " }]) {
+      const body = { conversation, reasoning: { effort: "high" }, input: [user("hello")] };
+      expect(observeSessionEffort(body)).toEqual(unknown);
+      for (const previous_response_id of [null, "", " \t ", 0]) {
+        expect(observeSessionEffort({ ...body, previous_response_id })).toEqual(unknown);
+      }
+      expect(observeSessionEffort({ ...body, input: [update, user("hello")] })).toEqual(visible);
+      expect(observeSessionEffort({ ...body, input: [{ type: "configuration_update" }] })).toEqual({
+        clientEffort: "high", sessionEffort: "unknown", status: "unrecognized",
+      });
+    }
+    for (const conversation of [undefined, null, "", " \t ", false, 0, [], ["fixture"], {},
+      { id: "" }, { id: " \n " }, { id: null }, { id: 0 }, { id: [] }, { id: {} }]) {
+      const body = { conversation, reasoning: { effort: "high" }, input: [user("hello")] };
+      expect(observeSessionEffort(body)).toBeUndefined();
+      expect(observeSessionEffort({ ...body, input: [update] })).toEqual(visible);
+      expect(observeSessionEffort({ ...body, previous_response_id: "previous-fixture" })).toEqual(unknown);
+    }
+  });
+
+  test("existing previous response continuation does not read conversation", () => {
+    const body = { previous_response_id: "previous-fixture", input: [],
+      get conversation(): never { throw new Error("unexpected conversation read"); } };
+    expect(observeSessionEffort(body)).toEqual({ clientEffort: "unknown", sessionEffort: "unknown", status: "not_in_input" });
+  });
+
+  for (const { name, conversation, valid } of [
+    { name: "string", conversation: " fixture-conversation-string ", valid: true },
+    { name: "object", conversation: { id: " fixture-conversation-object ", extra: "private-canary" }, valid: true },
+    { name: "empty string", conversation: "  ", valid: false },
+    { name: "empty object ID", conversation: { id: "  " }, valid: false },
+    { name: "non-string object ID", conversation: { id: 7 }, valid: false },
+    { name: "null", conversation: null, valid: false },
+    { name: "array", conversation: ["fixture-conversation"], valid: false },
+  ]) test(`HTTP conversation ${name} records only a bounded initial observation`, async () => {
+    const seen = captureWire();
+    const cfg = config({ authMode: "key", apiKey: "fixture-key", baseUrl: "https://api.openai.com/v1" });
+    const post = httpRouter(cfg);
+    for (const withUpdate of [false, true]) {
+      const input = [...(withUpdate ? [{ type: "configuration_update", reasoning: { effort: "max" } }] : []), user("hello")];
+      const body = { model: "p/gw-model", stream: true, store: false, input, reasoning: { effort: "high" }, conversation };
+      const response = await post(body);
+      expect(response.status).toBe(200);
+      await response.text();
+      const expected = withUpdate ? { clientEffort: "high", sessionEffort: "max", status: "visible" }
+        : valid ? { clientEffort: "high", sessionEffort: "unknown", status: "not_in_input" } : undefined;
+      expect(seen.at(-1)?.body.conversation).toEqual(conversation);
+      expect(seen.at(-1)?.body.input).toEqual(input);
+      const memory = getRequestLogEntries().at(-1)?.sessionEffortObservation;
+      const persisted = readUsageEntries().at(-1)?.sessionEffortObservation;
+      expect(memory).toEqual(expected);
+      expect(persisted).toEqual(expected);
+      expect(JSON.stringify([memory, persisted])).not.toContain("fixture-conversation");
+      expect(JSON.stringify([memory, persisted])).not.toContain("private-canary");
+      expect(JSON.stringify(getRequestLogEntries())).not.toContain("fixture-conversation");
+      expect(readFileSync(usageLogPath(), "utf8")).not.toContain("fixture-conversation");
+      expect(readFileSync(usageLogPath(), "utf8")).not.toContain("private-canary");
+    }
+  });
+
+  for (const statelessResponses of [false, true]) test(`HTTP gateway observes conversation before stateless stripping=${statelessResponses}`, async () => {
+    const seen = captureWire();
+    const cfg = config({ authMode: "key", apiKey: "fixture-key", baseUrl: "https://gateway.example/v1", statelessResponses });
+    const post = httpRouter(cfg);
+    for (const conversation of ["fixture-conversation", { id: "fixture-conversation", extra: "private-canary" }]) {
+      for (const withUpdate of [false, true]) {
+        const input = [...(withUpdate ? [{ type: "configuration_update", reasoning: { effort: "max" } }] : []), user("hello")];
+        const body = { model: "p/gw-model", stream: true, store: false, input, reasoning: { effort: "high" }, conversation };
+        const original = structuredClone(body);
+        const response = await post(body);
+        expect(response.status).toBe(200);
+        await response.text();
+        expect(body).toEqual(original);
+        expect(seen.at(-1)?.body.conversation).toEqual(statelessResponses ? undefined : conversation);
+        expect(seen.at(-1)?.body.input).toEqual([user("hello")]);
+        const expected = withUpdate ? { clientEffort: "high", sessionEffort: "max", status: "visible" }
+          : { clientEffort: "high", sessionEffort: "unknown", status: "not_in_input" };
+        const memory = getRequestLogEntries().at(-1)?.sessionEffortObservation;
+        const persisted = readUsageEntries().at(-1)?.sessionEffortObservation;
+        expect(memory).toEqual(expected);
+        expect(persisted).toEqual(expected);
+        expect(JSON.stringify([memory, persisted])).not.toContain("fixture-conversation");
+        expect(JSON.stringify([memory, persisted])).not.toContain("private-canary");
+      }
+    }
   });
 
   test("the observation is client-owned for other destinations and absent on synthetic requests", async () => {

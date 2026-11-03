@@ -24,6 +24,11 @@ export function observeSessionEffort(body: unknown): SessionEffortObservation | 
     }
   }
   if (!status && typeof body.previous_response_id === "string" && body.previous_response_id.trim()) status = "not_in_input";
+  if (!status) {
+    const conversation = body.conversation;
+    const conversationId = record(conversation) ? conversation.id : conversation;
+    if (typeof conversationId === "string" && conversationId.trim()) status = "not_in_input";
+  }
   return status ? { clientEffort, sessionEffort, status } : undefined;
 }
 
