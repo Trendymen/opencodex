@@ -1,6 +1,9 @@
 // Scanner/inventory cases are best-effort known-pattern lint, not a security
 // boundary or completeness proof. The runtime cases exercise the authority guard.
 import { afterAll, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { lintTest, openUpdateLintParser } from "../helpers/update-lint-parser";
 import { repoPath } from "../helpers/repo-root";
 import { createUpdateServiceHomePolicy } from "../../src/update/service-home-policy.mjs";
@@ -20,6 +23,40 @@ lint("known-pattern lint finds no unclassified update primitive references", () 
     failures.push(...rawMutationViolations(source,file).map(f=>file+": "+f));
   }} finally {snapshot.dispose();}
   expect(scanFiles.length).toBeGreaterThan(35); expect(failures).toEqual([]);
+});
+
+lint("fork version policy admission still rejects extra exits, imports and mutations", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ocx-version-policy-guard-"));
+  let count = 0;
+  const scan = (body: string, target: string) => {
+    const file = join(dir, `${count++}${target.endsWith(".mjs") ? ".mjs" : ".ts"}`);
+    writeFileSync(file, body);
+    const snapshot = api!.updateSnapshot({ openFiles: [file] });
+    try {
+      const source = snapshot.getDefaultProjectForFile(file)!.program.getSourceFile(file)!;
+      return rawMutationViolations(source, target);
+    } finally { snapshot.dispose(); }
+  };
+  try {
+    for (const [target, anchor, module] of [
+      ["bin/ocx.mjs", "async function runPackageManagerSelfUpdate(manager) {", "../src/fork/version-policy.mjs"],
+      ["src/update/index.ts", "export async function runUpdate(): Promise<void> {", "../fork/version-policy.mjs"],
+    ] as const) {
+      const original = readFileSync(repoPath(target), "utf8");
+      expect(original.split(anchor).length).toBe(2);
+      expect(scan(original, target)).toEqual([]);
+      expect(scan(original.replace(anchor, `${anchor}\nprocess.exit(1);`), target))
+        .toContain("extra allowlisted capability occurrence: process.exit(1)");
+      const alias = `${original}\nimport { forkUpdateDecision as unexpectedVersionAlias } from ${JSON.stringify(module)};\nunexpectedVersionAlias(null, "1.0.0", "latest");`;
+      const aliasFailures = scan(alias, target);
+      expect(aliasFailures.some(failure => failure.includes("unreviewed static dependency or binding"))).toBe(true);
+      expect(aliasFailures).toContain("raw imported capability reference: unexpectedVersionAlias");
+      const unknown = `${original}\nimport { execute } from "./unknown-control"; execute();`;
+      expect(scan(unknown, target).some(failure => failure.includes("unreviewed static dependency or binding"))).toBe(true);
+      const mutation = original.replace(anchor, `${anchor}\nprocess.kill(1234, "SIGTERM");`);
+      expect(scan(mutation, target).some(failure => failure.includes("raw primitive reference: process.kill"))).toBe(true);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("one refused mutation closes every later kind despite home re-matching", () => {

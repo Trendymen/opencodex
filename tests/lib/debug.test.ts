@@ -5,6 +5,7 @@ import { getInjectionDebugLogEntries, injectionDebugLog, resetInjectionDebugLogB
 import { markActivity, activityBreadcrumb } from "../../src/lib/sidecar-tracker";
 import { debugDroppedFrame, debugProviderDiagnostic, debugProviderDiagnosticLazy } from "../../src/lib/debug";
 import { resetDebugSettingsForTests, setDebugSettings } from "../../src/lib/debug-settings";
+import * as debugPersistence from "../../src/fork/debug-persistence";
 
 describe("retained UTF-8 sizing", () => {
   test("preserves TextEncoder coercion for non-string runtime inputs", () => {
@@ -248,6 +249,7 @@ describe("debug frame logging", () => {
 
   test("provider and injection debug rings evict the oldest on entry 2001", () => {
     const log = spyOn(console, "log").mockImplementation(() => {});
+    const persistence = spyOn(debugPersistence, "persistDebugEntry").mockImplementation(() => {});
     try {
       for (let index = 1; index <= 2_001; index++) {
         appendDebugLogLine(`provider-${index}`);
@@ -262,6 +264,7 @@ describe("debug frame logging", () => {
       expect(provider.at(-1)?.line).toBe("provider-2001");
       expect(injection.at(-1)?.line).toBe("injection-2001");
     } finally {
+      persistence.mockRestore();
       log.mockRestore();
     }
   });

@@ -861,6 +861,7 @@ console.log(JSON.stringify({ calls }));
       restartAcceptances = 0;
       return prepareServer({
         packageTreeInstaller: "npm",
+        packageTreeServiceChild: () => false,
         observePackageTree: () => observation,
         packageTreeIntegrityOptions: {
           replacedRestartDelayMs: 5_000,

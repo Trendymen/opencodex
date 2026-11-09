@@ -1,0 +1,385 @@
+{
+  "sourceHead": "34f76ec760fd0d5381672fa7a419da0fed7e063c",
+  "records": {
+    "direct-json": {
+      "upstream": {
+        "body": {
+          "model": "gpt-5.6-sol",
+          "stream": true,
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "frozen baseline"
+                }
+              ]
+            }
+          ],
+          "client_metadata": {
+            "caller_field": "keep",
+            "ws_request_header_x_openai_internal_codex_responses_lite": "true"
+          },
+          "unknown_valid_field": {
+            "nested": [
+              1,
+              true,
+              "keep"
+            ]
+          },
+          "store": false
+        },
+        "headers": {
+          "session_id": "frozen-session",
+          "x-codex-routing-hint": "model=gpt-5.6-sol",
+          "x-openai-internal-codex-responses-lite": "true",
+          "openai-beta": null,
+          "content-type": "application/json"
+        }
+      },
+      "status": 200,
+      "payload": {
+        "id": "resp_frozen",
+        "object": "response",
+        "status": "completed",
+        "model": "gpt-5.6-sol",
+        "output": [
+          {
+            "id": "msg_frozen",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "frozen output",
+                "annotations": []
+              }
+            ],
+            "status": "completed"
+          }
+        ],
+        "usage": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 2
+        }
+      },
+      "headers": {
+        "contentType": "application/json",
+        "upstream": "preserved",
+        "requestIdPresent": true,
+        "cors": "http://localhost:51541",
+        "expose": "x-opencodex-request-id"
+      }
+    },
+    "direct-sse": {
+      "upstream": {
+        "body": {
+          "model": "gpt-5.6-sol",
+          "stream": true,
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "frozen baseline"
+                }
+              ]
+            }
+          ],
+          "client_metadata": {
+            "caller_field": "keep",
+            "ws_request_header_x_openai_internal_codex_responses_lite": "true"
+          },
+          "unknown_valid_field": {
+            "nested": [
+              1,
+              true,
+              "keep"
+            ]
+          },
+          "store": false
+        },
+        "headers": {
+          "session_id": "frozen-session",
+          "x-codex-routing-hint": "model=gpt-5.6-sol",
+          "x-openai-internal-codex-responses-lite": "true",
+          "openai-beta": null,
+          "content-type": "application/json"
+        }
+      },
+      "status": 200,
+      "payload": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_frozen\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"gpt-5.6-sol\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_frozen\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[{\"id\":\"msg_frozen\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"frozen output\",\"annotations\":[]}],\"status\":\"completed\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n",
+      "headers": {
+        "contentType": "text/event-stream",
+        "upstream": "preserved",
+        "requestIdPresent": true,
+        "cors": "http://localhost:51541",
+        "expose": "x-opencodex-request-id"
+      }
+    },
+    "direct-ws": {
+      "upstream": {
+        "body": {
+          "model": "gpt-5.6-sol",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "frozen baseline"
+                }
+              ]
+            }
+          ],
+          "stream": true,
+          "client_metadata": {
+            "caller_field": "keep",
+            "ws_request_header_x_openai_internal_codex_responses_lite": "true"
+          },
+          "unknown_valid_field": {
+            "nested": [
+              1,
+              true,
+              "keep"
+            ]
+          },
+          "store": false
+        },
+        "headers": {
+          "session_id": "frozen-session",
+          "x-codex-routing-hint": "model=gpt-5.6-sol",
+          "x-openai-internal-codex-responses-lite": "true",
+          "openai-beta": null,
+          "content-type": "application/json"
+        }
+      },
+      "payload": {
+        "type": "response.completed",
+        "response": {
+          "id": "resp_frozen",
+          "object": "response",
+          "status": "completed",
+          "model": "gpt-5.6-sol",
+          "output": [
+            {
+              "id": "msg_frozen",
+              "type": "message",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "frozen output",
+                  "annotations": []
+                }
+              ],
+              "status": "completed"
+            }
+          ],
+          "usage": {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2
+          }
+        }
+      },
+      "status": 200
+    },
+    "pool-json": {
+      "upstream": {
+        "body": {
+          "model": "gpt-5.6-sol",
+          "stream": true,
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "frozen baseline"
+                }
+              ]
+            }
+          ],
+          "client_metadata": {
+            "caller_field": "keep",
+            "ws_request_header_x_openai_internal_codex_responses_lite": "true"
+          },
+          "unknown_valid_field": {
+            "nested": [
+              1,
+              true,
+              "keep"
+            ]
+          },
+          "store": false
+        },
+        "headers": {
+          "session_id": "frozen-session",
+          "x-codex-routing-hint": "model=gpt-5.6-sol",
+          "x-openai-internal-codex-responses-lite": "true",
+          "openai-beta": null,
+          "content-type": "application/json"
+        }
+      },
+      "status": 200,
+      "payload": {
+        "id": "resp_frozen",
+        "object": "response",
+        "status": "completed",
+        "model": "gpt-5.6-sol",
+        "output": [
+          {
+            "id": "msg_frozen",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "frozen output",
+                "annotations": []
+              }
+            ],
+            "status": "completed"
+          }
+        ],
+        "usage": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 2
+        }
+      },
+      "headers": {
+        "contentType": "application/json",
+        "upstream": "preserved",
+        "requestIdPresent": true,
+        "cors": "http://localhost:51546",
+        "expose": "x-opencodex-request-id"
+      }
+    },
+    "pool-sse": {
+      "upstream": {
+        "body": {
+          "model": "gpt-5.6-sol",
+          "stream": true,
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "frozen baseline"
+                }
+              ]
+            }
+          ],
+          "client_metadata": {
+            "caller_field": "keep",
+            "ws_request_header_x_openai_internal_codex_responses_lite": "true"
+          },
+          "unknown_valid_field": {
+            "nested": [
+              1,
+              true,
+              "keep"
+            ]
+          },
+          "store": false
+        },
+        "headers": {
+          "session_id": "frozen-session",
+          "x-codex-routing-hint": "model=gpt-5.6-sol",
+          "x-openai-internal-codex-responses-lite": "true",
+          "openai-beta": null,
+          "content-type": "application/json"
+        }
+      },
+      "status": 200,
+      "payload": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_frozen\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"gpt-5.6-sol\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_frozen\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[{\"id\":\"msg_frozen\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"frozen output\",\"annotations\":[]}],\"status\":\"completed\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n",
+      "headers": {
+        "contentType": "text/event-stream",
+        "upstream": "preserved",
+        "requestIdPresent": true,
+        "cors": "http://localhost:51546",
+        "expose": "x-opencodex-request-id"
+      }
+    },
+    "pool-ws": {
+      "upstream": {
+        "body": {
+          "model": "gpt-5.6-sol",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "frozen baseline"
+                }
+              ]
+            }
+          ],
+          "stream": true,
+          "client_metadata": {
+            "caller_field": "keep",
+            "ws_request_header_x_openai_internal_codex_responses_lite": "true"
+          },
+          "unknown_valid_field": {
+            "nested": [
+              1,
+              true,
+              "keep"
+            ]
+          },
+          "store": false
+        },
+        "headers": {
+          "session_id": "frozen-session",
+          "x-codex-routing-hint": "model=gpt-5.6-sol",
+          "x-openai-internal-codex-responses-lite": "true",
+          "openai-beta": null,
+          "content-type": "application/json"
+        }
+      },
+      "payload": {
+        "type": "response.completed",
+        "response": {
+          "id": "resp_frozen",
+          "object": "response",
+          "status": "completed",
+          "model": "gpt-5.6-sol",
+          "output": [
+            {
+              "id": "msg_frozen",
+              "type": "message",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "frozen output",
+                  "annotations": []
+                }
+              ],
+              "status": "completed"
+            }
+          ],
+          "usage": {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2
+          }
+        }
+      },
+      "status": 200
+    }
+  }
+}

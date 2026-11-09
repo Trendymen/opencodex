@@ -85,6 +85,16 @@ function mockConfig(baseUrl: string): OcxConfig {
   } as OcxConfig;
 }
 
+test("estimateClaudeRequestTokens matches the plain char estimate for text-only bodies", () => {
+  const raw = {
+    system: "be brief",
+    messages: [{ role: "user", content: "count me please, this is a sentence" }],
+    tools: [{ name: "Read", input_schema: { type: "object" } }],
+  };
+  const parts = [raw.system, JSON.stringify(raw.messages), JSON.stringify(raw.tools)];
+  expect(estimateClaudeRequestTokens(raw, "m")).toBe(Math.max(1, estimateTokens(parts.join("\n"), "m")));
+});
+
 test("estimateClaudeRequestTokens drops replayed thinking the settled Chat wire does not send", () => {
   // The defect this pins (#4857 family): a routed openai-chat turn serializes replayed
   // thinking only as `reasoning_content`, and only for preserve-listed models — the

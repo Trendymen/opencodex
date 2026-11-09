@@ -116,6 +116,7 @@ export function acknowledgeInjection(socket: InjectionSocket, sequence = 100, id
   socket.emit({ type: "response.inject.created", response_id: id, sequence_number: sequence });
 }
 export function installInjectionFixture() {
+  let teardownFailed = false;
   beforeEach(() => {
     nextId = 0; fallbackCalls = 0; InjectionSocket.suppressAutoCreated = false;
     savedProxy = Object.fromEntries(proxyKeys.map(key => [key, process.env[key]]));
@@ -125,6 +126,8 @@ export function installInjectionFixture() {
     clearRequestLogsForTests();
   });
   afterEach(async () => {
+    const earlierFailure = teardownFailed;
+    teardownFailed = true;
     // handler.close only STARTS the pump cancellation. Waiting for the socket to drop its stream
     // cancel and its native control is what proves the turn finished accounting; releasing the
     // lease before that leaves a reader settling against a journal nobody owns.
@@ -157,5 +160,7 @@ export function installInjectionFixture() {
       for (const key of proxyKeys) { delete process.env[key]; if (savedProxy[key] !== undefined) process.env[key] = savedProxy[key]; }
     }
     if (failure !== undefined) throw failure;
+    teardownFailed = earlierFailure;
   });
+  return { teardownFailed: () => teardownFailed };
 }

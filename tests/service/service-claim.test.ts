@@ -1,9 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, statSync } from "node:fs";
 import * as os from "node:os";
+import { dirname } from "node:path";
 import { parseClaimArgs, runServiceClaim, CLAIM_SCHEMA } from "../../src/service/claim";
 import { ServiceOwnershipSubjectMismatchError, serviceStatePath, serviceStatePaths } from "../../src/service/state";
 import type { ServiceOwnershipSubject } from "../../src/service/state";
+import { isProtectedHomeUnderTest } from "../../src/lib/test-home-guard";
 import { createTempHome } from "../helpers/temp-home";
 
 const VALID = [
@@ -145,9 +147,14 @@ describe("runServiceClaim", () => {
 
   test("an unreadable sandbox state refuses a real claim", async () => {
     const home = createTempHome("ocx-claim-refusal-");
+    const previousUserProfile = process.env.USERPROFILE;
+    if (process.platform === "win32") process.env.USERPROFILE = home.root;
     const homedir = spyOn(os, "homedir").mockReturnValue(home.root);
     try {
-      expect(serviceStatePaths().every(path => path.startsWith(home.root))).toBe(true);
+      const paths = serviceStatePaths();
+      expect(paths).toContain(serviceStatePath());
+      expect(paths.every(path => path.startsWith(home.root))).toBe(true);
+      expect(paths.every(path => !isProtectedHomeUnderTest(dirname(path)))).toBe(true);
       mkdirSync(serviceStatePath());
       const lines: string[] = [];
       const code = await runServiceClaim([...VALID, "--json"], {
@@ -162,6 +169,10 @@ describe("runServiceClaim", () => {
       try {
         homedir.mockRestore();
       } finally {
+        if (process.platform === "win32") {
+          if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+          else process.env.USERPROFILE = previousUserProfile;
+        }
         home.remove();
       }
     }

@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { getDefaultConfig, saveConfig } from "../../src/config";
 import { createTranslatorBudget } from "../../src/lib/translator-budget";
+import { materializeCodexRequestSource, retainCodexRequestSource, type CodexRequestSource } from "../../src/fork/codex-passthrough-source";
 import { startServer } from "../../src/server";
+import { finalizeAccountLease } from "../../src/server/responses/core-lifetime";
 import {
   MAX_DECOMPRESSED_BODY_BYTES,
   MAX_CONFIGURABLE_INBOUND_BODY_BYTES,
@@ -170,10 +172,10 @@ describe("raised inbound body admission lifetime", () => {
   // both sets is how a raised `maxInboundBodyBytes` route would skip the
   // process-wide reservation while every admission test still passed.
   test("every loopback /v1 route is classified for inbound body admission", async () => {
-    const source = await Bun.file(repoPath("src", "server", "index.ts")).text();
+    const source = await Bun.file(repoPath("src", "server", "index", "loopback-route-allowlist.ts")).text();
     const start = source.indexOf("function loopbackRouteAllowed");
     assert.notEqual(start, -1);
-    const end = source.indexOf("\n  }", start);
+    const end = source.indexOf("\n}\n", start);
     assert.notEqual(end, -1);
     const routes = [...source.slice(start, end).matchAll(/path === "(\/v1\/[^"]+)"/g)].map(match => match[1]);
     assert.ok(routes.length >= 8, `expected the dispatcher to list /v1 routes, saw ${routes.length}`);
@@ -631,6 +633,67 @@ describe("raised inbound body admission lifetime", () => {
       } finally {
         await response?.body?.cancel().catch(() => undefined);
         translator?.dispose();
+      }
+    });
+  }
+
+  for (const end of ["eof", "cancel"] as const) {
+    test(`compressed captured source and admission release on response ${end}`, async () => {
+      const text = `{"input":"${"x".repeat(4096)}","n":1e20}`;
+      const textBytes = Buffer.byteLength(text);
+      const serializedBytes = Buffer.byteLength(JSON.stringify(JSON.parse(text)));
+      const wire = gzipSync(Buffer.from(text));
+      assert.ok(wire.byteLength < textBytes && textBytes < serializedBytes);
+      const req = admissionRequest("/v1/responses", wire, { headers: { "content-encoding": "gzip" } });
+      const translator = createTranslatorBudget();
+      const finishCancel = bodyDeferred();
+      const cancelStarted = bodyDeferred();
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      let source!: CodexRequestSource;
+      let response: Response | undefined;
+      let cancellation: Promise<void> | undefined;
+      try {
+        response = await admittedBodyWork(async () => {
+          await readJsonRequestBody(req, translator, RAISED_BODY_LIMIT, {
+            onDecodedJson(capture) {
+              assert.equal(capture.jsonText, text);
+              assert.equal(capture.serializedBytes, serializedBytes);
+              assert.equal(testBudget.snapshot().reservedBytes, serializedBytes);
+              source = retainCodexRequestSource(capture, translator);
+            },
+          });
+          const releaseSource = () => source?.release();
+          return finalizeAccountLease(new Response(new ReadableStream<Uint8Array>({
+            start(value) { controller = value; },
+            cancel() { cancelStarted.resolve(); return finishCancel.promise; },
+          }, { highWaterMark: 0 })), releaseSource, releaseSource);
+        }, req);
+        assert.ok(source);
+        assert.deepEqual(testBudget.snapshot(), { reservedBytes: serializedBytes, activeLeases: 1, queuedRequests: 0 });
+        assert.equal(translator.snapshot().currentBytes, textBytes + serializedBytes);
+        const copy = materializeCodexRequestSource(source, translator);
+        assert.deepEqual(copy.body, JSON.parse(text));
+        copy.release();
+        if (end === "eof") {
+          controller.close();
+          assert.equal(await response.text(), "");
+        } else {
+          cancellation = response.body!.cancel("fixture stop");
+          await cancelStarted.promise;
+          assert.equal(translator.snapshot().currentBytes, serializedBytes);
+          assert.deepEqual(testBudget.snapshot(), { reservedBytes: serializedBytes, activeLeases: 1, queuedRequests: 0 });
+          finishCancel.resolve();
+          await cancellation;
+        }
+        assert.equal(translator.snapshot().currentBytes, serializedBytes);
+        assert.deepEqual(testBudget.snapshot(), { reservedBytes: 0, activeLeases: 0, queuedRequests: 0 });
+        assert.throws(() => materializeCodexRequestSource(source, translator), /unavailable/);
+      } finally {
+        finishCancel.resolve();
+        if (cancellation) await cancellation.catch(() => undefined);
+        else await response?.body?.cancel().catch(() => undefined);
+        source?.release();
+        translator.dispose();
       }
     });
   }

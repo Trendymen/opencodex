@@ -211,6 +211,7 @@ function expectRuntimeImportBoundary(source: string): string[] {
 describe("Responses fetch-helper import boundary", () => {
   test("loads only transport-owned runtime dependencies", () => {
     expect(expectRuntimeImportBoundary(readFileSync(helperPath, "utf8"))).toEqual([
+      "../../fork/codex-passthrough-local-errors",
       // Import-free sent-header registry read by the request log (#6911).
       "../../lib/outbound-credential-registry",
       // Import-free proof that the executor preserves destination and credentials.
@@ -223,6 +224,7 @@ describe("Responses fetch-helper import boundary", () => {
       "../../lib/upstream-http-version",
       // Import-free plugin rewrite slot (src/plugins/upstream-hooks.ts).
       "../../plugins/upstream-hooks",
+      "../../providers/openai-tiers-destination",
       "../../providers/request-pacing",
       // Turn-state handle redemption at the send (src/server/turn-state-handles.ts); node: built-ins only.
       "../turn-state-handles",
@@ -230,6 +232,13 @@ describe("Responses fetch-helper import boundary", () => {
       "./request-compression",
       "./ws-upstream",
     ]);
+    expect(expectRuntimeImportBoundary(readFileSync(resolve(repoRoot, "src/providers/openai-tiers-destination.ts"), "utf8"))).toEqual([
+      "../adapters/openai-responses-url",
+      "./openai-model-identity",
+    ]);
+    for (const dependency of ["src/adapters/openai-responses-url.ts", "src/providers/openai-model-identity.ts"]) {
+      expect(expectRuntimeImportBoundary(readFileSync(resolve(repoRoot, dependency), "utf8"))).toEqual([]);
+    }
   });
 
   test("the passive key transport proof is an import-free runtime leaf", () => {

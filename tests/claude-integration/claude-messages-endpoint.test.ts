@@ -263,16 +263,24 @@ test("native generated-agent passthrough preserves legacy thinking", async () =>
 
 test("native Anthropic passthrough clears the header deadline before streaming the body", async () => {
   const encoder = new TextEncoder();
+  const bodyTimers = new Set<ReturnType<typeof setTimeout>>();
   const upstream = serveUpstream({
     port: 0,
     fetch() {
+      let bodyTimer: ReturnType<typeof setTimeout>;
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(encoder.encode('event: message_start\ndata: {"type":"message_start"}\n\n'));
-          setTimeout(() => {
+          bodyTimer = setTimeout(() => {
+            bodyTimers.delete(bodyTimer);
             controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
             controller.close();
           }, 600);
+          bodyTimers.add(bodyTimer);
+        },
+        cancel() {
+          clearTimeout(bodyTimer);
+          bodyTimers.delete(bodyTimer);
         },
       });
       return new Response(body, { headers: { "content-type": "text/event-stream" } });
@@ -298,6 +306,7 @@ test("native Anthropic passthrough clears the header deadline before streaming t
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("message_stop");
   } finally {
+    for (const timer of bodyTimers) clearTimeout(timer);
     await server.stop(true);
     upstream.stop(true);
   }
@@ -659,7 +668,7 @@ test("native openai-responses route carries prompt_cache_key + synthesized sessi
     port: 0,
     defaultProvider: "native",
     providers: {
-      native: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" },
+      native: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward", upstreamWebsocket: false },
     },
   } as OcxConfig);
   const server = startServer(0);
@@ -1236,16 +1245,6 @@ test("count_tokens prices base64 attachments as attachments, not characters", as
   } finally {
     await server.stop(true);
   }
-});
-
-test("estimateClaudeRequestTokens matches the plain char estimate for text-only bodies", () => {
-  const raw = {
-    system: "be brief",
-    messages: [{ role: "user", content: "count me please, this is a sentence" }],
-    tools: [{ name: "Read", input_schema: { type: "object" } }],
-  };
-  const parts = [raw.system, JSON.stringify(raw.messages), JSON.stringify(raw.tools)];
-  expect(estimateClaudeRequestTokens(raw, "m")).toBe(Math.max(1, estimateTokens(parts.join("\n"), "m")));
 });
 
 test("estimateClaudeRequestTokens prices sniffable images by pixel dimensions", () => {
