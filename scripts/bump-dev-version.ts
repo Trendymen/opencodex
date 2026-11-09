@@ -37,11 +37,14 @@
  * The rule is therefore about the published version's SHAPE, which is the only thing
  * this function can see:
  *
+ *   published `X.Y.Z-ben.N`      ->  no version-coupled dev bump
  *   published `X.Y.Z-preview.*`  ->  dev becomes `X.Y.Z`     (befcac3e1)
  *   published `X.Y.Z` (stable)   ->  dev becomes `X.(Y+1).0` (e4a85d134, 076ad3036, 32529c2b2)
  *
  * A prerelease means the stable core has not shipped, so `dev` should carry it. A
  * stable release means that core is consumed, so `dev` moves to the next minor.
+ * A Fork revision is an immutable delivery snapshot and does not rename the ongoing
+ * development line.
  *
  * Freeness is then checked where the tag set IS visible: the workflow runs
  * `tests/ci-workflows/release-version-line.test.ts` in the `dev` checkout after the rewrite. If the
@@ -60,6 +63,7 @@
 
 import { dirname } from "node:path";
 
+import { forkBaseVersion } from "../src/fork/version-policy.mjs";
 import { compareReleaseTags } from "./release-notes";
 import { writeVersionSources } from "./release-version-sources";
 import { nextDevelopmentVersion } from "./version-line";
@@ -111,18 +115,25 @@ export function decideDevVersion(released: string, current: string): BumpDecisio
   if (!rel) throw new Error(`released version is not parseable: ${JSON.stringify(released)}`);
   if (!parseVersion(current)) throw new Error(`current version is not parseable: ${JSON.stringify(current)}`);
 
+  if (rel.prerelease?.startsWith("ben.")) {
+    const normalizedReleased = released.trim().replace(/^v/, "");
+    if (!forkBaseVersion(normalizedReleased)) {
+      throw new Error(`released version is not a canonical Fork version: ${JSON.stringify(released)}`);
+    }
+    return {
+      changed: false,
+      version: current,
+      reason: `${released} is an immutable Fork revision; dev may continue without a release-coupled version bump`,
+    };
+  }
+
   const candidate = nextDevelopmentVersion(released);
 
-  // Nothing to do when dev is already clear of the RELEASED version. That is the real
-  // question — the detector in tests/ci-workflows/release-version-line.test.ts compares dev against
-  // published tags, not against this candidate.
-  //
+  // Nothing to do when dev is already clear of the released version.
   // Comparing against the candidate instead is wrong, and a test caught it: dev at
   // `2.37.0-preview.1` with `2.36.0` published is genuinely ahead of the release, but it
   // is BEHIND the candidate `2.37.0`, so a candidate-based guard would "fix" a tree that
-  // was never broken and downgrade a legitimate prerelease line. release-version-line
-  // already pins that a prerelease of a future core outranks a published stable; these
-  // two must not disagree.
+  // was never broken and downgrade a legitimate prerelease line.
   if (compareReleaseTags(asTag(current), asTag(released)) > 0) {
     return {
       changed: false,
