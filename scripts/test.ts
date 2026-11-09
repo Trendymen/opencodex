@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { getTestRunnerBun } from "./lib/test-runner-bun";
+import { pinTestNodePath } from "./lib/test-runner-node";
+import { saveTestLaneDiagnostics } from "./lib/test-runner-diagnostics";
 import {
   acquireTestRunLock,
   resolveWrappedTestRunLockPath,
@@ -124,9 +126,20 @@ export function createIsolatedTestEnvironment(
 }
 
 function hasCliFlag(requested: string[], name: string): boolean {
-  const delimiterIndex = requested.indexOf("--");
-  const wrapperArgs = delimiterIndex === -1 ? requested : requested.slice(0, delimiterIndex);
-  return wrapperArgs.some(arg => arg === name || arg.startsWith(`${name}=`));
+  return wrapperOptionIndices(requested).some(index => (
+    requested[index] === name || requested[index]!.startsWith(`${name}=`)
+  ));
+}
+
+function wrapperOptionIndices(requested: string[]): number[] {
+  const indices: number[] = [];
+  for (let index = 0; index < requested.length && requested[index] !== "--"; index++) {
+    const arg = requested[index]!;
+    if (!arg.startsWith("-")) continue;
+    indices.push(index);
+    if (!arg.includes("=") && BUN_TEST_OPTIONS_REQUIRING_VALUES.has(arg)) index++;
+  }
+  return indices;
 }
 
 const DEFAULT_TEST_PARALLELISM = 4;
@@ -224,9 +237,9 @@ function decodeOutput(output: Uint8Array | undefined): string {
 }
 
 function changedComparisonRef(requested: string[]): string | null {
-  const delimiterIndex = requested.indexOf("--");
-  const wrapperArgs = delimiterIndex === -1 ? requested : requested.slice(0, delimiterIndex);
-  const changedArg = wrapperArgs.find(arg => arg === "--changed" || arg.startsWith("--changed="));
+  const changedIndex = wrapperOptionIndices(requested)
+    .find(index => requested[index] === "--changed" || requested[index]!.startsWith("--changed="));
+  const changedArg = changedIndex === undefined ? undefined : requested[changedIndex];
   if (!changedArg) return null;
   if (changedArg === "--changed" || changedArg === "--changed=") {
     throw new Error(
@@ -315,13 +328,13 @@ export function changedSelectionFailure(
   output: string,
 ): string | null {
   if (preflight.changedFiles.length === 0) return null;
-  const summary = output
+  const summaries = [...output
     .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
-    .match(/Ran\s+(\d+)\s+tests?\s+across\s+(\d+)\s+files?\b/i);
-  if (!summary) {
+    .matchAll(/Ran\s+(\d+)\s+tests?\s+across\s+(\d+)\s+files?\b/gi)];
+  if (summaries.length === 0) {
     return `[test] could not validate --changed=${preflight.comparisonCommit} (${preflight.comparisonRef} merge base): Bun did not emit a recognizable selection summary for a diff containing ${preflight.changedFiles.length} changed file(s).`;
   }
-  if (Number(summary[1]) !== 0 || Number(summary[2]) !== 0) return null;
+  if (summaries.some(summary => Number(summary[1]) !== 0 || Number(summary[2]) !== 0)) return null;
   return `[test] --changed=${preflight.comparisonCommit} (${preflight.comparisonRef} merge base) selected 0 tests across 0 files, but the diff contains ${preflight.changedFiles.length} changed file(s). Bun follows only the parsed module graph; run the relevant focused tests for subprocess, read-as-data, or golden-file dependencies, or run the full suite.`;
 }
 
@@ -360,10 +373,10 @@ export function resolveBunTestArgs(
   requested: string[],
   comparisonCommit?: string,
 ): string[] {
-  const delimiterIndex = requested.indexOf("--");
+  const optionIndices = new Set(wrapperOptionIndices(requested));
   const effectiveRequested = comparisonCommit
     ? requested.map((arg, index) => (
-        (delimiterIndex === -1 || index < delimiterIndex)
+        optionIndices.has(index)
           && (arg === "--changed" || arg.startsWith("--changed="))
           ? "--changed=" + comparisonCommit
           : arg
@@ -380,6 +393,13 @@ export function resolveBunTestArgs(
 
 // Paths relative to tests/. An entry moves with its file (scripts/test-layout/move.ts rewrites
 // it); the lane label, the ignore glob, and the timeout table all key on the basename.
+const SERIAL_DESKTOP_SQLITE_FILES = [
+  "claude-integration/claude-desktop-picker-routes.test.ts",
+  "claude-integration/claude-desktop-picker-profile.test.ts",
+  "claude-integration/claude-desktop-first-party.test.ts",
+  "claude-integration/claude-desktop-first-party-guards.test.ts",
+] as const;
+
 export const SERIAL_FULL_SUITE_FILES = [
   "codex-integration/codex-shim.test.ts",
   "providers/cursor/cursor-native-exec-shell.test.ts",
@@ -424,6 +444,8 @@ export const SERIAL_FULL_SUITE_FILES = [
   "cli/cli-update-restart-home.test.ts",
   "codex-integration/native-codex-toggle.test.ts",
   "codex-integration/native-grok-toggle.test.ts",
+  // These writers share the effective OS-user SQLite lock across HOME/configDir.
+  ...SERIAL_DESKTOP_SQLITE_FILES,
 ] as const;
 
 type SerialLaneBasename = (typeof SERIAL_FULL_SUITE_FILES)[number] extends infer P
@@ -442,15 +464,22 @@ export interface BunTestLane {
 }
 
 function withoutParallelOverride(requested: string[]): string[] {
-  return requested.filter(arg => arg !== "--parallel" && !arg.startsWith("--parallel="));
+  const indices = new Set(wrapperOptionIndices(requested));
+  return requested.filter((arg, index) => !indices.has(index)
+    || (arg !== "--parallel" && !arg.startsWith("--parallel=")));
 }
 
 function canUseSerialLanes(requested: string[]): boolean {
-  if (!isFullSuiteRun(requested)) return false;
-  return !["--changed", "--shard", "--reporter-outfile", "--update-timings"].some(flag => hasCliFlag(requested, flag));
+  if (requested.includes("--") || hasCliFlag(requested, "--path-ignore-patterns")
+      || ["-c", "--config", "--cwd", "--no-isolate", "--watch", "--hot", "--coverage", "--coverage-dir", "--coverage-reporter",
+        "--only-failures", "--bail", "--rerun-each", "--retry"].some(flag => hasCliFlag(requested, flag))) return false;
+  const indices = new Set(wrapperOptionIndices(requested));
+  const withoutChanged = requested.filter((arg, index) => !indices.has(index) || !arg.startsWith("--changed="));
+  if (!isFullSuiteRun(withoutChanged)) return false;
+  return !["--shard", "--reporter-outfile", "--update-timings"].some(flag => hasCliFlag(requested, flag));
 }
 
-/** Build the default full-suite plan: one bounded main lane plus isolated risky files. */
+/** Keep sensitive files in fresh processes for full and unfiltered changed runs. */
 export function resolveBunTestPlan(
   requested: string[], comparisonCommit?: string,
   env: Record<string, string | undefined> = process.env,
@@ -466,15 +495,18 @@ export function resolveBunTestPlan(
   }
 
   const mainArgs = resolveBunTestArgs(requested, comparisonCommit);
-  const rootIndex = mainArgs.lastIndexOf("./tests/");
-  const ignores = SERIAL_FULL_SUITE_FILES.flatMap(file => ["--path-ignore-patterns", `**/${basename(file)}`]);
+  const rootIndex = isFullSuiteRun(requested) ? mainArgs.length - 1 : -1;
+  const serialFiles = hasCliFlag(requested, "--changed")
+    ? SERIAL_FULL_SUITE_FILES.filter(file => existsSync(join("tests", file)))
+    : SERIAL_FULL_SUITE_FILES;
+  const ignores = serialFiles.flatMap(file => ["--path-ignore-patterns", `**/${basename(file)}`]);
   mainArgs.splice(rootIndex === -1 ? mainArgs.length : rootIndex, 0, ...ignores);
   const serialRequested = withoutParallelOverride(requested);
   return [
     { label: "parallel suite", args: mainArgs, timeoutMs: mainTimeout },
-    ...SERIAL_FULL_SUITE_FILES.map(file => ({
+    ...serialFiles.map(file => ({
       label: basename(file),
-      args: resolveBunTestArgs(["--parallel=1", ...serialRequested, `./tests/${file}`]),
+      args: resolveBunTestArgs(["--parallel=1", ...serialRequested, `./tests/${file}`], comparisonCommit),
       timeoutMs: SERIAL_LANE_TIMEOUT_MS[basename(file) as SerialLaneBasename] ?? 3 * 60 * 1000,
     })),
   ];
@@ -606,7 +638,7 @@ export async function runTestLane(
   },
   testRunner = getTestRunnerBun(),
 ): Promise<{ exitCode: number; output: string }> {
-  const isolated = createIsolatedTestEnvironment({
+  const sourceEnv = {
     ...process.env,
     [TEST_RUN_ID_ENV]: runId,
     [TEST_RUN_LOCK_PATH_ENV]: inheritedLock?.lockPath,
@@ -615,31 +647,53 @@ export async function runTestLane(
     // (not its own test timeout) needs headroom for process startup on a busy machine.
     // See tests/helpers/ci-watchdog.ts `isolationBudgetMs`.
     OCX_TEST_FULL_SUITE: "1",
-  });
-  const startedAt = Date.now();
-  let interrupted: NodeJS.Signals | null = null;
-  const child = Bun.spawn([testRunner, "test", ...lane.args], {
-    env: isolated.env,
-    stdin: "inherit",
-    stdout: capture ? "pipe" : "inherit",
-    stderr: capture ? "pipe" : "inherit",
-  });
-  const captured = capture ? captureTestOutput(child.stdout!, child.stderr!) : undefined;
-  const forward = (signal: NodeJS.Signals) => {
-    interrupted = signal;
-    try { child.kill(signal); } catch { /* child already exited */ }
   };
-  const onInterrupt = () => forward("SIGINT");
-  const onTerminate = () => forward("SIGTERM");
+  const isolated = createIsolatedTestEnvironment(sourceEnv);
+  let interrupted: number | null = null;
+  let terminateChild: ((signal: NodeJS.Signals) => void) | undefined;
+  let wakeCancellation: () => void;
+  const cancelled = new Promise<null>(resolve => { wakeCancellation = () => resolve(null); });
+  const forward = (code: number) => {
+    interrupted ??= code;
+    terminateChild?.(code === 130 ? "SIGINT" : "SIGTERM");
+    wakeCancellation();
+  };
+  const onInterrupt = () => forward(130);
+  const onTerminate = () => forward(143);
   process.once("SIGINT", onInterrupt);
   process.once("SIGTERM", onTerminate);
-
-  const exited = child.exited;
   let laneResult: { exitCode: number; output: string } | undefined;
   try {
-    let exitCode = await waitWithTimeout(exited, lane.timeoutMs);
+    try {
+      await pinTestNodePath(isolated.env, sourceEnv, isolated.root);
+    } catch (error) {
+      if (interrupted === null) throw error;
+    }
+    const startedAt = Date.now();
+    if (interrupted !== null) {
+      laneResult = { exitCode: interrupted, output: "" };
+      return laneResult;
+    }
+    const child = Bun.spawn([testRunner, "test", ...lane.args], {
+      env: isolated.env,
+      stdin: "inherit",
+      stdout: capture ? "pipe" : "inherit",
+      stderr: capture ? "pipe" : "inherit",
+    });
+    terminateChild = signal => { try { child.kill(signal); } catch { /* child already exited */ } };
+    const captured = capture ? captureTestOutput(child.stdout!, child.stderr!) : undefined;
+    const exited = child.exited;
+    let exitCode = await waitWithTimeout(Promise.race([exited, cancelled]), lane.timeoutMs);
     if (exitCode === null) {
-      console.error(`[test] ${lane.label} exceeded ${Math.round(lane.timeoutMs / 1000)}s; terminating pid ${child.pid}.`);
+      if (interrupted === null) {
+        console.error(`[test] ${lane.label} exceeded ${Math.round(lane.timeoutMs / 1000)}s; terminating pid ${child.pid}.`);
+        try {
+          const diagnostics = saveTestLaneDiagnostics(child.pid);
+          console.error(`[test] deadline diagnostics: ${diagnostics}`);
+        } catch {
+          console.error("[test] deadline diagnostics unavailable; termination will continue.");
+        }
+      }
       try { child.kill("SIGTERM"); } catch { /* child already exited */ }
       const graceful = await waitWithTimeout(exited, 5_000);
       if (graceful === null) {
@@ -658,16 +712,8 @@ export async function runTestLane(
       console.error("[test] captured output is incomplete; collected output is shown above.");
       if (exitCode === 0) exitCode = 1;
     }
-    if (exitCode === null) {
-      laneResult = { exitCode: 124, output };
-      return laneResult;
-    }
-    if (interrupted === "SIGINT") {
-      laneResult = { exitCode: 130, output };
-      return laneResult;
-    }
-    if (interrupted === "SIGTERM") {
-      laneResult = { exitCode: 143, output };
+    if (interrupted !== null || exitCode === null) {
+      laneResult = { exitCode: interrupted ?? 124, output };
       return laneResult;
     }
     const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
