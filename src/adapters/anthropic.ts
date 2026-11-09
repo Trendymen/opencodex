@@ -27,7 +27,7 @@ import { enforceAnthropicImageLimits } from "./anthropic-image-guard";
 import { normalizeAnthropicImages } from "./anthropic-image-normalize";
 import { normalizeAnthropicOutputSchema } from "./anthropic-output-schema";
 import { stripResponsesOnlyEncryptedMarker } from "./responses-tool-schema";
-import { identifyRoutedModel } from "./identity";
+import { identifyRoutedModel, identifyRoutedToolPrompt } from "./identity";
 import { redactSecretString } from "../lib/redact";
 import { CLAUDE_CODE_HEADERS, claudeCodeSessionId } from "./client-fingerprint";
 import { CLAUDE_CLI_SDK_PACKAGE_VERSION, CLAUDE_CLI_USER_AGENT } from "../providers/claude-cli-identity";
@@ -787,8 +787,9 @@ function messagesToAnthropicFormat(
     tool => toolNames.toWire(namespacedToolName(tool.namespace, tool.name)),
   );
   const systemParts = [...(parsed.context.systemPrompt ?? []), ...(toolCatalogNudge ? [toolCatalogNudge] : [])];
+  const identifySystem = toolCatalogNudge ? identifyRoutedToolPrompt : identifyRoutedModel;
   const system = systemParts.length
-    ? identifyRoutedModel(systemParts.join("\n\n"), parsed.modelId) || undefined
+    ? identifySystem(systemParts.join("\n\n"), parsed.modelId) || undefined
     : undefined;
   const messages: unknown[] = [];
 

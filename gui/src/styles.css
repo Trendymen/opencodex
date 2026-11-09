@@ -2245,8 +2245,10 @@ table.logs-table {
 @media (max-width: 760px) {
   .modal-overlay { padding: 16px 10px; }
   .log-detail-card { max-height: calc(100dvh - 32px); padding: 16px; }
-  .log-detail-grid { grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr); gap: 8px 10px; }
+  .log-detail-grid { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 8px 10px; }
+  .log-detail-grid > * { min-width: 0; overflow-wrap: anywhere; }
   .log-detail-request-row { align-items: flex-start; flex-direction: column; }
+  .log-detail-request-row > .btn { max-width: 100%; white-space: normal; }
 }
 .log-detail-json {
   background: var(--raised); border: 1px solid var(--border-soft); border-radius: var(--radius-sm);

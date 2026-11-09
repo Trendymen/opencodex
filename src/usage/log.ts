@@ -7,6 +7,7 @@ import { enforceAppOwnedMemoryBudget } from "../lib/app-owned-memory";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
 import { redactSecretString, sanitizeLogMetadataString } from "../lib/redact";
 import { usageDisplayTotalTokens } from "./totals";
+import { readSessionEffortObservation, type SessionEffortObservation } from "./session-effort-observation";
 import {
   normalizePersistedJevDecision,
   type PersistedJevDecisionV1,
@@ -132,6 +133,7 @@ export function classifyCacheTelemetryProvenance(
 }
 
 export interface PersistedUsageAttempt {
+  upstreamHttpStatus?: number;
   ordinal: number;
   provider: string;
   /** Absent on historic attempts and routes whose subscription attribution is unknown. */
@@ -297,6 +299,8 @@ export function normalizeRequestSpend(value: unknown): PersistedRequestSpend | u
 }
 
 export interface PersistedUsageEntry {
+  sessionEffortObservation?: SessionEffortObservation;
+  upstreamHttpStatus?: number;
   requestedAlias?: string;
   requestId: string;
   /**
@@ -499,6 +503,10 @@ const KNOWN_TERMINAL_SOURCES = new Set<NonNullable<PersistedUsageEntry["terminal
 
 export function isKnownTerminalSource(value: unknown): value is NonNullable<PersistedUsageEntry["terminalSource"]> {
   return typeof value === "string" && KNOWN_TERMINAL_SOURCES.has(value as NonNullable<PersistedUsageEntry["terminalSource"]>);
+}
+
+export function isUpstreamHttpStatus(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599;
 }
 
 /**
@@ -760,6 +768,7 @@ function normalizeUsageAttempt(raw: unknown): PersistedUsageAttempt | null {
     model: attempt.model,
     adapter: attempt.adapter,
     status: attempt.status,
+    ...(isUpstreamHttpStatus(attempt.upstreamHttpStatus) ? { upstreamHttpStatus: attempt.upstreamHttpStatus } : {}),
     durationMs: attempt.durationMs,
     // Absent by default; only the literal `true` marker survives the round trip.
     ...(attempt.streamAborted === true ? { streamAborted: true } : {}),
@@ -976,6 +985,7 @@ export function normalizeUsageEntryForTest(entry: PersistedUsageEntry): Persiste
 }
 
 function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
+  const sessionEffortObservation = readSessionEffortObservation(entry);
   const attempts = normalizedAttempts(entry.attempts);
   const tierOutcome = entry.tierOutcome ? normalizeAttemptTierOutcome(entry.tierOutcome) : undefined;
   const callerServiceTier = sanitizeLogMetadataString(entry.callerServiceTier);
@@ -1001,6 +1011,7 @@ function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
   const spend = normalizeRequestSpend(entry.spend);
   const protocolTrace = parseProtocolTraceV1(entry.protocolTrace);
   const normalized: PersistedUsageEntry = {
+    ...(sessionEffortObservation ? { sessionEffortObservation } : {}),
     requestId: entry.requestId,
     ...(isLogicalRequestId(entry.logicalRequestId) ? { logicalRequestId: entry.logicalRequestId } : {}),
     timestamp: entry.timestamp,
@@ -1062,6 +1073,7 @@ function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
     ...(responseServiceTier ? { responseServiceTier } : {}),
     ...(tierOutcome ? { tierOutcome } : {}),
     status: entry.status,
+    ...(isUpstreamHttpStatus(entry.upstreamHttpStatus) ? { upstreamHttpStatus: entry.upstreamHttpStatus } : {}),
     durationMs: entry.durationMs,
     ...(isNonNegativeFiniteNumber(entry.firstOutputMs)
       ? { firstOutputMs: entry.firstOutputMs }

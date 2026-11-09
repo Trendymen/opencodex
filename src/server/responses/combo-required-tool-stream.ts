@@ -27,7 +27,7 @@ export function requiredToolReasoningPrelude(payload: unknown): boolean {
 }
 
 /** In-place projection is shared by the existing inspection and client rewrite owners. */
-function terminalGuard(fulfills: (item: RecordValue, clientCall: boolean) => boolean, ownership: ReadonlySet<ProviderExecutedCallType>, evidence: { replayUnsafe: boolean }, normalizeItem: (item: unknown) => unknown) {
+function terminalGuard(fulfills: (item: RecordValue, clientCall: boolean) => boolean, ownership: ReadonlySet<ProviderExecutedCallType>, evidence: { replayUnsafe: boolean }, normalizeItem: (item: unknown) => unknown, allowResponseDone: boolean) {
   let fulfilled = false;
   const observe = (value: unknown, complete: boolean) => {
     const item = record(normalizeItem(value));
@@ -46,17 +46,19 @@ function terminalGuard(fulfills: (item: RecordValue, clientCall: boolean) => boo
     project(payload: unknown): boolean {
       const event = record(payload);
       if (!event) { evidence.replayUnsafe = true; return false; }
-      if (event.type !== "response.completed" && event.type !== "response.failed" && event.type !== "response.incomplete"
+      const response = record(event.response);
+      const completed = event.type === "response.completed"
+        || (allowResponseDone && event.type === "response.done" && response?.status === "completed");
+      if (!completed && event.type !== "response.failed" && event.type !== "response.incomplete"
         && !controlEvents.has(String(event.type)) && !requiredToolReasoningPrelude(event)) evidence.replayUnsafe = true;
       if (event.type === "response.output_item.added" || event.type === "response.output_item.done") {
         observe(event.item, event.type === "response.output_item.done");
       }
-      const response = record(event.response);
       if (Array.isArray(response?.output)) {
-        for (const item of response.output) observe(item, event.type === "response.completed");
+        for (const item of response.output) observe(item, completed);
       }
       if (response?.output !== undefined && !Array.isArray(response.output)) evidence.replayUnsafe = true;
-      if (event.type !== "response.completed" || !response || !Array.isArray(response.output) || fulfilled) return false;
+      if (!completed || !response || !Array.isArray(response.output) || fulfilled) return false;
       event.type = "response.failed";
       response.status = "failed";
       response.error = {
@@ -74,17 +76,18 @@ export function createComboRequiredToolStreamGuard(
   rawBody: unknown, ownership: ReadonlySet<ProviderExecutedCallType>, evidence = { replayUnsafe: false },
   normalizeItem: (item: unknown) => unknown = item => item,
   request?: AdapterRequest,
+  options?: { allowResponseDone?: boolean },
 ) {
   const contract = requiredToolContractOf(rawBody);
   if (!contract) return undefined;
   const fulfills = requiredToolFulfillments(rawBody, contract, normalizeItem, request);
-  const clientGuard = terminalGuard(fulfills, ownership, evidence, normalizeItem);
+  const clientGuard = terminalGuard(fulfills, ownership, evidence, normalizeItem, options?.allowResponseDone === true);
   return {
     rememberCompleted(response: RecordValue, remember: (response: RecordValue) => void) {
       if (!clientGuard.project({ type: "response.completed", response })) remember(response);
     },
     inspectorFactory(handlers: SseInspectorHandlers) {
-      const guard = terminalGuard(fulfills, ownership, evidence, normalizeItem);
+      const guard = terminalGuard(fulfills, ownership, evidence, normalizeItem, options?.allowResponseDone === true);
       return createSseInspector({
         ...handlers,
         onOpaquePayload(payload) { if (payload !== "[DONE]") guard.opaque(); handlers.onOpaquePayload?.(payload); },

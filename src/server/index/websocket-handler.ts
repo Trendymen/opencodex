@@ -345,6 +345,7 @@ export function createWebsocketHandler(
           try {
             let terminalRecorder: ((status: ResponsesTerminalStatus, httpStatusOverride?: number) => void) | undefined;
             const response = await handleResponses(req, config, logCtx, {
+              clientInitialResponses: true,
               advisorAdmissionPolicy,
               ...(wsAdmission ? { admission: wsAdmission } : {}),
               forceEmptyResponseId: true,
