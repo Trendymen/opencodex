@@ -36,14 +36,26 @@ export function manualUpdateFailureGuidance({ bin, args, owner, platform = proce
 const UNTOUCHED_PHASES = new Set(["stage", "verify", "authorize", "swap-backup"]);
 
 /**
- * @param {{ phase?: string; rolledBack?: boolean; pkgName: string; version?: string; tag?: string }} failure
+ * @param {{ phase?: string; rolledBack?: boolean; recoveryUnsafe?: boolean; pkgName: string; version?: string; tag?: string }} failure
  * @returns {{ previousVersionKept: boolean; lines: string[] }}
  */
-export function npmUpdateFailureGuidance({ phase, rolledBack, pkgName, version, tag }) {
+export function npmUpdateFailureGuidance({ phase, rolledBack, recoveryUnsafe, pkgName, version, tag }) {
   const manual = manualUpdateFailureGuidance({
     bin: "npm", args: ["install", "-g", "--allow-scripts=bun", pkgName + "@" + (version || tag || "latest")],
   });
-  const kept = UNTOUCHED_PHASES.has(phase ?? "") || rolledBack === true;
+  const kept = UNTOUCHED_PHASES.has(phase ?? "") || rolledBack === true
+    || (phase === "pending-marker" && recoveryUnsafe !== true);
+  if (recoveryUnsafe === true) {
+    return {
+      previousVersionKept: kept,
+      lines: [
+        kept ? "The previous version is still installed, but transaction recovery is unsafe."
+          : "The package transaction is in an uncertain recovery state.",
+        "Next: inspect any .ocx-transaction.json and .ocx-recovery.json next to the package and resolve the recovery state before retrying or reinstalling.",
+        ...manual,
+      ],
+    };
+  }
   if (!kept) {
     return {
       previousVersionKept: false,

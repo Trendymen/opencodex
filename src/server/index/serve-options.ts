@@ -1,4 +1,6 @@
 import { messagesUnknownEndpointMessage } from "../../lib/messages-error-body";
+import { trustedLoopbackForIngress, claudeInterceptRouteAllowed } from "./ingress-policy";
+import { forkModelApiRouteAllowed } from "../../fork/model-api-listener";
 import type { Server, ServerWebSocket } from "bun";
 import { modelAliasIdPromoter } from "./model-alias-id";
 import type { StartServerDeps } from "./startup-warnings";
@@ -23,12 +25,12 @@ import {
   webSocketFrameBytes,
 } from "./live-sideband";
 import {
+  withCodexResponseHeaders,
   withRequestLogId,
   withMessagesRequestLogId,
 } from "./startup-warnings";
 
 import { remoteWorkspaceEnabled } from "../../remote-control/workspace-activation";
-import { isClaudeInterceptedPath } from "../../claude/intercept/listener";
 import { markActivity } from "../../lib/sidecar-tracker";
 import { knownModelIdsForProvider } from "../../router";
 import {
@@ -98,7 +100,6 @@ import {
   isAllowedRequestOrigin,
   isAllowedManagementOrigin,
   isApiAuthRequired,
-  isLoopbackHostname,
   markTrustedHubManagementRequest,
   jsonResponse,
   admissionFields,
@@ -220,21 +221,9 @@ import { withCallerSessionIdentity } from "../caller-session-identity";
 import { agentAssertionUnsupportedResponse, hasAgentAssertionAuthorization } from "../../lib/authorization-scheme";
 import { runTurnStateCallerScope } from "../turn-state-handles";
 
-export type ServerIngress = "public" | "unauthenticated-loopback" | "hub-management" | "claude-intercept" | "hub-link" | "local-control";
+export type ServerIngress = "fork-model-api" | "public" | "unauthenticated-loopback" | "hub-management" | "claude-intercept" | "hub-link" | "local-control";
 
-export function trustedLoopbackForIngress(ingress: ServerIngress, hostname: string): boolean {
-  return ingress === "unauthenticated-loopback" || ingress === "local-control"
-    || (ingress === "public" && isLoopbackHostname(hostname));
-}
-
-/**
- * Routes the Claude intercept TLS listener may reach. Everything else on that socket is relayed
- * to the real upstream by the listener itself, so a request that lands here with another path
- * is a bug, not a client — refuse it.
- */
-export function claudeInterceptRouteAllowed(url: URL, req: Request): boolean {
-  return isClaudeInterceptedPath(url.pathname, req.method);
-}
+export { trustedLoopbackForIngress, claudeInterceptRouteAllowed } from "./ingress-policy";
 
 export interface ServeOptionsContext {
   readonly server: Server<WsData>;
@@ -275,6 +264,7 @@ export interface ServeOptionsContext {
   >;
   localAttestationSecret: string;
   loopbackPolicy: () => RequestPolicyView;
+  forkModelApiPolicy: () => RequestPolicyView;
   managementApiDeps: ManagementApiDeps;
   managementAuth: ManagementAuthState;
   managementSessionControl: ManagementSessionControl;
@@ -302,7 +292,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
     liveCallBindings,
     loadRemoteWorkspaceRuntime,
     localAttestationSecret,
-    loopbackPolicy,
+    loopbackPolicy, forkModelApiPolicy,
     managementApiDeps,
     managementAuth,
     managementSessionControl,
@@ -334,6 +324,9 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         markTrustedHubManagementRequest(req);
       }
       const requestUrl = codexCompatibleUrl(req.url);
+      if (ingress === "fork-model-api" && !forkModelApiRouteAllowed(requestUrl)) {
+        return withCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${new URL(req.url).pathname}`), req, forkModelApiPolicy());
+      }
       const linkPolicyView = ingress === "hub-link" ? linkPolicy() : undefined;
       // The unauthenticated loopback listener (#1102) serves a fixed allowlist and nothing
       // else. Rejecting here, before any handler runs, is what keeps the surface from growing
@@ -376,7 +369,9 @@ export function createServeOptions(ctx: ServeOptionsContext) {
       // The Claude intercept listener is loopback by construction (the CONNECT proxy binds
       // 127.0.0.1 and the request was rewritten onto a loopback origin), and its callers carry
       // Anthropic credentials, not opencodex admission tokens — so it takes the loopback view too.
-      const policy: RequestPolicyView = ingress === "hub-link"
+      const policy: RequestPolicyView = ingress === "fork-model-api"
+        ? forkModelApiPolicy()
+        : ingress === "hub-link"
         ? linkPolicyView!
         : ingress === "unauthenticated-loopback" || ingress === "claude-intercept" || ingress === "local-control"
           ? loopbackPolicy()
@@ -1510,6 +1505,8 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           let response: Response;
           try {
             response = await handleResponses(sessionReq, config, logCtx, {
+              clientInitialResponses: true,
+              codexSessionIdSynthesized: !req.headers.has("session_id") && sessionReq.headers.has("session_id"),
               turnAdmissionLease,
               admission,
               advisorAdmissionPolicy,
@@ -1540,9 +1537,8 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             );
             throw error;
           }
-          return withRequestLogId(
-            withCors(responseWithDeferredRequestLog(response, requestId, start, logCtx), req, policy),
-            requestId,
+          return withCodexResponseHeaders(
+            responseWithDeferredRequestLog(response, requestId, start, logCtx), req, policy, requestId,
           );
         }, { requestId, start, logCtx });
       }

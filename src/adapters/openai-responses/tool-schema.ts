@@ -5,7 +5,7 @@ import {
   responsesBodyDeclaresClientTools,
 } from "../../responses/hosted-tool-policy";
 import { debugProviderDiagnostic } from "../../lib/debug";
-import { stripUnicodePropertyPatterns } from "../responses-tool-schema";
+import { stripResponsesOnlyEncryptedMarker, stripUnicodePropertyPatterns } from "../responses-tool-schema";
 import {
   isXaiSchemaTarget,
   normalizeXaiToolParameters,
@@ -14,7 +14,12 @@ import {
 import { isPlainObject } from "./internal";
 import { hasItemProvenance, isHistoricalItem } from "../../responses/item-provenance";
 
-function normalizeFunctionToolSchema(tool: unknown, xaiTarget: boolean, chatDefaults: boolean): unknown | undefined {
+function normalizeFunctionToolSchema(
+  tool: unknown,
+  xaiTarget: boolean,
+  chatDefaults: boolean,
+  stripEncryptedMarker: boolean,
+): unknown | undefined {
   if (!isPlainObject(tool) || tool.type !== "function") return tool;
   // Runs for every Responses destination, forward auth included: the ChatGPT backend is where
   // the `\p{…}` rejection was observed, and it reaches this function through the same seam.
@@ -27,12 +32,16 @@ function normalizeFunctionToolSchema(tool: unknown, xaiTarget: boolean, chatDefa
     : compatibleTool;
   if (xaiTarget) {
     const parameters = normalizeXaiToolParameters(isPlainObject(source.parameters) ? source.parameters : {});
-    return parameters === undefined ? undefined : { ...source, parameters };
+    if (parameters === undefined) return undefined;
+    return { ...source, parameters: stripEncryptedMarker ? stripResponsesOnlyEncryptedMarker(parameters) : parameters };
   }
-  if (isPlainObject(source.parameters) && source.parameters.type === "object") return source;
+  const parameters = isPlainObject(source.parameters) && source.parameters.type === "object"
+    ? source.parameters
+    : { ...(isPlainObject(source.parameters) ? source.parameters : {}), type: "object" };
+  if (!stripEncryptedMarker && parameters === source.parameters) return source;
   return {
     ...source,
-    parameters: { ...(isPlainObject(source.parameters) ? source.parameters : {}), type: "object" },
+    parameters: stripEncryptedMarker ? stripResponsesOnlyEncryptedMarker(parameters) : parameters,
   };
 }
 
@@ -82,7 +91,7 @@ function reconcileToolChoiceForOmittedTools(
   return body;
 }
 
-export function normalizeToolSchemas(body: unknown, xaiTarget: boolean, chatDefaults = false): unknown {
+export function normalizeToolSchemas(body: unknown, xaiTarget: boolean, chatDefaults = false, stripEncryptedMarker = false): unknown {
   if (!isPlainObject(body)) return body;
 
   const omittedFunctionNames = new Set<string>();
@@ -90,7 +99,7 @@ export function normalizeToolSchemas(body: unknown, xaiTarget: boolean, chatDefa
     let changed = false;
     const normalized: unknown[] = [];
     for (const tool of tools) {
-      const fixed = normalizeFunctionToolSchema(tool, xaiTarget, chatDefaults);
+      const fixed = normalizeFunctionToolSchema(tool, xaiTarget, chatDefaults, stripEncryptedMarker);
       if (fixed === undefined) {
         changed = true;
         if (isPlainObject(tool) && typeof tool.name === "string") omittedFunctionNames.add(tool.name);

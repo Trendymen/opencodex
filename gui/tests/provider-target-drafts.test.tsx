@@ -107,6 +107,42 @@ function saveButton(): HTMLButtonElement {
   return save!;
 }
 
+describe("Codex permissions follow the target-scoped Settings draft", () => {
+  const official = {
+    name: "openai", adapter: "openai-responses", authMode: "forward",
+    baseUrl: "https://chatgpt.com/backend-api/codex",
+  } as WorkspaceItem;
+  const permission = (key: string) => host.querySelector<HTMLInputElement>(`[data-codex-permission="${key}"]`)!;
+
+  test("switching targets preserves an unsaved permission and sends only its leaf", async () => {
+    const store = createProviderDraftStore();
+    const patches: ProviderUpdatePatch[] = [];
+    const update = async (_name: string, patch: ProviderUpdatePatch) => { patches.push(patch); return { ok: true }; };
+    await render(<ProviderSettings item={official} targetKey="/a" draftStore={store} onUpdateProvider={update} />);
+    await act(async () => { permission("bridgeLiteMetadata").click(); });
+    await render(<ProviderSettings item={official} targetKey="/b" draftStore={store} onUpdateProvider={update} />);
+    expect(permission("bridgeLiteMetadata").checked).toBe(true);
+    await render(<ProviderSettings item={official} targetKey="/a" draftStore={store} onUpdateProvider={update} />);
+    expect(permission("bridgeLiteMetadata").checked).toBe(false);
+    await act(async () => { saveButton().click(); await Promise.resolve(); });
+    expect(patches).toEqual([{ codexPassthrough: { bridgeLiteMetadata: false } }]);
+  });
+
+  test("keeping a draft preserves another permission changed on the server", async () => {
+    const patches: ProviderUpdatePatch[] = [];
+    const update = async (_name: string, patch: ProviderUpdatePatch) => { patches.push(patch); return { ok: true }; };
+    await render(<ProviderSettings item={official} targetKey="/a" onUpdateProvider={update} />);
+    await act(async () => { permission("bridgeLiteMetadata").click(); });
+    await render(<ProviderSettings item={{ ...official, codexPassthrough: { normalizeEncryptedContent: false } }} targetKey="/a" onUpdateProvider={update} />);
+    expect(host.textContent).toContain("saved settings changed");
+    await act(async () => { button("Keep my draft")!.click(); });
+    expect(permission("bridgeLiteMetadata").checked).toBe(false);
+    expect(permission("normalizeEncryptedContent").checked).toBe(false);
+    await act(async () => { saveButton().click(); await Promise.resolve(); });
+    expect(patches).toEqual([{ codexPassthrough: { bridgeLiteMetadata: false } }]);
+  });
+});
+
 describe("Provider Settings drafts are scoped to their dashboard target", () => {
   test("a same-name provider on another target neither inherits nor loses the first target's draft", async () => {
     const store = createProviderDraftStore();

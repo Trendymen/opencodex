@@ -117,6 +117,8 @@ export interface HandleResponsesOptions {
   admissionScope?: AdmissionModelScope;
   /** Captured synchronously at ingress, before parsing or child replay can suspend. */
   advisorAdmissionPolicy?: import("../../types/admission-policy").CapturedAdmissionPolicy;
+  codexPassthroughTurn?: import("../../fork/codex-passthrough-turn").CodexPassthroughTurn;
+  codexSessionIdSynthesized?: boolean;
   /** Internal request-owned policy authorization; never read from client headers or body. */
   policyRequestScope?: PolicyRequestScope;
   /** Internal concrete selector chosen from the original policy evaluation. */
@@ -197,6 +199,9 @@ export interface HandleResponsesOptions {
    * it. Omitted means a genuine Responses inbound.
    */
   inboundWire?: InboundWire;
+  /** Trusted external Responses ingress; never inferred from a synthetic request body. */
+  clientInitialResponses?: boolean;
+  sessionEffortCapture?: { captured: boolean };
   /**
    * Set by a translating ingress (Chat / Anthropic) when the client sent an explicit empty
    * tool catalog. Those wires may defer tool delivery, so their translated body carries no
@@ -325,6 +330,7 @@ export interface ResponsesRequestContext {
 
 /** Admission leases remain owned by the outer finally until explicitly transferred. */
 export interface ResponsesAdmissionState {
+  codexPassthroughPermissions?: import("../../fork/codex-passthrough-contract").CodexPassthroughPermissions;
   pendingHostAdmissionLease: UpstreamHostAdmissionLease | null;
   authCtx: CodexAuthContext;
 }

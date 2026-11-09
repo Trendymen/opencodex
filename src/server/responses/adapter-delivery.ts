@@ -13,8 +13,14 @@ import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "..
 import type { OcxProviderContinuationState, AdapterEvent } from "../../types";
 import { rememberResponseState } from "../../responses/state";
 import { trackStreamLifetime } from "../lifecycle";
+import { relaySseWithBlockRewrite } from "../sse-payload-rewrite";
 import { awaitThoughtSignatureDurability } from "../../responses/thought-signature-replay";
 import { adapterResponseReachedServingTerminal } from "./core-replay";
+import {
+  createReasoningSummaryChannelBlockRewrite,
+  rewriteReasoningSummaryInJson,
+  shouldProjectContentChannelReasoning,
+} from "../responses-reasoning-summary-rewrite";
 import {
   readResponseBodyWithInactivity,
   readResponseStreamWithInactivity,
@@ -30,6 +36,7 @@ import { isNonReplayableResponse } from "../../lib/upstream-retry";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
 import { currentTurnToolBridgeMaps, guardEmptyToolCatalogEvents, guardEmptyToolCatalogStream } from "../../lib/empty-tool-catalog";
 import { guardCompactionSummary } from "../../responses/compaction-summary";
+import { createNestedExecAdapterEventRepair } from "../responses-nested-exec-call-repair";
 
 /** One responsibility of the Responses request pipeline; state owners are explicit. */
 export async function deliverAdapterResponse(
@@ -128,6 +135,12 @@ export async function deliverAdapterResponse(
     ? requestState.clientToolCatalogRestriction : undefined;
   const deliveryToolBridgeMaps = currentTurnToolBridgeMaps(toolBridgeMaps, clientToolCatalog);
 
+  const { repairSource: repairAdapterEventSource, repairBatch: repairAdapterEventBatch } = createNestedExecAdapterEventRepair({
+    rawBody: parsed._rawBody,
+    replayPrefixLength: parsed._replayPrefixLen ?? 0,
+    isPassthrough: false,
+    translatorBudget,
+  });
 
   if (parsed.stream) {
     const clientEncoder = clientToolCatalog?.bareCustomToolNames.has("exec") ? undefined
@@ -200,7 +213,7 @@ export async function deliverAdapterResponse(
           preserveRetryError: isContinuationBodyStall,
         })
       : advisorStream;
-    const catalogGuardedEventStream = guardEmptyToolCatalogStream(completionGuardedEventStream, clientToolCatalog, translatorBudget);
+    const catalogGuardedEventStream = guardEmptyToolCatalogStream(repairAdapterEventSource(completionGuardedEventStream), clientToolCatalog, translatorBudget);
     const guardedEventStream = routedCompaction && transportState.activeAdapter.name === "anthropic"
       ? guardCompactionSummary(catalogGuardedEventStream, translatorBudget) : catalogGuardedEventStream;
     const { toolNsMap, declaredToolNames, toolParameterSchemas, freeformToolNames, bareCustomToolNames, toolSearchToolNames } = deliveryToolBridgeMaps;
@@ -253,7 +266,7 @@ export async function deliverAdapterResponse(
         bindUsage: usage => transportState.bindKeyUsageFromBridge(usage),
       });
     }
-    const sseStream = bridgeToResponsesSSE(
+    let sseStream = bridgeToResponsesSSE(
       guardedEventStream, parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
       () => { cancelResponseCompletion(); upstream.abort(); }, 2_000,
       {
@@ -284,6 +297,18 @@ export async function deliverAdapterResponse(
         onCompletedResponse,
       },
     );
+    if (shouldProjectContentChannelReasoning(parsed._rawBody, route.provider, route.modelId)) {
+      sseStream = relaySseWithBlockRewrite(
+        sseStream,
+        createReasoningSummaryChannelBlockRewrite({
+          translatorBudget,
+          ...(logCtx.provider === "xai" && transportState.activeAdapter.name === "openai-chat"
+            ? { emitInitialSparseDelta: true }
+            : {}),
+        }),
+        translatorBudget,
+      );
+    }
     const bridgeTurnAc = new AbortController();
     const trackedSse = trackStreamLifetime(sseStream, bridgeTurnAc, cleanupUpstreamAbort, options.turnAdmissionLease);
     return new Response(trackedSse, {
@@ -368,6 +393,7 @@ export async function deliverAdapterResponse(
     } finally {
       cleanupUpstreamAbort();
     }
+    events = await repairAdapterEventBatch(events);
     const { toolNsMap, declaredToolNames, toolParameterSchemas, freeformToolNames, bareCustomToolNames, toolSearchToolNames } = deliveryToolBridgeMaps;
     let providerState: OcxProviderContinuationState | undefined;
     events = guardEmptyToolCatalogEvents(events, clientToolCatalog, translatorBudget);
@@ -414,7 +440,10 @@ export async function deliverAdapterResponse(
     notifyResponseComplete(json);
     const lastError = events.findLast(event => event.type === "error");
     const status = json.status === "failed" && lastError && isContinuationBodyStall(lastError) ? 504 : 200;
-    return new Response(JSON.stringify(json), { status, headers: { "Content-Type": "application/json" } });
+    const responseJson = shouldProjectContentChannelReasoning(parsed._rawBody, route.provider, route.modelId)
+      ? rewriteReasoningSummaryInJson(json)
+      : json;
+    return new Response(JSON.stringify(responseJson), { status, headers: { "Content-Type": "application/json" } });
   }
 
   return formatErrorResponse(400, "invalid_request_error", "Non-streaming not supported by this adapter");

@@ -1,4 +1,5 @@
 import type { UpstreamHttpVersion, ReasoningSummaryDelivery, CodexAccountMode, ThinkingDisplayPolicy } from "./wire";
+import type { CodexPassthroughConfig } from "../fork/codex-passthrough-contract";
 import type { AccountAutoPausePolicy, AccountPauseDetails } from "./account-auto-pause";
 import type { AnthropicAccountPoolConfig } from "./anthropic-account-pool";
 
@@ -303,6 +304,7 @@ export interface ModelCapabilities extends ReasoningCapabilities {
  * retries are allowed; OAuth/forward credentials and local runtimes are never replayed.
  */
 export interface OcxProviderConfig {
+  codexPassthrough?: CodexPassthroughConfig;
   /** Explicit builtin Pool 2 provenance; endpoints never imply ownership. */
   anthropicOAuthInstance?: "anthropic2";
   /** Independent Anthropic pool settings; valid only on providers.anthropic2. */
@@ -392,6 +394,8 @@ export interface OcxProviderConfig {
    * preserved after it, and parallel calls stay together with the reasoning turn that produced them.
    */
   requiresAdjacentResponsesToolResults?: boolean;
+  inferResponsesMessagePhaseModels?: string[];
+  agentMessageFormat?: "preserve" | "user_message";
   /**
    * Responses upstream whose parser also rejects a tool call that has no matching output
    * anywhere in the replayed input, not merely one whose result sits out of order. A call left

@@ -1,3 +1,4 @@
+export { codexPassthroughCandidateError, configCodexPassthroughCandidateError } from "../fork/codex-passthrough-contract";
 import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers";
 import { assertWorkBuddyDestination } from "../providers/workbuddy";
 import { resolveDshAccountMessagesUrl } from "../providers/dsh-account-destination";

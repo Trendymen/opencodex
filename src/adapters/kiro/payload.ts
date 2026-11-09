@@ -27,6 +27,11 @@ import {
   kiroImageOmissionMarker,
   type KiroImage,
 } from "../kiro-images";
+import {
+  finalizeRoutedToolPrompt,
+  hasRoutedProgressContract,
+  ROUTED_PROGRESS_CONTRACT,
+} from "../../fork/routed-progress-contract";
 import { convertKiroToolContext } from "../kiro-tools";
 import { createKiroToolNameRegistry, mapModelId, normalizeToolId, stableConversationId } from "../kiro-wire";
 import { buildNonOpenAIToolCatalogNudgeFromNames, isBareShellBridgeTool, isCodexCodeModeExecTool } from "../tool-catalog-nudge";
@@ -158,9 +163,14 @@ export function buildKiroPayload(
   const kiroTools = completionMode === "disabled"
     ? ordinaryTools
     : [...ordinaryTools, terminalTool];
+  const kiroWireToolNames = kiroToolWireNames(kiroTools);
   const nameMap = toolContext.nameMap;
   const systemParts: string[] = [];
-  const injectedChars = { value: 0 };
+  const callerHasProgressContract = parsed.context.systemPrompt?.some(hasRoutedProgressContract) === true;
+  const injectedChars = {
+    value: kiroWireToolNames.length > 0 && !(structuredOutput && ordinaryTools.length === 0) && !callerHasProgressContract
+      ? ROUTED_PROGRESS_CONTRACT.length : 0,
+  };
   // Name the Kiro model id actually sent on the wire without leaking the proxy identity upstream.
   if (parsed.context.systemPrompt?.length) {
     systemParts.push(identifyRoutedModel(parsed.context.systemPrompt.join("\n\n"), modelId));
@@ -184,7 +194,7 @@ export function buildKiroPayload(
   // bridge the model cannot call and suppress code mode for a catalog that is code-mode-shaped.
   // Intersecting the two keeps `tool_choice: "none"` and budget omission correct for free: both
   // empty the emitted set, so nothing can be named.
-  const emittedToolNames = new Set(kiroToolWireNames(kiroTools));
+  const emittedToolNames = new Set(kiroWireToolNames);
   const emittedAlias = (tool: OcxTool): string | undefined => {
     const wireName = namespacedToolName(tool.namespace, tool.name);
     // Read the recorded mapping; `registry.alias()` would REGISTER a name here.
@@ -203,7 +213,7 @@ export function buildKiroPayload(
   const toolCatalogNudge = structuredOutput && ordinaryTools.length === 0
     ? undefined
     : buildNonOpenAIToolCatalogNudgeFromNames(
-      kiroToolWireNames(kiroTools),
+      kiroWireToolNames,
       name => advertisedAlias.get(name) ?? name,
       codeModeExecName,
     );
@@ -220,7 +230,11 @@ export function buildKiroPayload(
     const boundedCompletion = boundedInjectedInstruction(contract, injectedChars);
     if (boundedCompletion) systemParts.push(boundedCompletion);
   }
-  const systemPrefix = systemParts.length > 0 ? `${systemParts.join("\n\n")}\n\n` : "";
+  const combinedSystemText = systemParts.join("\n\n");
+  const systemText = toolCatalogNudge
+    ? finalizeRoutedToolPrompt(combinedSystemText)
+    : combinedSystemText;
+  const systemPrefix = systemText.length > 0 ? `${systemText}\n\n` : "";
   const turns: KiroTurn[] = [];
   const priorCalls = new Map<string, { wireName: string; rawId: string }>();
   const pushUser = (content: string, images: KiroImage[] = [], toolResults: KiroToolResult[] = []): void => {

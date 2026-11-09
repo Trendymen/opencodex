@@ -7,6 +7,7 @@ export function manualUpdateFailureGuidance(command: {
 export function npmUpdateFailureGuidance(failure: {
   phase?: string;
   rolledBack?: boolean;
+  recoveryUnsafe?: boolean;
   pkgName: string;
   version?: string;
   tag?: string;

@@ -46,6 +46,10 @@ import {
   type ProviderSettingsDraft,
 } from "../../provider-workspace/target-drafts";
 import { useRenderTargetCapture } from "../../use-render-target-capture";
+import { isCanonicalOpenAiForwardProvider } from "../../../../src/providers/openai-tiers-destination";
+import CodexPassthroughSettings from "./CodexPassthroughSettings";
+import { codexPassthroughDelta, editCodexPassthrough } from "./codex-passthrough-draft";
+import type { CodexPassthroughConfig } from "../../../../src/fork/codex-passthrough-contract";
 
 const ADAPTERS = ["openai-responses", "openai-chat", "anthropic", "google", "azure-openai", "cursor"] as const;
 const EMPTY_MODELS: string[] = [];
@@ -126,6 +130,8 @@ function ProviderSettingsForm({
   const [preserveReasoningReplay, setPreserveReasoningReplay] = useState(initial.draft.preserveReasoningReplay);
   const [liveModels, setLiveModels] = useState(initial.draft.liveModels);
   const [cursorHttpVersion, setCursorHttpVersion] = useState<CursorHttpVersion>(initial.draft.cursorHttpVersion);
+  const [codexPassthrough, setCodexPassthrough] = useState(initial.draft.codexPassthrough);
+  const [codexPassthroughForceAllOff, setCodexPassthroughForceAllOff] = useState(initial.draft.codexPassthroughForceAllOff);
   const [baseline, setBaseline] = useState<ProviderSettingsDraft>(initial.baseline);
   const [saving, setSaving] = useState(false);
   // This form's render owns the target for every save it starts, including a mode change
@@ -133,6 +139,7 @@ function ProviderSettingsForm({
   // cannot retarget the save.
   const formCapture = useRenderTargetCapture(apiBase ?? "", targetKey);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [codexSaveError, setCodexSaveError] = useState<string | null>(null);
   const [accountMode, setAccountMode] = useState<"pool" | "direct">(item.codexAccountMode ?? "pool");
   const [modeSaving, setModeSaving] = useState(false);
   const [modeMsg, setModeMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -151,12 +158,23 @@ function ProviderSettingsForm({
   const [pacingModelDelay, setPacingModelDelay] = useState("");
   const [pacingModelConcurrency, setPacingModelConcurrency] = useState("");
   const [pacingStatus, setPacingStatus] = useState<PacingStatus | null>(null);
+  const codexDirty = codexPassthroughDelta(baseline.codexPassthrough, codexPassthrough, codexPassthroughForceAllOff) !== undefined;
+  const displayedMsg = codexDirty && codexSaveError ? { ok: false, text: codexSaveError } : msg;
+  const codexSaveFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (saving) return;
+    const target = codexSaveFocus.current;
+    codexSaveFocus.current = null;
+    if (displayedMsg?.ok === false && target?.isConnected
+      && (document.activeElement === document.body || document.activeElement === target)) target.focus();
+  }, [saving, displayedMsg?.ok]);
 
   const draft = useMemo<ProviderSettingsDraft>(() => ({
     adapter, baseUrl, project, location, defaultModel, authMode, apiKeyTransport, note,
     allowPrivateNetwork, preserveReasoningReplay, liveModels, cursorHttpVersion,
+    codexPassthrough, codexPassthroughObserved: baseline.codexPassthroughObserved, codexPassthroughForceAllOff,
     pacingEnabled, keyPacing, pacingRpm, pacingDelay, pacingConcurrency, pacingModels,
-  }), [adapter, allowPrivateNetwork, apiKeyTransport, authMode, baseUrl, cursorHttpVersion, defaultModel,
+  }), [adapter, allowPrivateNetwork, apiKeyTransport, authMode, baseline.codexPassthroughObserved, baseUrl, codexPassthrough, codexPassthroughForceAllOff, cursorHttpVersion, defaultModel,
     keyPacing, liveModels, location, note, pacingConcurrency, pacingDelay, pacingEnabled, pacingModels, pacingRpm,
     preserveReasoningReplay, project]);
 
@@ -173,6 +191,8 @@ function ProviderSettingsForm({
     setPreserveReasoningReplay(next.preserveReasoningReplay);
     setLiveModels(next.liveModels);
     setCursorHttpVersion(next.cursorHttpVersion);
+    setCodexPassthrough(next.codexPassthrough);
+    setCodexPassthroughForceAllOff(next.codexPassthroughForceAllOff);
     setPacingEnabled(next.pacingEnabled);
     setKeyPacing({ ...next.keyPacing, ...(next.keyPacing.keys ? { keys: { ...next.keyPacing.keys } } : {}) });
     setPacingRpm(next.pacingRpm);
@@ -189,7 +209,9 @@ function ProviderSettingsForm({
   const edited = draftSignature !== baselineSignature;
   /** The bar follows the saved item until its refresh lands, even after a confirmed save. */
   const dirty = edited || fieldsDirty || pacingDirty;
-  const baselineChanged = providerSettingsDirty(baseline, item);
+  const codexRemoteChanged = codexPassthroughDelta(baseline.codexPassthroughObserved, item.codexPassthrough) !== undefined;
+  const codexCaughtUp = codexPassthroughDelta(baseline.codexPassthrough, item.codexPassthrough) === undefined;
+  const baselineChanged = providerSettingsDirty(baseline, item) || (codexRemoteChanged && !codexCaughtUp);
   const pacingConflictPaths = providerPacingConflicts(baseline, draft, item.requestPacing);
   /** Saved values moved under a dirty draft; the user must choose a side. */
   const conflict = (edited && baselineChanged) || pacingConflictPaths.length > 0;
@@ -210,12 +232,18 @@ function ProviderSettingsForm({
   const [syncedSignature, setSyncedSignature] = useState(savedSignature);
   if (syncedSignature !== savedSignature) {
     setSyncedSignature(savedSignature);
-    if (!edited) {
+    const savedMatchesDraft = savedSignature === providerSettingsDraftSignature({
+      ...draft, codexPassthroughObserved: savedDraft.codexPassthroughObserved, codexPassthroughForceAllOff: false,
+    });
+    if (!edited || savedMatchesDraft) {
       applyDraft(savedDraft);
       setBaseline(savedDraft);
       setEndpointChoice(matchChoiceId(baseUrlChoices, savedDraft.baseUrl));
       setMsg(null);
+      setCodexSaveError(null);
       setModeMsg(null);
+    } else if (codexRemoteChanged && codexCaughtUp) {
+      setBaseline({ ...baseline, codexPassthroughObserved: item.codexPassthrough });
     }
   }
 
@@ -306,6 +334,9 @@ function ProviderSettingsForm({
   const supportsApiKeyTransport = adapter.trim() === "anthropic" && authMode === "key";
   const openAiState = item.name === "openai" ? openAiAccountProviderState(item) : "invalid";
   const isCanonicalOpenAi = openAiState === "ready" || openAiState === "disabled";
+  const codexDestination = { adapter: adapter.trim(), baseUrl: baseUrl.trim(), authMode };
+  const supportsCodexPassthrough = isCanonicalOpenAiForwardProvider(codexDestination)
+    || Object.values(item.modelAdapters ?? {}).some(modelAdapter => isCanonicalOpenAiForwardProvider({ ...codexDestination, adapter: modelAdapter }));
   // Lock plain baseUrl for presets while loading or when there is no picker.
   // On fetch error, keep it editable so allowBaseUrlOverride providers are not trapped.
   const plainBaseUrlLocked = isPreset && choicesStatus !== "error";
@@ -323,8 +354,12 @@ function ProviderSettingsForm({
       ? resolvedBaseUrlForChoice(baseUrlChoices, endpointChoice, baseUrl)
       : baseUrl.trim();
     if (!adapter.trim() || !nextBaseUrl) { setMsg({ ok: false, text: t("pws.adapterBaseRequired") }); return false; }
+    if (codexDirty && document.activeElement?.matches("input[data-codex-permission], .pwi-settings-sticky-bar .btn-primary")) {
+      codexSaveFocus.current = document.activeElement as HTMLElement;
+    }
     setSaving(true);
     setMsg(null);
+    setCodexSaveError(null);
     try {
       const rpmInvalid = pacingRpm.trim() !== "" && (positiveRpm(pacingRpm) === undefined || Number(pacingRpm) > 60_000);
       const delayInvalid = pacingDelay.trim() !== ""
@@ -359,23 +394,28 @@ function ProviderSettingsForm({
       // request was in flight, its result must not be announced or applied on the new target.
       if (targetKeyRef.current !== saveTarget) {
         if (res.ok) {
+          const confirmedDraft = { ...draft, codexPassthroughForceAllOff: false };
           const stored = draftStore.read(saveTarget, saveProvider);
           if (stored && providerSettingsDraftSignature(stored.draft) !== submittedSignature) {
-            draftStore.writeOwned(saveTarget, saveProvider, draftOwner, { draft: stored.draft, baseline: draft });
+            draftStore.writeOwned(saveTarget, saveProvider, draftOwner, { draft: stored.draft, baseline: confirmedDraft });
           } else {
-            draftStore.writeOwned(saveTarget, saveProvider, draftOwner, { draft, baseline: draft });
+            draftStore.writeOwned(saveTarget, saveProvider, draftOwner, { draft: confirmedDraft, baseline: confirmedDraft });
           }
         }
         return res.ok;
       }
-      setMsg(res.ok ? { ok: true, text: t("pws.settingsSaved") } : { ok: false, text: res.error || t("prov.saveFailed") });
+      if (!codexDirty || res.ok) setMsg(res.ok ? { ok: true, text: t("pws.settingsSaved") } : { ok: false, text: res.error || t("prov.saveFailed") });
+      if (codexDirty && !res.ok) setCodexSaveError(res.error || t("prov.saveFailed"));
       if (res.ok) {
-        const currentDraft = draftRef.current;
-        setBaseline(draft);
-        if (providerSettingsDraftSignature(currentDraft) === submittedSignature) {
-          draftStore.writeOwned(saveTarget, saveProvider, draftOwner, { draft, baseline: draft });
+        const unchanged = providerSettingsDraftSignature(draftRef.current) === submittedSignature;
+        const currentDraft = unchanged ? { ...draftRef.current, codexPassthroughForceAllOff: false } : draftRef.current;
+        const confirmedDraft = { ...draft, codexPassthroughForceAllOff: false };
+        if (unchanged) setCodexPassthroughForceAllOff(false);
+        setBaseline(confirmedDraft);
+        if (unchanged) {
+          draftStore.writeOwned(saveTarget, saveProvider, draftOwner, { draft: confirmedDraft, baseline: confirmedDraft });
         } else {
-          draftStore.writeOwned(saveTarget, saveProvider, draftOwner, { draft: currentDraft, baseline: draft });
+          draftStore.writeOwned(saveTarget, saveProvider, draftOwner, { draft: currentDraft, baseline: confirmedDraft });
         }
       }
       return res.ok;
@@ -432,9 +472,11 @@ function ProviderSettingsForm({
 
   const discard = () => {
     const next = providerSettingsDraftFromItem(item);
+    if (!codexRemoteChanged) next.codexPassthrough = baseline.codexPassthrough;
     applyDraft(next);
     setBaseline(next);
     setMsg(null);
+    setCodexSaveError(null);
     authorityRef.current += 1;
     draftStore.clearOwned(targetKey, item.name, draftOwner);
     draftStore.claim(targetKey, item.name, draftOwner, { draft: next, baseline: next });
@@ -649,6 +691,13 @@ function ProviderSettingsForm({
           <span className="muted text-label" style={{ display: "block", marginTop: 2 }}>{t("pws.liveModelsDesc")}</span>
         </span>
       </label>
+      {supportsCodexPassthrough && <CodexPassthroughSettings value={codexPassthrough}
+        onChange={(patch: CodexPassthroughConfig) => {
+          const next = editCodexPassthrough(codexPassthrough, baseline.codexPassthrough, patch);
+          setCodexSaveError(null);
+          setCodexPassthrough(next.value);
+          setCodexPassthroughForceAllOff(next.forceAllOff);
+        }} disabled={saving || modeSaving} />}
       <section className="pwi-pacing-card" aria-labelledby="pwi-pacing-title">
         <div className="pwi-pacing-head">
           <div><h3 id="pwi-pacing-title">{t("pws.pacingTitle")}</h3><p>{t("pws.pacingDesc")}</p></div>
@@ -704,9 +753,9 @@ function ProviderSettingsForm({
           </div>
         </div>
       )}
-      {msg && (
-        <div role={msg.ok ? "status" : "alert"} className={msg.ok ? "pwi-settings-msg pwi-settings-msg--ok" : "pwi-settings-msg pwi-settings-msg--err"}>
-          {msg.text}
+      {displayedMsg && (
+        <div role={displayedMsg.ok ? "status" : "alert"} className={displayedMsg.ok ? "pwi-settings-msg pwi-settings-msg--ok" : "pwi-settings-msg pwi-settings-msg--err"}>
+          {displayedMsg.text}
         </div>
       )}
     </div>

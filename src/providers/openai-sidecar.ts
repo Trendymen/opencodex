@@ -23,6 +23,7 @@ import {
   OPENAI_API_PROVIDER_ID,
   OPENAI_CODEX_PROVIDER_ID,
 } from "./openai-tiers";
+import { isRawOfficialOpenAiApiBaseUrl } from "./openai-tiers-destination";
 import { getProviderRegistryEntry, providerCodexAccountMode } from "./registry";
 
 export interface OpenAiForwardSidecarCandidate {
@@ -300,7 +301,7 @@ export function selectOpenAiImagesProvider(config: OcxConfig, allowPausedActiveR
     && provider.disabled !== true
     && provider.adapter === "openai-responses"
     && provider.authMode !== "forward"
-    && provider.baseUrl.replace(/\/+$/, "") === "https://api.openai.com/v1"
+    && isRawOfficialOpenAiApiBaseUrl(provider.baseUrl)
   ) {
     const canRecover = allowPausedActiveRecovery && provider.apiKeyPool?.some(entry => !entry.disabled);
     if (isProviderApiKeyPaused(provider) && !canRecover) {

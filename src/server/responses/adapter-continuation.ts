@@ -2,6 +2,7 @@ import { carryProxyError, proxyErrorPresentation, isProxyError, rememberProxyErr
 import { bindAnthropicRejectionResponse } from "../../adapters/anthropic-rejection-memo";
 import { deferPhysicalSendReporter } from "./deferred-send-reporter";
 import { responsesSpendTarget } from "./request-spend-target";
+import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { rotateAnthropicAccountOnResponseForInstance } from "../../oauth/anthropic-account-refusal";
 import type { ResponsesRequestContext } from "./core-options";
 import type { PreparedResponsesRequest } from "./request-prepare";
@@ -263,6 +264,7 @@ export function createAdapterContinuations(
               onRecoveryWithheld: noteAdapterRecoveryWithheld,
               stream: nextParsed.stream,
               executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                 pacingSlotAcquired: true,
                 pacingSlot,
                 dispatchOverride: oauthDispatch(builtContinuationRequest, nextParsed),
@@ -297,6 +299,7 @@ export function createAdapterContinuations(
               route.provider.authMode === "forward" ? connectMs : 0,
               nextParsed.stream,
               providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
               dispatchOverride: oauthDispatch(builtContinuationRequest, nextParsed),
                 onPhysicalDispatch: deferredContinuation ? () => {
                   if (!deferredContinuation.beforeDispatch()) throw new SendBudgetExhaustedError(errorDestinationLabel(builtContinuationRequest.url));
