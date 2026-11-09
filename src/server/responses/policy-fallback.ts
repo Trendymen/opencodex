@@ -18,6 +18,9 @@ import { isPolicyCandidateRefusal, isMandatoryToolChoiceRefusal, mandatoryToolCh
 import { fallbackTriggerForStatus, guardFallbackHop } from "../../routing/fallback-policy";
 import { captureAdmissionPolicy } from "../capture-admission-policy";
 import { upstreamCodeForComboFailure } from "../../bridge/errors";
+import { captureCodexPassthroughTurn, releaseCodexPassthroughTurnSource } from "../../fork/codex-passthrough-turn";
+import { createTranslatorBudget } from "../../lib/translator-budget";
+import { finalizeAccountLease, finalizeOwnedTranslatorBudget } from "./core-lifetime";
 
 type CoreHandler = typeof handleResponsesCore;
 type CoreOptions = Parameters<CoreHandler>[3];
@@ -183,7 +186,7 @@ function finishFailedPolicyAttempt(logCtx: RequestLogContext, status: number): v
  * failure. The initial policy trace remains the canonical selection evidence;
  * physical retries continue to accumulate in the existing request attempts.
  */
-export async function handleResponsesWithPolicyFallback(
+async function handleResponsesWithPolicyFallbackInner(
   req: Request,
   config: OcxConfig,
   logCtx: RequestLogContext,
@@ -197,6 +200,7 @@ export async function handleResponsesWithPolicyFallback(
   let rawBody: Record<string, unknown> | null = null;
   const coreOptions: CoreOptions = {
     ...options,
+    sessionEffortCapture: options.sessionEffortCapture ?? (options.clientInitialResponses ? { captured: false } : undefined),
     advisorAdmissionPolicy: options.advisorAdmissionPolicy ?? captureAdmissionPolicy(config, options.admission, options.admissionScope),
     policyRequestScope: policyScope,
     openAiSidecarAuth: options.openAiSidecarAuth === undefined
@@ -348,6 +352,26 @@ export async function handleResponsesWithPolicyFallback(
   }
 
   return response;
+}
+
+export async function handleResponsesWithPolicyFallback(
+  req: Request, config: OcxConfig, logCtx: RequestLogContext, options: CoreOptions = {}, deps: PolicyFallbackDeps = {},
+): Promise<Response> {
+  const turn = options.codexPassthroughTurn ?? captureCodexPassthroughTurn(config.providers, options.inboundWire ?? "responses");
+  if (!turn || options.codexPassthroughTurn) return handleResponsesWithPolicyFallbackInner(req, config, logCtx, options, deps);
+  const budget = options.translatorBudget ?? createTranslatorBudget();
+  const signal = options.abortSignal ?? req.signal;
+  const release = () => { releaseCodexPassthroughTurnSource(turn); signal.removeEventListener("abort", release); };
+  if (signal.aborted) release(); else signal.addEventListener("abort", release, { once: true });
+  try {
+    const response = await handleResponsesWithPolicyFallbackInner(req, config, logCtx, { ...options, codexPassthroughTurn: turn, translatorBudget: budget }, deps);
+    const final = options.translatorBudget ? response : finalizeOwnedTranslatorBudget(response, budget, signal);
+    return finalizeAccountLease(final, release, release);
+  } catch (error) {
+    release();
+    if (!options.translatorBudget) budget.dispose();
+    throw error;
+  }
 }
 
 export const handleResponses = handleResponsesWithPolicyFallback;

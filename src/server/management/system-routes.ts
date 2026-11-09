@@ -76,6 +76,7 @@ export async function handleSystemRoutes(ctx: ManagementContext): Promise<Respon
       uptime: process.uptime(),
       pid: process.pid,
       spendLedger: spendLedgerDiagnosticsSnapshot(),
+      forkModelApiListener: ctx.deps.forkModelApiRuntime?.() ?? null,
     });
   }
   if (url.pathname === "/api/system/memory" && req.method === "GET") {

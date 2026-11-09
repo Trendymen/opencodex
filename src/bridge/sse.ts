@@ -25,6 +25,11 @@ import {
   repairFreeformToolInput,
 } from "../responses/apply-patch-envelope";
 import { ProgressiveFreeformInputReader } from "../responses/progressive-freeform-input";
+import {
+  createAnnotationDirectiveCodeSpanFilter,
+  stripAnnotationDirectiveCodeSpans,
+  type AnnotationDirectiveCodeSpanFilter,
+} from "../responses/annotation-directive";
 import { encodeCompactionSummary, releaseCompactionCiphertextLease } from "../responses/compaction";
 import { compileCodeModeHelperInput, resolveCodeModeHelperName } from "../responses/code-mode-helper-compat";
 import { mayBecomeCodeModeShellInput } from "../responses/code-mode-shell-input";
@@ -396,6 +401,7 @@ export function bridgeToResponsesSSE(
         memoryCitationEscaper: MemoryCitationEscaper;
         /** Bytes the escaper currently holds, charged to the translator budget. */
         heldBytes: number;
+        annotationFilter: AnnotationDirectiveCodeSpanFilter;
         phase?: OcxMessagePhase;
       } | null = null;
       let currentReasoning: { itemId: string; outputIndex: number; text: StringChunks } | null = null;
@@ -581,11 +587,10 @@ export function bridgeToResponsesSSE(
 
       const closeCurrentMessage = (inferredPhase?: OcxMessagePhase) => {
         if (!currentMsg) return;
-        // Release anything the citation filter was holding for this message, then strip the
-        // accumulated text: closeCurrentMessage re-sends it in output_text.done and
-        // output_item.done, so filtering only the deltas would leave the markers in both.
+        // 按输入顺序释放过滤器；done 事件也重写累积正文，避免重新带回标记。
         const trailing = currentMsg.citationFilter.flush();
-        const escapedTrailing = trailing ? currentMsg.memoryCitationEscaper.push(trailing) : "";
+        const released = currentMsg.annotationFilter.push(trailing) + currentMsg.annotationFilter.flush();
+        const escapedTrailing = released ? currentMsg.memoryCitationEscaper.push(released) : "";
         // A held tail is a partial tag whose whole-message context is now known: resolve it once
         // against the accumulated text so a real block's trailing close tag survives.
         const heldTail = currentMsg.memoryCitationEscaper.pending();
@@ -598,7 +603,7 @@ export function bridgeToResponsesSSE(
             content_index: 0, delta: finalDelta,
           });
         }
-        const messageText = escapeVisibleTags(stripCitationMarkers(joinChunks(currentMsg.text)));
+        const messageText = escapeVisibleTags(stripAnnotationDirectiveCodeSpans(stripCitationMarkers(joinChunks(currentMsg.text))));
         // Chat Completions has no message-phase field. Keep its live item provisional, then
         // classify it only when the next adapter event proves whether this text led into more
         // work or completed the turn. Explicit adapter phases always outrank this inference.
@@ -1052,6 +1057,7 @@ export function bridgeToResponsesSSE(
                   citationFilter: createCitationMarkerFilter(),
                   memoryCitationEscaper: escapeTags ? createMemoryCitationEscaper() : passthroughMemoryCitationEscaper,
                   heldBytes: 0,
+                  annotationFilter: createAnnotationDirectiveCodeSpanFilter(),
                   ...(event.phase ? { phase: event.phase } : {}),
                 };
               }
@@ -1063,7 +1069,7 @@ export function bridgeToResponsesSSE(
               // A citation span can straddle a delta boundary, so the filter withholds an
               // unterminated tail and releases it at close (#3150). The accumulator above
               // keeps the raw text; it is stripped once in closeCurrentMessage.
-              const visible = currentMsg.citationFilter.push(event.text);
+              const visible = currentMsg.annotationFilter.push(currentMsg.citationFilter.push(event.text));
               // Escape a literal memory-citation tag: the Codex client hides everything from an
               // opening tag to the first closing one (or to the end when none follows), so one
               // quoted mention in prose swallows the rest of the answer and reads as a truncated

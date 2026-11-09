@@ -1,4 +1,5 @@
 import { messagesUnknownEndpointMessage } from "../../lib/messages-error-body";
+import { forkModelApiRouteAllowed } from "../../fork/model-api-listener";
 import type { Server, ServerWebSocket } from "bun";
 import {
   claudeInterceptRouteAllowed,
@@ -28,6 +29,7 @@ import {
   webSocketFrameBytes,
 } from "./live-sideband";
 import {
+  withCodexResponseHeaders,
   withRequestLogId,
   withMessagesRequestLogId,
 } from "./startup-warnings";
@@ -243,7 +245,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
     liveCallBindings,
     loadRemoteWorkspaceRuntime,
     localAttestationSecret,
-    loopbackPolicy,
+    loopbackPolicy, forkModelApiPolicy,
     managementApiDeps,
     managementAuth,
     managementSessionControl,
@@ -275,6 +277,9 @@ export function createServeOptions(ctx: ServeOptionsContext) {
       // #8338: the kernel-observed peer, so the configured standalone dashboard proxy can be verified.
       else if (ingress === "public" && config.dashboardTrustedProxy !== undefined) markDashboardProxyPeer(req, requestServer.requestIP(req)?.address);
       const requestUrl = codexCompatibleUrl(req.url);
+      if (ingress === "fork-model-api" && !forkModelApiRouteAllowed(requestUrl)) {
+        return withCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${new URL(req.url).pathname}`), req, forkModelApiPolicy());
+      }
       const linkPolicyView = ingress === "hub-link" ? linkPolicy() : undefined;
       // The unauthenticated loopback listener (#1102) serves a fixed allowlist and nothing
       // else. Rejecting here, before any handler runs, is what keeps the surface from growing
@@ -317,7 +322,9 @@ export function createServeOptions(ctx: ServeOptionsContext) {
       // The Claude intercept listener is loopback by construction (the CONNECT proxy binds
       // 127.0.0.1 and the request was rewritten onto a loopback origin), and its callers carry
       // Anthropic credentials, not opencodex admission tokens — so it takes the loopback view too.
-      const policy: RequestPolicyView = ingress === "hub-link"
+      const policy: RequestPolicyView = ingress === "fork-model-api"
+        ? forkModelApiPolicy()
+        : ingress === "hub-link"
         ? linkPolicyView!
         : ingress === "unauthenticated-loopback" || ingress === "claude-intercept" || ingress === "local-control"
           ? loopbackPolicy()
@@ -1459,6 +1466,8 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           let response: Response;
           try {
             response = await handleResponses(sessionReq, config, logCtx, {
+              clientInitialResponses: true,
+              codexSessionIdSynthesized: !req.headers.has("session_id") && sessionReq.headers.has("session_id"),
               turnAdmissionLease,
               admission,
               advisorAdmissionPolicy,
@@ -1489,9 +1498,8 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             );
             throw error;
           }
-          return withRequestLogId(
-            withCors(responseWithDeferredRequestLog(response, requestId, start, logCtx), req, policy),
-            requestId,
+          return withCodexResponseHeaders(
+            responseWithDeferredRequestLog(response, requestId, start, logCtx), req, policy, requestId,
           );
         }, { requestId, start, logCtx });
       }

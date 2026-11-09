@@ -375,6 +375,7 @@ export function createWebsocketHandler(
             const replayPrincipal = retainedPrincipal && (isContextPrincipalCurrent(retainedPrincipal.clientPrincipalId, config)
               ? retainedPrincipal : { clientPrincipalId: undefined });
             const response = await handleResponses(req, config, logCtx, {
+              clientInitialResponses: true,
               advisorAdmissionPolicy,
               ...(wsAdmission ? { admission: wsAdmission } : {}),
               // Keep an empty holder after revocation: a different forwarded bearer

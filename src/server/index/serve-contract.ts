@@ -19,7 +19,7 @@ import type { ReadinessGate } from "../readiness";
 import type { WorkflowRefusalLog } from "../workflow-refusal";
 import type { AdmittedHttpTurnOptions } from "../admitted-http-turn";
 
-export type ServerIngress = "public" | "unauthenticated-loopback" | "hub-management" | "claude-intercept" | "hub-link" | "local-control";
+export type ServerIngress = "fork-model-api" | "public" | "unauthenticated-loopback" | "hub-management" | "claude-intercept" | "hub-link" | "local-control";
 
 export function trustedLoopbackForIngress(ingress: ServerIngress, hostname: string): boolean {
   return ingress === "unauthenticated-loopback" || ingress === "local-control"
@@ -75,6 +75,7 @@ export interface ServeOptionsContext {
   >;
   localAttestationSecret: string;
   loopbackPolicy: () => RequestPolicyView;
+  forkModelApiPolicy: () => RequestPolicyView;
   managementApiDeps: ManagementApiDeps;
   managementAuth: ManagementAuthState;
   managementSessionControl: ManagementSessionControl;

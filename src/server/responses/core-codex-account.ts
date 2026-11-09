@@ -52,6 +52,8 @@ import {
 } from "../../codex/model-entitlements";
 import type { TransientSendBudget } from "../../lib/upstream-retry";
 import { resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve";
+import { routedCodexPassthroughPermissions } from "../../fork/codex-passthrough-routing";
+import { codexAccountSoftPrecheckOptions } from "../../fork/codex-passthrough-local-errors";
 import { codexAccountSelectionForTurn } from "../lifecycle";
 import { isNativeMainTrafficBlocked } from "../../codex/native-profile-startup";
 import { MAIN_CODEX_ACCOUNT_ID } from "../../codex/main-account";
@@ -498,6 +500,7 @@ export interface CodexPoolAccountRetryArgs {
   parsed: OcxParsedRequest;
   logCtx: RequestLogContext;
   options: CodexCredentialOwnershipOptions & {
+    codexPassthroughTurn?: import("../../fork/codex-passthrough-turn").CodexPassthroughTurn;
     admission?: DataPlaneAdmission;
     codexAuthPolicy?: CodexAuthPolicyConfig;
     visionDescribeTerminal?: boolean;
@@ -793,6 +796,7 @@ export async function retryCodexPoolOnAlternateAccount(
         "pool",
         {
           excludeAccountId: firstAuthCtx.accountId,
+          ...codexAccountSoftPrecheckOptions(routedCodexPassthroughPermissions(options.codexPassthroughTurn, route, options.inboundWire ?? "responses")),
           signal: options.abortSignal,
           admission: options.admission,
           codexAuthPolicy: options.codexAuthPolicy,
@@ -923,6 +927,7 @@ export async function retryCodexPoolOnAlternateAccount(
     await firstResponse.body?.cancel().catch(() => undefined);
     return { kind: "transport", error, authCtx: retryAuthCtx };
   }
+  const codexPassthroughPermissions = routedCodexPassthroughPermissions(options.codexPassthroughTurn, { ...route, provider: retryProvider }, inboundWire);
   const retryAdapter = resolveAdapter(
     resolveWireProtocolOverride(route.providerName, route.modelId, retryProvider, inboundWire, route.staticPolicy),
     config.cacheRetention,
@@ -961,6 +966,7 @@ export async function retryCodexPoolOnAlternateAccount(
       headers: retryHeaders,
       providerName: route.providerName,
       translatorBudget: options.translatorBudget,
+      codexPassthroughPermissions,
     });
   } catch (error) {
     if (!(error instanceof CodexInstallationIdUnavailableError)) throw error;
@@ -1082,6 +1088,7 @@ export async function retryCodexPoolOnAlternateAccount(
               connectMs,
               stream,
               providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions,
                 httpOnly,
                 providerName: route.providerName,
                 modelId: route.modelId,

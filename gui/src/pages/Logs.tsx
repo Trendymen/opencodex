@@ -34,6 +34,7 @@ import { failureAttributionLabels, failureDetailLabel, failureSummary, upstreamC
 import "./logs-decode-rate.css";
 import { formatEstimatedUsd, formatEstimatedUsdValue, summarizeEstimatedCosts } from "./logs-cost-format";
 import { cacheSplit, isCursorUsageProvider, tokensTitle } from "./logs-token-title";
+import type { SessionEffortObservation } from "../../../src/usage/session-effort-observation";
 import {
   sanitizeLogEntryRouteDecision,
   validCachedRouteDecision,
@@ -147,6 +148,7 @@ interface LogAttempt extends LogFailureAttribution {
   model: string;
   adapter: string;
   status: number;
+  upstreamHttpStatus?: number;
   durationMs: number;
   sendCount: number;
   recoveryKinds: AttemptRecoveryKind[];
@@ -164,6 +166,7 @@ interface LogAttempt extends LogFailureAttribution {
 }
 
 export interface LogEntry extends LogFailureAttribution {
+  sessionEffortObservation?: SessionEffortObservation;
   requestId?: string;
   timestamp: number;
   model: string;
@@ -197,6 +200,7 @@ export interface LogEntry extends LogFailureAttribution {
   wireModel?: string;
   modelSupportsServiceTier?: boolean;
   status: number;
+  upstreamHttpStatus?: number;
   durationMs: number;
   errorCode?: string;
   /** Classified upstream condition (closed enum) and proxy-authored failure text; never upstream text. */
@@ -297,6 +301,11 @@ function reasoningWireLabel(log: ReasoningLogFields): string | undefined {
   return `${log.reasoningWireField}=${log.reasoningWireValue}`;
 }
 
+export function SessionEffortIndicator({ observation, t }: { observation?: SessionEffortObservation; t: TFn }) {
+  if (!observation) return null;
+  return <>{" · "}<span title={t("logs.effort.initialUpdate")}>{observation.status === "visible" ? observation.sessionEffort : t("logs.effort.unknown")}</span></>;
+}
+
 function servedModelLabel(log: { model: string; resolvedModel?: string; servedModel?: string; wireModel?: string }): ReactNode {
   if (isModelRerouted(log)) {
     return <>{modelLabel(log.wireModel ?? log.model)}{" → "}{modelLabel(log.servedModel!)}</>;
@@ -356,6 +365,7 @@ const ESTIMATE_REASON_KEYS = {
  */
 const RECOVERY_KIND_KEYS = {
   "transient-5xx": "logs.detail.attempt.recovery.transient5xx",
+  "agent-task-recovery": "logs.detail.attempt.recovery.agentTaskRecovery",
   "connection-reset": "logs.detail.attempt.recovery.connectionReset",
   "oauth-401": "logs.detail.attempt.recovery.oauth401",
   "oauth-account-403": "logs.detail.attempt.recovery.oauthAccount403",
@@ -965,7 +975,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                   {/* The wire field (reasoning_effort=high) stays in the title and the detail
                       dialog; as a second line it repeated the label and, in mono, outgrew the
                       column and painted over the next cell. */}
-                  {columns.effort && <td className="mono log-reasoning-cell" title={reasoningWire}>{effortLabel(log)}</td>}
+                  {columns.effort && <td className="mono log-reasoning-cell" title={reasoningWire}>{effortLabel(log)}<SessionEffortIndicator observation={log.sessionEffortObservation} t={t} /></td>}
                   {columns.tokens && (
                   <td className="text-right font-mono tabular-nums" title={tokensTitle(log, t)}>
                     {(() => {
@@ -1075,7 +1085,7 @@ function useModalDialog(open: boolean) {
   return ref;
 }
 
-function LogDetailDialog({
+export function LogDetailDialog({
   detail, detailInfo, localeCode, localeTag, serverTimeZone, t, onClose, onFilterConversation,
 }: {
   detail: LogEntry;
@@ -1096,6 +1106,12 @@ function LogDetailDialog({
   const reasoningWire = reasoningWireLabel(detail);
   const detailFailure = failureAttributionLabels(detail, t);
   const summary = failureSummary(detail, detailInfo, t);
+  const localDeliveryFailure = detail.failureCause === "local-refusal" && [
+    "private-sse-read-timeout", "private-body-timeout", "private-invalid-json", "private-invalid-utf8",
+    "private-oversized", "private-budget", "private-header-name", "private-body-unreadable",
+  ].includes(detail.errorCode ?? "");
+  const summaryLabel = localDeliveryFailure && detailInfo ? t("logs.detail.localFailure") : summary.label;
+  const summaryDescription = localDeliveryFailure && detailInfo ? t("logs.detail.localFailureDesc") : summary.description;
 
   const copyRequestId = async () => {
     if (!detail.requestId) return;
@@ -1120,11 +1136,11 @@ function LogDetailDialog({
         <div className="modal-head">
           <h3 id="log-detail-title" className="flex min-w-0 flex-wrap items-center gap-2.5">
             <StatusPill status={detail.status} outcome={classifyRequestOutcome(detail)} label={t(outcomeKey(detail))} announce={false} className="h-6 text-[13px]" />
-            {summary.label && <span className="logs-detail-info m-0">{summary.label}</span>}
+            {summaryLabel && <span className="logs-detail-info m-0">{summaryLabel}</span>}
           </h3>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.cancel")}><IconX /></button>
         </div>
-        {summary.description && <p className="modal-desc">{summary.description}</p>}
+        {summaryDescription && <p className="modal-desc">{summaryDescription}</p>}
 
         <section className="log-detail-section" aria-labelledby="log-detail-basic">
           <h4 id="log-detail-basic" className="log-detail-section-title">{t("logs.detail.section.basic")}</h4>
@@ -1188,10 +1204,16 @@ function LogDetailDialog({
             {(detail.requestedEffort || detail.effectiveEffort) && (
               <><span className="muted">{t("logs.col.effort")}</span><span className="mono">{effortLabel(detail)}{reasoningWire ? ` (${reasoningWire})` : ""}</span></>
             )}
+            {detail.sessionEffortObservation && <>
+              <span className="muted">{t("logs.effort.initialTopLevel")}</span><span className="mono">{detail.sessionEffortObservation.clientEffort === "unknown" ? t("logs.effort.unknown") : detail.sessionEffortObservation.clientEffort}</span>
+              <span className="muted">{t("logs.effort.initialUpdate")}</span><span className="mono">{detail.sessionEffortObservation.status === "visible" ? detail.sessionEffortObservation.sessionEffort : t(detail.sessionEffortObservation.status === "not_in_input" ? "logs.effort.notInInput" : "logs.effort.unrecognized")}</span>
+            </>}
             {detail.errorCode && (<><span className="muted">{t("logs.col.error")}</span><span className="mono">{detail.errorCode}</span></>)}
             {upstreamConditionLabel(detail.upstreamCondition, t) && (<><span className="muted">{t("logs.col.upstreamReason")}</span><span>{upstreamConditionLabel(detail.upstreamCondition, t)}</span></>)}
             {failureDetailLabel(detail.failureDetail, t) && (<><span className="muted">{t("logs.col.failureDetail")}</span><span>{failureDetailLabel(detail.failureDetail, t)}</span></>)}
+            {detail.upstreamHttpStatus !== undefined && (<><span className="muted">{t("logs.col.upstreamHttpStatus")}</span><span className="mono">{detail.upstreamHttpStatus}</span></>)}
           </div>
+          {detail.sessionEffortObservation && <p className="log-detail-notes-line muted">{t("logs.effort.observationBoundary")}</p>}
         </section>
 
         <section className="log-detail-section" aria-labelledby="log-detail-route">

@@ -39,6 +39,7 @@ import { redactSecretString, sanitizeLogMetadataString } from "../lib/redact";
 import type { UpstreamCondition } from "../lib/upstream-condition";
 import { boundedServiceTier, errorDetailFor, projectErrorDetail } from "../usage/error-detail";
 import { incompleteReasonDetail, upstreamErrorIsLocal, type FailureDetail } from "./request-log-failure-detail";
+import { readSessionEffortObservation, type SessionEffortObservation } from "../usage/session-effort-observation";
 import {
   appendUsageEntry,
   classifyCacheTelemetryProvenance,
@@ -50,6 +51,7 @@ import {
   isKnownCacheTelemetryProvenance,
   isKnownInboundProtocol,
   isKnownTerminalSource,
+  isUpstreamHttpStatus,
   isKnownTransportPhase,
   isKnownUsageSurface,
   isCodexUsageAccountLogLabel,
@@ -126,6 +128,7 @@ export function cacheDiagnosticsObserving(): boolean {
 }
 
 export interface RequestLogContext extends UpstreamErrorDiagnostics, LinkRequestLogCarrier, RequestBodyLogContext {
+  upstreamHttpStatus?: number;
   model: string;
   provider: string;
   client?: UsageClient;
@@ -194,6 +197,7 @@ export interface RequestLogContext extends UpstreamErrorDiagnostics, LinkRequest
   shadowCallRewrittenFrom?: string;
   /** Internal structural combo identity; omitted from RequestLogEntry/JSONL. */
   comboId?: string;
+  sessionEffortObservation?: SessionEffortObservation;
   requestedEffort?: string;
   effectiveEffort?: string;
   reasoningWireField?: string;
@@ -330,6 +334,7 @@ export function rebindCacheDiagnosticBody(
 }
 
 export interface RequestLogEntry extends UpstreamErrorDiagnostics, LinkRequestLogCarrier, RequestBodyEntryField {
+  upstreamHttpStatus?: number;
   requestId: string;
   client?: UsageClient;
   /** The logical request this row belongs to (#4546); absent on rows written without a budget. */
@@ -368,6 +373,7 @@ export interface RequestLogEntry extends UpstreamErrorDiagnostics, LinkRequestLo
   requestedAlias?: string;
   /** Original bare helper model when the opt-in shadow-call route rewrote this request. */
   shadowCallRewrittenFrom?: string;
+  sessionEffortObservation?: SessionEffortObservation;
   requestedEffort?: string;
   effectiveEffort?: string;
   reasoningWireField?: string;
@@ -516,6 +522,7 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
   const claudeCompatibility = normalizeClaudeCompatibilityUsageLog(entry.claudeCompatibility);
   const spend = normalizeRequestSpend(entry.spend);
   const protocolTrace = parseProtocolTraceV1(entry.protocolTrace);
+  const sessionEffortObservation = readSessionEffortObservation(entry);
   // projectErrorDetail bounds the tier fields (top-level and per attempt) itself, so this stays safe
   // for a row that did not come through the disk reader; attempts are copied before it edits them.
   const attempts = Array.isArray(entry.attempts) ? entry.attempts.map(({ accountTag, ...attempt }) => ({ ...attempt,
@@ -542,6 +549,7 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
       ? { shadowCallRewrittenFrom: entry.shadowCallRewrittenFrom }
       : {}),
     ...(entry.requestedEffort ? { requestedEffort: entry.requestedEffort } : {}),
+    ...(sessionEffortObservation ? { sessionEffortObservation } : {}),
     ...(entry.effectiveEffort ? { effectiveEffort: entry.effectiveEffort } : {}),
     ...(entry.reasoningWireField ? { reasoningWireField: entry.reasoningWireField } : {}),
     ...(entry.reasoningWireValue !== undefined ? { reasoningWireValue: entry.reasoningWireValue } : {}),
@@ -557,6 +565,7 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
     ...(entry.tierOutcome ? { tierOutcome: entry.tierOutcome } : {}),
     ...modelIdentityLogFields(entry),
     status: entry.status,
+    ...(isUpstreamHttpStatus(entry.upstreamHttpStatus) ? { upstreamHttpStatus: entry.upstreamHttpStatus } : {}),
     durationMs: entry.durationMs,
     // Closed code, condition, failure detail and quota reset; legacy upstream text is read once and dropped.
     ...errorDetailFor(entry),
@@ -672,13 +681,26 @@ export function rehydrateRequestLogsAfterLedgerReplacement(
   return hydrateRequestLogsFromDisk(reader);
 }
 
+function snapshotRequestLogEntry(entry: RequestLogEntry): RequestLogEntry {
+  const source = entry as unknown as Record<PropertyKey, unknown>;
+  const retained = {} as Record<PropertyKey, unknown>;
+  for (const key of Reflect.ownKeys(entry)) {
+    if (key === "sessionEffortObservation" || !Object.prototype.propertyIsEnumerable.call(entry, key)) continue;
+    if (key === "__proto__") Object.defineProperty(retained, key, { value: source[key], enumerable: true, writable: true, configurable: true });
+    else retained[key] = source[key];
+  }
+  return retained as unknown as RequestLogEntry;
+}
+
 export function addRequestLog(entry: RequestLogEntry) {
   // Rows keep proxy-owned error facts only; upstream error text and tokens stop here (both the
   // retained ring row and the usage.jsonl projection below read the projected entry).
+  const sessionEffortObservation = readSessionEffortObservation(entry);
   const attemptNormalizationDropped = entry.attemptNormalizationDropped === true, client = normalizeRecordedClient(entry.client) ?? "unknown";
   const clientDescriptor = Object.getOwnPropertyDescriptor(entry, "client");
-  if (!Object.isFrozen(entry) || !clientDescriptor?.enumerable || !("value" in clientDescriptor) || clientDescriptor.value !== client || Object.values(Object.getOwnPropertyDescriptors(entry)).some(descriptor => !("value" in descriptor))) {
-    entry = { ...entry, ...errorDetailFor(entry), client, ...(attemptNormalizationDropped ? { attemptNormalizationDropped: true } : {}) };
+  if ("sessionEffortObservation" in entry || !Object.isFrozen(entry) || !clientDescriptor?.enumerable || !("value" in clientDescriptor) || clientDescriptor.value !== client || Object.values(Object.getOwnPropertyDescriptors(entry)).some(descriptor => !("value" in descriptor))) {
+    const detail = errorDetailFor(entry);
+    entry = { ...snapshotRequestLogEntry(entry), ...detail, client, ...(attemptNormalizationDropped ? { attemptNormalizationDropped: true } : {}) };
   }
   entry = projectErrorDetail(entry);
   if (attemptNormalizationDropped && entry.attemptNormalizationDropped !== true) entry = { ...entry, attemptNormalizationDropped: true };
@@ -710,6 +732,7 @@ export function addRequestLog(entry: RequestLogEntry) {
   else if (retained !== entry) delete retained.claudeCompatibility;
   if (jevDecision) retained.jevDecision = jevDecision;
   else if (retained !== entry) delete retained.jevDecision;
+  if (sessionEffortObservation) retained.sessionEffortObservation = sessionEffortObservation;
   entry = retained;
   retainRequestLogEntry(entry);
   for (const observer of requestLogObserversForTests) {
@@ -756,6 +779,7 @@ export function addRequestLog(entry: RequestLogEntry) {
         ? { shadowCallRewrittenFrom: entry.shadowCallRewrittenFrom }
         : {}),
       ...(entry.requestedEffort ? { requestedEffort: entry.requestedEffort } : {}),
+      ...(entry.sessionEffortObservation ? { sessionEffortObservation: entry.sessionEffortObservation } : {}),
       ...(entry.effectiveEffort ? { effectiveEffort: entry.effectiveEffort } : {}),
       ...(entry.reasoningWireField ? { reasoningWireField: entry.reasoningWireField } : {}),
       ...(entry.reasoningWireValue !== undefined ? { reasoningWireValue: entry.reasoningWireValue } : {}),
@@ -770,6 +794,7 @@ export function addRequestLog(entry: RequestLogEntry) {
       ...(entry.responseServiceTier ? { responseServiceTier: entry.responseServiceTier } : {}),
       ...(entry.tierOutcome ? { tierOutcome: entry.tierOutcome } : {}),
       status: entry.status,
+      ...(isUpstreamHttpStatus(entry.upstreamHttpStatus) ? { upstreamHttpStatus: entry.upstreamHttpStatus } : {}),
       durationMs: entry.durationMs,
       ...(entry.firstOutputMs !== undefined ? { firstOutputMs: entry.firstOutputMs } : {}),
       ...(entry.genStartMs !== undefined ? { genStartMs: entry.genStartMs } : {}),
@@ -1516,6 +1541,7 @@ function writeFinalRequestLog(
       : logCtx.errorCode ?? bareVerdictRowErrorCode(logCtx) ?? requestLogErrorCode(attemptStatus, logCtx.upstreamError, logCtx.terminalErrorCode, false);
     if (attemptErrorCode) logCtx.activeAttempt.errorCode = attemptErrorCode;
     else delete logCtx.activeAttempt.errorCode;
+    if (isUpstreamHttpStatus(logCtx.upstreamHttpStatus)) logCtx.activeAttempt.upstreamHttpStatus = logCtx.upstreamHttpStatus;
   }
   // Derived and stamped in a sibling module, before the attempt snapshot below. Every input is
   // a closed value; the open error strings are deliberately not among them.
@@ -1641,6 +1667,7 @@ function writeFinalRequestLog(
     ...(logCtx.requestedAlias ? { requestedAlias: logCtx.requestedAlias } : {}),
     ...(shadowCallRewrittenFrom ? { shadowCallRewrittenFrom } : {}),
     ...(logCtx.requestedEffort ? { requestedEffort: logCtx.requestedEffort } : {}),
+    ...(logCtx.sessionEffortObservation ? { sessionEffortObservation: logCtx.sessionEffortObservation } : {}),
     ...(logCtx.effectiveEffort ? { effectiveEffort: logCtx.effectiveEffort } : {}),
     ...(logCtx.reasoningWireField ? { reasoningWireField: logCtx.reasoningWireField } : {}),
     ...(logCtx.reasoningWireValue !== undefined ? { reasoningWireValue: logCtx.reasoningWireValue } : {}),
@@ -1656,6 +1683,7 @@ function writeFinalRequestLog(
       : {}),
     ...modelIdentityLogFields(logCtx),
     status: effectiveStatus,
+    ...(isUpstreamHttpStatus(logCtx.upstreamHttpStatus) ? { upstreamHttpStatus: logCtx.upstreamHttpStatus } : {}),
     durationMs,
     ...(logCtx.firstOutputMs !== undefined ? { firstOutputMs: logCtx.firstOutputMs } : {}),
     ...generationWindowFields(logCtx, start),
@@ -1815,6 +1843,7 @@ export async function recordKeyAttemptFailure(logCtx: RequestLogContext, respons
   const attempt = logCtx.activeAttempt;
   if (!attempt || !KEY_ACCOUNT_LOG_LABEL_RE.test(attempt.accountLogLabel ?? "")) return;
   attempt.status = response.status;
+  attempt.upstreamHttpStatus = response.status;
   const cancelOriginal = (): void => { try { void response.body?.cancel().catch(() => {}); } catch { /* closed */ } };
   signal?.addEventListener("abort", cancelOriginal, { once: true });
   try {
@@ -1891,6 +1920,8 @@ export function noteProviderAttemptSend(
     sealRequestAttemptIdentity(attempt, logCtx.provider, attempt.adapter, next);
     recordAttemptCredentialSource(attempt, providerName, provider, attempt.adapter);
   }
+  delete logCtx.upstreamHttpStatus;
+  if (attempt) delete attempt.upstreamHttpStatus;
   noteAttemptSend(attempt, inputTokenEstimate, recovery);
   if (attempt && keyUsageOwners.has(attempt)) {
     keyWireUsageBaselines.set(attempt, cloneKeyUsage(attempt.usage));

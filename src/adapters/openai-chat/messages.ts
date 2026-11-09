@@ -6,7 +6,7 @@ import { limitMistralChatImages } from "./mistral-image-limit";
 import { isVolcengineArkPaygChatTarget } from "./tool-schema";
 import { contentPartsToText } from "../image";
 import { EMPTY_TOOL_OUTPUT_ANNOTATION, isWhitespaceOnlyTextPartArray } from "../empty-tool-output-annotation";
-import { identifyRoutedModel } from "../identity";
+import { identifyRoutedModel, identifyRoutedToolPrompt } from "../identity";
 import { buildNonOpenAIToolCatalogNudgeForTools, shouldInjectNonOpenAIToolCatalogNudge } from "../tool-catalog-nudge";
 import { peekReasoningForCall } from "../../responses/reasoning-replay-cache";
 import { chatReasoningReplayPolicy, isReflectionThinkingModel } from "./reasoning-replay";
@@ -221,7 +221,8 @@ export function messagesToChatFormat(parsed: OcxParsedRequest, provider: OcxProv
     const wireModelId = provider.modelSuffixBracketStrip
       ? stripBracketedModelSuffix(parsed.modelId)
       : parsed.modelId;
-    const sys = identifyRoutedModel(systemParts.join("\n\n"), wireModelId);
+    const identifySystem = toolCatalogNudge ? identifyRoutedToolPrompt : identifyRoutedModel;
+    const sys = identifySystem(systemParts.join("\n\n"), wireModelId);
     out.push({ role: "system", content: sys });
   }
 

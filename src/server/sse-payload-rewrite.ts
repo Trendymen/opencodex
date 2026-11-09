@@ -24,6 +24,7 @@ export type SsePayloadRewrite = (payload: string) => string;
  * once per teardown path.
  */
 export type SseBlockRewrite = ((block: string) => readonly string[]) & {
+  flush?: () => readonly string[];
   dispose?: () => void;
 };
 
@@ -56,6 +57,20 @@ export function composeSseBlockRewrites(...rewrites: SseBlockRewrite[]): SseBloc
   };
   // Child disposal is part of the contract: one idempotent disposer for the
   // whole chain, so relay teardown never leaks a nested collector.
+  composed.flush = () => {
+    if (disposed) return [];
+    const output: string[] = [];
+    for (let index = 0; index < active.length; index++) {
+      let blocks = active[index]!.flush?.() ?? [];
+      for (let nextIndex = index + 1; nextIndex < active.length; nextIndex++) {
+        const next: string[] = [];
+        for (const block of blocks) next.push(...active[nextIndex]!(block));
+        blocks = next;
+      }
+      output.push(...blocks);
+    }
+    return output;
+  };
   composed.dispose = () => {
     if (disposed) return;
     disposed = true;
@@ -244,7 +259,19 @@ export function replaceSseDataPayload(block: string, payload: string): string {
   const { newline, lines } = splitSseBlock(block);
   const rewritten: string[] = [];
   let replaced = false;
+  let eventType: string | undefined;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      && typeof (parsed as { type?: unknown }).type === "string") {
+      eventType = (parsed as { type: string }).type;
+    }
+  } catch { /* preserve the original event field for non-JSON payloads */ }
   for (const line of lines) {
+    if (line.startsWith("event:") && eventType !== undefined) {
+      rewritten.push(`event: ${eventType}`);
+      continue;
+    }
     if (line !== "data" && !line.startsWith("data:")) {
       rewritten.push(line);
       continue;
@@ -299,11 +326,13 @@ export function relaySseWithBlockRewrite(
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   const buffer = createSseBlockBuffer(translatorBudget);
+  let delimiter = "\n\n";
   // Relays have several independent teardown paths; disposal is exactly once.
   let disposed = false;
   let cancelled = false;
   let pendingLineFeed = false;
   let pendingLineFeedVisible = false;
+  let finalTailNeedsDelimiter = false;
   const disposeRewrite = (): void => {
     if (disposed) return;
     disposed = true;
@@ -341,7 +370,8 @@ export function relaySseWithBlockRewrite(
     let emitted = 0;
     let next: { block: string; delimiter: string } | null;
     while (!cancelled && (next = buffer.next())) {
-      const { block, delimiter } = next;
+      const { block } = next;
+      delimiter = next.delimiter;
       // A CR followed by buffered text is already settled; only an end-of-buffer CR
       // can still receive the LF that extends its delimiter in the next fragment.
       pendingLineFeed = delimiter.endsWith("\r") && buffer.isEmpty();
@@ -363,9 +393,11 @@ export function relaySseWithBlockRewrite(
       // A trailing fragment has no delimiter of its own; multiple emitted
       // blocks must still be framed as separate events (#893 review).
       const tailDelimiter = tail.includes("\r\n") ? "\r\n\r\n" : "\n\n";
+      delimiter = tailDelimiter;
       for (let i = 0; i < tailBlocks.length; i++) {
         emitted += enqueueText(controller, tailBlocks[i]! + (i < tailBlocks.length - 1 ? tailDelimiter : ""), tail);
       }
+      finalTailNeedsDelimiter = tailBlocks.length > 0;
       buffer.clear();
     }
     return emitted;
@@ -385,6 +417,17 @@ export function relaySseWithBlockRewrite(
     return 0;
   };
 
+  const emitRewriteFlush = (controller: ReadableStreamDefaultController<Uint8Array>): number => {
+    const tailBlocks = rewrite.flush?.() ?? [];
+    if (cancelled) return 0;
+    if (tailBlocks.length > 0 && finalTailNeedsDelimiter) enqueueText(controller, delimiter);
+    for (const block of tailBlocks) {
+      if (cancelled) break;
+      enqueueText(controller, block + delimiter);
+    }
+    return tailBlocks.length;
+  };
+
   return carryPacedStream(body, new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
@@ -401,6 +444,8 @@ export function relaySseWithBlockRewrite(
           if (done) {
             appendFragment(controller, decoder.decode());
             emitProcessedBlocks(controller, true);
+            if (cancelled) return;
+            emitRewriteFlush(controller);
             if (cancelled) return;
             buffer.clear();
             clientFilter?.finish(value => controller.enqueue(value));

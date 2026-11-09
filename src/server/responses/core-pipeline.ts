@@ -1,4 +1,5 @@
 import { markProxyError, rememberProxyErrorMessage } from "../../lib/client-error-body";
+import { markCodexPassthroughResponse, markCodexPassthroughAttemptResponse } from "../../fork/codex-passthrough-turn";
 import { supportsNativeResponsesCompactionTrigger } from "../../providers/openai-tiers";
 import type { OcxConfig } from "../../types";
 import type { RequestLogContext } from "../request-log";
@@ -43,11 +44,16 @@ export async function handleResponsesInner(
   };
   let retention: ReturnType<typeof prepareCompactionRetention>;
   let releasePendingSend = () => {};
+  let finish = (response: Response): Response => response;
   try {
     const requestState = await prepareResponsesRequest(requestContext, admissionState, requestDispatchers);
-    if (requestState instanceof Response) return requestState;
+    if (requestState instanceof Response) return admissionState.codexPassthroughPermissions
+      ? markCodexPassthroughResponse(requestState, admissionState.codexPassthroughPermissions) : requestState;
+    finish = response => markCodexPassthroughAttemptResponse(response, options.codexPassthroughTurn, {
+      providerName: requestState.route.providerName, provider: requestState.route.provider, inboundWire: options.inboundWire ?? "responses",
+    });
     const transportState = await prepareResponsesTransport(requestContext, admissionState, requestState);
-    if (transportState instanceof Response) return markProxyError(transportState);
+    if (transportState instanceof Response) return finish(markProxyError(transportState));
     if (transportState.runTurnAdapter.name === "claude-cli") {
       const instructionImage = options.chatInstructionImage || options.responsesInstructionImage
         || responsesHasInstructionImage(requestState.parsed._rawBody)
@@ -63,7 +69,7 @@ export async function handleResponsesInner(
         rememberProxyErrorMessage(logCtx, message, { status: 400, type: "invalid_request_error", code: "unsupported_input_modality" });
         markProxyError(response);
         markResponseNonReplayable(response);
-        return response;
+        return finish(response);
       }
     }
     options.onCompactionRecoveryRoute?.(requestState.route);
@@ -147,10 +153,10 @@ export async function handleResponsesInner(
       );
     };
     const response = await execute();
-    return retention ? retention.deliver(response) : response;
+    return finish(retention ? retention.deliver(response) : response);
   } catch (error) {
     retention?.dispose();
-    if (error instanceof InvalidRetainedCompactionSummary) return formatErrorResponse(502, "invalid_compaction_summary", error.message);
+    if (error instanceof InvalidRetainedCompactionSummary) return finish(formatErrorResponse(502, "invalid_compaction_summary", error.message));
     throw error;
   } finally {
     releasePendingSend();
