@@ -1,4 +1,5 @@
 import { guardedUpdateIo } from "./update-guarded-io.mjs";
+import { forkUpdateDecision } from "../../src/fork/version-policy.mjs";
 import { createMutationAuthorizer } from "../../src/update/mutation-guard.mjs";
 
 /** Upgrade older I/O-only policy doubles when executing the production update bodies. */
@@ -12,6 +13,6 @@ export function updateSourceFunction(...args: string[]) {
         get serviceAllowed() { return policy.serviceAllowed ?? true; },
       });
     }
-    return execute({ ...deps, ...guardedUpdateIo(deps) });
+    return execute({ ...deps, ...guardedUpdateIo(deps), forkUpdateDecision });
   };
 }

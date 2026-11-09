@@ -14,6 +14,7 @@ export async function forwardProxy(kind: "http" | "https" | "socks5", targetPort
   options: { targetConnectDelayMs?: number } = {}) {
   const sockets = new Set<Socket>(), seen: { authority: string; auth: string }[] = [];
   const pipe = (client: Socket, head = Buffer.alloc(0)) => {
+    client.pause();
     const target = connect({ host: "127.0.0.1", port: targetPort }); sockets.add(target);
     target.on("error", () => client.destroy()); client.on("error", () => target.destroy());
     target.on("close", () => { sockets.delete(target); client.destroy(); }); client.on("close", () => target.destroy());

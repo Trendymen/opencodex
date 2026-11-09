@@ -32,6 +32,7 @@ export const updateStaticImports: Readonly<Record<string, readonly string[]>> = 
     "import { PNPM_READ_CWD, withPnpmCommandCwd, pnpmReadEnvironment } from \"../src/update/pnpm-read-policy.mjs\";",
     "import { checkRegistryPackageIntegrity } from \"../src/update/registry-integrity.mjs\";",
     "import { hasPendingTeardownIn } from \"../src/config/pending-teardown-names.mjs\";",
+    "import { forkUpdateDecision } from \"../src/fork/version-policy.mjs\";",
     "import { npmCachePreflightFailureMessage, resolveNpmCachePath, runNpmCachePreflight, } from \"../src/update/npm-cache-preflight.mjs\";",
     "import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from \"../src/update/tray-update-plan.mjs\";",
     "import { bootRestoreProbe, launcherUsableAfterNpmUpdate, transactionalNpmUpdate as transactionalNpmUpdateSync, transactionalNpmUpdateAsync } from \"../src/update/transactional-install.mjs\";",
@@ -106,7 +107,8 @@ export const updateStaticImports: Readonly<Record<string, readonly string[]>> = 
     "import { isStandaloneModuleUrl } from \"../lib/standalone\";",
     "import { selfLaunchArgv } from \"../lib/self-launch-argv\";",
     "import { PNPM_READ_CWD, withPnpmCommandCwd, pnpmReadEnvironment } from \"./pnpm-read-policy.mjs\";",
-    "import { freshServingPid, hasRestartableServiceManager, readParentPid, readServiceManagerPid, restartServiceManagerJob, supervisionVerdict, unsettledManagerWarning, unsupervisedRuntimeWarning, } from \"./supervised-recovery.mjs\";"
+    "import { freshServingPid, hasRestartableServiceManager, readParentPid, readServiceManagerPid, restartServiceManagerJob, supervisionVerdict, unsettledManagerWarning, unsupervisedRuntimeWarning, } from \"./supervised-recovery.mjs\";",
+    "import { forkUpdateDecision } from \"../fork/version-policy.mjs\";"
   ],
   "src/update/install-detection.mjs": [
     "import { existsSync, readFileSync, realpathSync, statSync } from \"node:fs\";"
@@ -194,6 +196,7 @@ export const updateStaticImports: Readonly<Record<string, readonly string[]>> = 
     "import { atomicWriteFile, getConfigDir } from \"../config\";",
     "import { hasStarPromptRun } from \"../cli/star-prompt\";",
     "import { selfLaunchArgv } from \"../lib/self-launch-argv\";",
+    "import { forkBaseVersion } from \"../fork/version-policy.mjs\";",
     "import { type Channel, currentVersion, detectInstall, latestVersion, runUpdate, updateCommandStr, updateTag, } from \"./index\";"
   ],
   "src/update/npm-cache-preflight.mjs": [
@@ -288,11 +291,10 @@ export const updateStaticImports: Readonly<Record<string, readonly string[]>> = 
     "import { isProcessAlive } from \"../lib/process-control\";"
   ],
   "src/update/transactional-install.mjs": [
-    "import { guardedRenameSync, ownedArtifactRm } from \"./mutation-guard.mjs\";",
-    "import { probeSpawnSync } from \"./mutation-guard.mjs\";",
-    "import { randomBytes } from \"node:crypto\";",
-    "import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from \"node:fs\";",
-    "import { basename, dirname, join } from \"node:path\";"
+    "import { guardedRenameSync, ownedArtifactRm, probeProcessAlive } from \"./mutation-guard.mjs\";",
+    "import { randomBytes, randomUUID } from \"node:crypto\";",
+    "import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from \"node:fs\";",
+    "import { basename, dirname, isAbsolute, join, relative, resolve } from \"node:path\";"
   ],
   "src/update/tray-update-plan.mjs": [],
   "src/update/update-failure-guidance.mjs": [

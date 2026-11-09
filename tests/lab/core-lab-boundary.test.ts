@@ -142,7 +142,7 @@ export function namesLabDirectly(source: string): boolean {
 // at the moment it is created. It is still the same statement and still the start of the same
 // window; what changed is the expression the listener is assigned from. An anchor that no
 // longer matches makes every scan below measure an empty string, which is why they assert on it.
-const SERVE_ANCHOR = "server = spendLedgerLifecycle.track(Bun.serve<WsData>({ ...serveOptions, port: listenPort, hostname: bindHost }));";
+const SERVE_ANCHOR = "server = spendLedgerLifecycle.track(bindListener({ ...serveOptions, port: listenPort, hostname: bindHost }));";
 const ACTIVATION_ANCHOR = "if (labActivationRequired(config, labConfigDir)) {";
 /**
  * The window ends at the RETURN, not at the activation check.
@@ -1032,7 +1032,7 @@ describe("activation window stays synchronous", () => {
    * that this scan never sees.
    */
   const SYNC_WINDOW_RECEIVER_CALLS: Record<string, string> = {
-    "Bun.serve()": "Bun runtime API. serve() returns a Server synchronously; an async serve would be a Bun change, not ours. The existing body-level await scan would still catch `await Bun.serve()`.",
+    "forkModelApiListener.start()": "Synchronous controller start from src/fork/model-api-listener.ts; inspectStartDefinitions below checks its implementation alongside the optional listeners.",
     "server.stop()": "Server.stop on the just-created listener, invoked as `void server.stop(true)` in the loopback-bind rollback. The Promise is discarded, so even an async stop does not suspend startServer; `await server.stop()` is already a Guard-3 failure.",
     "bound.stop()": "The same Server.stop on the loop variable of the management-ingress bind rollback. Same fire-and-forget shape as server.stop().",
     "userCostOverlayReconciler?.stop()": "Instance method on the overlay reconciler. The local binding is typed `{ stop(): void } | null`; the call site cannot see the implementation in user-cost-overlay-reconciler.ts.",
@@ -1186,6 +1186,7 @@ describe("activation window stays synchronous", () => {
 
   test("optional listener start implementations stay synchronous", () => {
     for (const relative of [
+      "src/fork/model-api-listener.ts",
       "src/server/index/optional-listeners.ts",
       "src/server/index/link-listener.ts",
     ]) {

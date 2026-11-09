@@ -24,6 +24,12 @@ import {
   type PersistedUsageEntry,
 } from "../../src/usage/log";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { addRequestLog, clearRequestLogsForTests, getRequestLogEntries, hydrateRequestLogsFromDisk, requestLogEntryFromPersistedUsage } from "../../src/server/request-log";
+import { log } from "../helpers/request-log-entry";
+import { handleManagementAPI } from "../../src/server/management-api";
+import { ManagementRequest } from "../helpers/management-auth";
+import { logsFromApiBody } from "../helpers/logs-api";
+import type { OcxConfig } from "../../src/types";
 
 let testDir = "";
 let previousHome: string | undefined;
@@ -42,6 +48,213 @@ afterEach(() => {
 });
 
 describe("usage log", () => {
+  test("request log snapshots an initially absent observation before caller mutation", async () => {
+    clearRequestLogsForTests();
+    try {
+      const entry = log({ requestId: "outer-mutation", requestedEffort: "high" });
+      addRequestLog(entry);
+      const safe = { clientEffort: "high", sessionEffort: "max", status: "visible" } as const;
+      const observed = log({ requestId: "outer-replacement", sessionEffortObservation: safe });
+      addRequestLog(observed);
+      entry.sessionEffortObservation = { clientEffort: "private-canary", sessionEffort: "max", status: "visible", sensitive: "sensitive-canary" } as never;
+      observed.sessionEffortObservation = entry.sessionEffortObservation;
+      const memory = getRequestLogEntries()[0]!;
+      const url = new URL("http://localhost/api/logs");
+      const response = await handleManagementAPI(new ManagementRequest(url), url, { providers: {} } as OcxConfig);
+      const apiRows = logsFromApiBody(await response!.json());
+      const api = apiRows.find(row => row.requestId === entry.requestId);
+      const persistedRows = readUsageEntries();
+      const persisted = persistedRows[0]!;
+      expect(memory).not.toBe(entry);
+      expect(memory.requestedEffort).toBe("high");
+      expect(memory.sessionEffortObservation).toBeUndefined();
+      expect(api?.sessionEffortObservation).toBeUndefined();
+      expect(persisted.sessionEffortObservation).toBeUndefined();
+      expect(getRequestLogEntries()[1]?.sessionEffortObservation).toEqual(safe);
+      expect(apiRows.find(row => row.requestId === observed.requestId)?.sessionEffortObservation).toEqual(safe);
+      expect(persistedRows[1]?.sessionEffortObservation).toEqual(safe);
+      expect(JSON.stringify([memory, api, persisted])).not.toContain("canary");
+    } finally { clearRequestLogsForTests(); }
+  });
+
+  test.each([false, true])("request log reads an outer observation getter once before storing the row (initially valid=%s)", async initiallyValid => {
+    clearRequestLogsForTests();
+    try {
+      const entry = log({ requestId: "outer-changing" });
+      let reads = 0;
+      Object.defineProperty(entry, "sessionEffortObservation", { enumerable: true, get() {
+        reads++;
+        if (initiallyValid && reads === 1) return { clientEffort: "high", sessionEffort: "max", status: "visible" };
+        return reads <= 2 && !initiallyValid ? undefined : { clientEffort: "private-canary", sessionEffort: "max", status: "visible", sensitive: "sensitive-canary" };
+      } });
+      addRequestLog(entry);
+      const memory = JSON.stringify(getRequestLogEntries());
+      const url = new URL("http://localhost/api/logs");
+      const response = await handleManagementAPI(new ManagementRequest(url), url, { providers: {} } as OcxConfig);
+      const api = JSON.stringify(await response!.json());
+      const persisted = JSON.stringify(readUsageEntries());
+      expect(memory).not.toContain("canary");
+      expect(api).not.toContain("canary");
+      expect(persisted).not.toContain("canary");
+      expect(reads).toBe(1);
+      const expected = initiallyValid ? { clientEffort: "high", sessionEffort: "max", status: "visible" } : undefined;
+      expect(getRequestLogEntries()[0]?.sessionEffortObservation).toEqual(expected);
+      expect(readUsageEntries()[0]?.sessionEffortObservation).toEqual(expected);
+    } finally { clearRequestLogsForTests(); }
+  });
+
+  test.each(["getter", "proxy", "descriptor-proxy"] as const)("outer %s throwing during observation read does not break logs or usage", async kind => {
+    clearRequestLogsForTests();
+    try {
+      const source = log({ requestId: `outer-throw-${kind}` });
+      if (kind === "descriptor-proxy") source.sessionEffortObservation = { clientEffort: "high", sessionEffort: "max", status: "visible" };
+      const entry = kind === "proxy" || kind === "descriptor-proxy"
+        ? new Proxy(source, {
+          get(target, key, receiver) { if (key === "sessionEffortObservation") throw new Error("private-canary"); return Reflect.get(target, key, receiver); },
+          getOwnPropertyDescriptor(target, key) {
+            if (kind === "descriptor-proxy" && key === "sessionEffortObservation") throw new Error("private-canary");
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        })
+        : Object.defineProperty(source, "sessionEffortObservation", { enumerable: true, get() { throw new Error("private-canary"); } });
+      const errors: string[] = [];
+      for (const action of [() => addRequestLog(entry), () => normalizeUsageEntryForTest(entry),
+        () => normalizePersistedUsageRow(entry), () => requestLogEntryFromPersistedUsage(entry), () => appendUsageEntry(entry)]) {
+        try { action(); } catch { errors.push("threw"); }
+      }
+      const url = new URL("http://localhost/api/logs");
+      const response = await handleManagementAPI(new ManagementRequest(url), url, { providers: {} } as OcxConfig);
+      const api = JSON.stringify(await response!.json());
+      expect(errors).toEqual([]);
+      expect(getRequestLogEntries()[0]?.sessionEffortObservation).toBeUndefined();
+      expect(readUsageEntries().every(row => row.sessionEffortObservation === undefined)).toBe(true);
+      expect(api).not.toContain("canary");
+      expect(readFileSync(usageLogPath(), "utf8")).not.toContain("canary");
+    } finally { clearRequestLogsForTests(); }
+  });
+
+  test("request-log snapshot retains enumerable symbols and a data property named __proto__", () => {
+    clearRequestLogsForTests();
+    try {
+      const symbol = Symbol("fixture");
+      const entry = log({ requestId: "snapshot-shape", requestedEffort: "high" });
+      Object.defineProperty(entry, "__proto__", { value: "fixture-value", enumerable: true });
+      Object.defineProperty(entry, symbol, { value: "fixture-symbol", enumerable: true });
+      addRequestLog(entry);
+      const retained = getRequestLogEntries()[0]!;
+      expect(Object.getPrototypeOf(retained)).toBe(Object.prototype);
+      expect(Object.hasOwn(retained, "__proto__")).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(retained, "__proto__")?.value).toBe("fixture-value");
+      expect((retained as unknown as Record<symbol, unknown>)[symbol]).toBe("fixture-symbol");
+      expect(retained.requestedEffort).toBe("high");
+    } finally { clearRequestLogsForTests(); }
+  });
+
+  test("usage and hydration projections read a changing outer observation only once", () => {
+    const expected = { clientEffort: "high", sessionEffort: "max", status: "visible" };
+    for (const project of [
+      (entry: ReturnType<typeof log>) => normalizeUsageEntryForTest(entry),
+      (entry: ReturnType<typeof log>) => normalizePersistedUsageRow(entry),
+      (entry: ReturnType<typeof log>) => requestLogEntryFromPersistedUsage(entry),
+      (entry: ReturnType<typeof log>) => { appendUsageEntry(entry); return readUsageEntries().at(-1); },
+    ]) {
+      const entry = log({ requestId: "outer-projection" });
+      let reads = 0;
+      Object.defineProperty(entry, "sessionEffortObservation", { enumerable: true, get() {
+        return ++reads === 1 ? expected : { clientEffort: "private-canary", sensitive: "sensitive-canary" };
+      } });
+      const projected = project(entry);
+      expect(reads).toBe(1);
+      expect(projected?.sessionEffortObservation).toEqual(expected);
+      expect(JSON.stringify(projected)).not.toContain("canary");
+    }
+  });
+
+  test("untrusted observation properties are read once and throwing accessors are rejected", async () => {
+    const makeObservation = (changing: "clientEffort" | "sessionEffort" | "status") => {
+      const reads = { count: 0 };
+      const row: Record<string, unknown> = { clientEffort: "high", sessionEffort: "max", status: "visible" };
+      const original = row[changing];
+      Object.defineProperty(row, changing, { enumerable: true, get() { return ++reads.count === 1 ? original : "private-canary"; } });
+      return { row, reads };
+    };
+    const expected = { clientEffort: "high", sessionEffort: "max", status: "visible" };
+    const base = { requestId: "getter", timestamp: 1, provider: "mock", model: "model", status: 200, durationMs: 1, usageStatus: "unreported" as const };
+    clearRequestLogsForTests();
+    try {
+      for (const field of ["clientEffort", "sessionEffort", "status"] as const) {
+        const direct = makeObservation(field);
+        addRequestLog(log({ requestId: `ring-${field}`, sessionEffortObservation: direct.row as never }));
+        expect(direct.reads.count).toBe(1);
+        expect(getRequestLogEntries().at(-1)?.sessionEffortObservation).toEqual(expected);
+        const persisted = makeObservation(field);
+        appendUsageEntry({ ...base, requestId: `disk-${field}`, sessionEffortObservation: persisted.row as never });
+        expect(persisted.reads.count).toBe(1);
+        expect(readUsageEntries().at(-1)?.sessionEffortObservation).toEqual(expected);
+        const projected = makeObservation(field);
+        expect(normalizePersistedUsageRow({ ...base, sessionEffortObservation: projected.row })?.sessionEffortObservation).toEqual(expected);
+        expect(projected.reads.count).toBe(1);
+      }
+      const throwing = new Proxy({}, { get() { throw new Error("private-canary"); } });
+      expect(normalizePersistedUsageRow({ ...base, sessionEffortObservation: throwing })?.sessionEffortObservation).toBeUndefined();
+      expect(() => addRequestLog(log({ requestId: "throwing", sessionEffortObservation: throwing as never }))).not.toThrow();
+      expect(() => appendUsageEntry({ ...base, requestId: "throwing-disk", sessionEffortObservation: throwing as never })).not.toThrow();
+      expect(readUsageEntries().at(-1)?.sessionEffortObservation).toBeUndefined();
+      const url = new URL("http://localhost/api/logs");
+      const response = await handleManagementAPI(new ManagementRequest(url), url, { providers: {} } as OcxConfig);
+      expect(JSON.stringify(await response!.json())).not.toContain("private-canary");
+      expect(readFileSync(usageLogPath(), "utf8")).not.toContain("private-canary");
+    } finally { clearRequestLogsForTests(); }
+  });
+
+  test("direct request-log ingress copies bounded observations before memory and disk", async () => {
+    clearRequestLogsForTests();
+    try {
+      const raw = { clientEffort: "high", sessionEffort: "max", status: "visible", secret: "private-canary" };
+      addRequestLog(log({ requestId: "safe", sessionEffortObservation: raw as never }));
+      raw.sessionEffort = "low";
+      const continuation = { clientEffort: "high", sessionEffort: "unknown", status: "not_in_input" } as const;
+      const unknownUpdate = { clientEffort: "unknown", sessionEffort: "unknown", status: "unrecognized" } as const;
+      addRequestLog(log({ requestId: "continuation", sessionEffortObservation: continuation }));
+      addRequestLog(log({ requestId: "unknown-update", sessionEffortObservation: unknownUpdate }));
+      addRequestLog(log({ requestId: "invalid", sessionEffortObservation: { clientEffort: "secret", sessionEffort: "max", status: "visible" } as never }));
+      addRequestLog(log({ requestId: "bad-state", sessionEffortObservation: { clientEffort: "high", sessionEffort: "max", status: "not_in_input" } }));
+      addRequestLog(log({ requestId: "legacy" }));
+      const expected = { clientEffort: "high", sessionEffort: "max", status: "visible" };
+      expect(getRequestLogEntries().map(row => row.sessionEffortObservation)).toEqual([expected, continuation, unknownUpdate, undefined, undefined, undefined]);
+      expect(readUsageEntries().map(row => row.sessionEffortObservation)).toEqual([expected, continuation, unknownUpdate, undefined, undefined, undefined]);
+      expect(readFileSync(usageLogPath(), "utf8")).not.toContain("private-canary");
+      const url = new URL("http://localhost/api/logs");
+      const response = await handleManagementAPI(new ManagementRequest(url), url, { providers: {} } as OcxConfig);
+      const apiRows = logsFromApiBody(await response!.json());
+      expect(apiRows.find(row => row.requestId === "safe")?.sessionEffortObservation).toEqual(expected);
+      expect(apiRows.find(row => row.requestId === "invalid")?.sessionEffortObservation).toBeUndefined();
+      expect(apiRows.find(row => row.requestId === "bad-state")?.sessionEffortObservation).toBeUndefined();
+      expect(apiRows.find(row => row.requestId === "continuation")?.sessionEffortObservation).toEqual(continuation);
+      expect(JSON.stringify(apiRows)).not.toContain("private-canary");
+      clearRequestLogsForTests();
+      expect(hydrateRequestLogsFromDisk(() => readUsageEntries())).toBe(6);
+      expect(getRequestLogEntries().map(row => row.sessionEffortObservation)).toEqual([expected, continuation, unknownUpdate, undefined, undefined, undefined]);
+    } finally { clearRequestLogsForTests(); }
+  });
+
+  test("persists and reloads only the bounded initial session effort observation", () => {
+    const observation = { clientEffort: "high", sessionEffort: "max", status: "visible", secret: "private-canary" };
+    const base = { requestId: "session-effort", timestamp: 1, provider: "mock", model: "model",
+      status: 200, durationMs: 1, usageStatus: "unreported" };
+    appendUsageEntry({ ...base, sessionEffortObservation: observation } as unknown as PersistedUsageEntry);
+    observation.sessionEffort = "low";
+    resetUsageReadCacheForTests();
+    expect((readUsageEntries()[0] as unknown as Record<string, unknown>).sessionEffortObservation).toEqual({
+      clientEffort: "high", sessionEffort: "max", status: "visible",
+    });
+    expect(readFileSync(usageLogPath(), "utf8")).not.toContain("private-canary");
+    const invalid = normalizePersistedUsageRow({ ...base, sessionEffortObservation: {
+      clientEffort: "high", sessionEffort: "max", status: "not_in_input",
+    } });
+    expect((invalid as unknown as Record<string, unknown>).sessionEffortObservation).toBeUndefined();
+  });
+
   test("Claude shadow metadata round trips as closed codes and a regenerated reason", () => {
     const evidence = normalizeClaudeCompatibilityUsageLog({
       decision: "shadow", featureCodes: ["unknown_beta", "documents", "documents", "private-header", "__proto__"],

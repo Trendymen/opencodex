@@ -10,7 +10,7 @@ import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { log } from "../helpers/request-log-entry";
 
 describe("request log metadata", () => {
-  test("direct ingress retains an already normalized row", () => {
+  test("direct ingress copies the row and retains the normalized attempt roster", () => {
     const previousHome = process.env.OPENCODEX_HOME;
     const home = mkdtempSync(join(tmpdir(), "ocx-valid-normalization-log-"));
     process.env.OPENCODEX_HOME = home;
@@ -22,7 +22,8 @@ describe("request log metadata", () => {
       const attempts = [attempt];
       const entry = log({ attempts });
       addRequestLog(entry);
-      expect(getRequestLogEntries()[0]).toBe(entry);
+      expect(getRequestLogEntries()[0]).not.toBe(entry);
+      expect(getRequestLogEntries()[0]).toEqual(entry);
       expect(getRequestLogEntries()[0]!.attempts).toBe(attempts);
       expect(getRequestLogEntries()[0]!.attempts![0]).toBe(attempt);
     } finally {

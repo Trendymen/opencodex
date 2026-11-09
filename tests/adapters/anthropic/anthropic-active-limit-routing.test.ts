@@ -7,7 +7,7 @@ import { captureAnthropicCooldownRecovery, clearAnthropicAccountPoolState, getAn
   pickAlternateAnthropicAccount, recordAnthropicAccount429, settleAnthropicCooldownRecovery } from "../../../src/oauth/anthropic-routing";
 import { clearAccountQuotaCache, setCachedProviderAccountQuotaForTests } from "../../../src/providers/quota";
 import { probeAnthropicUsageQuota } from "../../../src/providers/claude-cli-usage";
-import { ultraUsage, weeklyReset } from "../../fixtures/anthropic-usage-shapes";
+import { ultraUsage } from "../../fixtures/anthropic-usage-shapes";
 import { drainAndRemoveFixtureRoots } from "../../helpers/fixture-teardown";
 import type { OcxConfig } from "../../../src/types";
 
@@ -46,6 +46,7 @@ async function parse(body: unknown) {
 
 for (const active of [false, true]) test(`real pool selection applies active=${active} Fable only to Fable`, async () => {
   const [a, b] = await seed();
+  const weeklyReset = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
   const quota = await parse({ five_hour: null, seven_day_fable: { utilization: 100 }, limits: [
     { kind: "weekly_all", percent: 10, is_active: true, resets_at: weeklyReset },
     { kind: "weekly_scoped", percent: 100, is_active: active, resets_at: weeklyReset,

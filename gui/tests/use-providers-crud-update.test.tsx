@@ -76,6 +76,22 @@ test("updateProvider returns the xAI opt-in effective state echoed by PATCH", as
   await act(async () => { root.unmount(); });
 });
 
+test("codex permission updates retain sparse leaves and null clears without account refreshes", async () => {
+  const requests: unknown[] = [];
+  const fetchConfig = mock(async () => {});
+  const fetchProviderQuotas = mock(async () => {});
+  const refreshCodexAccount = mock(async () => {});
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push(JSON.parse(String(init?.body))); return Response.json({ success: true });
+  }) as typeof fetch;
+  const { root, updateProvider } = await mountCrud({ fetchConfig, fetchProviderQuotas, refreshCodexAccount });
+  const patch: ProviderUpdatePatch = { codexPassthrough: { bridgeLiteMetadata: false, localErrorPolicies: { inputAdmissionPrecheck: null } } };
+  await act(async () => { expect(await updateProvider("renamed-official", patch)).toEqual({ ok: true }); });
+  expect(requests).toEqual([patch]); expect(fetchConfig).toHaveBeenCalledTimes(1);
+  expect(fetchProviderQuotas).not.toHaveBeenCalled(); expect(refreshCodexAccount).not.toHaveBeenCalled();
+  await act(async () => { root.unmount(); });
+});
+
 async function mountCrud(overrides: {
   fetchConfig?: () => Promise<void>;
   fetchProviderQuotas?: (refresh?: boolean) => Promise<void>;

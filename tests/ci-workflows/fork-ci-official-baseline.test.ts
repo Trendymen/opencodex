@@ -1,0 +1,1350 @@
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  classifyPackageVersion,
+  prepareForkOfficialBase,
+  safeGitDiagnostic,
+} from "../../scripts/prepare-fork-official-base";
+import { repoRoot as resolveRepoRoot } from "../helpers/repo-root";
+import { forkVersionTagError } from "../../src/fork/version-policy.mjs";
+
+const decoder = new TextDecoder();
+const roots: string[] = [];
+const seedRoots: string[] = [];
+
+function fakeGitEnvironment(fakeBin: string, values: Record<string, string> = {}): Record<string, string> {
+  const withoutPathAliases = Object.fromEntries(Object.entries({ ...process.env, ...values, Path: "discarded-path-alias" })
+    .filter(([key]) => key.toUpperCase() !== "PATH")) as Record<string, string>;
+  return { ...withoutPathAliases, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}` };
+}
+
+function hostileGitDiagnostic(ownedPath: string): string {
+  const fakeToken = "secret" + "-token";
+  const adversarial = [
+    `Authorization: Bearer ${fakeToken}\u0007\u2028forged-line`,
+    ownedPath,
+    `https://${"user"}:${fakeToken}@${"example.invalid"}/repo.git?access_token=${fakeToken}#private-fragment`,
+    `Authorization: Bearer ${fakeToken}`,
+    `/${"Users"}/${"private" + "-name"}/work/repo`,
+    `/${"home"}/${"linux" + "-private"}/work/repo`,
+    `C:${"\\"}${"Users"}${"\\"}${"windows" + "-private"}${"\\"}work${"\\"}repo`,
+    `/${"private"}/var/folders/xy/ocx-fork-${"official"}-${"secret"}/repo.git`,
+    `/${"tmp"}/ocx-fork-${"official"}-${"secret"}/repo.git`,
+    `D:${"\\"}Temp${"\\"}ocx-fork-${"official"}-${"secret"}${"\\"}repo.git`,
+  ];
+  return `${adversarial.join("\n")}\n${"neutral diagnostic filler ".repeat(220)}`;
+}
+
+function git(cwd: string, args: readonly string[]) {
+  const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  return {
+    exitCode: result.exitCode,
+    stdout: decoder.decode(result.stdout),
+    stderr: decoder.decode(result.stderr),
+  };
+}
+
+function requireGit(cwd: string, args: readonly string[]): string {
+  const result = git(cwd, args);
+  if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+function commit(repo: string, subject: string): string {
+  writeFileSync(join(repo, `${subject}.txt`), `${subject}\n`);
+  requireGit(repo, ["add", "."]);
+  requireGit(repo, ["commit", "-m", subject]);
+  return requireGit(repo, ["rev-parse", "HEAD"]);
+}
+
+type Fixture = {
+  root: string;
+  official: string;
+  originBare: string;
+  checkout: string;
+  officialTagCommit: string;
+};
+
+let fixtureSeed: Fixture | undefined;
+
+function createFixtureSeed(): Fixture {
+  const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-"));
+  seedRoots.push(root);
+  const official = join(root, "official");
+  const originBare = join(root, "origin.git");
+  const checkout = join(root, "checkout");
+  mkdirSync(official);
+  requireGit(official, ["init", "--initial-branch=main"]);
+  requireGit(official, ["config", "user.name", "Fixture"]);
+  requireGit(official, ["config", "user.email", "fixture" + "@" + "example.invalid"]);
+  commit(official, "root");
+  writeFileSync(join(official, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
+  const officialTagCommit = commit(official, "baseline");
+  requireGit(official, ["tag", "v2.35.0", officialTagCommit]);
+  commit(official, "main-one");
+  commit(official, "main-two");
+  requireGit(root, ["clone", "--bare", pathToFileURL(official).href, originBare]);
+  requireGit(official, ["branch", "sync/v2.35.0", officialTagCommit]);
+  requireGit(official, ["branch", "upstream-release", officialTagCommit]);
+  requireGit(official, ["push", pathToFileURL(originBare).href,
+    "refs/heads/sync/v2.35.0:refs/heads/sync/v2.35.0",
+    "refs/heads/upstream-release:refs/heads/upstream-release",
+  ]);
+  requireGit(originBare, ["tag", "-d", "v2.35.0"]);
+  requireGit(originBare, ["tag", "v2.35.0-ben.1", officialTagCommit]);
+  requireGit(root, [
+    "clone", "--depth=1", "--branch", "sync/v2.35.0", "--single-branch",
+    pathToFileURL(originBare).href, checkout,
+  ]);
+  requireGit(checkout, ["config", "user.name", "Fixture Checkout"]);
+  requireGit(checkout, ["config", "user.email", "fixture-checkout" + "@" + "example.invalid"]);
+  return { root, official, originBare, checkout, officialTagCommit };
+}
+
+function createFixture(): Fixture {
+  const seed = fixtureSeed ??= createFixtureSeed();
+  const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-"));
+  roots.push(root);
+  for (const name of ["official", "origin.git", "checkout"]) {
+    cpSync(join(seed.root, name), join(root, name), { recursive: true });
+  }
+  const official = join(root, "official");
+  const originBare = join(root, "origin.git");
+  const checkout = join(root, "checkout");
+  requireGit(originBare, ["remote", "set-url", "origin", pathToFileURL(official).href]);
+  requireGit(checkout, ["remote", "set-url", "origin", pathToFileURL(originBare).href]);
+  return { root, official, originBare, checkout, officialTagCommit: seed.officialTagCommit };
+}
+
+function fetchHeadSnapshot(repo: string): string | undefined {
+  const rawPath = requireGit(repo, ["rev-parse", "--git-path", "FETCH_HEAD"]);
+  const path = isAbsolute(rawPath) ? rawPath : resolve(repo, rawPath);
+  return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+}
+
+function createReleasedForkFixture(options: { diverged?: boolean; full?: boolean } = {}): Fixture {
+  const fixture = createFixture();
+  const { official, originBare, checkout, officialTagCommit, root } = fixture;
+  if (options.diverged) {
+    requireGit(official, ["checkout", "-b", "other-fork", officialTagCommit]);
+    commit(official, "other-fork");
+  }
+  requireGit(official, ["tag", "-a", "v2.35.0-ben.2", "-m", "released fork",
+    options.diverged ? "HEAD" : officialTagCommit]);
+  requireGit(official, ["checkout", "main"]);
+  commit(official, "main-three");
+  commit(official, "main-four");
+  requireGit(official, ["push", pathToFileURL(originBare).href,
+    "refs/heads/main:refs/heads/main", "refs/tags/v2.35.0-ben.2:refs/tags/v2.35.0-ben.2"]);
+  rmSync(checkout, { recursive: true, force: true });
+  requireGit(root, ["clone", ...(options.full ? [] : ["--depth=1"]), "--no-tags", "--branch", "main",
+    "--single-branch", pathToFileURL(originBare).href, checkout]);
+  requireGit(checkout, ["fetch", ...(options.full ? [] : ["--depth=1"]), "--no-tags", "origin",
+    "refs/tags/v2.35.0-ben.2:refs/tags/v2.35.0-ben.2"]);
+  requireGit(checkout, ["fetch", ...(options.full ? [] : ["--depth=1"]), "--no-tags", pathToFileURL(official).href,
+    "refs/tags/v2.35.0:refs/tags/v2.35.0"]);
+  return fixture;
+}
+
+function releasedForkError(repo: string): string | null {
+  return forkVersionTagError("2.35.0-ben.2", requireGit(repo, ["tag", "--list"]).split("\n"), tag =>
+    git(repo, ["merge-base", "--is-ancestor", `${tag}^{commit}`, "HEAD"]).exitCode === 0);
+}
+
+function assertNoOwnedResidue(
+  fixture: Fixture,
+  beforeFetchHead: string | undefined,
+  sentinel: string,
+  beforeVerifierRoots: string[],
+) {
+  for (const ref of ["refs/ocx-ci/fork-marker", "refs/ocx-ci/official-tag"]) {
+    expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", ref]).exitCode).not.toBe(0);
+  }
+  expect(fetchHeadSnapshot(fixture.checkout)).toBe(beforeFetchHead);
+  expect(requireGit(fixture.checkout, ["rev-parse", "refs/heads/keep-sentinel"])).toBe(sentinel);
+  expect(verifierRoots()).toEqual(beforeVerifierRoots);
+}
+
+function verifierRoots(): string[] {
+  return readdirSync(tmpdir()).filter(name => name.startsWith("ocx-fork-official-")).sort();
+}
+
+function runAsCandidate<T>(run: () => T, overrides: Record<string, string | undefined> = {}): T {
+  const previous = {
+    actions: process.env.GITHUB_ACTIONS,
+    event: process.env.GITHUB_EVENT_NAME,
+    ref: process.env.GITHUB_REF,
+    lane: process.env.OCX_CANDIDATE_CI_LANE,
+  };
+  const environment = {
+    GITHUB_ACTIONS: "true",
+    GITHUB_EVENT_NAME: "workflow_dispatch",
+    GITHUB_REF: "refs/heads/dev",
+    OCX_CANDIDATE_CI_LANE: "all",
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(environment)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    return run();
+  } finally {
+    if (previous.actions === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = previous.actions;
+    if (previous.event === undefined) delete process.env.GITHUB_EVENT_NAME;
+    else process.env.GITHUB_EVENT_NAME = previous.event;
+    if (previous.ref === undefined) delete process.env.GITHUB_REF;
+    else process.env.GITHUB_REF = previous.ref;
+    if (previous.lane === undefined) delete process.env.OCX_CANDIDATE_CI_LANE;
+    else process.env.OCX_CANDIDATE_CI_LANE = previous.lane;
+  }
+}
+
+function runOutsideCandidate<T>(run: () => T): T {
+  const previous = {
+    actions: process.env.GITHUB_ACTIONS,
+    event: process.env.GITHUB_EVENT_NAME,
+    ref: process.env.GITHUB_REF,
+  };
+  process.env.GITHUB_ACTIONS = "false";
+  process.env.GITHUB_EVENT_NAME = "push";
+  process.env.GITHUB_REF = "refs/heads/main";
+  try {
+    return run();
+  } finally {
+    if (previous.actions === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = previous.actions;
+    if (previous.event === undefined) delete process.env.GITHUB_EVENT_NAME;
+    else process.env.GITHUB_EVENT_NAME = previous.event;
+    if (previous.ref === undefined) delete process.env.GITHUB_REF;
+    else process.env.GITHUB_REF = previous.ref;
+  }
+}
+
+function prepare(
+  fixture: Fixture,
+  officialUrl = pathToFileURL(fixture.official).href,
+  runGit?: (cwd: string, args: readonly string[]) => ReturnType<typeof git>,
+  options: { allowPendingOfficialMarker?: boolean; officialReleaseEvidence?: unknown } = {},
+) {
+  const rawFetchHead = requireGit(fixture.checkout, ["rev-parse", "--git-path", "FETCH_HEAD"]);
+  const fetchHeadPath = isAbsolute(rawFetchHead) ? rawFetchHead : resolve(fixture.checkout, rawFetchHead);
+  writeFileSync(fetchHeadPath, "sentinel-fetch-head\n\u0000byte-specific\n");
+  const beforeFetchHead = fetchHeadSnapshot(fixture.checkout);
+  const beforeVerifierRoots = verifierRoots();
+  const sentinel = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+  requireGit(fixture.checkout, ["update-ref", "refs/heads/keep-sentinel", sentinel]);
+  return {
+    beforeFetchHead,
+    beforeVerifierRoots,
+    sentinel,
+    run: () => prepareForkOfficialBase({
+      repoRoot: fixture.checkout,
+      officialRepositoryUrl: officialUrl,
+      runGit,
+      ...options,
+    } as Parameters<typeof prepareForkOfficialBase>[0]),
+  };
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  for (const root of seedRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe("Fork CI official baseline preparation", () => {
+  test("classifies only strict fork, stable, and preview package versions before Git", () => {
+    expect(classifyPackageVersion("2.35.0-ben.2")).toEqual({
+      kind: "fork", version: "2.35.0-ben.2", base: "2.35.0", tag: "v2.35.0",
+    });
+    for (const value of [
+      " 2.35.0-ben.2 ", "2.35.0-ben", "2.35.0-ben.0", "2.35.0-ben.02",
+      "2.35.0-ben.9007199254740993", "2.35.0-ben.2.extra", "2.35.0-rc.1",
+      "2.35.0-beta.1", "2.35.0-foo.1", "not-semver",
+    ]) expect(() => classifyPackageVersion(value)).toThrow();
+    expect(classifyPackageVersion("2.35.0")).toEqual({ kind: "non-fork", version: "2.35.0" });
+    expect(classifyPackageVersion("2.36.0-preview.20260829"))
+      .toEqual({ kind: "non-fork", version: "2.36.0-preview.20260829" });
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-version-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0" }));
+    let calls = 0;
+    expect(prepareForkOfficialBase({
+      repoRoot: root,
+      officialRepositoryUrl: "https://example.invalid/unused.git",
+      runGit: () => {
+        calls += 1;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    })).toEqual({ kind: "not-fork", version: "2.35.0" });
+    expect(calls).toBe(0);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0-ben" }));
+    expect(() => prepareForkOfficialBase({
+      repoRoot: root,
+      officialRepositoryUrl: "https://example.invalid/unused.git",
+      runGit: () => {
+        calls += 1;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    })).toThrow("prepare official base:");
+    expect(calls).toBe(0);
+  });
+
+  test("imports the observed lightweight official tag into an origin-only shallow checkout", () => {
+    const fixture = createFixture();
+    expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe("true");
+    expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
+    expect(requireGit(fixture.checkout, ["tag", "--list", "v*"]).split("\n").filter(Boolean)).toEqual(["v2.35.0-ben.1"]);
+    expect(requireGit(fixture.official, ["rev-list", "--count", `${fixture.officialTagCommit}..refs/heads/main`])).toBe("2");
+    const calls: string[][] = [];
+    const prepared = prepare(fixture, pathToFileURL(fixture.official).href, (cwd, args) => {
+      calls.push([...args]);
+      return git(cwd, args);
+    });
+    const result = prepared.run();
+    expect(result).toMatchObject({ kind: "prepared", tag: "v2.35.0", refKind: "lightweight" });
+    expect(requireGit(fixture.checkout, ["cat-file", "-t", "refs/tags/v2.35.0"])).toBe("commit");
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"]))
+      .toBe(fixture.officialTagCommit);
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0^{commit}"]))
+      .toBe(fixture.officialTagCommit);
+    const officialFetch = calls.find(args => args.includes("fetch") && args.includes(pathToFileURL(fixture.official).href));
+    expect(officialFetch).toBeDefined();
+    const bareDir = calls.find(args => args[0] === "init" && args[1] === "--bare")?.[2];
+    expect(officialFetch).toEqual([
+      `--git-dir=${bareDir}`, "fetch", "--no-tags", "--no-filter", pathToFileURL(fixture.official).href,
+      "+refs/heads/main:refs/heads/official-main", "+refs/tags/v2.35.0:refs/tags/v2.35.0",
+    ]);
+    expect(officialFetch?.some(arg => arg === "--depth" || arg.startsWith("--depth=")
+      || arg.startsWith("--shallow") || arg === "--unshallow")).toBe(false);
+    const checkoutFetches = calls.filter(args => args.includes("fetch") && !args.includes(pathToFileURL(fixture.official).href));
+    expect(checkoutFetches.every(args => args.includes("--no-write-fetch-head"))).toBe(true);
+    expect(calls.some(args => args.includes("--unshallow"))).toBe(false);
+    const index = (needle: string) => calls.findIndex(args => args.includes(needle));
+    const bareType = calls.findIndex(args => args.includes("cat-file") && args.includes("refs/tags/v2.35.0"));
+    const bareRaw = calls.findIndex((args, position) => position > bareType && args.includes("rev-parse") && args.includes("refs/tags/v2.35.0"));
+    const barePeeled = calls.findIndex((args, position) => position > bareRaw && args.includes("rev-parse") && args.includes("refs/tags/v2.35.0^{commit}"));
+    expect(bareType).toBeGreaterThan(-1);
+    expect(bareRaw).toBeGreaterThan(bareType);
+    expect(barePeeled).toBeGreaterThan(bareRaw);
+    expect(index("merge-base")).toBeGreaterThan(barePeeled);
+    const importIndex = calls.findIndex((args, position) => position > index("merge-base")
+      && args.includes("fetch") && bareDir !== undefined && args.includes(bareDir));
+    expect(importIndex).toBeGreaterThan(index("merge-base"));
+    const checkoutType = calls.findIndex((args, position) => position > importIndex
+      && args.includes("cat-file") && args.includes("refs/ocx-ci/official-tag"));
+    const checkoutRaw = calls.findIndex((args, position) => position > checkoutType
+      && args.includes("rev-parse") && args.includes("refs/ocx-ci/official-tag"));
+    const checkoutPeeled = calls.findIndex((args, position) => position > checkoutRaw
+      && args.includes("rev-parse") && args.includes("refs/ocx-ci/official-tag^{commit}"));
+    expect(checkoutType).toBeGreaterThan(importIndex);
+    expect(checkoutRaw).toBeGreaterThan(checkoutType);
+    expect(checkoutPeeled).toBeGreaterThan(checkoutRaw);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("imports the official tag with exact formal Release evidence when main is absent", () => {
+    const fixture = createFixture();
+    requireGit(fixture.official, ["checkout", "--orphan", "dev"]);
+    requireGit(fixture.official, ["rm", "-rf", "."]);
+    commit(fixture.official, "unrelated-dev-root");
+    requireGit(fixture.official, ["branch", "-D", "main"]);
+    expect(git(fixture.official, ["merge-base", "--is-ancestor", "v2.35.0", "refs/heads/dev"]).exitCode).toBe(1);
+    const prepared = prepare(fixture, undefined, undefined, { officialReleaseEvidence: {
+      tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
+    } });
+    expect(prepared.run()).toMatchObject({
+      kind: "prepared", tag: "v2.35.0", rawTagOid: fixture.officialTagCommit,
+      peeledCommit: fixture.officialTagCommit,
+    });
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"]))
+      .toBe(fixture.officialTagCommit);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("preserves an annotated official tag with Release evidence when main is absent", () => {
+    const fixture = createFixture();
+    requireGit(fixture.official, ["branch", "-m", "main", "dev"]);
+    requireGit(fixture.official, ["tag", "-d", "v2.35.0"]);
+    requireGit(fixture.official, ["tag", "-a", "v2.35.0", "-m", "official release", fixture.officialTagCommit]);
+    const rawTagOid = requireGit(fixture.official, ["rev-parse", "refs/tags/v2.35.0"]);
+    const prepared = prepare(fixture, undefined, undefined, { officialReleaseEvidence: {
+      tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
+    } });
+    expect(prepared.run()).toMatchObject({ kind: "prepared", refKind: "annotated", rawTagOid,
+      peeledCommit: fixture.officialTagCommit });
+    expect(rawTagOid).not.toBe(fixture.officialTagCommit);
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"])).toBe(rawTagOid);
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0^{commit}"]))
+      .toBe(fixture.officialTagCommit);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  for (const [name, evidence] of [
+    ["missing", undefined],
+    ["draft", { draft: true }],
+    ["prerelease", { prerelease: true }],
+    ["missing draft status", { draft: undefined }],
+    ["wrong tag", { tag_name: "v2.35.1" }],
+    ["branch target", { target_commitish: "dev" }],
+    ["wrong commit target", { target_commitish: "a".repeat(40) }],
+    ["malformed commit target", { target_commitish: "z".repeat(40) }],
+  ] as const) {
+    test(`rejects ${name} Release evidence when main is absent`, () => {
+      const fixture = createFixture();
+      requireGit(fixture.official, ["branch", "-m", "main", "dev"]);
+      const release = evidence === undefined ? undefined : {
+        tag_name: "v2.35.0", draft: false, prerelease: false,
+        target_commitish: fixture.officialTagCommit, ...evidence,
+      };
+      const prepared = prepare(fixture, undefined, undefined, { officialReleaseEvidence: release });
+      expect(prepared.run).toThrow("official release evidence");
+      expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    });
+  }
+
+  test("rejects a pending marker on the Release evidence path even in candidate CI", () => {
+    const fixture = createFixture();
+    const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
+    requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
+    requireGit(fixture.official, ["branch", "-m", "main", "dev"]);
+    const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true, officialReleaseEvidence: {
+      tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
+    } });
+    expect(() => runAsCandidate(prepared.run)).toThrow("official release tag does not match origin upstream-release");
+    expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("does not use Release evidence when the official main query fails", () => {
+    const fixture = createFixture();
+    const calls: string[][] = [];
+    const prepared = prepare(fixture, undefined, (cwd, args) => {
+      calls.push([...args]);
+      if (args.includes("ls-remote")) return { exitCode: 128, stdout: "", stderr: "remote query failed" };
+      return git(cwd, args);
+    }, { officialReleaseEvidence: {
+      tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
+    } });
+    expect(prepared.run).toThrow("remote query failed");
+    expect(calls.some(args => args.includes("fetch"))).toBe(false);
+    expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("rejects malformed output from the official main query", () => {
+    const fixture = createFixture();
+    const calls: string[][] = [];
+    const prepared = prepare(fixture, undefined, (cwd, args) => {
+      calls.push([...args]);
+      if (args.includes("ls-remote")) return { exitCode: 0, stdout: "unexpected remote response\n", stderr: "" };
+      return git(cwd, args);
+    }, { officialReleaseEvidence: {
+      tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
+    } });
+    expect(prepared.run).toThrow("invalid official main ref response");
+    expect(calls.some(args => args.includes("fetch"))).toBe(false);
+    expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("does not use Release evidence when the official main fetch fails", () => {
+    const fixture = createFixture();
+    const prepared = prepare(fixture, undefined, (cwd, args) => {
+      if (args.includes("fetch") && args.includes(pathToFileURL(fixture.official).href)) {
+        return { exitCode: 1, stdout: "", stderr: "main fetch failed" };
+      }
+      return git(cwd, args);
+    }, { officialReleaseEvidence: {
+      tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
+    } });
+    expect(prepared.run).toThrow("main fetch failed");
+    expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("rejects an official tag fetch failure when main is absent", () => {
+    const fixture = createFixture();
+    requireGit(fixture.official, ["branch", "-m", "main", "dev"]);
+    const prepared = prepare(fixture, undefined, (cwd, args) => {
+      if (args.includes("fetch") && args.includes(pathToFileURL(fixture.official).href)) {
+        return { exitCode: 1, stdout: "", stderr: "tag fetch failed" };
+      }
+      return git(cwd, args);
+    }, { officialReleaseEvidence: {
+      tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
+    } });
+    expect(prepared.run).toThrow("tag fetch failed");
+    expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("requires main ancestry when main exists even if Release evidence matches the tag", () => {
+    const fixture = createFixture();
+    requireGit(fixture.official, ["tag", "-d", "v2.35.0"]);
+    requireGit(fixture.official, ["checkout", "--orphan", "unrelated"]);
+    requireGit(fixture.official, ["rm", "-rf", "."]);
+    const unrelated = commit(fixture.official, "unrelated-root");
+    requireGit(fixture.official, ["tag", "v2.35.0", unrelated]);
+    const prepared = prepare(fixture, undefined, undefined, { officialReleaseEvidence: {
+      tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: unrelated,
+    } });
+    expect(prepared.run).toThrow("verify official ancestry:");
+    expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("reads Release evidence only from the fixed GitHub endpoint without credentials or redirects", async () => {
+    const script = await import("../../scripts/prepare-fork-official-base");
+    const readRelease = script.fetchOfficialReleaseEvidence;
+    expect(typeof readRelease).toBe("function");
+    let requestedUrl = "";
+    let requestOptions: RequestInit | undefined;
+    const evidence = { tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: "a".repeat(40) };
+    expect(await readRelease("v2.35.0", async (url, init) => {
+      requestedUrl = url;
+      requestOptions = init;
+      return Response.json(evidence);
+    })).toEqual(evidence);
+    expect(requestedUrl).toBe("https://api.github.com/repos/lidge-jun/opencodex/releases/tags/v2.35.0");
+    expect(requestOptions?.credentials).toBe("omit");
+    expect(requestOptions?.redirect).toBe("error");
+    expect(requestOptions?.signal).toBeInstanceOf(AbortSignal);
+    expect(new Headers(requestOptions?.headers).has("authorization")).toBe(false);
+  });
+
+  test("uses only the supplied API token at the fixed Release endpoint", async () => {
+    const { fetchOfficialReleaseEvidence } = await import("../../scripts/prepare-fork-official-base");
+    const token = "fixture-token-for-release-api";
+    let requestedUrl = "";
+    let options: RequestInit | undefined;
+    const evidence = { tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: "a".repeat(40) };
+    expect(await fetchOfficialReleaseEvidence("v2.35.0", async (url, init) => {
+      requestedUrl = url;
+      options = init;
+      return Response.json(evidence);
+    }, token)).toEqual(evidence);
+    expect(requestedUrl).toBe("https://api.github.com/repos/lidge-jun/opencodex/releases/tags/v2.35.0");
+    expect(options?.credentials).toBe("omit");
+    expect(options?.redirect).toBe("error");
+    expect(new Headers(options?.headers).get("authorization")).toBe(`Bearer ${token}`);
+  });
+
+  test("classifies Release API failures without exposing error messages, response bodies, or tokens", async () => {
+    const { fetchOfficialReleaseEvidence } = await import("../../scripts/prepare-fork-official-base");
+    const token = "fixture-token-for-release-api";
+    const secret = "/fixture/private/fixture-private-content";
+    const cases: Array<[(url: string, init: RequestInit) => Promise<Response>, string]> = [
+      [async () => { throw new Error(`${secret} ${token}`); }, "request-failed"],
+      [async () => { throw new DOMException(`${secret} ${token}`, "TimeoutError"); }, "request-timeout"],
+      [async () => new Response(secret, { status: 503 }), "http-503"],
+      [async () => new Response(secret, { status: 403, headers: { "x-ratelimit-remaining": "0" } }), "http-403 rate-limit-exhausted"],
+      [async () => new Response(secret, { status: 403, headers: { "x-ratelimit-remaining": "00" } }), "http-403"],
+      [async () => new Response(secret, { status: 429, headers: { "x-ratelimit-remaining": "0" } }), "http-429"],
+      [async () => new Response(null, { status: 200 }), "body-missing"],
+      [async () => new Response(new ReadableStream({ start(controller) { controller.error(new Error(`${secret} ${token}`)); } })), "body-read-failed"],
+      [async () => new Response(new ReadableStream({ start(controller) { controller.error(new DOMException(secret, "TimeoutError")); } })), "body-read-timeout"],
+      [async () => new Response(`{${secret} ${token}`), "invalid-json"],
+      [async () => new Response(secret.repeat(100_000)), "response-too-large"],
+    ];
+    for (const [request, category] of cases) {
+      let message = "";
+      try { await fetchOfficialReleaseEvidence("v2.35.0", request, token); } catch (error) { message = String(error); }
+      expect(message).toBe(`Error: fetch official release evidence failed: ${category}`);
+      expect(message).not.toContain(secret);
+      expect(message).not.toContain(token);
+    }
+  });
+
+  for (const [name, request] of [
+    ["network failure", async () => { throw new Error("network failed"); }],
+    ["timeout", async () => { throw new DOMException("timed out", "TimeoutError"); }],
+    ["HTTP failure", async () => new Response("unavailable", { status: 503 })],
+    ["malformed JSON", async () => new Response("{")],
+    ["oversized response", async () => new Response("x".repeat(1_048_577))],
+  ] as const) {
+    test(`rejects a Release API ${name}`, async () => {
+      const script = await import("../../scripts/prepare-fork-official-base");
+      const readRelease = script.fetchOfficialReleaseEvidence;
+      expect(typeof readRelease).toBe("function");
+      await expect(readRelease("v2.35.0", request)).rejects.toThrow();
+    });
+  }
+
+  test("CLI obtains Release evidence after confirming main is absent and fails closed on API errors", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-release-cli-"));
+    roots.push(root);
+    const fakeScript = join(root, "fake-git.mjs");
+    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").map(JSON.parse); } catch { return []; } })();\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\nif (args.includes("ls-remote")) { if (process.env.FAKE_RELEASE_MODE === "main-returns" && rows.some(row => row.includes("ls-remote"))) process.stdout.write("a".repeat(40) + "\\trefs/heads/main\\n"); process.exit(0); }\nif (args.includes("merge-base") && process.env.FAKE_RELEASE_MODE === "main-returns") process.exit(1);\nif (args[0] === "rev-parse" && args.includes("--verify")) process.exit(1);\nif (args[0] === "cat-file" && args.at(-1).startsWith("refs/tags/")) process.exit(1);\nif (args.includes("cat-file")) { process.stdout.write("commit\\n"); process.exit(0); }\nif (args.includes("rev-parse")) process.stdout.write("a".repeat(40) + "\\n");\n`);
+    const preload = join(root, "preload.mjs");
+    writeFileSync(preload, `import { appendFileSync } from "node:fs";\nconst spawnSync = Bun.spawnSync.bind(Bun);\nBun.spawnSync = (command, options) => {\n  if (command[0] === "git") {\n    appendFileSync(process.env.FAKE_GIT_ENV_LOG, String(Object.keys(options.env ?? {}).some(key => key.toUpperCase() === "OCX_OFFICIAL_RELEASE_API_TOKEN")) + "\\n");\n    return spawnSync([process.execPath, ${JSON.stringify(fakeScript)}, ...command.slice(1)], options);\n  }\n  return spawnSync(command, options);\n};\nglobalThis.fetch = async (url, init) => {\n  const header = new Headers(init.headers).get("authorization");\n  appendFileSync(process.env.FAKE_RELEASE_LOG, JSON.stringify({ url: String(url), credentials: init.credentials, redirect: init.redirect, authorization: header !== null, usesToken: header === "Bearer " + process.env.OCX_OFFICIAL_RELEASE_API_TOKEN }) + "\\n");\n  if (process.env.FAKE_RELEASE_MODE === "network") throw new Error("network failure");\n  if (process.env.FAKE_RELEASE_MODE === "http") return new Response("unavailable", { status: 503 });\n  if (process.env.FAKE_RELEASE_MODE === "auth-http") return new Response(process.env.OCX_OFFICIAL_RELEASE_API_TOKEN, { status: 403, headers: { "x-ratelimit-remaining": "0" } });\n  return new Response(process.env.FAKE_RELEASE_JSON);\n};\n`);
+    const scriptPath = fileURLToPath(new URL("../../scripts/prepare-fork-official-base.ts", import.meta.url));
+    const repoRoot = resolveRepoRoot();
+    const { version } = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+    const tag = `v${version.split("-ben.")[0]}`;
+    for (const mode of ["success", "auth", "network", "http", "auth-http", "main-returns"]) {
+      const gitLog = join(root, `${mode}-git.jsonl`);
+      const gitEnvLog = join(root, `${mode}-git-env.log`);
+      const releaseLog = join(root, `${mode}-release.jsonl`);
+      const hasToken = mode === "auth" || mode === "auth-http";
+      const succeeds = mode === "success" || mode === "auth";
+      const result = Bun.spawnSync([process.execPath, "--preload", preload, scriptPath], {
+        cwd: repoRoot,
+        env: { ...process.env, FAKE_GIT_LOG: gitLog, FAKE_GIT_ENV_LOG: gitEnvLog, FAKE_RELEASE_LOG: releaseLog, FAKE_RELEASE_MODE: mode,
+          OCX_OFFICIAL_RELEASE_API_TOKEN: hasToken ? "fixture-cli-api-token" : "",
+          GH_TOKEN: "fixture-user-token", GITHUB_TOKEN: "fixture-other-token",
+          FAKE_RELEASE_JSON: JSON.stringify({ tag_name: tag, draft: false, prerelease: false, target_commitish: "a".repeat(40) }) },
+        stdout: "pipe", stderr: "pipe",
+      });
+      expect(result.exitCode).toBe(succeeds ? 0 : 1);
+      const stderr = decoder.decode(result.stderr);
+      expect(stderr).not.toContain("fixture-cli-api-token");
+      expect(stderr).not.toContain("fixture-user-token");
+      expect(stderr).not.toContain("fixture-other-token");
+      if (mode === "auth-http") expect(stderr).toContain("http-403 rate-limit-exhausted");
+      expect(existsSync(releaseLog)).toBe(true);
+      const releaseCalls = readFileSync(releaseLog, "utf8").trim().split("\n").map(JSON.parse);
+      expect(releaseCalls).toEqual([{
+        url: `https://api.github.com/repos/lidge-jun/opencodex/releases/tags/${tag}`,
+        credentials: "omit", redirect: "error", authorization: hasToken, usesToken: hasToken,
+      }]);
+      const calls = readFileSync(gitLog, "utf8").trim().split("\n").map(JSON.parse) as string[][];
+      expect(readFileSync(gitEnvLog, "utf8").trim().split("\n").every(value => value === "false")).toBe(true);
+      expect(calls.filter(args => args.includes("ls-remote"))).toHaveLength(succeeds || mode === "main-returns" ? 2 : 1);
+      expect(calls.filter(args => args[0] === "fetch" && args.includes("origin")))
+        .toHaveLength(succeeds || mode === "main-returns" ? 1 : 0);
+      expect(calls.some(args => args[0] === "update-ref" && args[1] === `refs/tags/${tag}`))
+        .toBe(succeeds);
+      if (mode === "network" || mode === "http" || mode === "auth-http") {
+        expect(calls.some(args => args[0] === "update-ref")).toBe(false);
+      }
+    }
+  });
+
+  test("zero-parent revision syntax preserves commit peeling and rejects non-commit tag targets", () => {
+    const fixture = createFixture();
+    const repo = fixture.official;
+    requireGit(repo, ["tag", "-a", "annotated-commit", "-m", "commit", fixture.officialTagCommit]);
+    const tree = requireGit(repo, ["rev-parse", "HEAD^{tree}"]);
+    const blob = requireGit(repo, ["hash-object", "-w", "package.json"]);
+    for (const [name, object] of [["tree", tree], ["blob", blob]] as const) {
+      requireGit(repo, ["tag", name, object]);
+      requireGit(repo, ["tag", "-a", `annotated-${name}`, "-m", name, object]);
+    }
+    for (const [ref, expectedExit] of [
+      ["refs/tags/annotated-commit", 0], ["refs/tags/v2.35.0", 0], [fixture.officialTagCommit, 0],
+      ["refs/tags/tree", 1], ["refs/tags/blob", 1], ["refs/tags/annotated-tree", 1],
+      ["refs/tags/annotated-blob", 1], ["refs/tags/missing", 1],
+    ] as const) {
+      const original = git(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+      const compatible = git(repo, ["rev-parse", "--verify", "--quiet", `${ref}~0`]);
+      expect(original.exitCode).toBe(expectedExit);
+      expect(compatible.exitCode).toBe(original.exitCode);
+      expect(compatible.stdout).toBe(original.stdout);
+      if (expectedExit === 0) expect(compatible.stdout.trim()).toBe(fixture.officialTagCommit);
+    }
+  });
+
+  test("Fork version commit probe uses a cmd-safe Git revision token", () => {
+    const fixture = createReleasedForkFixture();
+    const calls: string[][] = [];
+    prepare(fixture, undefined, (cwd, args) => {
+      calls.push([...args]);
+      return git(cwd, args);
+    }).run();
+    const probe = calls.find(args => args[0] === "rev-parse" && args[1] === "--verify" && args[2] === "--quiet");
+    expect(probe).toEqual(["rev-parse", "--verify", "--quiet", "refs/tags/v2.35.0-ben.2~0"]);
+    expect(probe?.[3]).not.toContain("^");
+  });
+
+  test("restores released Fork ancestry across four commits in a real depth-one clone", () => {
+    const fixture = createReleasedForkFixture();
+    const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+    const rawTag = requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"]);
+    expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe("true");
+    expect(requireGit(fixture.official, ["rev-list", "--count", "v2.35.0-ben.2..HEAD"])).toBe("4");
+    expect(releasedForkError(fixture.checkout)).toContain("tag is not on HEAD history");
+    const calls: string[][] = [];
+    const prepared = prepare(fixture, undefined, (cwd, args) => {
+      calls.push([...args]);
+      return git(cwd, args);
+    });
+    const refs = requireGit(fixture.checkout, ["show-ref"]);
+    prepared.run();
+    expect(releasedForkError(fixture.checkout)).toBeNull();
+    expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe("false");
+    expect(calls.filter(args => args.includes("--unshallow"))).toEqual([
+      ["fetch", "--unshallow", "--no-tags", "--no-write-fetch-head", "origin", head],
+    ]);
+    expect(requireGit(fixture.checkout, ["rev-parse", "HEAD"])).toBe(head);
+    expect(requireGit(fixture.checkout, ["symbolic-ref", "HEAD"])).toBe("refs/heads/main");
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"])).toBe(rawTag);
+    expect(requireGit(fixture.checkout, ["show-ref"])).toBe(refs);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("complete Fork history and already-proven shallow ancestry need no unshallow fetch", () => {
+    for (const full of [true, false]) {
+      const fixture = createReleasedForkFixture({ full });
+      if (!full) {
+        requireGit(fixture.checkout, ["tag", "-d", "v2.35.0-ben.2"]);
+        requireGit(fixture.checkout, ["tag", "v2.35.0-ben.2", "HEAD"]);
+      }
+      expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe(String(!full));
+      expect(releasedForkError(fixture.checkout)).toBeNull();
+      const calls: string[][] = [];
+      const prepared = prepare(fixture, undefined, (cwd, args) => {
+        calls.push([...args]);
+        return git(cwd, args);
+      });
+      prepared.run();
+      expect(releasedForkError(fixture.checkout)).toBeNull();
+      expect(calls.some(args => args.includes("--unshallow"))).toBe(false);
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    }
+  });
+
+  test("unshallow cannot make a real divergent Fork tag pass the unchanged version guard", () => {
+    const fixture = createReleasedForkFixture({ diverged: true });
+    const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+    const rawTag = requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"]);
+    const prepared = prepare(fixture);
+    const refs = requireGit(fixture.checkout, ["show-ref"]);
+    prepared.run();
+    expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe("false");
+    expect(releasedForkError(fixture.checkout)).toContain("tag is not on HEAD history");
+    expect(requireGit(fixture.checkout, ["rev-parse", "HEAD"])).toBe(head);
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"])).toBe(rawTag);
+    expect(requireGit(fixture.checkout, ["show-ref"])).toBe(refs);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("fatal Fork ancestry queries fail before any fetch with redacted diagnostics and cleanup", () => {
+    const fixture = createReleasedForkFixture();
+    const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+    const calls: string[][] = [];
+    const prepared = prepare(fixture, undefined, (cwd, args) => {
+      calls.push([...args]);
+      if (args[0] === "merge-base") {
+        return { exitCode: 128, stdout: "", stderr: `fatal ancestry query:\n${hostileGitDiagnostic(fixture.checkout)}` };
+      }
+      return git(cwd, args);
+    });
+    const refs = requireGit(fixture.checkout, ["show-ref"]);
+    let message = "";
+    try { prepared.run(); } catch (error) { message = String(error); }
+    expect(message).toContain("fetch Fork version history: fatal ancestry query:");
+    expect(message).toContain("[CREDENTIAL HEADER REDACTED]");
+    expect(message).toContain("[REDACTED_PATH]");
+    expect(message.length).toBeLessThanOrEqual(519);
+    for (const leaked of [fixture.checkout, "secret-token", "Authorization: Bearer", "private-name", "\u0007", "\u2028"]) {
+      expect(message).not.toContain(leaked);
+    }
+    expect(calls.some(args => args.includes("fetch"))).toBe(false);
+    expect(requireGit(fixture.checkout, ["rev-parse", "HEAD"])).toBe(head);
+    expect(requireGit(fixture.checkout, ["show-ref"])).toBe(refs);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("Fork history fetch failure stays closed, redacted, and cleaned up", () => {
+    for (const throws of [false, true]) {
+      const fixture = createReleasedForkFixture();
+      const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+      const rawTag = requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"]);
+      const calls: string[][] = [];
+      const prepared = prepare(fixture, undefined, (cwd, args) => {
+        calls.push([...args]);
+        if (args.includes("--unshallow")) {
+          const stderr = hostileGitDiagnostic(fixture.checkout);
+          if (throws) throw new Error(stderr);
+          return { exitCode: 1, stdout: "", stderr };
+        }
+        return git(cwd, args);
+      });
+      let message = "";
+      try { prepared.run(); } catch (error) { message = String(error); }
+      expect(message).toContain("fetch Fork version history:");
+      expect(message).toContain("[CREDENTIAL HEADER REDACTED]");
+      expect(message).toContain("[REDACTED_PATH]");
+      expect(message.length).toBeLessThanOrEqual(519);
+      for (const leaked of [fixture.checkout, "secret-token", "Authorization: Bearer", "private-name", "\u0007", "\u2028"]) {
+        expect(message).not.toContain(leaked);
+      }
+      expect(calls.some(args => args.includes("fetch") && !args.includes("--unshallow"))).toBe(false);
+      expect(requireGit(fixture.checkout, ["rev-parse", "HEAD"])).toBe(head);
+      expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"])).toBe(rawTag);
+      expect(releasedForkError(fixture.checkout)).toContain("tag is not on HEAD history");
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    }
+  });
+
+  test("rejects an origin marker that does not equal the verified official tag", () => {
+    const fixture = createFixture();
+    const different = requireGit(fixture.official, ["rev-parse", "refs/heads/main"]);
+    requireGit(fixture.official, ["push", pathToFileURL(fixture.originBare).href,
+      `${different}:refs/heads/upstream-release`,
+    ]);
+    const prepared = prepare(fixture);
+    expect(prepared.run).toThrow("official release tag does not match origin upstream-release");
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("candidate CI accepts a pending ancestor marker only when explicitly enabled", () => {
+    const fixture = createFixture();
+    const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
+    requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
+    const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
+    const result = runAsCandidate(prepared.run);
+    expect(result).toMatchObject({ kind: "prepared", tag: "v2.35.0", peeledCommit: fixture.officialTagCommit });
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("candidate CI rejects a pending marker outside the official ancestry", () => {
+    const fixture = createFixture();
+    const different = requireGit(fixture.official, ["rev-parse", "refs/heads/main"]);
+    requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", different]);
+    const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
+    expect(() => runAsCandidate(prepared.run)).toThrow("verify official ancestry");
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("a direct pending-marker option cannot bypass the candidate environment", () => {
+    const fixture = createFixture();
+    const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
+    requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
+    const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
+    expect(() => runOutsideCandidate(prepared.run)).toThrow("official release tag does not match origin upstream-release");
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  for (const [name, environment] of [
+    ["local dispatch", { GITHUB_ACTIONS: "false" }],
+    ["missing Actions marker", { GITHUB_ACTIONS: undefined }],
+    ["main dispatch", { GITHUB_REF: "refs/heads/main" }],
+    ["preview dispatch", { GITHUB_REF: "refs/heads/preview" }],
+    ["tag dispatch", { GITHUB_REF: "refs/tags/v2.35.0" }],
+    ["legacy dev push", { GITHUB_EVENT_NAME: "push" }],
+    ["scheduled dev run", { GITHUB_EVENT_NAME: "schedule" }],
+    ["pull request", { GITHUB_EVENT_NAME: "pull_request" }],
+    ["missing lane", { OCX_CANDIDATE_CI_LANE: undefined }],
+    ["empty lane", { OCX_CANDIDATE_CI_LANE: "" }],
+    ["release-only lane", { OCX_CANDIDATE_CI_LANE: "release-gates" }],
+    ["macOS control lane", { OCX_CANDIDATE_CI_LANE: "macos-control" }],
+    ["unknown lane", { OCX_CANDIDATE_CI_LANE: "unknown" }],
+  ] as const) {
+    test(`rejects a pending ancestor marker in ${name}`, () => {
+      const fixture = createFixture();
+      const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
+      requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
+      const prepared = prepare(fixture, undefined, undefined, { allowPendingOfficialMarker: true });
+      expect(() => runAsCandidate(prepared.run, environment))
+        .toThrow("official release tag does not match origin upstream-release");
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    });
+  }
+
+  test("full dev dispatch still requires the pending-marker option", () => {
+    const fixture = createFixture();
+    const rootCommit = requireGit(fixture.official, ["rev-list", "--max-parents=0", "refs/heads/main"]);
+    requireGit(fixture.originBare, ["update-ref", "refs/heads/upstream-release", rootCommit]);
+    const prepared = prepare(fixture);
+    expect(() => runAsCandidate(prepared.run)).toThrow("official release tag does not match origin upstream-release");
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("imports an independently annotated official tag without losing its tag object", () => {
+    const fixture = createFixture();
+    requireGit(fixture.official, ["tag", "-d", "v2.35.0"]);
+    requireGit(fixture.official, ["tag", "-a", "v2.35.0", "-m", "official v2.35.0", fixture.officialTagCommit]);
+    const prepared = prepare(fixture);
+    const result = prepared.run();
+    const officialRaw = requireGit(fixture.official, ["rev-parse", "refs/tags/v2.35.0"]);
+    expect(result).toEqual({
+      kind: "prepared",
+      version: "2.35.0-ben.2",
+      tag: "v2.35.0",
+      refKind: "annotated",
+      rawTagOid: officialRaw,
+      peeledCommit: fixture.officialTagCommit,
+    });
+    expect(officialRaw).not.toBe(fixture.officialTagCommit);
+    expect(requireGit(fixture.checkout, ["cat-file", "-t", "refs/tags/v2.35.0"])).toBe("tag");
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"])).toBe(officialRaw);
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0^{commit}"]))
+      .toBe(fixture.officialTagCommit);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("rejects blob and tree official refs rather than treating them as tags", () => {
+    for (const kind of ["blob", "tree"] as const) {
+      const fixture = createFixture();
+      requireGit(fixture.official, ["tag", "-d", "v2.35.0"]);
+      const object = kind === "blob"
+        ? requireGit(fixture.official, ["hash-object", "-w", "package.json"])
+        : requireGit(fixture.official, ["write-tree"]);
+      requireGit(fixture.official, ["update-ref", "refs/tags/v2.35.0", object]);
+      const prepared = prepare(fixture);
+      expect(prepared.run).toThrow("official release ref has unsupported object type");
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    }
+  });
+
+  test("rejects an annotated tag whose commit is outside official main ancestry", () => {
+    const fixture = createFixture();
+    requireGit(fixture.official, ["tag", "-d", "v2.35.0"]);
+    requireGit(fixture.official, ["checkout", "--orphan", "not-main"]);
+    requireGit(fixture.official, ["rm", "-rf", "."]);
+    writeFileSync(join(fixture.official, "unrelated.txt"), "unrelated\n");
+    requireGit(fixture.official, ["add", "unrelated.txt"]);
+    requireGit(fixture.official, ["commit", "-m", "unrelated tag commit"]);
+    requireGit(fixture.official, ["tag", "-a", "v2.35.0", "-m", "not on main"]);
+    const prepared = prepare(fixture);
+    expect(prepared.run).toThrow("verify official ancestry:");
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("rejects a local same-name forged tag instead of overwriting it", () => {
+    const fixture = createFixture();
+    const forged = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+    requireGit(fixture.checkout, ["tag", "-a", "v2.35.0", "-m", "forged", forged]);
+    const forgedRaw = requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"]);
+    const prepared = prepare(fixture);
+    expect(prepared.run).toThrow("existing local official tag does not match verified official tag");
+    expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"])).toBe(forgedRaw);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("rejects a pre-existing blob or tree local ref before zero-OID publication", () => {
+    for (const kind of ["blob", "tree"] as const) {
+      const fixture = createFixture();
+      const object = kind === "blob"
+        ? requireGit(fixture.checkout, ["hash-object", "-w", "package.json"])
+        : requireGit(fixture.checkout, ["write-tree"]);
+      requireGit(fixture.checkout, ["update-ref", "refs/tags/v2.35.0", object]);
+      const prepared = prepare(fixture);
+      expect(prepared.run).toThrow("existing local official tag has unsupported object type");
+      expect(requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0"])).toBe(object);
+      assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    }
+  });
+
+  test("keeps an existing identical official tag and rejects missing marker, tag, main, and fetch failures", () => {
+    const fixture = createFixture();
+    const first = prepare(fixture);
+    first.run();
+    const second = prepare(fixture);
+    expect(second.run()).toMatchObject({ kind: "prepared", tag: "v2.35.0" });
+    assertNoOwnedResidue(fixture, second.beforeFetchHead, second.sentinel, second.beforeVerifierRoots);
+
+    for (const mutation of ["marker", "tag", "main"] as const) {
+      const broken = createFixture();
+      if (mutation === "marker") requireGit(broken.originBare, ["update-ref", "-d", "refs/heads/upstream-release"]);
+      if (mutation === "tag") requireGit(broken.official, ["tag", "-d", "v2.35.0"]);
+      if (mutation === "main") requireGit(broken.official, ["branch", "-m", "main", "without-main"]);
+      const prepared = prepare(broken);
+      expect(prepared.run).toThrow();
+      assertNoOwnedResidue(broken, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+    }
+
+    const unavailable = createFixture();
+    const prepared = prepare(unavailable, pathToFileURL(join(unavailable.root, "missing.git")).href);
+    expect(prepared.run).toThrow("fetch official refs:");
+    assertNoOwnedResidue(unavailable, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test("redacts hostile Git diagnostics to one bounded line", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-official-secret-"));
+    roots.push(root);
+    const hostile = hostileGitDiagnostic(join(realpathSync(root), "repo.git"));
+    expect(hostile.length).toBeGreaterThan(4096);
+    expect(hostile.length).toBeLessThanOrEqual(8192);
+    const message = safeGitDiagnostic("fetch official refs", new Error(hostile), [
+      root, realpathSync(root), join(root, "repo.git"), join(realpathSync(root), "repo.git"),
+    ]);
+    for (const leaked of ["user", "secret-token", "Authorization: Bearer", "private-name", "linux-private", "windows-private", "ocx-fork-official-secret", "?access_token", "#private-fragment", "\n", "\u0007", "\u2028"]) {
+      expect(message).not.toContain(leaked);
+    }
+    expect(message).toContain("[CREDENTIAL HEADER REDACTED]");
+    expect(message).toContain("[REDACTED_PATH]");
+    expect(message.length).toBeLessThanOrEqual(512);
+  });
+
+  test("keeps the primary failure while reporting a cleanup-only failure safely", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-cleanup-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
+    let cleanupCalls = 0;
+    const primaryRunner = (_cwd: string, args: readonly string[]) => {
+      if (args.includes("ls-remote")) return { exitCode: 0, stdout: `${"a".repeat(40)}\trefs/heads/main\n`, stderr: "" };
+      if (args[0] === "fetch" && args.includes("origin")) {
+        return { exitCode: 1, stdout: "", stderr: "marker failure" };
+      }
+      if (args[0] === "update-ref" && args[1] === "-d" && cleanupCalls++ >= 2) {
+        throw new Error(`cleanup ${"secret" + "-token"}`);
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    let primaryMessage = "";
+    try {
+      prepareForkOfficialBase({
+        repoRoot: root, officialRepositoryUrl: "https://example.invalid/official.git", runGit: primaryRunner,
+      });
+    } catch (error) {
+      primaryMessage = error instanceof Error ? error.message : String(error);
+    }
+    expect(primaryMessage).toBe("prepare official base: fetch origin marker: marker failure; cleanup also failed");
+
+    let cleanupOnlyDeletes = 0;
+    const cleanupOnlyRunner = (_cwd: string, args: readonly string[]) => {
+      if (args.includes("ls-remote")) return { exitCode: 0, stdout: `${"a".repeat(40)}\trefs/heads/main\n`, stderr: "" };
+      if (args[0] === "update-ref" && args[1] === "-d" && cleanupOnlyDeletes++ >= 2) {
+        throw new Error(`cleanup ${"secret" + "-token"}`);
+      }
+      if (args.includes("cat-file")) return { exitCode: 0, stdout: "tag\n", stderr: "" };
+      if (args.includes("merge-base")) return { exitCode: 0, stdout: "", stderr: "" };
+      if (args.includes("rev-parse") && args.some(value => value.includes("^{commit}"))) {
+        return { exitCode: 0, stdout: "a".repeat(40) + "\n", stderr: "" };
+      }
+      if (args.includes("rev-parse")) {
+        if (args.includes("refs/tags/v2.35.0") && !args.some(value => value.startsWith("--git-dir="))) {
+          return { exitCode: 1, stdout: "", stderr: "missing local tag" };
+        }
+        return { exitCode: 0, stdout: "b".repeat(40) + "\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    let cleanupMessage = "";
+    try {
+      prepareForkOfficialBase({
+        repoRoot: root, officialRepositoryUrl: "https://example.invalid/official.git", runGit: cleanupOnlyRunner,
+      });
+    } catch (error) {
+      cleanupMessage = error instanceof Error ? error.message : String(error);
+    }
+    expect(cleanupMessage).toStartWith("cleanup official verifier:");
+    expect(cleanupMessage).not.toContain("secret-token");
+  });
+
+  test("runner throws during a primary Git operation without leaking its owned bare path", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-throw-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
+    let bareDir = "";
+    const runner = (_cwd: string, args: readonly string[]) => {
+      if (args[0] === "init") bareDir = args[2] ?? "";
+      if (args.includes("ls-remote")) return { exitCode: 0, stdout: `${"a".repeat(40)}\trefs/heads/main\n`, stderr: "" };
+      if (args.includes("fetch") && args.includes("https://example.invalid/official.git")) throw new Error(`primary ${bareDir}`);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    let message = "";
+    try {
+      prepareForkOfficialBase({ repoRoot: root, officialRepositoryUrl: "https://example.invalid/official.git", runGit: runner });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toStartWith("prepare official base: fetch official refs:");
+    expect(message).not.toContain(bareDir);
+    expect(existsSync(dirname(bareDir))).toBe(false);
+  });
+
+  test("post-mkdtemp setup failure cleans both owned refs and verifier root", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-setup-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
+    let bareDir = "";
+    let deletions = 0;
+    const runner = (_cwd: string, args: readonly string[]) => {
+      if (args[0] === "update-ref" && args[1] === "-d") deletions += 1;
+      if (args[0] === "init") {
+        bareDir = args[2] ?? "";
+        return { exitCode: 1, stdout: "", stderr: `cannot initialize ${bareDir}` };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    let message = "";
+    try {
+      prepareForkOfficialBase({ repoRoot: root, officialRepositoryUrl: "https://example.invalid/official.git", runGit: runner });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toStartWith("prepare official base: init official verifier:");
+    expect(message).toContain("[REDACTED_PATH]");
+    expect(message).not.toContain(bareDir);
+    expect(deletions).toBe(2);
+    expect(existsSync(dirname(bareDir))).toBe(false);
+  });
+
+  test("raw chmod setup failure folds the verifier path and still invokes supplied cleanup runner", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-fs-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
+    let verifierRoot = "";
+    let deletions = 0;
+    const runner = (_cwd: string, args: readonly string[]) => {
+      if (args[0] === "update-ref" && args[1] === "-d") deletions += 1;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    let message = "";
+    try {
+      prepareForkOfficialBase({
+        repoRoot: root,
+        officialRepositoryUrl: "https://example.invalid/official.git",
+        runGit: runner,
+        filesystem: {
+          chmodSync(path) {
+            verifierRoot = String(path);
+            throw new Error(`cannot chmod ${verifierRoot}`);
+          },
+          writeFileSync,
+        },
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toStartWith("prepare official base:");
+    expect(message).toContain("[REDACTED_PATH]");
+    expect(message).not.toContain(verifierRoot);
+    expect(deletions).toBe(2);
+    expect(existsSync(verifierRoot)).toBe(false);
+  });
+
+  test("default production runner cleans both owned refs after raw chmod failure", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-base-default-fs-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.35.0-ben.2" }));
+    const fakeBin = join(root, "fake-bin");
+    const fakeLog = join(root, "default-runner.jsonl");
+    mkdirSync(fakeBin);
+    const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
+    const fakeScript = join(root, "default-runner-git.mjs");
+    writeFileSync(fakeScript, `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");\n`);
+    if (process.platform === "win32") writeFileSync(fakeGit, `@echo off\n"${process.execPath}" "${fakeScript}" %*\n`);
+    else {
+      writeFileSync(fakeGit, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`);
+      chmodSync(fakeGit, 0o755);
+    }
+    const previousPath = process.env.PATH;
+    const previousLog = process.env.FAKE_GIT_LOG;
+    let verifierRoot = "";
+    let message = "";
+    try {
+      process.env.PATH = `${fakeBin}${delimiter}${previousPath ?? ""}`;
+      process.env.FAKE_GIT_LOG = fakeLog;
+      prepareForkOfficialBase({
+        repoRoot: root,
+        officialRepositoryUrl: "https://example.invalid/official.git",
+        filesystem: {
+          chmodSync(path) {
+            verifierRoot = String(path);
+            throw new Error(`raw chmod ${verifierRoot}`);
+          },
+          writeFileSync,
+        },
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousLog === undefined) delete process.env.FAKE_GIT_LOG;
+      else process.env.FAKE_GIT_LOG = previousLog;
+    }
+    const calls = readFileSync(fakeLog, "utf8").trim().split("\n").map(JSON.parse) as string[][];
+    expect(message).toContain("[REDACTED_PATH]");
+    expect(message).not.toContain(verifierRoot);
+    expect(calls).toEqual([
+      ["update-ref", "-d", "refs/ocx-ci/fork-marker"],
+      ["update-ref", "-d", "refs/ocx-ci/official-tag"],
+    ]);
+    expect(existsSync(verifierRoot)).toBe(false);
+  });
+
+  test("direct production entry sandboxes Git environment, fixed URL, long hostile output, and cleanup suffix", () => {
+    const fixture = createFixture();
+    const fakeBin = join(fixture.root, "fake-bin");
+    const fakeGitLog = join(fixture.root, "git-args.jsonl");
+    mkdirSync(fakeBin);
+    const fakeScript = join(fixture.root, "fake-git.mjs");
+    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nconst env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase().startsWith("GIT_CONFIG") || key.toUpperCase() === "PATH"));\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify({ args, env }) + "\\n");\nconst deletes = rows.filter(row => row.args?.[0] === "update-ref" && row.args?.[1] === "-d").length;\nconst bare = rows.flatMap(row => row.args?.[0] === "init" ? [row.args[2]] : row.args ?? []).find(value => value?.startsWith("--git-dir="))?.slice("--git-dir=".length) ?? rows.find(row => row.args?.[0] === "init")?.args?.[2] ?? "";\nif (args.includes("ls-remote")) { process.stdout.write("a".repeat(40) + "\\trefs/heads/main\\n"); process.exit(0); }\nif (args.includes("fetch") && args.includes("https://github.com/lidge-jun/opencodex.git")) { process.stderr.write(bare + "\\n" + process.env.FAKE_GIT_ERROR); process.exit(1); }\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 2) { process.stderr.write("cleanup " + bare); process.exit(1); }\nprocess.exit(0);\n`);
+    const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
+    if (process.platform === "win32") {
+      writeFileSync(fakeGit, `@echo off\n"${process.execPath}" "${fakeScript}" %*\n`);
+    } else {
+      writeFileSync(fakeGit, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`);
+      chmodSync(fakeGit, 0o755);
+    }
+    const scriptPath = fileURLToPath(new URL("../../scripts/prepare-fork-official-base.ts", import.meta.url));
+    const repoRoot = resolveRepoRoot();
+    const hostile = hostileGitDiagnostic(join(repoRoot, "repo.git"));
+    expect(hostile.length).toBeGreaterThan(4096);
+    expect(hostile.length).toBeLessThanOrEqual(8192);
+    const result = Bun.spawnSync([process.execPath, scriptPath, "https://evil.invalid/override"], {
+      cwd: repoRoot,
+      env: fakeGitEnvironment(fakeBin, {
+        gIt_cOnFiG_cOuNt: "must-not-reach-fake-git",
+        OCX_OFFICIAL_REPOSITORY_URL: "https://evil.invalid/from-env",
+        FAKE_GIT_LOG: fakeGitLog,
+        FAKE_GIT_ERROR: hostile,
+      }),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = decoder.decode(result.stderr);
+    expect(result.exitCode).not.toBe(0);
+    expect(decoder.decode(result.stdout)).toBe("");
+    expect(stderr.split("\n").filter(Boolean)).toHaveLength(1);
+    expect(stderr.length).toBeLessThanOrEqual(513);
+    for (const leaked of ["user", "secret-token", "Authorization: Bearer", "private-name", "linux-private", "windows-private", "ocx-fork-official-secret", "?access_token", "#private-fragment", "\u0007", "\u2028"]) {
+      expect(stderr).not.toContain(leaked);
+    }
+    expect(stderr).toContain("[CREDENTIAL HEADER REDACTED]");
+    expect(stderr).toContain("[REDACTED_PATH]");
+    expect(stderr.trimEnd()).toEndWith("; cleanup also failed");
+    const lines = readFileSync(fakeGitLog, "utf8").trim().split("\n").map(JSON.parse) as Array<{ args: string[]; env: Record<string, string> }>;
+    const officialFetch = lines.find(row => row.args.includes("fetch") && row.args.includes("https://github.com/lidge-jun/opencodex.git"));
+    const generatedBareDir = lines.find(row => row.args[0] === "init")?.args[2] ?? "";
+    expect(officialFetch).toBeDefined();
+    expect(JSON.stringify(lines)).not.toContain("https://evil.invalid");
+    expect(Object.keys(officialFetch?.env ?? {}).every(key => ["PATH", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL"].includes(key))).toBe(true);
+    expect(Object.keys(officialFetch?.env ?? {})).not.toContain("gIt_cOnFiG_cOuNt");
+    expect(stderr).not.toContain(generatedBareDir);
+  });
+
+  test("normal module import performs zero Git calls", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-import-"));
+    roots.push(root);
+    const fakeBin = join(root, "fake-bin");
+    const fakeLog = join(root, "calls.log");
+    mkdirSync(fakeBin);
+    const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
+    const payload = process.platform === "win32"
+      ? `@echo off\necho invoked>>"${fakeLog}"\nexit /b 1\n`
+      : `#!/bin/sh\nprintf invoked >> "${fakeLog}"\nexit 1\n`;
+    writeFileSync(fakeGit, payload);
+    if (process.platform !== "win32") chmodSync(fakeGit, 0o755);
+    const scriptUrl = pathToFileURL(fileURLToPath(new URL("../../scripts/prepare-fork-official-base.ts", import.meta.url))).href;
+    const result = Bun.spawnSync([process.execPath, "--eval", `import(${JSON.stringify(scriptUrl)})`], {
+      cwd: root,
+      env: fakeGitEnvironment(fakeBin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(fakeLog)).toBe(false, decoder.decode(result.stderr));
+  });
+
+  test("direct production entry redacts the generated bare path on a cleanup-only failure", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocx-fork-cli-cleanup-"));
+    roots.push(root);
+    const fakeLog = join(root, "calls.jsonl");
+    const fakeScript = join(root, "fake-git.mjs");
+    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\nconst bare = rows.find(row => row[0] === "init")?.[2] ?? "";\nconst deletes = rows.filter(row => row[0] === "update-ref" && row[1] === "-d").length;\nif (args.includes("ls-remote")) { process.stdout.write("a".repeat(40) + "\\trefs/heads/main\\n"); process.exit(0); }\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 2) { process.stderr.write("cleanup " + bare); process.exit(1); }\nif (args.includes("cat-file")) { process.stdout.write("tag\\n"); process.exit(0); }\nif (args.includes("rev-parse")) { if (args[1]?.startsWith("refs/tags/") && !args.some(value => value.startsWith("--git-dir="))) process.exit(1); process.stdout.write(args.some(value => value.includes("^{commit}")) ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n"); process.exit(0); }\nprocess.exit(0);\n`);
+    const preload = join(root, "git-preload.mjs");
+    // Keep the real CLI entry while passing Git argv through a native executable on Windows.
+    writeFileSync(preload, `const spawnSync = Bun.spawnSync.bind(Bun);\nBun.spawnSync = (command, options) => spawnSync(command[0] === "git" ? [process.execPath, ${JSON.stringify(fakeScript)}, ...command.slice(1)] : command, options);\n`);
+    const scriptPath = fileURLToPath(new URL("../../scripts/prepare-fork-official-base.ts", import.meta.url));
+    const repoRoot = resolveRepoRoot();
+    const result = Bun.spawnSync([process.execPath, "--preload", preload, scriptPath], {
+      cwd: repoRoot,
+      env: { ...process.env, FAKE_GIT_LOG: fakeLog },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = decoder.decode(result.stderr);
+    const rows = readFileSync(fakeLog, "utf8").trim().split("\n").map(JSON.parse) as string[][];
+    const bareDir = rows.find(row => row[0] === "init")?.[2] ?? "";
+    const { version } = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+    const tagRef = `refs/tags/v${version.split("-ben.")[0]}`;
+    expect(result.exitCode).not.toBe(0);
+    expect(decoder.decode(result.stdout)).toBe("");
+    expect(stderr.split("\n").filter(Boolean)).toHaveLength(1);
+    expect(stderr.length).toBeLessThanOrEqual(513);
+    expect(stderr).toContain("[REDACTED_PATH]");
+    expect(stderr).not.toContain(bareDir);
+    expect(stderr).toStartWith("prepare official base: cleanup official verifier: cleanup ");
+    expect(stderr).not.toContain("cleanup also failed");
+    expect(bareDir).not.toBe("");
+    expect(rows).toContainEqual([`--git-dir=${bareDir}`, "rev-parse", `${tagRef}^{commit}`]);
+    expect(rows).toContainEqual(["rev-parse", "refs/ocx-ci/official-tag^{commit}"]);
+    expect(rows).toContainEqual(["update-ref", tagRef, "b".repeat(40), "0".repeat(40)]);
+    expect(rows.slice(-2)).toEqual([
+      ["update-ref", "-d", "refs/ocx-ci/fork-marker"],
+      ["update-ref", "-d", "refs/ocx-ci/official-tag"],
+    ]);
+    expect(existsSync(dirname(bareDir))).toBe(false);
+  });
+
+  test("requires official-base preparation wherever the workflow opts into Fork provenance", async () => {
+    type WorkflowJob = {
+      name?: string;
+      needs?: string | string[];
+      if?: string;
+      "runs-on"?: unknown;
+      permissions?: Record<string, string>;
+      strategy?: { matrix?: { os?: string[] } };
+      steps?: Array<{ name?: string; uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, unknown> }>;
+    };
+    type Workflow = {
+      on?: { workflow_dispatch?: { inputs?: Record<string, unknown> } };
+      permissions?: Record<string, string>;
+      jobs?: Record<string, WorkflowJob | undefined>;
+    };
+
+    const workflow = await Bun.file(new URL("../../.github/workflows/ci.yml", import.meta.url)).text();
+    const ci = Bun.YAML.parse(workflow) as Workflow;
+    const prepareName = "Prepare verified Fork official base";
+    const prepareRun = "bun scripts/prepare-fork-official-base.ts";
+    const prepareSteps = Object.entries(ci.jobs ?? {}).flatMap(([jobName, job]) =>
+      (job?.steps ?? [])
+        .filter(step => step.run === prepareRun)
+        .map(step => ({ jobName, step })),
+    );
+    expect(ci.permissions).toEqual({ contents: "read" });
+    expect(prepareSteps).toHaveLength(4);
+    for (const { jobName } of prepareSteps) {
+      const steps = ci.jobs?.[jobName]?.steps ?? [];
+      const matching = prepareSteps.filter(step => step.jobName === jobName);
+      expect(matching).toHaveLength(1);
+      expect(matching[0]?.step.name).toBe(prepareName);
+      expect(matching[0]?.step.env?.OCX_CANDIDATE_CI_LANE).toBe("${{ github.event.inputs.lane }}");
+      expect(matching[0]?.step.env?.OCX_OFFICIAL_RELEASE_API_TOKEN).toBe("${{ github.token }}");
+      expect(ci.jobs?.[jobName]?.permissions).toBeUndefined();
+      const prepareIndex = steps.indexOf(matching[0]!.step);
+      const setupIndex = steps.findIndex(step => step.name === "Setup project Bun");
+      const installIndex = steps.findIndex(step => step.name === "Install dependencies");
+      const testIndex = steps.findIndex(step => /^Test\b/.test(step.name ?? ""));
+      expect(setupIndex).toBeGreaterThanOrEqual(0);
+      expect(installIndex).toBeGreaterThanOrEqual(0);
+      expect(testIndex).toBeGreaterThanOrEqual(0);
+      expect(prepareIndex).toBeGreaterThan(setupIndex);
+      expect(prepareIndex).toBe(setupIndex + 1);
+      expect(prepareIndex).toBeLessThan(installIndex);
+      expect(prepareIndex).toBeLessThan(testIndex);
+    }
+
+    expect(await Bun.file(new URL("../../.github/actions/setup-project-bun/action.yml", import.meta.url)).text())
+      .not.toContain(prepareRun);
+
+    // Official job names, shard counts, runners, dispatch inputs and timeouts are
+    // intentionally left to the upstream workflow and its own tests.
+  });
+});

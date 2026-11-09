@@ -13,6 +13,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { repoPath } from "../helpers/repo-root";
 import {
   isAllowedRequestOrigin,
   requestPolicyView,
@@ -93,18 +94,17 @@ describe("loopback listener policy view", () => {
 });
 
 describe("local client inference wires on the loopback listener (#4236)", () => {
-  // src/server/index.ts is a facade now. The allowlist closure stayed in the composition root
-  // while the route branches moved into the serve-options leaf, and the tests below read both:
-  // the allowlist shape from the root, the chat wire's CORS tail from the leaf. Reading only
-  // the facade left indexOf at -1 and sliced an empty branch, so the CORS assertions passed
-  // without checking anything.
+  // Read the allowlist and dispatcher leaves alongside their composition root.
+  // Reading only the facade would let branch extraction silently inspect an empty string.
+  const allowlistSource = readFileSync(repoPath("src/server/index/loopback-route-allowlist.ts"), "utf8");
   const source = [
+    allowlistSource,
     readFileSync(new URL("../../src/server/index.ts", import.meta.url), "utf8"),
     readFileSync(new URL("../../src/server/index/serve-options.ts", import.meta.url), "utf8"),
   ].join("\n");
 
   test("the allowlist admits all three wires as POST and nothing else about them", () => {
-    // The allowlist is a closure inside startServer, so this reads the entry itself. The
+    // Read the allowlist source directly. The
     // integration file proves the socket behaviour; this pins the SHAPE, because "admit the
     // path" and "admit the path for any method" are one character apart.
     expect(source).toContain(
@@ -121,11 +121,11 @@ describe("local client inference wires on the loopback listener (#4236)", () => 
   test("no /api route joins the allowlist", () => {
     // Management discovery is the other destination contract (authenticated ingress). A
     // reviewer condition on #4236: `/api/*` must never appear on this listener.
-    const start = source.indexOf("function loopbackRouteAllowed(");
-    const end = source.indexOf("function managementIngressRouteAllowed(", start);
+    const start = allowlistSource.indexOf("function loopbackRouteAllowed(");
+    const end = allowlistSource.indexOf("\n}\n", start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
-    expect(source.slice(start, end)).not.toContain('"/api');
+    expect(allowlistSource.slice(start, end)).not.toContain('"/api');
   });
 
   test("the chat wire finishes CORS with the receiving listener's policy", () => {

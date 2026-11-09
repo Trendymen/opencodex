@@ -9,13 +9,15 @@ import { clearAccountQuota, setAccountQuotaFromParsed } from "../../src/codex/qu
 import { clearCodexUpstreamHealth, clearThreadAccountMap, getCodexUpstreamHealth } from "../../src/codex/routing";
 import { handleResponses } from "../../src/server/responses";
 import { codexWsPool } from "../../src/server/responses/codex-ws-pool";
-import { createRequestExecutionBudget } from "../../src/lib/request-execution-budget";
+import { CODEX_TEXT_GUARDED_BUDGET_POLICY, createRequestExecutionBudget } from "../../src/lib/request-execution-budget";
+import { resetAgentTaskRecoveryState } from "../../src/server/responses/agent-task-recovery";
 import { clearPoolRecoveryState, configureSharedPoolBackpressure } from "../../src/routing/probe-lease";
 import type { RequestLogContext } from "../../src/server/request-log";
 import type { OcxConfig } from "../../src/types";
 import { BOUNDED_WS_RUNTIME } from "../helpers/ws-upstream-fixtures";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { codexHeaders, encryptedInput, recoverySse } from "../helpers/agent-task-recovery";
 
 /**
  * #6969 end to end: a pooled native Codex turn that the upstream refuses over the WebSocket before
@@ -247,6 +249,60 @@ describe("pooled native Codex recovers a pre-output upstream refusal (#6969)", (
     expect(body).toContain("server_is_overloaded");
     expect(sockets()).toEqual(["Bearer work-access", "Bearer work-access", "Bearer work-access"]);
     expect(failures(WORK)).toBe(1);
+  });
+
+  test("encrypted task recovery with no shared resend budget preserves the original WS refusal stream", async () => {
+    resetAgentTaskRecoveryState();
+    const ciphertext = `gAAAA${"B".repeat(128)}`;
+    const sendBudget = createRequestExecutionBudget({
+      ...CODEX_TEXT_GUARDED_BUDGET_POLICY,
+      finalRecoveryAllowance: 0,
+    });
+    FakeWebSocket.plan = ["refuse", "refuse", "refuse"];
+    let recoveryAttempts = 0;
+    globalThis.fetch = (async (_input, init) => {
+      if (typeof init?.body !== "string" || !init.body.includes("capture_assignment")) {
+        throw new Error("unexpected HTTP send");
+      }
+      recoveryAttempts += 1;
+      return new Response(recoverySse("Return only ok."), {
+        headers: { "content-type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+    try {
+      const request = new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...Object.fromEntries(codexHeaders("acc-work")) },
+        body: JSON.stringify({
+          model: "side/gpt-5.5", stream: true,
+          input: encryptedInput({ ciphertext }),
+        }),
+      });
+      const response = await handleResponses(request, poolConfig([WORK], {
+        agentTaskRecovery: { enabled: true }, codexAccountNamespaces: { side: WORK },
+      }),
+        { model: "", provider: "" }, { codexWsRuntimeIdentity: BOUNDED_WS_RUNTIME, sendBudget });
+      const body = await response.text();
+      expect(recoveryAttempts).toBe(1);
+      expect(sockets()).toEqual(["Bearer work-access", "Bearer work-access", "Bearer work-access"]);
+      expect(FakeWebSocket.instances.every(ws => ws.sent.length === 1 && ws.sent[0]!.includes(ciphertext))).toBe(true);
+      expect(sendBudget.used).toBe(3);
+      expect(sendBudget.reserveSpent).toBe(false);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+      const frames = [...body.matchAll(/^data: (.+)$/gm)]
+        .filter(([, payload]) => payload !== "[DONE]")
+        .map(([, payload]) => JSON.parse(payload!));
+      expect(frames.map(frame => frame.type)).toEqual(["response.created", "response.in_progress", "response.failed"]);
+      expect(frames[0]).toMatchObject({ response: { id: "resp_2", status: "in_progress", output: [] } });
+      expect(frames[1]).toMatchObject({ response: { id: "resp_2", status: "in_progress", output: [] } });
+      expect(frames[2]).toMatchObject({ response: {
+        status: "failed", error: { type: "server_error", code: "server_is_overloaded" },
+        last_error: { type: "server_error", code: "server_is_overloaded" },
+      } });
+      expect(failures(WORK)).toBe(1);
+      expect(failures(OTHER)).toBe(0);
+    } finally { resetAgentTaskRecoveryState(); }
   });
 
   test("a pinned account never moves to another account", async () => {
