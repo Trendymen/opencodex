@@ -493,6 +493,49 @@ describe("structure/ SSOT", () => {
     expect(runStructureChecks(root)).toEqual([]);
   });
 
+  test("fork-only docs stay checked without changing the official index", () => {
+    const root = scaffold();
+    const manifest = manifestOf(root);
+    const officialIndex = renderIndex(manifest);
+    write(root, "src/beta/keep.ts", "export const keep = 2;\n");
+    write(root, "structure/fork-notes.md", "# Fork notes\n\nBeta uses " + BT + "src/beta/keep.ts" + BT + ". See [Overview](overview.md).\n");
+    manifest.docs.push({ path: "fork-notes.md", tier: 1, title: "Fork notes", scope: "beta", documents: ["src/beta/"], forkOnly: true });
+    saveManifest(root, manifest);
+    expect(renderIndex(manifest)).toBe(officialIndex);
+    expect(runStructureChecks(root)).toEqual([]);
+
+    write(root, "structure/fork-notes.md", "# Fork notes\n\n[Missing](missing.md)\n");
+    fires(root, "missing.md");
+    write(root, "structure/fork-notes.md", "# Fork notes\n");
+    manifest.docs.at(-1)!.documents = ["src/missing/"];
+    saveManifest(root, manifest);
+    fires(root, "src/missing/");
+    fires(root, "src/beta/");
+    manifest.docs.at(-1)!.documents = ["src/beta/"];
+    manifest.sizeBudgetLines = 2;
+    saveManifest(root, manifest);
+    write(root, "structure/fork-notes.md", "# Fork notes\n\nThird line\n");
+    fires(root, "structure/fork-notes.md is 3 lines, over the 2-line budget");
+    rmSync(join(root, "structure/fork-notes.md"));
+    fires(root, "manifest.json lists structure/fork-notes.md but the file is missing");
+  });
+
+  test("forkOnly is optional and accepts only booleans", () => {
+    const manifest = manifestOf(scaffold());
+    const officialIndex = renderIndex(manifest);
+    expect(loadManifest(JSON.stringify(manifest))).toEqual({ manifest });
+    for (const forkOnly of [true, false]) {
+      manifest.docs[0]!.forkOnly = forkOnly;
+      expect(loadManifest(JSON.stringify(manifest))).toEqual({ manifest });
+    }
+    expect(renderIndex(manifest)).toBe(officialIndex);
+    for (const forkOnly of ["false", "true", 0, 1, null, {}, []]) {
+      const loaded = loadManifest(JSON.stringify({ ...manifest, docs: [{ ...manifest.docs[0], forkOnly }] }));
+      expect(loaded).toHaveProperty("error");
+      expect((loaded as { error: string }).error).toContain("docs[0].forkOnly must be a boolean");
+    }
+  });
+
   test("a malformed manifest is an actionable failure, not a stack trace", () => {
     expect(loadManifest("{not json")).toHaveProperty("error");
     const shapeless = loadManifest(JSON.stringify({ sizeBudgetLines: 600 }));

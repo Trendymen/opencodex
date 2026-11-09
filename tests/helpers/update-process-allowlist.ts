@@ -30,7 +30,7 @@ const baseProcessAllowlist: readonly (readonly [string, string, number])[] = [
   ["bin/ocx.mjs:<module>:process.removeListener(sig, handler)","ordinary launcher signal relay registration/cleanup",1],
   ["bin/ocx.mjs:<module>:process.exit(code ?? 1)","ordinary launcher/help/probe or terminal prompt outcome; update success remains guarded",1],
   ['src/update/index.ts:runUpdate:process.once("exit", () => session?.finishPreflight())',"pre-mutation exit cleanup for the legacy session",1],
-  ["src/update/index.ts:runUpdateWithSession:process.exit(1)","terminal failure only; cannot publish successful update",4],
+  ["src/update/index.ts:runUpdateWithSession:process.exit(1)","terminal failure only; cannot publish successful update; includes unresolved or older fork versions before stop",6],
   ["src/update/index.ts:runUpdateWithSession:process.exit(updateExitCode)","ordinary launcher/help/probe or terminal prompt outcome; update success remains guarded",1],
   ["src/update/job.ts:defaultProbeProxyIdentity:fetch(`http://${probeHostname(hostname)}:${port}/healthz`, { signal: AbortSignal.timeout(750), })","bounded loopback health observation, no update control",1],
   ["src/update/notify.ts:maybeShowUpdatePrompt:process.exit(0)","ordinary launcher/help/probe or terminal prompt outcome; update success remains guarded",1],

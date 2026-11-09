@@ -16,6 +16,7 @@ import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { chatStream, chatSuccess } from "../helpers/combo-failover-upstream";
+import { probeSessionEffortSource } from "../helpers/session-effort-source-probe";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 
 type Rec = Record<string, unknown>;
@@ -168,6 +169,23 @@ for (const lane of ["native", "responses"] as const) {
       expect(row.jevDecision).toMatchObject({ gate: failure ? "http" : "apply", selected: { effort: null } });
     }, 30_000);
   }
+}
+
+for (const source of ["chat", "decision"] as const) for (const forced of [false, true]) {
+  test(`${source} internal Responses body is observed only with an injected client marker (control=${forced})`, async () => {
+    const f = fixture("native", "model", "low");
+    delete f.config.protocols;
+    const probe = probeSessionEffortSource(options => source === "decision"
+      ? options.internalDecisionCall === true
+      : options.inboundWire === "chat" && !options.comboAttempt && !options.internalDecisionCall, forced);
+    try {
+      const { response } = await send("native", f.config);
+      expect(response.status).toBe(200);
+      expect(probe.calls).toHaveLength(1);
+      expect(probe.calls[0]!.marker).not.toBe(true);
+      expect(probe.calls[0]!.observation).toEqual(forced ? { clientEffort: "high", sessionEffort: "max", status: "visible" } : undefined);
+    } finally { probe.restore(); }
+  }, 30_000);
 }
 
 test.each(["none", "minimal"])("native caller sentinel %s cannot override the initial decision", async caller => {

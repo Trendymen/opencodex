@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as directHttp from "../../src/server/direct-local-http";
 import { opencodeCatalogToken } from "../../src/lib/admin-secrets";
 import * as childProcess from "node:child_process";
@@ -37,6 +37,7 @@ import {
   serializeOpencodeRuntimeConfig,
 } from "../../src/cli/opencode";
 import type { OcxConfig } from "../../src/types";
+import { installIsolatedCodexRuntime } from "../helpers/isolated-codex-runtime";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 function cfg(extra?: Partial<OcxConfig>): OcxConfig {
@@ -534,6 +535,24 @@ describe("ocx opencode proxy model catalog", () => {
 });
 
 describe("ocx opencode native slug selection", () => {
+  let previousHome: string | undefined;
+  let testHome = "";
+  let restoreCodexRuntime: (() => void) | undefined;
+  beforeEach(() => {
+    previousHome = process.env.OPENCODEX_HOME;
+    testHome = mkdtempSync(join(tmpdir(), "ocx-opencode-native-"));
+    process.env.OPENCODEX_HOME = testHome;
+    restoreCodexRuntime = installIsolatedCodexRuntime(testHome);
+  });
+  afterEach(() => {
+    restoreCodexRuntime?.();
+    restoreCodexRuntime = undefined;
+    if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
+    else process.env.OPENCODEX_HOME = previousHome;
+    if (testHome) removeTreeWithRetry(testHome);
+    testHome = "";
+  });
+
   test("omits native slugs in Codex Direct mode", () => {
     const config = cfg({
       providers: {

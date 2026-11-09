@@ -13,11 +13,11 @@ import { anthropicModelPercents } from "../../../src/oauth/anthropic-model-quota
 import { providerQuotaWindows } from "../../../src/quota-pool/assemble";
 import { probeAnthropicUsageQuota } from "../../../src/providers/claude-cli-usage";
 import { ultraUsage } from "../../fixtures/anthropic-usage-shapes";
+import { drainAndRemoveFixtureRoots } from "../../helpers/fixture-teardown";
+import type { OcxConfig } from "../../../src/types";
 
 /** A weekly reset relative to now, so cached windows never expire mid-suite on a later date. */
 const futureWeeklyReset = () => new Date(Date.now() + 7 * 86_400_000).toISOString();
-import { drainAndRemoveFixtureRoots } from "../../helpers/fixture-teardown";
-import type { OcxConfig } from "../../../src/types";
 
 const originalHome = process.env.OPENCODEX_HOME;
 const originalFetch = globalThis.fetch;

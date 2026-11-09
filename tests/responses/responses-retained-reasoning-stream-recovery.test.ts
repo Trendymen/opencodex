@@ -92,6 +92,8 @@ function retentionConfig(): OcxConfig {
         baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "forward",
         codexAccountMode: "pool",
+        // This fixture mocks HTTP fetch, so keep it off the WebSocket transport.
+        upstreamWebsocket: false,
       },
     },
     codexAccounts: [{ id: "pool-a", email: "a@example.test", chatgptAccountId: "workspace-a", isMain: false }],

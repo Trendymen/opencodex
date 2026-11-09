@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { providerFetch } from "../../src/server/responses/fetch-helpers";
 import { handleResponses } from "../../src/server/responses";
 import { isEagerRelaySseResponse } from "../../src/server/relay";
-import { isWin32EagerRewrite } from "../../src/lib/bun-stream-caps";
 import { fetchWithTransientRetry, isNonReplayableResponse } from "../../src/lib/upstream-retry";
 import { codexWsExchange } from "../../src/server/responses/codex-ws-exchange";
 import { shouldRetryCodexPoolAccountModel400 } from "../../src/server/responses/core-codex-account";
@@ -31,12 +30,13 @@ import {
 } from "../../src/server/responses/ws-upstream";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 import { resolveTurnStateHandle, TURN_STATE_BINDING_INIT } from "../../src/server/turn-state-handles";
-import { BOUNDED_WS_RUNTIME, codexWsUpstreamFetch, shouldUseCodexWsUpstream, streamingInit } from "../helpers/ws-upstream-fixtures";
+import { isWin32EagerRewrite, EAGER_RELAY_FORCED_BY_PLATFORM, BOUNDED_WS_RUNTIME, codexWsUpstreamFetch, shouldUseCodexWsUpstream, streamingInit } from "../helpers/ws-upstream-fixtures";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { installCompactionRoutingAclFixture as installRoutingAclFixture } from "../helpers/compaction-routing-fixtures";
 // Quota headers under families this proxy does not know: ten per family, all of them dropped.
 const quotaFamilyHeaders = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, i) => [`x-codex-family-${Math.floor(i / 10)}-${["primary-used-percent", "primary-window-minutes", "primary-reset-at", "secondary-used-percent", "secondary-window-minutes", "secondary-reset-at", "tertiary-used-percent", "tertiary-window-minutes", "tertiary-reset-at", "limit-name"][i % 10]}`, "1"]));
 installRoutingAclFixture();
+import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 
 const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
 
@@ -49,7 +49,6 @@ const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
 // that are about *not* taking the WebSocket path assert that directly through
 // `FakeWebSocket.instances`; they hold the marker to this rule rather than to a
 // constant that only held before the backfill landed.
-const EAGER_RELAY_FORCED_BY_PLATFORM = isWin32EagerRewrite(process.platform, true);
 
 describe("shouldUseCodexWsUpstream", () => {
   test("uses HTTP SSE on runtimes without a bounded response sink", async () => {
@@ -661,6 +660,7 @@ describe("handleResponses Codex WS relay selection", () => {
   // `blockRewrites`, so observing its transformation is what proves
   // `clientBlockRewrite !== undefined`, hence `needsClientRewrite === true`.
   test("the registered rewrite chain transforms the client stream, so needsClientRewrite is true", async () => {
+    installHttpOnlyCodexWebSocket();
     const upstreamEvent = {
       type: "response.completed",
       response: {

@@ -1,3 +1,4 @@
+import { initChangedRunFixture, runGit, commitFixture } from "../helpers/fork-changed-run-fixture";
 import { beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -11,6 +12,7 @@ import {
   realpathSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -33,6 +35,7 @@ import {
   NESTED_LIVE_LOCK_RECEIPT_KEY,
 } from "../helpers/nested-test-run-lock-controller";
 import { helperPath, repoPath, repoRoot } from "../helpers/repo-root";
+import { changedFixtureDiagnostic, changedFixturePathFacts } from "../helpers/fork-changed-fixture-diagnostic";
 import {
   acquireTestRunLock,
   parseDarwinTestProcessStart,
@@ -64,20 +67,6 @@ import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { INTERNAL_DEADLINE_MS, SPAWN_BUDGET_MS } from "../helpers/test-budget";
 
 
-function runGit(cwd: string, ...args: string[]): string {
-  const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  if (result.exitCode !== 0) {
-    throw new Error(new TextDecoder().decode(result.stderr));
-  }
-  return new TextDecoder().decode(result.stdout).trim();
-}
-
-// Assembled from fragments so the fixture identity is not an email literal in a tracked
-// file: scripts/privacy-scan.ts matches any email-shaped string and `.invalid` is not
-// allow-listed, so writing it whole fails the repository's own privacy gate. The bytes
-// handed to git are identical either way.
-const FIXTURE_COMMIT_EMAIL = ["test", "opencodex.invalid"].join("@");
-
 function pathIsContainedBy(parent: string, candidate: string, platform: "posix" | "win32"): boolean {
   const path = platform === "win32" ? win32 : posix;
   const relative = path.relative(path.resolve(parent), path.resolve(candidate));
@@ -104,28 +93,12 @@ function acceptingRuntimeFileSystem(
   };
 }
 
-function commitFixture(cwd: string, path: string, contents: string, message: string): string {
-  writeFileSync(join(cwd, path), contents);
-  runGit(cwd, "add", path);
-  runGit(
-    cwd,
-    "-c",
-    "user.name=OpenCodex Test",
-    "-c",
-    `user.email=${FIXTURE_COMMIT_EMAIL}`,
-    "commit",
-    "-m",
-    message,
-  );
-  return runGit(cwd, "rev-parse", "HEAD");
-}
-
-function initChangedRunFixture(): { cwd: string; base: string } {
-  const cwd = mkdtempSync(join(tmpdir(), "opencodex-changed-ref-"));
-  runGit(cwd, "init", "--quiet");
-  const base = commitFixture(cwd, "base.txt", "base\n", "base");
-  return { cwd, base };
-}
+const desktopLifecycleFiles = [
+  "claude-integration/claude-desktop-picker-routes.test.ts",
+  "claude-integration/claude-desktop-picker-profile.test.ts",
+  "claude-integration/claude-desktop-first-party.test.ts",
+  "claude-integration/claude-desktop-first-party-guards.test.ts",
+];
 
 describe("test runner captured output", () => {
   // This describe's first real lane pays Bun's test-runner bootstrap inside its child timeout.
@@ -225,13 +198,23 @@ describe("test runner captured output", () => {
       cancel() { cancelled = true; },
     });
     const stderr = new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } });
-    const spawn = spyOn(Bun, "spawn").mockReturnValue({
+    const originalSpawn = Bun.spawn;
+    let resolveSpawn!: () => void;
+    const spawned = new Promise<void>(resolve => { resolveSpawn = resolve; });
+    const fixtureChild = {
       pid: 0,
       stdout,
       stderr,
       exited: Promise.resolve(0),
       kill() { throw new Error("the fixture child already exited"); },
-    } as unknown as ReturnType<typeof Bun.spawn>);
+    } as unknown as ReturnType<typeof Bun.spawn>;
+    const spawn = spyOn(Bun, "spawn").mockImplementation((command, options) => {
+      if (Array.isArray(command) && command[1] === "test") {
+        resolveSpawn();
+        return fixtureChild;
+      }
+      return originalSpawn(command, options);
+    });
     const emitted: string[] = [];
     try {
       const pending = runTestLane(
@@ -241,7 +224,8 @@ describe("test runner captured output", () => {
         true,
         { stdout: value => { emitted.push(value); }, stderr: value => { emitted.push(value); } },
       );
-      // Only the synchronous spawn is mocked; no other test or later subprocess uses it.
+      await spawned;
+      // Restore after the lane spawn; Node probes keep their real subprocesses.
       spawn.mockRestore();
       expect(await pending).toEqual({ exitCode: 1, output: "partial output\n\n" });
       expect(emitted).toEqual(["partial output\n"]);
@@ -699,24 +683,64 @@ describe("bun test argv", () => {
     expect(resolveBunTestArgs([])).toEqual(["--isolate", "--parallel=4", "./tests/"]);
   });
 
-  test("the default full suite quarantines load-sensitive files into one-worker lanes", () => {
+  test("the full suite keeps official isolation and desktop SQLite writers outside the main pool", () => {
+    const files = [
+      "codex-integration/codex-shim.test.ts",
+      "providers/cursor/cursor-native-exec-shell.test.ts",
+      "codex-integration/issue-452-empty-503.test.ts",
+      "adapters/openai/openai-provider-option-e2e.test.ts",
+      "ci-workflows/ci-gui-typecheck-gate.test.ts",
+      "ci-workflows/release-helper.test.ts",
+      "ci-workflows/structure-ssot.test.ts",
+      "codex-integration/codex-inject-write-lock.test.ts",
+      "routing/subagent-roster-retention.test.ts",
+      "codex-integration/active-registry-admission.test.ts",
+      "update/update-stop-first.test.ts",
+      "server/server-live.test.ts",
+      "service/service-ownership-state.test.ts",
+      "service/service-sqlite-home.test.ts",
+      "service/service.test.ts",
+      "service/service-claim.test.ts",
+      "service/service-wsl-home-ownership.test.ts",
+      "service/launchd-repair.test.ts",
+      "cli/cli-update-restart-home.test.ts",
+      "codex-integration/native-codex-toggle.test.ts",
+      "codex-integration/native-grok-toggle.test.ts",
+      "claude-integration/claude-desktop-picker-routes.test.ts",
+      "claude-integration/claude-desktop-picker-profile.test.ts",
+      "claude-integration/claude-desktop-first-party.test.ts",
+      "claude-integration/claude-desktop-first-party-guards.test.ts",
+    ];
     const plan = resolveBunTestPlan([]);
-    expect(plan).toHaveLength(SERIAL_FULL_SUITE_FILES.length + 1);
-    expect(plan[0]?.label).toBe("parallel suite");
-    expect(plan[0]?.args).toContain("--parallel=4");
-    expect(plan[0]?.args).toContain("./tests/");
-    for (const file of SERIAL_FULL_SUITE_FILES) {
-      // The ignore glob and the lane label use the basename; only the lane argv carries the
-      // path relative to tests/, so an entry can move into a domain directory.
-      expect(plan[0]?.args).toContain(`**/${basename(file)}`);
-      expect(plan.find(lane => lane.label === basename(file))?.args).toEqual([
-        "--isolate",
-        "--parallel=1",
-        `./tests/${file}`,
-      ]);
+    expect(plan[0]!.args.slice(0, 2)).toEqual(["--isolate", "--parallel=4"]);
+    expect(plan[0]!.args.at(-1)).toBe("./tests/");
+    expect(plan[0]!.timeoutMs).toBe(900_000);
+    expect(plan.slice(1).map(lane => lane.args.at(-1))).toEqual(files.map(file => "./tests/" + file));
+    for (const file of files) {
+      const index = plan[0]!.args.indexOf("**/" + basename(file));
+      expect(plan[0]!.args[index - 1]).toBe("--path-ignore-patterns");
+      const lane = plan.find(entry => entry.label === basename(file))!;
+      expect(lane.args).toEqual(["--isolate", "--parallel=1", "./tests/" + file]);
+      expect(lane.timeoutMs).toBe(basename(file) === "release-helper.test.ts" ? 300_000 : 180_000);
     }
-    expect(plan.find(lane => lane.label === "release-helper.test.ts")?.timeoutMs).toBe(5 * 60 * 1000);
-    expect(plan.find(lane => lane.label === "codex-shim.test.ts")?.timeoutMs).toBe(3 * 60 * 1000);
+  });
+
+  test("the default full suite schedules each isolated test path once", () => {
+    const lanes = resolveBunTestPlan([]).slice(1);
+    const paths = lanes.map(lane => lane.args.at(-1));
+    expect(paths).toEqual([...new Set(paths)]);
+    const referencePath = "./tests/codex-integration/codex-shim.test.ts";
+    const referenceLane = lanes.find(lane => lane.args.includes(referencePath));
+    expect(referenceLane).toBeDefined();
+    for (const path of [
+      "./tests/service/service-claim.test.ts",
+      "./tests/service/service-wsl-home-ownership.test.ts",
+    ]) {
+      const lane = lanes.find(entry => entry.args.includes(path));
+      expect(lane?.args.slice(0, -1)).toEqual(referenceLane!.args.slice(0, -1));
+      expect(lane?.args.at(-1)).toBe(path);
+      expect(lane?.timeoutMs).toBe(referenceLane!.timeoutMs);
+    }
   });
 
   test("a control budget is bounded and changes only the main lane", () => {
@@ -739,12 +763,12 @@ describe("bun test argv", () => {
   });
 
   test("serial lanes override caller parallelism without changing the main lane", () => {
-    const plan = resolveBunTestPlan(["--parallel=2", "--only-failures"]);
+    const plan = resolveBunTestPlan(["--parallel=2", "--dots"]);
     expect(plan[0]?.args).toContain("--parallel=2");
     for (const lane of plan.slice(1)) {
       expect(lane.args).toContain("--parallel=1");
       expect(lane.args).not.toContain("--parallel=2");
-      expect(lane.args).toContain("--only-failures");
+      expect(lane.args).toContain("--dots");
     }
   });
 
@@ -815,8 +839,95 @@ describe("bun test argv", () => {
     const mergeBase = "0123456789abcdef0123456789abcdef01234567";
     expect(resolveBunTestArgs(["--changed=dev"], mergeBase))
       .toEqual(["--isolate", "--parallel=4", "--changed=" + mergeBase]);
-    expect(resolveBunTestPlan(["--changed=dev"])).toHaveLength(1);
+    const plan = resolveBunTestPlan(["--changed=dev"], mergeBase);
+    expect(plan).toHaveLength(26);
+    expect(plan[0]!.args).toContain("--parallel=4");
+    expect(plan[0]!.timeoutMs).toBe(900_000);
+    for (const file of SERIAL_FULL_SUITE_FILES) {
+      expect(plan[0]!.args).toContain(`**/${basename(file)}`);
+      expect(plan.find(lane => lane.label === basename(file))!.args).toEqual([
+        "--isolate", "--parallel=1", "--changed=" + mergeBase, `./tests/${file}`,
+      ]);
+    }
   });
+
+  test("changed lanes preserve explicit filters and unsupported split options", () => {
+    for (const args of [
+      ["tests/service/"], ["--parallel", "tests/service/service.test.ts"],
+      ["--shard=1/3"], ["--reporter=junit", "--reporter-outfile", "results.xml"],
+      ["--update-timings"], ["--", "--parallel=2"], ["--"],
+      ["--path-ignore-patterns", "**/service-claim.test.ts"], ["--", "--changed=other"],
+    ]) {
+      const requested = ["--changed=HEAD", ...args];
+      expect(resolveBunTestPlan(requested)).toEqual([
+        { label: "suite", args: resolveBunTestArgs(requested), timeoutMs: 900_000 },
+      ]);
+    }
+    expect(resolveBunTestPlan(["--changed"])).toHaveLength(1);
+    const plan = resolveBunTestPlan(["--changed=HEAD", "--parallel=2", "-t", "chosen case"]);
+    expect(plan[0]!.args).toContain("--parallel=2");
+    for (const lane of plan.slice(1)) {
+      expect(lane.args).toContain("--parallel=1");
+      expect(lane.args).not.toContain("--parallel=2");
+      expect(lane.args).toContain("chosen case");
+    }
+  });
+
+  test.each(["--parallel=2", "./tests/", "--no-isolate"])("changed lanes preserve the literal option value %s", value => {
+    const requested = ["--changed=HEAD", "-t", value];
+    const plan = resolveBunTestPlan(requested, "fixed-sha");
+    expect(plan[0]!.args[plan[0]!.args.indexOf("-t") + 1]).toBe(value);
+    for (const lane of plan.slice(1)) {
+      const index = lane.args.indexOf("-t");
+      expect(lane.args[index + 1]).toBe(value);
+    }
+  });
+
+  test("changed lanes let Bun select only changed sensitive fixtures", () => {
+    const { cwd, base, allocated } = initChangedRunFixture();
+    const isolated = createIsolatedTestEnvironment();
+    try {
+      mkdirSync(join(cwd, "tests", "claude-integration"), { recursive: true });
+      for (const name of ["claude-desktop-picker-routes", "claude-desktop-first-party-guards"]) {
+        commitFixture(cwd, `tests/claude-integration/${name}.test.ts`,
+          `import { test } from "bun:test"; test("${name}", () => console.log("EXECUTED_${name}"));\n`, name);
+      }
+      commitFixture(cwd, "tests/ordinary.test.ts",
+        'import { test } from "bun:test"; test("ordinary", () => console.log("UNRELATED_ORDINARY"));\n', "ordinary");
+      const comparisonCommit = runGit(cwd, "rev-parse", "HEAD");
+      writeFileSync(join(cwd, "tests/claude-integration/claude-desktop-picker-routes.test.ts"),
+        readFileSync(join(cwd, "tests/claude-integration/claude-desktop-picker-routes.test.ts"), "utf8") + "// changed\n");
+      const driver = `import {resolveBunTestPlan} from ${JSON.stringify(repoPath("scripts", "test.ts"))}; console.log(JSON.stringify(resolveBunTestPlan([${JSON.stringify("--changed=" + base)}],${JSON.stringify(comparisonCommit)})));`;
+      const planned = Bun.spawnSync([process.execPath, "-e", driver], { cwd, env: isolated.env, stdout: "pipe", stderr: "pipe" });
+      expect(planned.exitCode).toBe(0);
+      const plan = JSON.parse(planned.stdout.toString()) as ReturnType<typeof resolveBunTestPlan>;
+      expect(plan.map(lane => lane.label)).toEqual(["parallel suite", "claude-desktop-picker-routes.test.ts", "claude-desktop-first-party-guards.test.ts"]);
+      const lanes = plan;
+      let output = "";
+      const diagnostics: string[] = [];
+      for (const lane of lanes) {
+        const result = Bun.spawnSync([process.execPath, "test", ...lane.args], {
+          cwd, env: { ...isolated.env, OCX_TEST_NO_QUEUE: "1" }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
+        });
+        const diagnostic = changedFixtureDiagnostic(result, lane.args, cwd);
+        diagnostics.push(diagnostic);
+        if (result.exitCode !== 0) console.error(diagnostic, changedFixturePathFacts(cwd));
+        expect(result.exitCode).toBe(0);
+        const text = result.stdout.toString() + result.stderr.toString();
+        if (lane === plan[0]) expect(text).not.toContain("EXECUTED_claude-desktop-picker-routes");
+        output += text;
+      }
+      const executed = output.match(/^EXECUTED_claude-desktop-picker-routes$/gm);
+      if (executed?.length !== 1) console.error(diagnostics.join("\n"), changedFixturePathFacts(cwd));
+      expect(executed).toHaveLength(1);
+      expect(output).not.toContain("EXECUTED_claude-desktop-first-party-guards");
+      expect(output).not.toContain("UNRELATED_ORDINARY");
+      expect(changedSelectionFailure({ comparisonRef: "fixture", comparisonCommit, changedFiles: ["tests/claude-integration/claude-desktop-picker-routes.test.ts"] }, output)).toBeNull();
+    } finally {
+      isolated.cleanup();
+      removeTreeWithRetry(allocated);
+    }
+  }, { timeout: 35_000 });
 
   test("changed-mode prefers the first existing conventional dev ref", () => {
     const selectFrom = (...existing: string[]) => {
@@ -859,7 +970,7 @@ describe("bun test argv", () => {
     const fixtures: string[] = [];
     try {
       const behind = initChangedRunFixture();
-      fixtures.push(behind.cwd);
+      fixtures.push(behind.allocated);
       runGit(behind.cwd, "branch", "candidate", behind.base);
       commitFixture(behind.cwd, "head.txt", "head\n", "head ahead of candidate");
       expect(inspectChangedRun(["--changed=candidate"], behind.cwd)).toMatchObject({
@@ -869,7 +980,7 @@ describe("bun test argv", () => {
       });
 
       const ahead = initChangedRunFixture();
-      fixtures.push(ahead.cwd);
+      fixtures.push(ahead.allocated);
       const candidateTip = commitFixture(ahead.cwd, "candidate.txt", "candidate\n", "candidate ahead");
       runGit(ahead.cwd, "branch", "candidate", candidateTip);
       runGit(ahead.cwd, "checkout", "--quiet", "--detach", ahead.base);
@@ -880,7 +991,7 @@ describe("bun test argv", () => {
       });
 
       const diverged = initChangedRunFixture();
-      fixtures.push(diverged.cwd);
+      fixtures.push(diverged.allocated);
       runGit(diverged.cwd, "checkout", "--quiet", "-b", "candidate");
       commitFixture(diverged.cwd, "candidate.txt", "candidate\n", "candidate side");
       runGit(diverged.cwd, "checkout", "--quiet", "--detach", diverged.base);
@@ -915,6 +1026,13 @@ describe("bun test argv", () => {
       { comparisonRef: "dev", comparisonCommit: "base-sha", changedFiles: ["src/router.ts"] },
       "0 pass\n0 fail",
     )).toContain("did not emit a recognizable selection summary");
+  });
+
+  test("changed coverage accepts a later nonempty lane and rejects all empty lanes", () => {
+    const preflight = { comparisonRef: "fixture", comparisonCommit: "base-sha", changedFiles: ["src/router.ts"] };
+    expect(changedSelectionFailure(preflight, "Ran 0 tests across 0 files.\nRan 9 tests across 1 file.\nRan 0 tests across 0 files.")).toBeNull();
+    expect(changedSelectionFailure(preflight, "Ran 0 tests across 0 files.\nRan 0 tests across 0 files.")).toContain("selected 0 tests");
+    expect(changedSelectionFailure(preflight, "lane without summary\nlane without summary")).toContain("recognizable selection summary");
   });
 
   test("the wrapper passes parallel execution through to bun without leaving TEMP roots", () => {

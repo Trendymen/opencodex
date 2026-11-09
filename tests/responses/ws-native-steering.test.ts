@@ -156,6 +156,25 @@ test("real handler -> auth/dispatch -> native exchange -> downstream preserves a
   expect(log.upstreamError).toBeUndefined();
 });
 
+test("logs only the initial WebSocket create when a later frame changes effort", async () => {
+  const { ws, socket, send, sent, id } = await begin({ reasoning: { effort: "high" }, input: [
+    { type: "configuration_update", reasoning: { effort: "max" } },
+  ] });
+  send({ type: "response.steer", previous_response_id: id, input: "continue" });
+  accept(socket, id);
+  complete(socket, id);
+  socket.emit({ type: "response.steer.pending", steer: { id: "s1", previous_response_id: id }, reason: "waiting_for_required_input", required_input: [{ type: "function_call_output", call_id: "c" }] });
+  await waitFor(() => sent.some(frame => frame.type === "response.steer.pending"));
+  send({ type: "response.create", previous_response_id: id, model: "gpt-5.5", reasoning: { effort: "low" }, input: [{ type: "function_call_output", call_id: "c", output: "ok" }] });
+  await waitFor(() => socket.frames.length === 3);
+  socket.emit({ type: "response.created", response: { id: "successor", previous_response_id: id } });
+  complete(socket, "successor");
+  await waitFor(() => !ws.data.nativeControl);
+  expect((getRequestLogEntries().at(-1) as unknown as Record<string, unknown>).sessionEffortObservation).toEqual({
+    clientEffort: "high", sessionEffort: "max", status: "visible",
+  });
+});
+
 test("normal completion before acceptance still retains the socket and successor", async () => {
   const { ws, socket, send, sent, id } = await begin();
   send({ type: "response.steer", previous_response_id: id, input: "new constraint" });

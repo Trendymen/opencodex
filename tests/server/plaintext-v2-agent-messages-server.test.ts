@@ -13,7 +13,7 @@ import {
   PLAINTEXT_V2_COLLABORATION_NAMESPACE,
 } from "../../src/responses/plaintext-v2-agent-messages";
 import { clearResponseStateForTests, expandPreviousResponseInput } from "../../src/responses/state";
-import { handleResponses } from "../../src/server/responses";
+import { handleResponses as handleResponsesCore } from "../../src/server/responses";
 import type { OcxConfig } from "../../src/types";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -26,6 +26,13 @@ let previousCatalogStateOverride: string | undefined;
 // ??= keeps a second call inside one case idempotent rather than replacing the release callback
 // it would need; no row here calls it twice today, so this is defence, not a fixed regression.
 const takeInheritedSpendHome = (): void => { releaseInheritedSpendHome ??= acquireOwnedSpendHome(); };
+const handleResponses = (...args: Parameters<typeof handleResponsesCore>) => {
+  const [request, settings, logCtx, options] = args;
+  return handleResponsesCore(request, settings, logCtx, {
+    ...options,
+    codexWsRuntimeIdentity: "1.3.14",
+  });
+};
 beforeEach(() => {
   // These fixtures own HTTP responses; a WebSocket upgrade must never contact a real provider.
   globalThis.WebSocket = class {

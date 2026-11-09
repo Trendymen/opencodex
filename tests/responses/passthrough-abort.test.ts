@@ -64,11 +64,11 @@ describe("passthrough relayWithAbort (RC2, passthrough path)", () => {
       capsSource.indexOf("export function selectEagerPath"),
     );
 
-    // The captured static policy now supplies the repair decision; the real platform gate and
-    // pure native relay invariants below are unchanged.
-    expect(sseBranch).toContain("const terminalRepairPolicy = route.staticPolicy.model.responsesTerminalRepair;");
+    // The permission gates the captured policy; private protection precedes either relay path.
+    expect(sseBranch).toContain("const terminalRepairPolicy = codexPermissions?.synthesizeTerminalFailure === false ? undefined : route.staticPolicy.model.responsesTerminalRepair;");
     expect(sseBranch).toContain("let passthroughSseBody = terminalRepairPolicy");
-    expect(sseBranch).toContain(": upstreamResponse.body;");
+    expect(sseBranch).toContain("protectedBody = await protectSse(upstreamResponse.body)");
+    expect(sseBranch).toContain(": protectedBody;");
     // Repair has to wrap the raw first leg before the bridge hides its completed web-search call;
     // otherwise a terminal-less open leg cannot trigger the repair timer and continuation stalls.
     const terminalRepair = sseBranch.indexOf("relayResponsesSseWithTerminalRepair(");
@@ -98,7 +98,7 @@ describe("passthrough relayWithAbort (RC2, passthrough path)", () => {
     expect(sseBranch).toContain("rewriteBlocks: clientBlockRewrite");
     // Elsewhere the failed-tail relay converts mid-stream resets into a clean response.failed.
     expect(sseBranch).toMatch(
-      /relaySseWithFailedTail\(\s*rewrittenBody,\s*upstream,\s*reason\s*=>\s*\{\s*responseEffects\.responseCompletionCancelled\s*=\s*true;\s*clientGone\.abort\(reason\);\s*\},\s*\{\s*upstreamError:\s*logCtx\.upstreamError,\s*terminalBoundary:\s*codexSafetyBufferingOptions,\s*maskCredential\s*\},\s*\)/,
+      /relaySseWithFailedTail\(\s*rewrittenBody,\s*upstream,\s*reason\s*=>\s*\{\s*responseEffects\.responseCompletionCancelled\s*=\s*true;\s*clientGone\.abort\(reason\);\s*\},\s*\{\s*upstreamError:\s*logCtx\.upstreamError,\s*terminalBoundary:\s*codexSafetyBufferingOptions,\s*maskCredential,\s*synthesizeTerminalFailure:\s*codexPermissions\?\.synthesizeTerminalFailure\s*\},\s*\)/,
     );
     expect(sseBranch).toContain("new Response(clientBody");
     expect(sseBranch).toContain("markNativePassthroughSseResponse");

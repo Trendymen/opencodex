@@ -53,6 +53,7 @@ export const RESPONSES_CORE_MODULES = [
   "compaction-recovery.ts",
   "compaction-recovery-policy.ts",
   "memory-models.ts",
+  "annotation-instructions.ts",
   "request-transport.ts",
   // Reached from request-transport.ts: opt-in DeepSeek upload-backed image replay.
   "deepseek-image-files.ts",
@@ -71,6 +72,7 @@ export const RESPONSES_CORE_MODULES = [
   "opengateway-completion-guard.ts",
   "passthrough-observations.ts",
   "passthrough-key-rotation.ts",
+  "passthrough-dispatch-types.ts",
   // Reached from passthrough/adapter dispatch, compact and runTurn: local spend-ledger refusal mapping.
   "spend-storage-error.ts",
   // Reached from passthrough dispatch: local pacing refusals retain 429 and Retry-After.
@@ -89,9 +91,11 @@ export const RESPONSES_CORE_MODULES = [
   "sidecar-send-budget.ts",
   "completion-policy.ts",
   "run-turn-execution.ts",
+  "combo-adapter-preflight.ts",
   "adapter-dispatch.ts",
   // Reached from adapter-dispatch.ts: the non-2xx upstream message this proxy composes (#8352).
   "adapter-failure-message.ts",
+  "adapter-dispatch-types.ts",
   "antigravity-validation-refusal.ts",
   "antigravity-model-denial-recovery.ts",
   "adapter-continuation.ts",
