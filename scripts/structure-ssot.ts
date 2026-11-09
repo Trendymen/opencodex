@@ -34,7 +34,7 @@ export type Manifest = {
   generatedPaths: string[];
   absentPaths: { path: string; reason: string }[];
   tiers: { id: number; name: string; purpose: string }[];
-  docs: { path: string; tier: number; title: string; scope: string; documents: string[] }[];
+  docs: { path: string; tier: number; title: string; scope: string; documents: string[]; forkOnly?: boolean }[];
   contracts?: {
     version: 1;
     entries: {
@@ -93,6 +93,7 @@ export function loadManifest(raw: string): { manifest: Manifest } | { error: str
       if (typeof doc?.title !== "string") problems.push("docs[" + i + "].title must be a string");
       if (typeof doc?.scope !== "string") problems.push("docs[" + i + "].scope must be a string");
       if (!isArray(doc?.documents)) problems.push("docs[" + i + "].documents must be an array");
+      if (doc?.forkOnly !== undefined && typeof doc.forkOnly !== "boolean") problems.push("docs[" + i + "].forkOnly must be a boolean");
     });
   }
   if (m.contracts !== undefined) {
@@ -215,6 +216,7 @@ function headingAnchors(body: string): Set<string> {
 }
 
 export function renderIndex(manifest: Manifest): string {
+  const indexedDocs = manifest.docs.filter((doc) => !doc.forkOnly);
   const lines: string[] = [];
   lines.push("# opencodex Structure Index");
   lines.push("");
@@ -230,7 +232,7 @@ export function renderIndex(manifest: Manifest): string {
   lines.push("");
   lines.push("## Reading order");
   for (const tier of manifest.tiers) {
-    const docs = manifest.docs.filter((d) => d.tier === tier.id);
+    const docs = indexedDocs.filter((d) => d.tier === tier.id);
     if (docs.length === 0) continue;
     lines.push("");
     lines.push("### Tier " + tier.id + " — " + tier.name);
@@ -250,7 +252,7 @@ export function renderIndex(manifest: Manifest): string {
   lines.push("| Source path | Described by |");
   lines.push("| --- | --- |");
   const byPath = new Map<string, string[]>();
-  for (const doc of manifest.docs) {
+  for (const doc of indexedDocs) {
     for (const area of doc.documents) byPath.set(area, [...(byPath.get(area) ?? []), doc.path]);
   }
   for (const area of [...byPath.keys()].sort()) {
