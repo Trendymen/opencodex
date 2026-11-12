@@ -16,6 +16,72 @@ const desktopLifecycleFiles = [
   "claude-integration/claude-desktop-first-party-guards.test.ts",
 ];
 
+test("Fork Windows update diagnostics keep their fixed partial scope", () => {
+  const path = repoPath(".github", "workflows", "fork-ci-update-diagnostics.yml");
+  expect(existsSync(path)).toBe(true);
+  if (!existsSync(path)) return;
+
+  const workflow = Bun.YAML.parse(readFileSync(path, "utf8")) as {
+    name: string;
+    "run-name": string;
+    on: unknown;
+    permissions: unknown;
+    jobs: Record<string, { name: string; if: string; "runs-on": string; "timeout-minutes": number; steps: Record<string, unknown>[] }>;
+  };
+  expect(Object.keys(workflow).sort()).toEqual(["jobs", "name", "on", "permissions", "run-name"]);
+  expect(workflow.name).toMatch(/partial.*not release evidence/i);
+  expect(workflow["run-name"]).toMatch(/partial.*not release evidence/i);
+  expect(workflow.on).toEqual({ workflow_dispatch: null });
+  expect(workflow.permissions).toEqual({ contents: "read" });
+  expect(Object.keys(workflow.jobs)).toEqual(["windows-update-diagnostics"]);
+  const job = workflow.jobs["windows-update-diagnostics"]!;
+  expect(Object.keys(job).sort()).toEqual(["if", "name", "runs-on", "steps", "timeout-minutes"]);
+  expect(job.if).toBe("github.ref == 'refs/heads/dev'");
+  expect(job["runs-on"]).toBe("windows-latest");
+  expect(job["timeout-minutes"]).toBeGreaterThan(0);
+  expect(job["timeout-minutes"]).toBeLessThanOrEqual(30);
+  expect(job.steps).toHaveLength(6);
+  expect(job.steps[0]).toEqual({
+    name: "Checkout workflow commit",
+    uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+    with: { ref: "${{ github.sha }}", "persist-credentials": false },
+  });
+  expect(job.steps[1]).toEqual({ name: "Setup project Bun", uses: "./.github/actions/setup-project-bun", with: { role: "test-runner" } });
+  expect(job.steps[2]).toEqual({ name: "Install dependencies", run: "bun install --frozen-lockfile" });
+  expect(job.steps[3]).toEqual({
+    name: "Isolate homes", id: "isolate", shell: "pwsh",
+    run: [
+      '$root = Join-Path $env:RUNNER_TEMP "ocx-update-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"',
+      "$ocxHome = Join-Path $root 'opencodex'",
+      "$codexHome = Join-Path $root 'codex'",
+      "New-Item -ItemType Directory -Path $ocxHome, $codexHome -ErrorAction Stop | Out-Null",
+      '"OPENCODEX_HOME=$ocxHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
+      '"CODEX_HOME=$codexHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
+      "",
+    ].join("\n"),
+  });
+  const condition = "${{ always() && steps.isolate.outcome == 'success' }}";
+  const env = { OCX_TEST_NO_QUEUE: "1" };
+  expect(job.steps[4]).toEqual({
+    name: "Run offline Windows apply Worker cases", if: condition, env,
+    run: "bun test --isolate --timeout 60000 tests/codex-integration/codex-cli-update-windows-apply-install.test.ts --test-name-pattern 'a fresh Worker closes after offline Windows apply'",
+  });
+  expect(job.steps[5]).toEqual({
+    name: "Run isolated npm HOME case", if: condition, env,
+    run: "bun test --isolate --timeout 60000 tests/codex-integration/codex-cli-update-plan.test.ts --test-name-pattern 'a real npm call under the isolated argv leaves the operator HOME untouched'",
+  });
+
+  const { validateRun } = require(repoPath(".github", "scripts", "release-evidence.cjs")) as {
+    validateRun: (run: unknown, ci: unknown, kind: string, sourceSha: string) => void;
+  };
+  const sha = "a".repeat(40);
+  const diagnostic = { id: 7, workflow_id: 43, repository: { id: 1273824907 }, head_repository: { id: 1273824907 },
+    event: "workflow_dispatch", head_branch: "dev", status: "completed", conclusion: "success", run_attempt: 1,
+    head_sha: sha, display_title: workflow["run-name"] };
+  expect(() => validateRun(diagnostic, { id: 42 }, "ci", sha)).toThrow("unqualified run metadata");
+  expect(() => validateRun({ ...diagnostic, workflow_id: 42 }, { id: 42 }, "ci", sha)).toThrow("CI lane or source mismatch");
+});
+
 test("Node pin failure prevents the child and still removes isolated HOME", async () => {
   const root = mkdtempSync(join(tmpdir(), "ocx-pin-failure-"));
   const marker = join(root, "ran");

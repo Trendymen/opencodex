@@ -1,0 +1,47 @@
+name: Fork Windows update diagnostics (partial, not release evidence)
+run-name: Fork Windows update diagnostics (partial, not release evidence)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-update-diagnostics:
+    name: Windows update diagnostics (partial)
+    if: github.ref == 'refs/heads/dev'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout workflow commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup project Bun
+        uses: ./.github/actions/setup-project-bun
+        with:
+          role: test-runner
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Isolate homes
+        id: isolate
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "ocx-update-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $ocxHome = Join-Path $root 'opencodex'
+          $codexHome = Join-Path $root 'codex'
+          New-Item -ItemType Directory -Path $ocxHome, $codexHome -ErrorAction Stop | Out-Null
+          "OPENCODEX_HOME=$ocxHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CODEX_HOME=$codexHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Run offline Windows apply Worker cases
+        if: ${{ always() && steps.isolate.outcome == 'success' }}
+        env:
+          OCX_TEST_NO_QUEUE: "1"
+        run: bun test --isolate --timeout 60000 tests/codex-integration/codex-cli-update-windows-apply-install.test.ts --test-name-pattern 'a fresh Worker closes after offline Windows apply'
+      - name: Run isolated npm HOME case
+        if: ${{ always() && steps.isolate.outcome == 'success' }}
+        env:
+          OCX_TEST_NO_QUEUE: "1"
+        run: bun test --isolate --timeout 60000 tests/codex-integration/codex-cli-update-plan.test.ts --test-name-pattern 'a real npm call under the isolated argv leaves the operator HOME untouched'
