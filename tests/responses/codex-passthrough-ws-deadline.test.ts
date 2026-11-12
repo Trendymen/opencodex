@@ -33,7 +33,7 @@ afterEach(() => {
 });
 function start(enabled?: boolean, signal?: AbortSignal) {
   return codexWsUpstreamFetch(URL, { ...streamingInit(), signal }, fallback, BOUNDED_WS_RUNTIME,
-    undefined, undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     resolveCodexPassthroughPermissions({ upstreamWsSilenceDeadline: enabled }));
 }
 async function opened() { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); return SilentSocket.current; }

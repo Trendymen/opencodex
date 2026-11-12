@@ -1,15 +1,57 @@
 import { expect, test } from "bun:test";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, constants, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { repoPath } from "../helpers/repo-root";
 import { assertNotRealHomeUnderTest } from "../../src/lib/test-home-guard";
 import { encodeOrchestratedExpect, issueOrchestratedResultCapability } from "../../src/update/orchestrated-session.mjs";
 import { createUpdatePlanToken } from "../../src/update/orchestrated-token.mjs";
 import { inspectUpdateMarker, inspectUpdateSyncMutex, tryAcquireUpdateSyncMutex } from "../../src/update/sync-update-mutex.mjs";
 import { isUpdateInFlight } from "../../src/update/sync-update-mutex";
+import { verifyInstallTree } from "../../src/update/transactional-install.mjs";
 import { watch } from "node:fs";
+
+function instrumentCopiedSource(pkg: string, relativePath: string, before: string, after: string) {
+  const sourcePath = repoPath(relativePath), copyPath = join(pkg, relativePath);
+  if (realpathSync(sourcePath) === realpathSync(copyPath)) throw new Error("fixture source is not a copy");
+  const source = readFileSync(sourcePath, "utf8"), copied = readFileSync(copyPath, "utf8");
+  const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+  if (hash(source) !== hash(copied) || copied.split(before).length !== 2) throw new Error("fixture source seam changed");
+  const modified = copied.replace(before, after);
+  writeFileSync(copyPath, modified);
+  if (hash(readFileSync(copyPath, "utf8")) !== hash(modified) || hash(modified) === hash(source)) {
+    throw new Error("fixture source instrumentation failed");
+  }
+}
+
+function isolateFixtureServiceManager(pkg: string) {
+  const entry = "export function inspectUpdateServiceHome(deps: OwnershipDeps = {}): UpdateServiceHomeAuthority {";
+  const runner = `function fixtureManagerRun(file: string, args: string[]) {
+  if (process.platform === "darwin" && file === "/bin/launchctl" && args.length === 2 && args[0] === "print"
+      && ["gui/" + process.getuid() + "/com.opencodex.proxy", "user/" + process.getuid() + "/com.opencodex.proxy"].includes(args[1])) {
+    return { status: 113, stdout: "", stderr: "", timedOut: false, spawnFailed: false };
+  }
+  if (process.platform === "linux" && file === "systemctl" && JSON.stringify(args) === JSON.stringify([
+    "--user", "show", "opencodex-proxy", "-p", "LoadState", "-p", "ActiveState", "-p", "FragmentPath", "-p", "NeedDaemonReload",
+  ])) {
+    return { status: 0, stdout: "LoadState=not-found\\nActiveState=inactive\\nFragmentPath=\\nNeedDaemonReload=no\\n", stderr: "", timedOut: false, spawnFailed: false };
+  }
+  throw new Error("unexpected service manager query in update fixture");
+}`;
+  instrumentCopiedSource(pkg, "src/update/service-home-authority.ts", entry,
+    `${runner}\n${entry}\n  deps = { ...deps, run: deps.run ?? fixtureManagerRun };`);
+}
+
+function installFixtureDependencies(pkg: string) {
+  mkdirSync(join(pkg, "node_modules"));
+  for (const name of readdirSync(repoPath("node_modules"))) {
+    const source = repoPath("node_modules", name), destination = join(pkg, "node_modules", name);
+    if (name === "bun" || name === "zod") cpSync(source, destination, { recursive: true, mode: constants.COPYFILE_FICLONE });
+    else symlinkSync(source, destination);
+  }
+}
 
 // These scenarios run sequentially in one disposable home. Simulate the bound
 // passing only after the fixture worker and recorded installer have settled.
@@ -38,6 +80,14 @@ test.skipIf(process.platform === "win32")("npm child fences identity, deadline a
   try {
     cpSync(repoPath("src"), join(pkg, "src"), { recursive: true });
     cpSync(repoPath("bin"), join(pkg, "bin"), { recursive: true });
+    isolateFixtureServiceManager(pkg);
+    const verifyLive = "    liveCheck = verifyLive(packageDir, targetVersion || undefined);";
+    instrumentCopiedSource(pkg, "src/update/transactional-install.mjs", verifyLive, `${verifyLive}
+    if (process.env.OCX_FIXTURE_ROLLBACK === "1" && liveCheck.ok) {
+      const fixture = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+      writeFileSync(process.env.OCX_FIXTURE_SWAP_RECEIPT, JSON.stringify({ packageDir, version: fixture.version }));
+      liveCheck = { ok: false, failures: ["fixture post-swap verification failure"] };
+    }`);
     const launcher = join(pkg, "bin/ocx.mjs");
     const originalLauncher = readFileSync(launcher, "utf8");
     writeFileSync(launcher, originalLauncher.replace("#!/usr/bin/env node\n", `#!/usr/bin/env node\nif (process.env.OCX_UPDATE_ORCHESTRATED_CHILD === '1' && process.env.OCX_FIXTURE_EXIT_EFFECT) {\n  const once = process.once.bind(process);\n  process.once = function(event, listener) {\n    const result = once(event, listener);\n    if (event === 'exit') once('exit', () => {\n      const fs = requireFixtureFs;\n      const output = process.argv[process.argv.indexOf('--orchestrated-result') + 1];\n      if (process.env.OCX_FIXTURE_EXIT_EFFECT === 'missing') fs.unlinkSync(output);\n      if (process.env.OCX_FIXTURE_EXIT_EFFECT === 'damage') fs.unlinkSync(process.env.OCX_FIXTURE_PKG + '/src/cli/index.ts');\n    });\n    return result;\n  };\n}\nimport * as requireFixtureFs from 'node:fs';\n`));
@@ -70,12 +120,13 @@ if (process.env.OCX_FIXTURE_OVERRUN === '1' && process.argv.includes('--yes')) {
     writeFileSync(launcher, supervisedLauncher);
     const manifest = JSON.parse(readFileSync(repoPath("package.json"), "utf8")); manifest.version = "2.0.0";
     writeFileSync(join(pkg, "package.json"), JSON.stringify(manifest));
-    symlinkSync(repoPath("node_modules"), join(pkg, "node_modules"));
+    installFixtureDependencies(pkg);
+    expect(verifyInstallTree(pkg, "2.0.0")).toMatchObject({ ok: true });
     writeFileSync(join(home, "config.json"), JSON.stringify({ port: 1 }));
     const executable = Bun.which("node"); if (!executable) throw new Error("Node required");
     const node = spawnSync(executable, ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
     if (!node || !node.startsWith("/")) throw new Error("Node executable is not an absolute path");
-    writeFileSync(join(path, "npm"), `#!${node}\nconst fs=require('node:fs'), p=require('node:path'), a=process.argv.slice(2);\nfs.appendFileSync(process.env.OCX_FIXTURE_LOG,JSON.stringify({args:a,capability:process.env.OCX_UPDATE_RESULT_CAPABILITY??null,outcome:JSON.parse(fs.readFileSync(process.env.OCX_FIXTURE_RESULT))})+'\\n');\nif(a[0]==='config') console.log(process.env.OCX_FIXTURE_CACHE);\nelse if(a[0]==='view') console.log(a.includes('dist.integrity')?'sha512-YWJj':(process.env.OCX_FIXTURE_MOVED==='1' && a.some(x=>x.endsWith('@2.1.0'))?'2.2.0':'2.1.0'));\nelse if(a[0]==='install'){const s=a[a.indexOf('--prefix')+1],d=p.join(s,'lib/node_modules/@bitkyc08/opencodex');fs.cpSync(process.env.OCX_FIXTURE_PKG,d,{recursive:true});const m=JSON.parse(fs.readFileSync(p.join(d,'package.json')));m.version='2.1.0';fs.writeFileSync(p.join(d,'package.json'),JSON.stringify(m));if(process.env.OCX_FIXTURE_ROLLBACK==='1'){const l=p.join(d,'bin/ocx.mjs'),t=p.join(s,'temporary-launcher');fs.copyFileSync(l,t);fs.unlinkSync(l);fs.symlinkSync(p.relative(p.dirname(l),t),l);}}\nelse process.exit(90);\n`);
+    writeFileSync(join(path, "npm"), `#!${node}\nconst fs=require('node:fs'), p=require('node:path'), a=process.argv.slice(2);\nfs.appendFileSync(process.env.OCX_FIXTURE_LOG,JSON.stringify({args:a,capability:process.env.OCX_UPDATE_RESULT_CAPABILITY??null,outcome:JSON.parse(fs.readFileSync(process.env.OCX_FIXTURE_RESULT))})+'\\n');\nif(a[0]==='config') console.log(process.env.OCX_FIXTURE_CACHE);\nelse if(a[0]==='view') console.log(a.includes('dist.integrity')?'sha512-YWJj':(process.env.OCX_FIXTURE_MOVED==='1' && a.some(x=>x.endsWith('@2.1.0'))?'2.2.0':'2.1.0'));\nelse if(a[0]==='install'){const s=a[a.indexOf('--prefix')+1],d=p.join(s,'lib/node_modules/@bitkyc08/opencodex');fs.cpSync(process.env.OCX_FIXTURE_PKG,d,{recursive:true,mode:fs.constants.COPYFILE_FICLONE});const m=JSON.parse(fs.readFileSync(p.join(d,'package.json')));m.version='2.1.0';fs.writeFileSync(p.join(d,'package.json'),JSON.stringify(m));}\nelse process.exit(90);\n`);
     chmodSync(join(path, "npm"), 0o755);
     const npmScript = join(path, "npm"), npmSource = readFileSync(npmScript, "utf8");
     const npmTimed = npmSource.replace("const s=a[a.indexOf('--prefix')+1]", "if(process.env.OCX_FIXTURE_TIMEOUT==='1'){const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});fs.writeFileSync(process.env.OCX_FIXTURE_DESCENDANT,String(c.pid));setInterval(()=>{},1000);return;}const s=a[a.indexOf('--prefix')+1]");
@@ -84,7 +135,8 @@ if (process.env.OCX_FIXTURE_OVERRUN === '1' && process.argv.includes('--yes')) {
     const token = createUpdatePlanToken({ currentVersion: "2.0.0", targetVersion: "2.1.0", installer: "npm", cliRoot: pkg, servingRoot: null, runtimeOwner: "none", runtime: null });
     const env = { ...process.env, HOME: root, USERPROFILE: root, OPENCODEX_HOME: home, CODEX_HOME: join(root, "codex"),
       OCX_TEST_HOME_GUARD: "1", OCX_REAL_HOME: process.env.OCX_REAL_HOME ?? homedir(), OCX_UPDATE_ORCHESTRATED_CHILD: "1",
-      OPENCODEX_BUN_PATH: process.execPath, PATH: path, OCX_FIXTURE_LOG: log, OCX_FIXTURE_CACHE: cache, OCX_FIXTURE_PKG: pkg, OCX_FIXTURE_RESULT: result };
+      OPENCODEX_BUN_PATH: process.execPath, PATH: path, OCX_FIXTURE_LOG: log, OCX_FIXTURE_CACHE: cache, OCX_FIXTURE_PKG: pkg, OCX_FIXTURE_RESULT: result,
+      OCX_FIXTURE_SWAP_RECEIPT: join(root, "swap-receipt") };
     const backup = join(root, "lib/node_modules/@bitkyc08/.ocx-backup-sync/opencodex");
     mkdirSync(backup, { recursive: true });
     writeFileSync(join(backup, "package.json"), JSON.stringify({ version: "1.9.0" }));
@@ -133,10 +185,20 @@ if (process.env.OCX_FIXTURE_OVERRUN === '1' && process.argv.includes('--yes')) {
     expect(JSON.parse(readFileSync(result, "utf8"))).toMatchObject({ phase: "refused", error: "plan-changed" });
     expect(JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")).version).toBe("2.0.0");
     expect(readFileSync(log, "utf8")).not.toContain('"install"');
+    const transactionArtifacts = () => readdirSync(dirname(pkg))
+      .filter(name => name.startsWith(".ocx-staging-") || name.startsWith(".ocx-backup-")).sort();
+    const artifactsBeforeRollback = transactionArtifacts();
     const rolledBack = run(token, undefined, true);
     expect({ status: rolledBack.status, stdout: rolledBack.stdout, stderr: rolledBack.stderr }).toMatchObject({ status: 1 });
-    expect(JSON.parse(readFileSync(result, "utf8"))).toEqual({ phase: "failed", rollbackPerformed: true });
+    expect({ outcome: JSON.parse(readFileSync(result, "utf8")), stdout: rolledBack.stdout, stderr: rolledBack.stderr }).toEqual({
+      outcome: { phase: "failed", rollbackPerformed: true }, stdout: expect.any(String), stderr: expect.any(String),
+    });
+    expect(rolledBack.stderr).toContain("live tree failed post-swap verification: fixture post-swap verification failure");
+    expect(JSON.parse(readFileSync(env.OCX_FIXTURE_SWAP_RECEIPT, "utf8"))).toEqual({ packageDir: pkg, version: "2.1.0" });
     expect(JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")).version).toBe("2.0.0");
+    expect(verifyInstallTree(pkg, "2.0.0")).toMatchObject({ ok: true });
+    expect(transactionArtifacts()).toEqual(artifactsBeforeRollback);
+    expect(readFileSync(log, "utf8")).toContain("@bitkyc08/opencodex@2.1.0");
     expireFixtureFence(home);
     const updated = run(token);
     expect({ status: updated.status, stdout: updated.stdout, stderr: updated.stderr }).toMatchObject({ status: 0 });
@@ -173,9 +235,14 @@ if (process.env.OCX_FIXTURE_OVERRUN === '1' && process.argv.includes('--yes')) {
     expect(sync.kind).toBe("acquired");
     try { const blocked = parent(); expect(blocked.status).toBe(10); expect(JSON.parse(blocked.stdout).error).toBe("sync-in-progress"); }
     finally { if (sync.kind === "acquired") sync.release(); }
+    rmSync(env.OCX_FIXTURE_SWAP_RECEIPT);
+    const artifactsBeforeParentRollback = transactionArtifacts();
     const parentRollback = parent({ OCX_FIXTURE_ROLLBACK: "1" });
     expect({ status: parentRollback.status, stderr: parentRollback.stderr }).toMatchObject({ status: 11 });
     expect(JSON.parse(parentRollback.stdout)).toMatchObject({ rolledBack: true, applied: false });
+    expect(JSON.parse(readFileSync(env.OCX_FIXTURE_SWAP_RECEIPT, "utf8"))).toEqual({ packageDir: pkg, version: "2.1.0" });
+    expect(verifyInstallTree(pkg, "2.0.0")).toMatchObject({ ok: true });
+    expect(transactionArtifacts()).toEqual(artifactsBeforeParentRollback);
     expireFixtureFence(home);
     const parentApplied = parent({ OCX_FIXTURE_MOVED: "1" });
     expect({ status: parentApplied.status, stderr: parentApplied.stderr }).toMatchObject({ status: 0 });
@@ -378,9 +445,11 @@ test.skipIf(process.platform === "win32")("Bun-global apply runs the real child 
   writeFileSync(join(ocxHome, "config.json"), JSON.stringify({ port: 1, hostname: "127.0.0.1" }));
   cpSync(repoPath("src"), join(pkg, "src"), { recursive: true });
   cpSync(repoPath("bin"), join(pkg, "bin"), { recursive: true });
+  isolateFixtureServiceManager(pkg);
   const manifest = JSON.parse(readFileSync(repoPath("package.json"), "utf8")); manifest.version = "2.0.0";
   writeFileSync(join(pkg, "package.json"), JSON.stringify(manifest));
-  symlinkSync(repoPath("node_modules"), join(pkg, "node_modules"));
+  installFixtureDependencies(pkg);
+  expect(verifyInstallTree(pkg, "2.0.0")).toMatchObject({ ok: true });
   writeFileSync(join(path, "npm"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "$OCX_FIXTURE_LOG"\nprintf 'CAP=%s\\n' "\${OCX_UPDATE_RESULT_CAPABILITY:-none}" >> "$OCX_FIXTURE_LOG"\ncase "$*" in *dist.integrity*) printf 'sha512-YWJj\\n';; *) if [ -e "$OCX_FIXTURE_PKG/tag-queried" ]; then printf '2.2.0\\n'; else : > "$OCX_FIXTURE_PKG/tag-queried"; printf '2.1.0\\n'; fi;; esac\n`);
   chmodSync(join(path, "npm"), 0o755);
   writeFileSync(join(path, "bun"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "$OCX_FIXTURE_LOG"\nprintf 'CAP=%s\\n' "\${OCX_UPDATE_RESULT_CAPABILITY:-none}" >> "$OCX_FIXTURE_LOG"\nexec '${process.execPath}' -e 'const fs=require("node:fs"),root=process.env.OCX_FIXTURE_PKG;fs.writeFileSync(root+"/installer-ready","");const end=Date.now()+10000;const t=setInterval(()=>{if(!fs.existsSync(root+"/installer-release") && Date.now()<end)return;clearInterval(t);const p=root+"/package.json",m=JSON.parse(fs.readFileSync(p,"utf8"));m.version="2.1.0";fs.writeFileSync(p,JSON.stringify(m));},10);'\n`);

@@ -34,7 +34,6 @@ export function stripResponsesOnlyEncryptedMarker(node: unknown, inNameBag = fal
   interface Frame { node: unknown; inNameBag: boolean; assign: Assign }
 
   let result: unknown;
-  let removedMarker = false;
   const stack: Frame[] = [{ node, inNameBag, assign: value => { result = value; } }];
 
   while (stack.length > 0) {
@@ -62,6 +61,7 @@ export function stripResponsesOnlyEncryptedMarker(node: unknown, inNameBag = fal
     for (const [key, value] of Object.entries(current as Record<string, unknown>)) {
       if (frame.inNameBag) {
         // Inside a name bag every key is a caller-chosen name, so `encrypted` here is data.
+        out[key] = undefined;
         stack.push({ node: value, inNameBag: false, assign: v => { out[key] = v; } });
       } else if (key !== "encrypted") {
         if (SCHEMA_LITERAL_VALUE_KEYS.has(key)) {
@@ -69,15 +69,14 @@ export function stripResponsesOnlyEncryptedMarker(node: unknown, inNameBag = fal
           out[key] = value;
         } else {
           const childInNameBag = SCHEMA_NAME_BAG_KEYS.has(key);
+          out[key] = undefined;
           stack.push({ node: value, inNameBag: childInNameBag, assign: v => { out[key] = v; } });
         }
-      } else {
-        removedMarker = true;
       }
     }
   }
 
-  return removedMarker ? result : node;
+  return result;
 }
 
 /**

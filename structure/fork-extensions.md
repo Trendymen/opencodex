@@ -47,7 +47,7 @@
 
 - `src/types/agent-task-recovery.ts` 保存 `OcxConfig.agentTaskRecovery` 的原有七个可选字段及默认值说明；`src/types/config.ts` 通过 `import type` 引用，不增加运行时依赖或改变配置结构。
 - `src/server/responses/passthrough-dispatch-types.ts` 与 `src/server/responses/adapter-dispatch-types.ts` 分别保存对应 dispatch 的参数类型，母文件通过 `import type` 引用，发送预算、取消和恢复逻辑仍在母文件中。
-- `src/server/responses/account-auto-pause-recovery.ts` 只在预算允许且已选中替补后，按现有有界错误读取保存失败响应、释放旧 body 的 pacing slot，再进入替补发送。没有预算、没有替补或 body 被外部 reader 锁定时不读取原 body；重建失败使用保留的失败响应，请求取消仍沿用 abort 路径。
+- `src/server/responses/account-auto-pause-recovery.ts` 只在凭据跳转预算允许且已选中替补后，按现有有界错误读取保存失败响应、释放旧 body 的 pacing slot，再进入替补发送。没有跳转预算、没有替补或 body 被外部 reader 锁定时不读取原 body；重建失败保留原响应。已预留跳转但物理发送准入明确因预算拒绝时，沿用官方本地429；其他发送前失败仍保留原响应，请求取消沿用abort路径。
 - `src/server/responses-reasoning-summary-rewrite.ts` 仅在客户端请求 summary 且路由满足条件时投影；已有 summary 不重复投影。保留 raw reasoning、终态字段和原始存储对象，passthrough continuation 记录客户端实际收到的形状。
 - projection 的唯一序号按 32 字节计入共享 `translatorBudget`；EOF、失败和取消完成资源释放，超限沿用 `translation_buffer_limit`。flush 不扩大到 reader error / nested-exec barrier。
 - Fork 的 `inferResponsesMessagePhaseModels` 只作用于显式列出的第三方原生 Responses 模型，包含普通 JSON 交付；宣布阶段的 `final_answer` 不足以证明最终相位，已有 phase 和后续工作证据共同决定交付结果。命中该名单时优先使用 Fork 推断，避免两层缓冲吞掉 EOF 尾项。其余路由按官方 `messagePhaseInference` 控制 SSE 推断及由 SSE 重建的 JSON，保留官方适用条件。

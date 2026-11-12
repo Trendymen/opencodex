@@ -43,7 +43,7 @@ test.each([undefined, true])("private Combo deadline %s preserves the five secon
   jest.useFakeTimers(); const { budget, guard } = privateError(); let cancelled = false;
   const body = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
   try {
-    const pending = comboFailure.consumeComboFailure(new Response(body, { status: 400 }), undefined, undefined,
+    const pending = comboFailure.consumeComboFailure(new Response(body, { status: 400 }), undefined, undefined, undefined, false,
       (text, safe) => { if (!safe) throw new CodexPrivateCredentialProtectionError("private-body-unreadable"); return guard.mask(text); },
       undefined, codexPrivateErrorBodyReadDeadlines({ privateErrorBodyReadDeadline: enabled, stallTimeoutMs: 300_000 }));
     void pending.catch(() => {}); jest.advanceTimersByTime(5_000);
@@ -56,7 +56,7 @@ test("disabled private Combo deadline retains the resolved first-byte stall", as
   const { budget, guard } = privateError(); let cancelled = false;
   const body = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
   try {
-    await expect(comboFailure.consumeComboFailure(new Response(body, { status: 400 }), undefined, undefined,
+    await expect(comboFailure.consumeComboFailure(new Response(body, { status: 400 }), undefined, undefined, undefined, false,
       (text, safe) => { if (!safe) throw new CodexPrivateCredentialProtectionError("private-body-unreadable"); return guard.mask(text); },
       undefined, codexPrivateErrorBodyReadDeadlines({ privateErrorBodyReadDeadline: false, stallTimeoutMs: 25 })))
       .rejects.toMatchObject({ code: "private-body-unreadable" });
@@ -69,7 +69,7 @@ test("disabled private Combo deadline and zero stall still preserve caller abort
   const reason = new Error("synthetic Combo caller abort"); let cancelled = false;
   const body = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; return new Promise(() => {}); } });
   try {
-    const pending = comboFailure.consumeComboFailure(new Response(body, { status: 400 }), abort.signal, undefined,
+    const pending = comboFailure.consumeComboFailure(new Response(body, { status: 400 }), abort.signal, undefined, undefined, false,
       (text, safe) => { if (!safe) throw new CodexPrivateCredentialProtectionError("private-body-unreadable"); return guard.mask(text); },
       undefined, codexPrivateErrorBodyReadDeadlines({ privateErrorBodyReadDeadline: false, stallTimeoutMs: 0 }));
     void pending.catch(() => {}); jest.advanceTimersByTime(360_000); abort.abort(reason);
