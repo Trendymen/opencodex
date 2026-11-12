@@ -302,5 +302,46 @@
       "desktop/scripts/appimage-patchelf.py": "63e78ef74160bc48fbcdd882065f1d416db6d13c",
       "desktop/scripts/linux-packaged-e2e.ts": "9ca92352668ff881c85caea44a9b4747bedc7e2d"
     }
+  },
+  {
+    "kind": "ci",
+    "version": 1,
+    "files": {
+      ".github/workflows/ci.yml": "65d15a4573dfa2a8d56519802372d8ba1b17a0e6",
+      ".github/actions/setup-project-bun/action.yml": "cf28f6f9d4385d69784f4e3610914f6952ce789d",
+      ".github/scripts/release-evidence.cjs": "c4cd8c762abbfc1c0674937535c5a36b9cf705fd",
+      ".github/scripts/release-evidence.test.cjs": "de30ad37105cf0e7dd8c538efb5ee1cfafe02990",
+      "scripts/ci/select-test-lane.sh": "b25836cb55f962d1ffd9e68ed00f45f8b45becc8",
+      "scripts/ci/windows-sensitive-diff.sh": "03495f256c671aff57e750febffe19ca7face6a1",
+      "scripts/ci/run-bun-test-batches.sh": "f8aa18e80aff1c95c584cd2c879dfbb6806c11fb",
+      "scripts/ci/bun-crash-signatures.sh": "d34662ddd07864d97bed909135095db33fe42c9e",
+      "scripts/ci/bun-install-frozen.sh": "e6d7bc3aec044e12297c7c4c04015a33df0eb22b",
+      "scripts/ci/docker-smoke.ts": "a8424f93986a31625a0a236cdab5667db67b3405",
+      "scripts/ci/test-durations.tsv": "d70844c36c836067dd99964325c24dc0107c5a51",
+      "scripts/ci/test-durations.windows.tsv": "0f0dd65e2ef2523dcba0be69c8b86afd0a3ba9e7",
+      "scripts/test.ts": "7c1d3e4660b99d16232a334ce396982719278f4a",
+      "scripts/lib/test-runner-bun.ts": "8763806104a851dbdefeea8cffe8d7dd8d1c8da1",
+      "scripts/test-temp-lock.ts": "ee83fb254b728de119028f52b9894bf52d7aea15",
+      "scripts/ci/run-changed-tests.sh": "9a54d3a5db9849bcbe0dd766954a840185419fa5",
+      "scripts/keyring-smoke.ts": "cd3be07ad57796172696dfa053ea1fb129f29365",
+      "scripts/privacy-scan.ts": "86314e891b45e49739b94c76cddd9e4cc2d4340f",
+      "scripts/structure-ssot.ts": "828294f0dbc5404e6b2c389ec52659f114c5bdb6",
+      "scripts/generate-ocx-skill-surface.ts": "155e866656ba2d71e8fd48adda857451caf16322",
+      "desktop/scripts/prepare-sidecar.ts": "20f7eec61f73635ea681e25f13dd850b62bb41e2",
+      "desktop/scripts/build-widget.sh": "38e0eb9d713804b603aa75c32383aa18ef01d06c",
+      "desktop/scripts/verify-macos-runtime.sh": "43f1a31375c6f6fe7dcafb9d96c231b98d1f6ba4",
+      "desktop/scripts/verify-linux-sidecar.sh": "c502bb5c8ba8346c722a8f5274f2274bb325a934",
+      "desktop/scripts/appimage-patchelf.py": "63e78ef74160bc48fbcdd882065f1d416db6d13c",
+      "desktop/scripts/linux-packaged-e2e.ts": "9ca92352668ff881c85caea44a9b4747bedc7e2d",
+      ".github/scripts/fork-prepare-release-history.cjs": "6f04250bd4b7d8d81e11026716868de7e62d13e0",
+      ".github/scripts/fork-prepare-release-history.test.cjs": "d74eb60e8c4098fb3c82dc7d82951fad04f9acac",
+      ".github/scripts/release-history.cjs": "e2de485339b8e4fc0671d340fcd896608857f918",
+      "scripts/prepare-fork-official-base.ts": "038d1d136eaca0f1e96fd7059e59e30f7ab435a0",
+      "src/fork/version-policy.mjs": "a7b3725f83b4dfa99658529deb1bfe3f3aa52867",
+      "src/lib/redact.ts": "fcde66a73616bbe6af68c6d8d1c7015e581fc334",
+      "src/lib/redact-folding.ts": "19175487af50af727c7a9b0a14dd52c9a62d6386",
+      "scripts/lib/test-runner-node.ts": "fb1a3223da838415f0968c7d1eb2f09c840438cd",
+      "scripts/lib/test-runner-diagnostics.ts": "87ad91e64754e928373d8b683cf85092e9a2f961"
+    }
   }
 ]

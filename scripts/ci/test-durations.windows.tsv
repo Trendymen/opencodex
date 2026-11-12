@@ -1,7 +1,7 @@
 # Per-file Bun test durations in milliseconds, read from hosted CI job logs.
 # Consumed by scripts/ci/run-bun-test-batches.sh to balance shards; a file without a row weighs the median.
 # Regenerate with scripts/ci/test-durations.ts (usage in its header); do not edit by hand.
-# Source: run 42694893702 (Windows shards 1-11 at 4b38e9a072; 8/11 stopped at its failing batch, 9/11 cancelled at the 30-minute limit in batch 42/48)
+# Source: run 42694893702 (Windows shards 1-11 at 4b38e9a072; 8/11 stopped at its failing batch, 9/11 cancelled at the 30-minute limit in batch 42/48); R2 run 43157368276 not green: only completed successful Windows batches (1-4,6-11; failed and incomplete batches excluded; 5 not sampled)
 2850	tests/adapters/abort-race.test.ts
 223	tests/adapters/adapter-buffered-tool-conformance.test.ts
 1134	tests/adapters/adapter-error-inline.test.ts
@@ -79,6 +79,7 @@
 266	tests/adapters/anthropic/anthropic-tool-declaration-constraints.test.ts
 80	tests/adapters/anthropic/anthropic-tool-schema.test.ts
 11253	tests/adapters/anthropic/anthropic2-fast-parity.test.ts
+423	tests/adapters/bridge-annotation-directive.test.ts
 249	tests/adapters/bridge-legacy-shell-normalization.test.ts
 3668	tests/adapters/bridge-lifecycle.test.ts
 350	tests/adapters/bridge-nonstreaming-terminal.test.ts
@@ -236,6 +237,7 @@
 79	tests/ci-workflows/ci-bun-install-frozen.test.ts
 235	tests/ci-workflows/ci-concurrency-groups.test.ts
 82	tests/ci-workflows/ci-crash-disposition.test.ts
+1000	tests/ci-workflows/ci-gui-if-changed.test.ts
 5323	tests/ci-workflows/ci-gui-typecheck-gate.test.ts
 157	tests/ci-workflows/ci-pr-hygiene-approvals.test.ts
 65	tests/ci-workflows/ci-privacy-gate.test.ts
@@ -276,7 +278,20 @@
 394	tests/ci-workflows/fixture-dir-uniqueness.test.ts
 111	tests/ci-workflows/fixture-teardown-helper.test.ts
 1493	tests/ci-workflows/fixture-windows-runtime-preload.test.ts
+437	tests/ci-workflows/fork-changed-fixture-diagnostic.test.ts
+70316	tests/ci-workflows/fork-ci-official-baseline.test.ts
+952	tests/ci-workflows/fork-install-local-deferred-transaction.test.ts
+318	tests/ci-workflows/fork-install-local-lifecycle.test.ts
+413	tests/ci-workflows/fork-install-local-manifest-lifecycle.test.ts
+27825	tests/ci-workflows/fork-install-local-staging.test.ts
+2956	tests/ci-workflows/fork-install-local-transaction-hardening.test.ts
+473	tests/ci-workflows/fork-install-local-transaction.test.ts
+508	tests/ci-workflows/fork-install-local-volta-registration.test.ts
+439	tests/ci-workflows/fork-install-local-volta-root.test.ts
+10043	tests/ci-workflows/fork-test-runner-lifecycle.test.ts
 729	tests/ci-workflows/import-cycle-ratchet.test.ts
+175	tests/ci-workflows/install-local-vendor.test.ts
+319	tests/ci-workflows/install-local.test.ts
 111	tests/ci-workflows/install-scripts.test.ts
 199	tests/ci-workflows/installed-gate-drivers.test.ts
 95	tests/ci-workflows/keyring-smoke.test.ts
@@ -312,6 +327,7 @@
 58691	tests/ci-workflows/test-home-guard.test.ts
 23759	tests/ci-workflows/test-run-lock-generation.test.ts
 127	tests/ci-workflows/test-runner-bun.test.ts
+6499	tests/ci-workflows/test-runner-node-async.test.ts
 79	tests/ci-workflows/test-runner-spawnsync-finalizer.test.ts
 26520	tests/ci-workflows/test-runner.test.ts
 64	tests/ci-workflows/test-sandbox-cleanup.test.ts
@@ -644,6 +660,7 @@
 11180	tests/cli/cli-version-skew.test.ts
 174	tests/cli/cross-home-loopback-family.test.ts
 1262	tests/cli/ensure-desired-integrations-race.test.ts
+35904	tests/cli/fork-model-api-port.test.ts
 6006	tests/cli/hub-disable.test.ts
 1495	tests/cli/hub-gated-local-clients.test.ts
 210	tests/cli/hub-invite.test.ts
@@ -907,6 +924,7 @@
 21114	tests/codex-integration/codex-auth-headless-accounts.test.ts
 6037	tests/codex-integration/codex-auth-release.test.ts
 1268	tests/codex-integration/codex-catalog-admission.test.ts
+269	tests/codex-integration/codex-catalog-contract.test.ts
 109	tests/codex-integration/codex-catalog-exclusions.test.ts
 238	tests/codex-integration/codex-catalog-golden.test.ts
 5729	tests/codex-integration/codex-catalog-heal-integration.test.ts
@@ -1009,7 +1027,7 @@
 4538	tests/codex-integration/codex-installation-live-http.test.ts
 7001	tests/codex-integration/codex-installation-live-ws.test.ts
 1964	tests/codex-integration/codex-installation-sidecars.test.ts
-1507	tests/codex-integration/codex-installation-wire.test.ts
+3236	tests/codex-integration/codex-installation-wire.test.ts
 746	tests/codex-integration/codex-integration-record.test.ts
 6143	tests/codex-integration/codex-journal-recovery.test.ts
 40656	tests/codex-integration/codex-journal.test.ts
@@ -1052,6 +1070,7 @@
 1896	tests/codex-integration/codex-models-cache-invalidate.test.ts
 5063	tests/codex-integration/codex-native-availability-nux.test.ts
 5410	tests/codex-integration/codex-native-residue.test.ts
+16644	tests/codex-integration/codex-passthrough-soft-precheck.test.ts
 1239	tests/codex-integration/codex-pin-drain-projection.test.ts
 3395	tests/codex-integration/codex-plan.test.ts
 889	tests/codex-integration/codex-plugins-doctor.test.ts
@@ -1094,6 +1113,7 @@
 3940	tests/codex-integration/codex-reset-credit-auto-redeem.test.ts
 16260	tests/codex-integration/codex-reset-credit-operation-ledger.test.ts
 270	tests/codex-integration/codex-reset-credit-recovery.test.ts
+1469	tests/codex-integration/codex-responses-lite-metadata.test.ts
 191	tests/codex-integration/codex-restart-contract-parity.test.ts
 1581	tests/codex-integration/codex-restart-route.test.ts
 19259	tests/codex-integration/codex-restore-app-rewrite.test.ts
@@ -1174,6 +1194,8 @@
 348	tests/codex-integration/exec-trust-boundary.test.ts
 389	tests/codex-integration/fast-row-listing.test.ts
 143	tests/codex-integration/fast-row.test.ts
+1156	tests/codex-integration/fork-custom-model-tool-mode-contract.test.ts
+521	tests/codex-integration/fork-routed-progress-contract.test.ts
 373	tests/codex-integration/gather-routed-models-single-flight.test.ts
 159	tests/codex-integration/gpt6-native-rows.test.ts
 308	tests/codex-integration/gpt61-sol-rows.test.ts
@@ -1298,6 +1320,7 @@
 269	tests/config/client-config-export.test.ts
 157	tests/config/client-config-kimi-efforts.test.ts
 192	tests/config/client-config-new-clients.test.ts
+1539	tests/config/codex-passthrough-config.test.ts
 237	tests/config/compaction-recovery-settings.test.ts
 17076	tests/config/config-account-auto-pause-revisions.test.ts
 306	tests/config/config-account-thresholds.test.ts
@@ -1327,6 +1350,8 @@
 23128	tests/config/config-user-edits.test.ts
 79	tests/config/config-workflow-budget.test.ts
 92	tests/config/expand-user-path.test.ts
+1502	tests/config/fork-custom-model-config-schema.test.ts
+7423	tests/config/fork-model-api-listener-config.test.ts
 9863	tests/config/hub-disable-live-save.test.ts
 192	tests/config/lmstudio-system-policy.test.ts
 9283	tests/config/local-credential-generation.test.ts
@@ -1763,6 +1788,13 @@
 356	tests/providers/fast-row-ingress.test.ts
 376	tests/providers/featherless-provider.test.ts
 174	tests/providers/flash-route-image-modalities.test.ts
+238	tests/providers/fork-ark-weekly-quota.test.ts
+204	tests/providers/fork-deepseek-opaque-reasoning.test.ts
+284	tests/providers/fork-deepseek-vision-route.test.ts
+172	tests/providers/fork-glm-kimi-compat.test.ts
+317	tests/providers/fork-kimi-schema-compiler.test.ts
+221	tests/providers/fork-volcengine-empty-assistant-content.test.ts
+223	tests/providers/fork-zhipu-glm-schema-lowering.test.ts
 5591	tests/providers/forward-admission-separation.test.ts
 61	tests/providers/free-directory-runcrate.test.ts
 14975	tests/providers/github-copilot/github-copilot-account-origin.test.ts
@@ -1772,7 +1804,7 @@
 326	tests/providers/github-copilot/github-copilot-context-tier.test.ts
 16087	tests/providers/github-copilot/github-copilot-oauth.test.ts
 108	tests/providers/github-copilot/github-copilot-sse-rewrite.test.ts
-1170	tests/providers/github-copilot/github-copilot-stream-contract.test.ts
+3041	tests/providers/github-copilot/github-copilot-stream-contract.test.ts
 4868	tests/providers/github-copilot/github-copilot-wire-defaults.test.ts
 5407	tests/providers/gpt61-terra-provider-rows.test.ts
 82	tests/providers/haiku-5-5-catalog.test.ts
@@ -1878,6 +1910,7 @@
 488	tests/providers/ollama/ollama-show-enrichment-v7.test.ts
 175	tests/providers/ollama/ollama-show-enrichment.test.ts
 314	tests/providers/ollama/ollama-show-ignore-abort.test.ts
+365	tests/providers/openai-model-identity.test.ts
 728	tests/providers/opencode-cli.test.ts
 144	tests/providers/opencode-go-deepseek.test.ts
 1631	tests/providers/opencode-go-gemini-wire.test.ts
@@ -2002,9 +2035,13 @@
 636	tests/providers/zed-lossless-arguments.test.ts
 224	tests/providers/zed-openai-contract.test.ts
 481	tests/providers/zed-retained-budget.test.ts
+312	tests/providers/zhipu-bigmodel-codex-provider.test.ts
 159	tests/providers/zhipu-bigmodel-provider.test.ts
 379	tests/providers/zhipu-bigmodel-responses-quota.test.ts
+238	tests/responses/adapter-reasoning-summary-projection.test.ts
 14403	tests/responses/agent-assertion-routes.test.ts
+503	tests/responses/agent-message-format.test.ts
+237	tests/responses/annotation-directive.test.ts
 17828	tests/responses/anthropic2-responses-parity.test.ts
 195	tests/responses/apply-patch-envelope.test.ts
 472	tests/responses/bare-echo-alias.test.ts
@@ -2047,6 +2084,13 @@
 4490	tests/responses/codex-installation-compact-empty.test.ts
 14817	tests/responses/codex-installation-failover.test.ts
 12904	tests/responses/codex-installation-turn-limit.test.ts
+42990	tests/responses/codex-passthrough-contract.test.ts
+14419	tests/responses/codex-passthrough-local-errors.test.ts
+34974	tests/responses/codex-passthrough-request.test.ts
+21231	tests/responses/codex-passthrough-response.test.ts
+319	tests/responses/codex-passthrough-turn.test.ts
+286	tests/responses/codex-passthrough-ws-deadline.test.ts
+6448	tests/responses/codex-passthrough-ws.test.ts
 2106	tests/responses/codex-ws-handshake-validation.test.ts
 262	tests/responses/codex-ws-handshake.test.ts
 78	tests/responses/codex-ws-pool-contention.test.ts
@@ -2074,7 +2118,11 @@
 34928	tests/responses/explicit-empty-tool-catalog-history.test.ts
 42574	tests/responses/explicit-empty-tool-catalog.test.ts
 445	tests/responses/external-task-input-repair.test.ts
+207	tests/responses/external-task-input-seed.test.ts
 63	tests/responses/fix-eventstream-cancel-wait.test.ts
+190	tests/responses/fork-custom-tool-output-lowering.test.ts
+1030	tests/responses/fork-passthrough-opaque-reasoning.test.ts
+222	tests/responses/fork-sse-block-rewrite-flush.test.ts
 616	tests/responses/fresh-connection-optout.test.ts
 93	tests/responses/graceful-max-output-tokens-exclusions.test.ts
 919	tests/responses/graceful-max-output-tokens.test.ts
@@ -2092,6 +2140,8 @@
 16756	tests/responses/native-compaction-gateway.test.ts
 760	tests/responses/native-compaction-oauth.test.ts
 21423	tests/responses/native-compaction-provenance.test.ts
+253	tests/responses/nested-exec-repair-context.test.ts
+238	tests/responses/nested-exec-repair.test.ts
 225	tests/responses/opaque-blob-wrapped-rejection.test.ts
 2953	tests/responses/openai-responses-passthrough.test.ts
 152	tests/responses/openai-responses-summary-none.test.ts
@@ -2151,7 +2201,7 @@
 1093	tests/responses/responses-anthropic-legal-history.test.ts
 144	tests/responses/responses-anthropic-thinking-recovery.test.ts
 18212	tests/responses/responses-anthropic-thinking-signature-recovery.test.ts
-3039	tests/responses/responses-auto-pause-replay-owner.test.ts
+7390	tests/responses/responses-auto-pause-replay-owner.test.ts
 4255	tests/responses/responses-azure-opaque-blob-recovery.test.ts
 206	tests/responses/responses-bare-echo-helper-fence.test.ts
 250	tests/responses/responses-call-id-linkage.test.ts
@@ -2160,6 +2210,7 @@
 1203	tests/responses/responses-chat-tool-call-content.test.ts
 158	tests/responses/responses-chatgpt-web-replay-metadata.test.ts
 1461	tests/responses/responses-claude-preflight-lease.test.ts
+648	tests/responses/responses-code-mode-exec-output-guard.test.ts
 64	tests/responses/responses-code-mode-goal-helpers.test.ts
 498	tests/responses/responses-code-mode-mcp-direct.test.ts
 63	tests/responses/responses-code-mode-patch-compile.test.ts
@@ -2216,6 +2267,7 @@
 491	tests/responses/responses-hosted-send-round-parity.test.ts
 3267	tests/responses/responses-hosted-send-unsent-hop.test.ts
 1777	tests/responses/responses-hosted-send-ws.test.ts
+380	tests/responses/responses-hosted-tool-conflicts.test.ts
 273	tests/responses/responses-hosted-tool-declaration.test.ts
 159	tests/responses/responses-hosted-tool-min-spread.test.ts
 841	tests/responses/responses-image-gen-repair.test.ts
@@ -2225,6 +2277,9 @@
 66	tests/responses/responses-legacy-dotted-tool-name-repair.test.ts
 6007	tests/responses/responses-main-quota-observation.test.ts
 4029	tests/responses/responses-memory-models.test.ts
+249	tests/responses/responses-message-phase-config.test.ts
+3823	tests/responses/responses-message-phase-passthrough.test.ts
+348	tests/responses/responses-message-phase-rewrite.test.ts
 246	tests/responses/responses-mimo-envelope.test.ts
 1062	tests/responses/responses-muse-tool-choice.test.ts
 1646	tests/responses/responses-muse-tool-name-alias.test.ts
@@ -2239,6 +2294,7 @@
 10083	tests/responses/responses-oauth-refresh-capacity.test.ts
 79	tests/responses/responses-ollama-codec.test.ts
 33701	tests/responses/responses-opaque-blob-recovery.test.ts
+332	tests/responses/responses-original-field-preservation.test.ts
 79	tests/responses/responses-parser-agent-message.test.ts
 95	tests/responses/responses-parser-malformed-content.test.ts
 206	tests/responses/responses-parser.test.ts
@@ -2249,7 +2305,14 @@
 330	tests/responses/responses-pool-refresh-attribution.test.ts
 7003	tests/responses/responses-preview-main-read-fence.test.ts
 1853	tests/responses/responses-reasoning-effort-downgrade.test.ts
+235	tests/responses/responses-reasoning-summary-block-edge-lifecycle.test.ts
+223	tests/responses/responses-reasoning-summary-block-lifecycle.test.ts
+301	tests/responses/responses-reasoning-summary-block-terminal-failure.test.ts
+222	tests/responses/responses-reasoning-summary-display-projection.test.ts
+207	tests/responses/responses-reasoning-summary-lifecycle.test.ts
+254	tests/responses/responses-reasoning-summary-part-split.test.ts
 1553	tests/responses/responses-reasoning-summary-passthrough.test.ts
+240	tests/responses/responses-reasoning-summary-rewrite.test.ts
 840	tests/responses/responses-repeated-tool-outputs.test.ts
 744	tests/responses/responses-replay-metadata-principal.test.ts
 158	tests/responses/responses-request-compression.test.ts
@@ -2281,6 +2344,7 @@
 188	tests/responses/responses-spill-inspection.test.ts
 237	tests/responses/responses-spill-orphan-sweep.test.ts
 490	tests/responses/responses-spill-shutdown-clock.test.ts
+897	tests/responses/responses-state-admission.test.ts
 569	tests/responses/responses-state-flush-race.test.ts
 63	tests/responses/responses-state-snapshot-select.test.ts
 111	tests/responses/responses-state-snapshot-stubs.test.ts
@@ -2290,6 +2354,7 @@
 3421	tests/responses/responses-stateless-dangling-call-repair.test.ts
 110	tests/responses/responses-stream-tool-events.test.ts
 174	tests/responses/responses-terminal-repair.test.ts
+237	tests/responses/responses-tool-catalog.test.ts
 111	tests/responses/responses-tool-conformance.test.ts
 63	tests/responses/responses-tool-groups.test.ts
 1332	tests/responses/responses-tool-search-repair.test.ts
@@ -2330,7 +2395,7 @@
 5931	tests/responses/ws-native-steering.test.ts
 200	tests/responses/ws-pre-output-refusal.test.ts
 998	tests/responses/ws-replay-refusal-attribution.test.ts
-3157	tests/responses/ws-steering-completion.test.ts
+12226	tests/responses/ws-steering-completion.test.ts
 237	tests/responses/ws-steering-smoke.test.ts
 693	tests/responses/ws-steering-stability.test.ts
 189	tests/responses/ws-upstream-reuse.test.ts
@@ -2416,6 +2481,7 @@
 206	tests/server/account-import-project-fallback.test.ts
 2402	tests/server/account-import.test.ts
 80654	tests/server/account-pool-management-api.test.ts
+348	tests/server/account-selection-config.test.ts
 192	tests/server/adapter-resolve.test.ts
 360	tests/server/admitted-http-turn.test.ts
 78	tests/server/advisor-routes.test.ts
@@ -2423,9 +2489,11 @@
 3355	tests/server/agent-task-recovery-cache.test.ts
 4940	tests/server/agent-task-recovery-combo.test.ts
 602	tests/server/agent-task-recovery-fallback.test.ts
+523	tests/server/agent-task-recovery-routed-backend.test.ts
 4004	tests/server/agent-task-recovery-security.test.ts
 27545	tests/server/agent-task-recovery.test.ts
 345	tests/server/alias-management-api.test.ts
+826	tests/server/annotation-instructions.test.ts
 3424	tests/server/anthropic2-management.test.ts
 144	tests/server/api-access-endpoints.test.ts
 7738	tests/server/api-catalog-route.test.ts
@@ -2453,6 +2521,10 @@
 19926	tests/server/claude-intercept-integration.test.ts
 604	tests/server/client-retry-after-sites.test.ts
 5828	tests/server/codex-agent-role-routes.test.ts
+26814	tests/server/codex-passthrough-private-credentials.test.ts
+21876	tests/server/codex-passthrough-private-deadline.test.ts
+39768	tests/server/codex-passthrough-private-error-deadline.test.ts
+2743	tests/server/codex-passthrough-source.test.ts
 542	tests/server/codex-role-auto-assign-routes.test.ts
 174	tests/server/codex-role-configured-credentials.test.ts
 1569	tests/server/codex-role-history-recovery.test.ts
@@ -2473,6 +2545,23 @@
 456	tests/server/errors-adapter-failure.test.ts
 2130	tests/server/fallback-routes.test.ts
 612	tests/server/fetch-header-timeout.test.ts
+1597	tests/server/fork-agent-message-strict-envelope.test.ts
+22979	tests/server/fork-agent-task-recovery-backend.test.ts
+2965	tests/server/fork-agent-task-recovery-kiro-turn-termination.test.ts
+266	tests/server/fork-ark-quota-error.test.ts
+887	tests/server/fork-debug-persistence.test.ts
+7995	tests/server/fork-inbound-response-debug.test.ts
+10450	tests/server/fork-model-api-access.test.ts
+16797	tests/server/fork-model-api-listener.test.ts
+9038	tests/server/fork-model-api-protocols.test.ts
+14778	tests/server/fork-model-api-status.test.ts
+317	tests/server/fork-overload-error-eof-fidelity.test.ts
+1727	tests/server/fork-provider-agent-message-format.test.ts
+5649	tests/server/fork-provider-message-phase-config.test.ts
+317	tests/server/fork-relay-eager-client-observation.test.ts
+302	tests/server/fork-relay-eager-flush.test.ts
+363	tests/server/fork-tool-call-ciphertext-arguments.test.ts
+762	tests/server/fork-tool-call-ciphertext-egress.test.ts
 4723	tests/server/health-scoring.test.ts
 6063	tests/server/hub-usage.test.ts
 9527	tests/server/inbound-body-admission.test.ts
@@ -2516,6 +2605,7 @@
 1837	tests/server/management-auto-review-auth.test.ts
 1173	tests/server/management-auto-review-settings.test.ts
 999	tests/server/management-client-config-route.test.ts
+3669	tests/server/management-codex-passthrough.test.ts
 571	tests/server/management-desktop-compatibility-routes.test.ts
 448	tests/server/management-desktop-compatibility-runtime-routes.test.ts
 823	tests/server/management-desktop-compatibility-settings.test.ts
@@ -2574,6 +2664,7 @@
 286	tests/server/protocol-settings-route.test.ts
 1027	tests/server/protocol-trace-suppression.test.ts
 1363	tests/server/provider-account-quota-routes.test.ts
+2426	tests/server/provider-context-cap-rollback.test.ts
 95	tests/server/provider-egress-management-validation.test.ts
 253	tests/server/provider-send-path-import.test.ts
 127	tests/server/proxy-env-macos.test.ts
@@ -2600,7 +2691,7 @@
 174	tests/server/safe-response-headers.test.ts
 18409	tests/server/served-by-header.test.ts
 4363	tests/server/server-403-permission-e2e.test.ts
-2979	tests/server/server-agent-task-recovery-replay.test.ts
+6759	tests/server/server-agent-task-recovery-replay.test.ts
 8048	tests/server/server-anthropic-billing-boundaries.test.ts
 10317	tests/server/server-anthropic-billing.test.ts
 2073	tests/server/server-antigravity-model-denial-recovery.test.ts
@@ -2624,7 +2715,7 @@
 5166	tests/server/server-combo-reasoning-replay-eligibility.test.ts
 38709	tests/server/server-combo-required-tool-contract.test.ts
 6851	tests/server/server-combo-stream-hosted-tool-contract.test.ts
-9420	tests/server/server-combo-stream-required-tool.test.ts
+21079	tests/server/server-combo-stream-required-tool.test.ts
 4179	tests/server/server-combo-stream-send-contract.test.ts
 7651	tests/server/server-combo-tool-loop-continuation.test.ts
 4881	tests/server/server-combo-zero-output-failover.test.ts
@@ -2790,6 +2881,7 @@
 25579	tests/storage/storage-worker-teardown-isolate.test.ts
 3742	tests/test-layout-tooling.test.ts
 286	tests/test-layout.test.ts
+206	tests/update/fork-update-monotonicity.test.ts
 230	tests/update/pnpm-command-isolation.test.ts
 64	tests/update/update-badge.test.ts
 6938	tests/update/update-bun-ownership-lease.test.ts
@@ -2888,6 +2980,7 @@
 239	tests/usage/request-log-normalization.test.ts
 159	tests/usage/request-log-protocol-trace.test.ts
 320	tests/usage/request-log-served-model.test.ts
+347	tests/usage/request-log-upstream-http-status.test.ts
 922	tests/usage/request-log.test.ts
 206	tests/usage/request-outcome-agreement.test.ts
 241	tests/usage/request-pacing-provenance.test.ts

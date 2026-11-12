@@ -39,8 +39,8 @@ lint("fork version policy admission still rejects extra exits, imports and mutat
   };
   try {
     for (const [target, anchor, module] of [
-      ["bin/ocx.mjs", "async function runPackageManagerSelfUpdate(manager) {", "../src/fork/version-policy.mjs"],
-      ["src/update/index.ts", "export async function runUpdate(): Promise<void> {", "../fork/version-policy.mjs"],
+      ["bin/ocx.mjs", "async function runPackageManagerSelfUpdate(manager, child) {", "../src/fork/version-policy.mjs"],
+      ["src/update/index.ts", "  session: ReturnType<typeof createOrchestratedChildSession> | undefined): Promise<void> {", "../fork/version-policy.mjs"],
     ] as const) {
       const original = readFileSync(repoPath(target), "utf8");
       expect(original.split(anchor).length).toBe(2);
