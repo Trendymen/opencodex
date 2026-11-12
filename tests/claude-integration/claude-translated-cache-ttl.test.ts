@@ -9,7 +9,6 @@ import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { NEUTRAL_IDENTITY_LINE } from "../../src/adapters/identity";
 import { createAnthropicAdapter } from "../../src/adapters/anthropic";
-import { ROUTED_PROGRESS_CONTRACT } from "../../src/fork/routed-progress-contract";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
 
 // A combo route declines the native Messages lane, so the anthropic adapter places its own
@@ -165,7 +164,7 @@ describe("callerCacheRetention walks every block container", () => {
 describe("translated Claude lane system breakpoint", () => {
   // Claude Code marks its stable system block and ends with a per-turn env block. The single
   // joined system block put the breakpoint on the env bytes, so no turn could read the cache.
-  async function wireSystem(env: string, markPrefix = true, stable = "Stable instructions.", withTool = false): Promise<unknown[]> {
+  async function wireSystem(env: string, markPrefix = true, stable = "Stable instructions."): Promise<unknown[]> {
     const wires: string[] = [];
     const fetch = (async (_input: unknown, init?: RequestInit) => {
       wires.push(String(init?.body));
@@ -185,7 +184,6 @@ describe("translated Claude lane system breakpoint", () => {
           { type: "text", text: stable, ...(markPrefix ? { cache_control: { type: "ephemeral" } } : {}) },
           { type: "text", text: env },
         ],
-        ...(withTool ? { tools: [{ name: "Read", description: "read", input_schema: { type: "object", properties: {} } }] } : {}),
         messages: [{ role: "user", content: "Hi." }],
       }),
     }), config, { model: "", provider: "" });
@@ -235,21 +233,5 @@ describe("translated Claude lane system breakpoint", () => {
     expect(JSON.stringify(cached(first))).toContain(MODEL);
     expect(JSON.stringify(cached(first))).not.toContain("<env>");
     expect(JSON.stringify(first.at(-1))).toContain("<env>first</env>");
-  });
-
-  test("a tool turn keeps the cache prefix and adds progress once across both system blocks", async () => {
-    for (const present of ["none", "prefix", "tail"] as const) {
-      const stable = present === "prefix" ? `Stable instructions.\n\n${ROUTED_PROGRESS_CONTRACT}` : "Stable instructions.";
-      const tail = present === "tail" ? `<env>one</env>\n\n${ROUTED_PROGRESS_CONTRACT}` : "<env>one</env>";
-      const first = await wireSystem(tail, true, stable, true);
-      const second = await wireSystem(tail.replace("one", "two"), true, stable, true);
-      const cached = (blocks: unknown[]) => blocks.filter(block => (block as { cache_control?: unknown }).cache_control);
-      expect(cached(first)).toHaveLength(1);
-      expect(cached(first)).toEqual(cached(second));
-      expect(JSON.stringify(cached(first))).not.toContain("<env>");
-      const systemText = first.map(block => (block as { text: string }).text).join("\n\n");
-      expect(systemText.split(ROUTED_PROGRESS_CONTRACT)).toHaveLength(2);
-      expect(systemText).toContain("Tool contract:");
-    }
   });
 });

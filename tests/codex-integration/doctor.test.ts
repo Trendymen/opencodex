@@ -55,20 +55,6 @@ let prevHttpsProxy: string | undefined;
 let prevLowerHttpsProxy: string | undefined;
 let prevProxyRef: string | undefined;
 let prevAdminToken: string | undefined;
-let fetchBeforeTest: typeof globalThis.fetch;
-
-beforeEach(() => {
-  fetchBeforeTest = globalThis.fetch;
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (url === "https://chatgpt.com/backend-api/wham/usage") {
-      return Promise.resolve(new Response(null, { status: 503 }));
-    }
-    return fetchBeforeTest(input, init);
-  }) as typeof globalThis.fetch;
-});
-
-afterEach(() => { globalThis.fetch = fetchBeforeTest; });
 
 describe("doctor", () => {
   beforeEach(() => {
@@ -1106,16 +1092,11 @@ describe("doctor spill report wiring (end to end)", () => {
     const old = new Date(Date.now() - 2 * 60 * 60 * 1_000);
     utimesSync(path, old, old);
 
-    const fetch = spyOn(globalThis, "fetch").mockImplementation(async () => new Response(null, { status: 503 }));
-    try {
-      await runDoctor([]);
-      expect(existsSync(path)).toBe(true);
-      const out = logged.join("\n");
-      expect(out).toContain("Response-state spill files");
-      expect(out).toContain("1 unreferenced response-state spill file(s)");
-    } finally {
-      fetch.mockRestore();
-    }
+    await runDoctor([]);
+    expect(existsSync(path)).toBe(true);
+    const out = logged.join("\n");
+    expect(out).toContain("Response-state spill files");
+    expect(out).toContain("1 unreferenced response-state spill file(s)");
   });
 });
 

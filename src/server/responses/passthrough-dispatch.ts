@@ -8,7 +8,8 @@ import { createAutoPauseRefreshErrorMapper } from "./account-auto-pause-recovery
 import { physicalSendAccounting } from "./deferred-send-reporter";
 import { adoptCodexWsStage, capturePassthroughAffinity } from "./passthrough-observations";
 import { codexPassthroughStreamPolicy, resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
-import type { PassthroughDispatchInputs, PassthroughAdapterHandoff } from "./passthrough-dispatch-types";
+import { codexPassthroughProviderFetch } from "../../fork/codex-passthrough-fetch";
+import type { PassthroughDispatchInputs, PassthroughAdapterHandoff } from "../responses-passthrough-dispatch-types";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { requestPacingOverloadResponse } from "./pacing-overload";
 import { recordDistributedResponseFailure } from "../../providers/api-key-response-ownership";
@@ -90,7 +91,6 @@ import {
 import {
   safeOriginLabel,
   fetchWithHeaderTimeout,
-  providerFetch,
   safeHostLabel,
 } from "./fetch-helpers";
 import { classifyPoolRecoveryDispatch } from "../../routing/probe-lease";
@@ -781,7 +781,7 @@ export async function preparePassthroughExchange(
       signal,
       sendConnectMs(),
       true,
-      providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+      codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
         httpOnly: true,
         providerName: route.providerName,
         modelId: route.modelId,
@@ -987,7 +987,7 @@ export async function preparePassthroughExchange(
             headers: request.headers,
             body: request.body,
           }, recovery), upstream.signal, sendConnectMs(), upstreamRequestsStream,
-            providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+            codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
               httpOnly: canonicalBufferedJson,
               nativeControl: nativeResponseControlEligible(route.provider, options.nativeControl) && options.inboundTransport === "websocket" && !options.comboAttempt
                 && responseEffects.plaintextV2AgentMessageToolNames.size === 0
@@ -1136,7 +1136,7 @@ export async function preparePassthroughExchange(
               headers: request.headers,
               body: request.body,
             }, innerRecovery), upstream.signal, sendConnectMs(), upstreamRequestsStream,
-              providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+              codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
                 httpOnly: canonicalBufferedJson,
                 nativeControl: nativeResponseControlEligible(route.provider, options.nativeControl) && options.inboundTransport === "websocket" && !options.comboAttempt
                   && responseEffects.plaintextV2AgentMessageToolNames.size === 0
@@ -1282,7 +1282,7 @@ export async function preparePassthroughExchange(
         const replayGuard = isCanonicalOpenAiForwardProvider(route.provider)
           ? createCodexAuthDispatchGuard(admissionState.authCtx, options.codexAuthPolicy ?? config, route.modelId, options.admission, options.visionDescribeTerminal === true) : undefined;
         let replayNotified = false;
-        const oauthReplayExecutor = providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+        const oauthReplayExecutor = codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
             httpOnly: canonicalBufferedJson,
             nativeControl: nativeResponseControlEligible(route.provider, options.nativeControl) && options.inboundTransport === "websocket" && !options.comboAttempt
               && responseEffects.plaintextV2AgentMessageToolNames.size === 0
@@ -1432,7 +1432,7 @@ export async function preparePassthroughExchange(
               headers: request.headers,
               body: request.body,
             }, recovery), upstream.signal, sendConnectMs(), upstreamRequestsStream,
-              providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+              codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
                 httpOnly: canonicalBufferedJson,
                 nativeControl: nativeResponseControlEligible(route.provider, options.nativeControl) && options.inboundTransport === "websocket" && !options.comboAttempt
                   && responseEffects.plaintextV2AgentMessageToolNames.size === 0
@@ -1581,7 +1581,7 @@ export async function preparePassthroughExchange(
               headers: request.headers,
               body: request.body,
             }, recovery), upstream.signal, sendConnectMs(), upstreamRequestsStream,
-              providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+              codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
                 httpOnly: canonicalBufferedJson,
                 nativeControl: nativeResponseControlEligible(route.provider, options.nativeControl) && options.inboundTransport === "websocket" && !options.comboAttempt
                   && responseEffects.plaintextV2AgentMessageToolNames.size === 0
@@ -2008,4 +2008,4 @@ export async function preparePassthroughExchange(
   };
 }
 
-export type { PassthroughExchange, PassthroughAdapterHandoff } from "./passthrough-dispatch-types";
+export type { PassthroughExchange, PassthroughAdapterHandoff } from "../responses-passthrough-dispatch-types";

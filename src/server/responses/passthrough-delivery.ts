@@ -830,7 +830,7 @@ export async function deliverPassthroughResponse(
         let failure: Awaited<ReturnType<typeof consumeComboFailure>>;
         try { failure = await consumeComboFailure(upstreamResponse, options.abortSignal, undefined, comboCause, false, privateGuard ? (text, safe) => {
           if (!safe) throw new CodexPrivateCredentialProtectionError("private-body-unreadable");
-          return passthroughCt?.includes("json") ? privateGuard.protectJson(text).text : privateGuard.mask(text);
+          return passthroughCt?.includes("json") ? privateGuard.protectJson(text, true).text : privateGuard.mask(text);
         } : undefined, privateGuard ? headers : undefined, privateGuard ? codexPrivateErrorBodyReadDeadlines(privateErrorReadOptions) : undefined); }
         catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
         if (comboCause.causeHint) logCtx.causeHint = comboCause.causeHint;

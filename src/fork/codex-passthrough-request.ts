@@ -8,7 +8,7 @@ import { expandPreviousResponseInput, previousResponseReplayFailure, markBodyNon
 import { parseRequest } from "../responses/parser";
 import { sanitizeEncryptedContentInPlace, strictBackendEncryptedAgentTaskContentPart } from "../server/responses/encrypted-payload";
 import { snapshotSkillsCatalogInBody } from "../server/responses/skills-snapshot";
-import { rewriteAnnotationInstructionsInPlace } from "../server/responses/annotation-instructions";
+import { rewriteAnnotationInstructionsInPlace } from "./annotation-instructions";
 import { redactHostedImageDisplayPaths } from "../server/responses-hosted-image-display";
 import { parseSyntheticRowId } from "../server/fast-row";
 import { shouldPreparePlaintextV2AgentMessages } from "../responses/plaintext-v2-agent-messages";

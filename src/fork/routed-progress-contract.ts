@@ -67,10 +67,6 @@ export function neutralizeRoutedChannelInstructions(text: string): string {
     );
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 export function hasRoutedProgressContract(value: unknown): boolean {
   return typeof value === "string" && value.includes(ROUTED_PROGRESS_CONTRACT);
 }
@@ -89,21 +85,4 @@ export function appendRoutedProgressContractPart(parts: readonly string[]): stri
   return neutralized.some(hasRoutedProgressContract)
     ? neutralized
     : [...neutralized, ROUTED_PROGRESS_CONTRACT];
-}
-
-function responsesBodyHasTools(body: Record<string, unknown>): boolean {
-  if (Array.isArray(body.tools) && body.tools.length > 0) return true;
-  if (!Array.isArray(body.input)) return false;
-  return body.input.some(item => isPlainObject(item)
-    && item.type === "additional_tools"
-    && Array.isArray(item.tools)
-    && item.tools.length > 0);
-}
-
-/** Append the contract only to tool-using public Responses requests with string instructions. */
-export function applyRoutedProgressContractToResponsesBody(body: unknown): unknown {
-  if (!isPlainObject(body) || !responsesBodyHasTools(body)) return body;
-  if (typeof body.instructions !== "string") return body;
-  const instructions = finalizeRoutedToolPrompt(body.instructions);
-  return instructions === body.instructions ? body : { ...body, instructions };
 }

@@ -22,7 +22,8 @@ import {
 } from "../request-log";
 import { noteAttemptRecoveryWithheld } from "../request-log";
 import { withProviderRequestSlot } from "../../providers/request-pacing";
-import { providerFetch, fetchWithHeaderTimeout, safeHostLabel } from "./fetch-helpers";
+import { fetchWithHeaderTimeout, safeHostLabel } from "./fetch-helpers";
+import { codexPassthroughProviderFetch } from "../../fork/codex-passthrough-fetch";
 import { isLocalUpstream } from "../../lib/local-upstream";
 import {
   transientRetryPolicyFor,
@@ -264,7 +265,7 @@ export function createAdapterContinuations(
               onPhysicalSend: send => noteAdapterPhysicalSend(continuationEstimate, send),
               onRecoveryWithheld: noteAdapterRecoveryWithheld,
               stream: nextParsed.stream,
-              executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              executor: codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
                 codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                 pacingSlotAcquired: true,
                 pacingSlot,
@@ -299,7 +300,7 @@ export function createAdapterContinuations(
               upstream.signal,
               route.provider.authMode === "forward" ? connectMs : 0,
               nextParsed.stream,
-              providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
                 codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
               dispatchOverride: oauthDispatch(builtContinuationRequest, nextParsed),
                 onPhysicalDispatch: deferredContinuation ? () => {

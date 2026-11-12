@@ -78,7 +78,6 @@ describe("chat-completions pool vs direct credential injection", () => {
       saveConfig({
         port: 0,
         defaultProvider: "openai",
-        openaiProviderTierVersion: 2,
         activeCodexAccountId: "pool-account",
         codexAccounts: [{
           id: "pool-account",
@@ -92,7 +91,6 @@ describe("chat-completions pool vs direct credential injection", () => {
             baseUrl: "https://chatgpt.com/backend-api/codex",
             authMode: "forward",
             codexAccountMode: "pool",
-            upstreamWebsocket: false,
           },
         },
       } as OcxConfig);

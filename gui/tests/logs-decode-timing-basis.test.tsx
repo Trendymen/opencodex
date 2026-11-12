@@ -6,7 +6,6 @@ import { LanguageProvider } from "../src/i18n/provider";
 import { clearClientResourceStoresForTests } from "../src/client-resource";
 import Logs from "../src/pages/Logs";
 import { decodeRateLabelKeys } from "../src/pages/logs-decode-rate";
-import { projectErrorDetail } from "../../src/usage/error-detail";
 
 const globals = ["document", "window", "navigator", "localStorage", "sessionStorage", "IS_REACT_ACT_ENVIRONMENT", "ResizeObserver"] as const;
 let previousGlobals: Record<(typeof globals)[number], unknown>;
@@ -135,57 +134,6 @@ function rowFor(container: HTMLElement, id: string): HTMLTableRowElement {
 async function openDetails(row: HTMLTableRowElement) {
   await act(async () => { row.querySelector<HTMLButtonElement>(".log-detail-btn")!.click(); });
 }
-
-test("local delivery failure details retain the upstream HTTP status without blaming upstream", async () => {
-  const secret = "sensitive-local-canary";
-  const projected = projectErrorDetail({
-    ...fixture("private-deadline"), status: 502, upstreamHttpStatus: 200,
-    errorCode: "private-sse-read-timeout", failureCause: "local-refusal", terminalSource: "synthetic",
-    upstreamError: secret,
-  });
-  expect(projected).not.toHaveProperty("upstreamError");
-  expect(projected).not.toHaveProperty("upstreamCondition");
-  mockLogs([projected]);
-  const { root, container } = await mountLogs();
-  try {
-    await openDetails(rowFor(container, "private-deadline"));
-    const dialog = document.querySelector(".log-detail-card")!;
-    expect(dialog.textContent).toContain("Local response delivery failed");
-    expect(dialog.textContent).toContain("OCX could not safely deliver the response. The upstream HTTP status is shown separately.");
-    const upstreamLabel = [...dialog.querySelectorAll("span")].find(span => span.textContent === "Upstream HTTP status");
-    expect(upstreamLabel?.nextElementSibling?.textContent).toBe("200");
-    expect(dialog.textContent).toContain("private-sse-read-timeout");
-    expect(dialog.textContent).not.toContain("Upstream reason");
-    expect(dialog.textContent).not.toContain(secret);
-  } finally {
-    await act(async () => { root.unmount(); });
-    container.remove();
-  }
-});
-
-test("upstream failures show the classified condition beside the observed HTTP status", async () => {
-  const secret = "sensitive-upstream-canary";
-  const projected = projectErrorDetail({ ...fixture("upstream-failure"), status: 502, upstreamHttpStatus: 503,
-    errorCode: "upstream_server_error", failureCause: "upstream-fault", upstreamError: secret, upstreamErrorCode: "service_unavailable" });
-  expect(projected).not.toHaveProperty("upstreamError");
-  expect(projected.upstreamCondition).toBe("upstream_unavailable");
-  mockLogs([projected]);
-  const { root, container } = await mountLogs();
-  try {
-    await openDetails(rowFor(container, "upstream-failure"));
-    const dialog = document.querySelector(".log-detail-card")!;
-    expect(dialog.textContent).toContain("Upstream fault");
-    expect(dialog.textContent).toContain("Upstream reason");
-    expect(dialog.textContent).toContain("Provider unavailable");
-    expect(dialog.textContent).not.toContain("Local response delivery failed");
-    expect(dialog.textContent).not.toContain(secret);
-    const upstreamLabel = [...dialog.querySelectorAll("span")].find(span => span.textContent === "Upstream HTTP status");
-    expect(upstreamLabel?.nextElementSibling?.textContent).toBe("503");
-  } finally {
-    await act(async () => { root.unmount(); });
-    container.remove();
-  }
-});
 
 test("mixed Logs rows visibly identify their basis, with distinct details and attempt timing", async () => {
   const current = fixture("generation-row", value("generation-window"));

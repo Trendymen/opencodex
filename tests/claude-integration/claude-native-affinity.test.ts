@@ -19,10 +19,8 @@ import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
-import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 
 const originalFetch = globalThis.fetch;
-const originalWebSocket = globalThis.WebSocket;
 const metadata = "user_test_account__session_conversation-native";
 // Independent SHA-256/UUID fixture vectors; no production helper builds the oracle.
 const key = "9745d86cd579894abd0ef69a5214cf96";
@@ -34,7 +32,6 @@ let token: string;
 let releaseSpendHome: (() => void) | undefined;
 
 beforeEach(() => {
-  installHttpOnlyCodexWebSocket();
   previousHome = process.env.OPENCODEX_HOME;
   home = mkdtempSync(join(tmpdir(), "ocx-native-affinity-"));
   process.env.OPENCODEX_HOME = home;
@@ -54,7 +51,6 @@ afterEach(() => {
   releaseSpendHome?.();
   releaseSpendHome = undefined;
   globalThis.fetch = originalFetch;
-  globalThis.WebSocket = originalWebSocket;
   clearComboSelectionState();
   clearComboTargetCooldowns();
   isolated.restore();

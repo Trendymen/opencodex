@@ -72,11 +72,12 @@ tests/**/.tmp-*
 # tests/ci-workflows/repo-hygiene.test.ts, which fails if any path here becomes tracked again.
 go/
 
-# Retired upstream docs stay out of the tree. Only the current Fork sync policy
-# stays tracked here; plans and execution material use ignored scratch space.
-# PR screenshots belong in the PR description or on the orphan `pr-assets` branch.
-/docs/*
-!/docs/fork-sync-automation.md
+# Retired root docs/ folder and the pull-request screenshot folders that used to
+# collect evidence images. Screenshots belong in the PR description or on the
+# orphan `pr-assets` branch; tests/ci-workflows/repo-hygiene.test.ts fails if any
+# path here becomes tracked again. Root-anchored so docs-site/src/content/docs/
+# is not caught by the docs/ rule.
+/docs/
 /.github/pr-assets/
 /assets/pr-screenshots/
 /docs-site/public/pr-screenshots/

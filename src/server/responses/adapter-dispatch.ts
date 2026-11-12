@@ -6,10 +6,11 @@ import { projectLocalModelRefusalLog } from "../request-log-failure-detail";
 import { markProxyError, carryProxyError, isProxyError } from "../../lib/client-error-body";
 import { codexAdapterBuildRefusal } from "./passthrough-build-error";
 import { createAutoPauseRefreshErrorMapper, recoverAutoPausedAccount } from "./account-auto-pause-recovery";
-import type { AdapterDispatchInputs } from "./adapter-dispatch-types";
+import type { AdapterDispatchInputs } from "../responses-adapter-dispatch-types";
 import { wasAccountAutoPaused, wasPermanentAccountRefusal } from "../../oauth/account-auto-pause";
 import { bindAnthropicRejectionResponse } from "../../adapters/anthropic-rejection-memo";
 import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
+import { codexPassthroughProviderFetch } from "../../fork/codex-passthrough-fetch";
 import { deferPhysicalSendReporter } from "./deferred-send-reporter";
 import { usesApiKeyAccount } from "../../providers/label";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
@@ -41,7 +42,7 @@ import { redactSecretString } from "../../lib/redact";
 import { rewriteUpstreamPolicyRefusal } from "./policy-refusal";
 import { carryPolicyCandidateRefusal } from "./policy-request-scope";
 import { withProviderRequestSlot } from "../../providers/request-pacing";
-import { providerFetch, fetchWithHeaderTimeout, safeHostLabel } from "./fetch-helpers";
+import { fetchWithHeaderTimeout, safeHostLabel } from "./fetch-helpers";
 import { isAnthropicBillingKeyPool, rotateAnthropicBillingKeyOnResponse } from "../../providers/anthropic-billing-recovery";
 import {
   transientRetryPolicyFor,
@@ -354,7 +355,7 @@ export async function prepareAdapterExchange(
           onPhysicalSend: send => { antigravityDenial.beforeSend(); noteAdapterPhysicalSend(inputTokenEstimate, send); },
           onRecoveryWithheld: noteAdapterRecoveryWithheld,
           stream: parsed.stream,
-          executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+          executor: codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
                 codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
             pacingSlotAcquired: true,
             pacingSlot,
@@ -431,7 +432,7 @@ export async function prepareAdapterExchange(
             headers: builtInitialRequest.headers,
             body: builtInitialRequest.body,
           }, recovery), upstream.signal, sendConnectMs(), parsed.stream,
-            providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+            codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
                 codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
               dispatchOverride: oauthDispatch(builtInitialRequest),
               providerName: route.providerName,
@@ -658,7 +659,7 @@ export async function prepareAdapterExchange(
                 },
                 onRecoveryWithheld: noteAdapterRecoveryWithheld,
                 stream: parsed.stream,
-                executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                executor: codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
                 codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                   pacingSlotAcquired: true,
                   pacingSlot,
@@ -727,7 +728,7 @@ export async function prepareAdapterExchange(
                   applyUpstreamRecoveryInit({
                     method: retryRequest.method, headers: retryRequest.headers, body: retryRequest.body,
                   }, recoveryKind), upstream.signal, sendConnectMs(), parsed.stream,
-                  providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                  codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
                 codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                     dispatchOverride: oauthDispatch(retryRequest),
                     onPhysicalDispatch: deferredRefetch ? () => {

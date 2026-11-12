@@ -1,6 +1,6 @@
 # OpenCodex Fork 上游同步自动化规则
 
-本文档是 Trendymen/opencodex Fork 每小时上游稳定版同步自动化的完整规则真源。自动化任务的消息文本是本文档的精简索引；两者冲突时以本文档为准。
+本文是 Trendymen/opencodex Fork 每小时上游稳定版同步自动化的完整规则真源。自动化任务的消息文本是本文的精简索引；两者冲突时以本文为准。
 
 ## 巡检入口
 
@@ -154,21 +154,22 @@ dev 的 force 权限只来自当前已授权的候选或发布动作，必须 re
 
 ## 维护真源
 
-FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维护真源。每次任务先读取它，以实际提交代码、测试和真实验收为能力基准，不以旧 Spec、Plan、devlog 或安装包残留为准。文档、任务状态、Tag 注释与 GitHub Release Notes 必须使用简体中文；代码符号、路径、命令、Provider/模型 ID 和版本号保持原样。
+FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维护真源。每次任务先读取它，以实际提交代码、现有测试和真实验收为能力依据，不以旧 Spec、Plan、devlog 或安装包残留为准；官方测试不代表完整覆盖 Fork 独有能力。文档、任务状态、Tag 注释与 GitHub Release Notes 必须使用简体中文；代码符号、路径、命令、Provider/模型 ID 和版本号保持原样。
 
-`FORK_CHANGES.md` 按能力组织，只保留一处当前已 rebase 的官方 Tag/SHA、现存差异、代码与测试入口、必要的覆盖/移除结论和已知边界。rebase 后原地更新，不追加版本章节，也不保存逐次候选 SHA、shortstat、测试计数、冲突账本或发布状态。包版本读取 `package.json`；目标 Tag、实现/发布 SHA、验证、冲突和审查证据保存在本轮 review package 与任务记录，发布结果写入对应 Release Notes。旧记录从 Git 历史查阅，本文保留完整同步与发布规则，能力清单只引用本文。
+`FORK_CHANGES.md` 按能力组织，只保留一处当前已 rebase 的官方 Tag/SHA、现存差异、实现入口、必要的覆盖/移除结论和已知边界。rebase 后原地更新，不追加版本章节，也不保存逐次候选 SHA、shortstat、测试计数、冲突账本或发布状态。包版本读取 `package.json`；目标 Tag、实现/发布 SHA、验证、冲突和审查证据保存在本轮 review package 与任务记录，发布结果写入对应 Release Notes。旧记录从 Git 历史查阅，本文保留完整同步与发布规则，能力清单只引用本文。
 
 ## 跟随官方门禁
 
-- 新官方稳定 Tag 的 `AGENTS.md`、目录级 `AGENTS.md`、package scripts、测试布局和 CI 拓扑是本轮默认基线。Fork 只保留有当前能力证据支持的差异。
-- Fork 测试只固定 Fork 新增语义，不固定官方自行维护的 job 名、shard 数、timeout、目录旧路径或实现细节；官方门禁改变时，先采用官方合同，再补最小 Fork 断言。
-- 同一行为已由当前官方源码与测试完整覆盖时，删除重复 Fork 实现或测试，并在 `FORK_CHANGES.md` 留下证据。不能为了让旧 Fork 测试继续通过而恢复已经过时的官方结构。
+- 新官方稳定 Tag 的 `AGENTS.md`、目录级 `AGENTS.md`、package scripts、测试、夹具、布局、runner 和 CI 拓扑是本轮默认基线。
+- Fork 独有能力不再保留专项回归；默认不新增 Fork 专项测试文件，也不向官方测试追加 Fork 专属断言。版本和发布元数据只保留必需的最小测试适配，并在任务差异清单中列明。用户在新任务中明确要求专项回归时，按官方布局及登记规则添加。
+- 官方断言与 Fork 行为冲突时，先核对断言和实际消费者，再优先修改 Fork 实现；不得用测试环境分支、降低断言或删除官方用例通过测试。
+- 同一行为已由当前官方源码与测试完整覆盖时，删除重复 Fork 实现，并在 `FORK_CHANGES.md` 留下证据。
 - CI 或定向验证失败时，在 `NEW_OFFICIAL` 的干净临时目录对照同一报错项；不为对照启动本地整体测试。官方基线同样失败且不影响本轮 Fork 修改路径或发布产物时，记录为 upstream-baseline residual risk，不算 Fork 回归；不能借此忽略只在 Fork 候选出现的失败，也不能改弱断言。
 - 测试文件使用官方 `tests/<domain>/` 布局；当前命令和维护文档更新真实路径，已经结束的历史 Spec/Plan 不做纯路径批量改写。
 
 ### 验证选择与结果复用
 
-- 相对 rebase 前固定的 Fork SHA 核对模型 API 入口能力清单：默认关闭、两种拓扑、原生数据面/凭据与管理隔离、保存后待重启、真实状态及本机证明。该链路的回归入口为 `tests/config/fork-model-api-listener-config.test.ts`、`tests/cli/fork-model-api-port.test.ts`、`tests/server/fork-model-api-listener.test.ts`、`tests/server/fork-model-api-protocols.test.ts`、`tests/server/fork-model-api-access.test.ts` 和 `tests/server/fork-model-api-status.test.ts`；CI 命中相关失败时按实际报错及直接依赖挑选，不仅靠导入图推断源码读取、子进程或临时 socket 覆盖。
+- 相对 rebase 前固定的 Fork SHA 核对模型 API 入口能力清单：默认关闭、两种拓扑、原生数据面/凭据与管理隔离、保存后待重启、真实状态及本机证明。该链路没有 Fork 专项回归；检查时区分源码核对、官方测试和实际运行验收。
 - 测试以同一最终候选 SHA 的官方 CI 为准。CI 报错后只在本地运行报错项及直接相关回归，保留具体命令、输入和结果；不再自动运行本地完整测试池、`bun run test`、`bun run prepush`，也不以宽范围 changed 测试代替定向定位。用户单独明确要求时才运行更广测试。
 - 发布前完成适用的 typecheck、privacy scan 等静态检查；GUI 和文档站构建按实际影响及目录规则补充。已执行的本地整体测试失败或超时如实保留，不要求先把本地全体单测跑绿才推送 CI 候选。官方 CI 的事件、平台、分片、并发、断言和预算保持，不以增加 timeout 或删断言取得通过。
 - 同一实现、依赖、测试输入、runner 和环境未变时，复用已通过的检查，不因进入双审、补附件或整理日志重跑。只改说明文字时，先证明其不是测试/构建输入；若文档被源码真值测试读取，重跑对应测试；若影响文档站则构建文档站。更新后的文本仍需 privacy scan 和 `git diff --check`。
@@ -479,7 +480,7 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 4. 冲突处理以 FORK_CHANGES.md、src/fork 边界、AGENTS.local.md、既有测试和新官方实现为依据，并为全部 `CONTENT_CONFLICTS` 写逐冲突 ledger。仅当前官方源码与测试证明等价或更优才可删除 Fork 行为；名称相似、旧文档或单次 HTTP 200 不算证据。部分覆盖只移除被替代部分；语义改变、能力放弃或无法判定时先保留现有能力，继续对照和验证后自主确定兼容方案，不停在等待用户选择。Fork 逻辑优先放窄模块或 src/fork，官方高频文件最小接线。
 5. revision：新官方 vX.Y.Z 首次派生固定 X.Y.Z-ben.1 / vX.Y.Z-ben.1。同基线已有 Release 不自动递增；仅用户明确要求才允许 ben.2、ben.3。`ben.N` 按官方基线独立维护：即使完整 Tag 集已有更新官方稳定版，明确授权的旧基线维护修订仍可继续，但必须存在精确官方基线 Tag、不得低于同基线最高有效 ben revision、不得复用或移动既有 Fork Tag，也不得声称包含更新官方版本能力。普通 stable/preview 仍遵守全局单调版本门禁。重复 heartbeat 幂等。
 6. 完成并提交全部 rebase、冲突、版本与实现修复。
-7. 创建下一个候选尝试 `AK`（首次为 `A1`，否则最大 `K + 1`），捕获 `CANDIDATE_IMPLEMENTATION_HEAD_AK`，不得从后续 HEAD 反推。按该 SHA 原地更新 FORK_CHANGES.md 的当前官方 Tag/SHA、能力差异、代码与测试入口、覆盖/移除结论及已知边界，不追加版本历史。实现 commit、shortstat、包版本、目标 Tag、逐冲突 ledger 和验证证据保存在本轮任务记录，供第 10 步 review package 使用。只保留仍影响维护判断的移除结论，旧 PASS 不沿用。
+7. 创建下一个候选尝试 `AK`（首次为 `A1`，否则最大 `K + 1`），捕获 `CANDIDATE_IMPLEMENTATION_HEAD_AK`，不得从后续 HEAD 反推。按该 SHA 原地更新 FORK_CHANGES.md 的当前官方 Tag/SHA、能力差异、实现入口、覆盖/移除结论及已知边界，不追加版本历史。实现 commit、shortstat、包版本、目标 Tag、逐冲突 ledger 和验证证据保存在本轮任务记录，供第 10 步 review package 使用。只保留仍影响维护判断的移除结论，旧 PASS 不沿用。
 8. 文档更新后按“验证选择与结果复用”完成适用的本地静态检查和必要构建，记录已知失败与未验证项；本地整体测试或全体单测通过不再是候选门禁。正式发布仍要求第 10 步同 SHA 的官方 CI 通过。实现修改时把当前 `AK` 标记为 abandoned，以最大 `K + 1` 回到第 7 步；未形成完整 SHA 对的尝试不占用 `RN`，也不写入 `PRIOR_FINDINGS`。
 9. 验证通过后只暂存 `FORK_CHANGES.md`，核对 staged list 与 diff check，创建 docs-only commit，并机械验证其父提交等于当前 `CANDIDATE_IMPLEMENTATION_HEAD_AK`。此时才将完整 SHA 对晋升为下一个审查轮次：尚无轮次时创建 `R1`；已有 reviewed round 时使用当前最大 `N + 1`。令 `IMPLEMENTATION_HEAD_RN=CANDIDATE_IMPLEMENTATION_HEAD_AK`、`RELEASE_COMMIT_RN=<docs-only commit>`，两者同时存在后才算分配成功。
 10. 生成最新完整 `RN` 的 review package，执行机械集合/冲突 replay 对账、命名风险检查与双审门禁（见上）。首次真实派发使用 `REVIEW_PHASE: INITIAL`。任一 Critical/Important finding 都从新 `AK` 回到第 7 步；新候选经第 7–9 步晋升为下一完整 `RN` 后，按 `REVIEW_PHASE: RE_REVIEW` 复用原 reviewer 并保留完整 `PRIOR_FINDINGS`。未取得两个 `PASS`，以及仅在明确未收敛跨边界风险时所需的窄审 `PASS` 前，禁止后续 push、Tag、Release。

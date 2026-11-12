@@ -204,46 +204,6 @@ function routedProvider(name: "litellm" | "ollama", apiKey?: string): OcxProvide
 }
 
 describe("openai-chat request hardening", () => {
-  test.each([false, true])("schema cleaning copies shared branches when encrypted marker is present=%s", marker => {
-    const literal = { encrypted: true };
-    const shared = { type: "string", default: literal, ...(marker ? { encrypted: true } : {}) };
-    const input = { type: "object", properties: { encrypted: shared, other: shared } };
-    const result = stripResponsesOnlyEncryptedMarker(input) as typeof input;
-
-    expect(result.properties.encrypted).toEqual({ type: "string", default: { encrypted: true } });
-    expect(result.properties.other).toEqual({ type: "string", default: { encrypted: true } });
-    expect(JSON.stringify(result)).toBe(JSON.stringify({ type: "object", properties: {
-      encrypted: { type: "string", default: { encrypted: true } },
-      other: { type: "string", default: { encrypted: true } },
-    } }));
-    expect(result.properties.encrypted).not.toBe(shared);
-    expect(result.properties.encrypted).not.toBe(result.properties.other);
-    expect(result.properties.encrypted.default).toBe(literal);
-    expect(input.properties.encrypted).toBe(input.properties.other);
-    expect(shared).toEqual({ type: "string", default: literal, ...(marker ? { encrypted: true } : {}) });
-  });
-
-  test("schema cleaning preserves own keys and serializes sparse branches safely", () => {
-    const properties = JSON.parse('{"__proto__":{"type":"string"}}') as Record<string, unknown>;
-    properties.optional = undefined;
-    const branches: unknown[] = new Array(3);
-    branches[1] = { properties };
-    const input = { anyOf: branches, properties };
-    const result = stripResponsesOnlyEncryptedMarker(input) as typeof input;
-
-    expect(JSON.stringify(result)).toBe(JSON.stringify(input));
-    expect(Object.keys(result)).toEqual(["anyOf", "properties"]);
-    expect(Object.keys(result.properties)).toEqual(["__proto__", "optional"]);
-    expect(Object.hasOwn(result.properties, "__proto__")).toBe(true);
-    expect(Object.getPrototypeOf(result.properties)).toBeNull();
-    expect(Object.hasOwn(result.properties, "optional")).toBe(true);
-    expect(result.properties.optional).toBeUndefined();
-    expect(result.anyOf).toHaveLength(3);
-    expect(result.anyOf[0]).toBeUndefined();
-    expect(result.anyOf[2]).toBeUndefined();
-    expect(result.anyOf[1]).not.toBe(branches[1]);
-  });
-
   test("strips Responses-only encrypted annotations without changing schema names or literal values", () => {
     const parameters = {
       type: "object",

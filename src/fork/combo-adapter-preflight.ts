@@ -1,5 +1,5 @@
-import type { AdapterEvent } from "../../types";
-import { preflightAdapterEvents, type AdapterEventPreflight } from "../../adapters/run-turn-queue";
+import type { AdapterEvent } from "../types";
+import { preflightAdapterEvents, type AdapterEventPreflight } from "../adapters/run-turn-queue";
 
 export const COMBO_PREFLIGHT_STALLED = Symbol("combo preflight stalled");
 export const COMBO_PREFLIGHT_ABORTED = Symbol("combo preflight aborted");

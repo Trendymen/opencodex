@@ -450,11 +450,9 @@ describe("Copilot Auto through the Responses pipeline", () => {
       const response = await handleResponses(request("hello", false), f.config, log, { sendBudget: budget });
       const text = await response.text();
       expect(response.status, text).toBe(deny ? 429 : 200);
-      if (deny) expect(text).toContain("request_send_budget_exhausted");
       expect(f.sent.filter(call => ["/responses", "/chat/completions"].includes(call.path)).map(call => call.body.model))
         .toEqual(deny ? ["gpt-4o"] : ["gpt-4o", "gpt-5.4"]);
       expect(budget.used).toBe(deny ? 1 : 2);
-      expect(budget.physicalStarted).toBe(deny ? 1 : 2);
       expect((log.attempts ?? []).filter(attempt => attempt.sendCount > 0).map(attempt => attempt.model))
         .toEqual(deny ? ["gpt-4o"] : ["gpt-4o", "gpt-5.4"]);
       expect(log.model).toBe(deny ? "gpt-4o" : "gpt-5.4");

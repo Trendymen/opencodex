@@ -9,7 +9,7 @@ import { isXaiResponsesDestination } from "../../providers/xai-transport";
 import { applyGithubCopilotContextTier } from "../../providers/github-copilot-context";
 import { Buffer } from "node:buffer";
 import type { AdapterRequest, IncomingMeta, ProviderAdapter } from "../base";
-import { namespacedToolName, toolChoiceToolPredicate, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../../types";
+import type { AdapterEvent, OcxParsedRequest, OcxProviderConfig, OcxUsage, TierDecision } from "../../types";
 import { applyCodexRoutingHint, CODEX_RESPONSES_LITE_HEADER, CODEX_RESPONSES_LITE_METADATA_KEY, CODEX_ROUTING_HINT_HEADER, isolateCodexPoolClientMetadata } from "../../codex/forward-transport-headers";
 import { COMPACT_PROMPT, compactionItemToText, decodeCompactionSummary, isCompactionItemType, transferCompactionCiphertextLease } from "../../responses/compaction";
 import { decodeServerSentEvents } from "../../lib/sse-decoder";
@@ -30,23 +30,13 @@ import { isMetaAiResponsesDestination, rewriteMuseToolNamesForUpstream } from ".
 import { buildResponsesTransport } from "./transport";
 export { FORWARD_HEADERS } from "./transport";
 import { collectFunctionCallRepairSchemas } from "../../responses/function-call-compat";
-import { collectResponsesToolGroups } from "../../responses/tool-groups";
 import { agentMessageConversionOptions } from "../../fork/agent-message-format";
 import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../../fork/glm-kimi-compat";
 import { addSpawnAgentForkTurnsGuidance } from "../../fork/spawn-agent-compat";
-import { applyRoutedProgressContractToResponsesBody } from "../../fork/routed-progress-contract";
 import { debugResponsesOutboundShape } from "../../fork/outbound-debug";
 import { modelRecordValue } from "../../reasoning-effort";
 import { estimateInputTokens } from "../../server/responses/input-admission";
 import { normalizeResponsesCodeMode } from "../responses-code-mode";
-import { CODE_MODE_RESULT_ECHO_SENTENCE } from "../exec-tool-result-normalize";
-import {
-  buildNonOpenAIToolCatalogNudgeFromNames,
-  isBareShellBridgeTool,
-  isCodexApplyPatchTool,
-  isCodexCodeModeExecTool,
-  shouldInjectNonOpenAIToolCatalogNudge,
-} from "../tool-catalog-nudge";
 import { injectXaiResponsesXSearch, normalizeXaiResponsesWebSearch } from "../xai-web-search";
 import {
   isXaiSchemaTarget,
@@ -180,43 +170,6 @@ function appendedUtf8Bytes(previousBytes: number, lastCodeUnit: number, fragment
   // they encode as one four-byte scalar. Empty fragments produce NaN and never pair.
   const joinsSurrogatePair = lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff && first >= 0xdc00 && first <= 0xdfff;
   return previousBytes + Buffer.byteLength(fragment, "utf8") - (joinsSurrogatePair ? 2 : 0);
-}
-
-/** Add tool guidance from the final wire catalog so routed models see every callable name. */
-function applyRoutedResponsesToolCatalogNudge(body: unknown, parsed: OcxParsedRequest): unknown {
-  if (!isPlainObject(body) || typeof body.instructions !== "string") return body;
-  const declarations = collectResponsesToolGroups(body).flat();
-  if (declarations.length === 0) return body;
-  if (declarations.some(tool => !isPlainObject(tool) || typeof tool.name !== "string")) return body;
-
-  const wireNames = [...new Set(declarations.map(tool => (tool as Record<string, unknown>).name as string))];
-  const wireNameSet = new Set(wireNames);
-  let codeModeExecName: string | undefined;
-  let directApplyPatchName: string | undefined;
-  const tools = parsed.context.tools;
-  if (tools?.length) {
-    const visible = tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, tools));
-    const codeModeVisible = !visible.some(isBareShellBridgeTool);
-    for (const tool of visible) {
-      const wireName = namespacedToolName(tool.namespace, tool.name);
-      if (!wireNameSet.has(wireName)) continue;
-      if (codeModeVisible && !codeModeExecName && isCodexCodeModeExecTool(tool)) codeModeExecName = wireName;
-      if (isCodexApplyPatchTool(tool)) directApplyPatchName = wireName;
-    }
-  }
-
-  const nudge = buildNonOpenAIToolCatalogNudgeFromNames(
-    wireNames,
-    undefined,
-    codeModeExecName,
-    directApplyPatchName,
-  );
-  if (!nudge) return body;
-  const novelNudge = body.instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)
-    ? nudge.replace(`${CODE_MODE_RESULT_ECHO_SENTENCE} `, "")
-    : nudge;
-  if (body.instructions.includes(novelNudge)) return body;
-  return { ...body, instructions: `${body.instructions}\n\n${novelNudge}` };
 }
 
 export function applyConfiguredResponsesMaxOutputTokens(
@@ -536,9 +489,6 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           plaintextV2AgentMessageAliasedToolNames = prepared.aliasedAgentMessageToolNames;
         }
       }
-      if (parsed._compactionRequest !== true && !isOpenAiOperatedResponsesDestination(provider)) {
-        outBody = applyRoutedProgressContractToResponsesBody(outBody);
-      }
       const glmKimiCompatibility = applyGlmKimiOutboundCompatibility({
         body: outBody,
         provider,
@@ -574,7 +524,6 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
                   dropForeignItemId: parsed._dropForeignReasoningItemIds === true,
                   requirePlaintextReasoning: requiresPlaintextReasoningReplay(provider),
                   onPlaintextReasoningBlanked: () => notePlaintextReasoningDropped(provider),
-                  stripRawContentBackedEncryptedContent: isOpenAiOperatedResponsesDestination(provider),
                 },
               ),
               provider,
@@ -623,9 +572,6 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         && isPlainObject(finalBody)
         && finalBody.stream !== true) {
         finalBody = { ...finalBody, stream: true };
-      }
-      if (parsed._compactionRequest !== true && shouldInjectNonOpenAIToolCatalogNudge(provider)) {
-        finalBody = applyRoutedResponsesToolCatalogNudge(finalBody, parsed);
       }
       finalBody = applyConfiguredResponsesMaxOutputTokens(finalBody, provider, parsed.modelId, parsed);
       if (isCanonicalOpenAiForwardProvider(provider)) {

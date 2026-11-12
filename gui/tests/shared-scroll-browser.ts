@@ -1,14 +1,10 @@
 /** Isolated Chromium regression using production entry + lazy App CSS, in load order.
  * Build separately, then run `bun run test:shared-scroll [ignored-output-dir]`.
  * GUI_DIST selects a preserved build (absolute path); CHROME_BIN selects Chromium.
- * The log dialog is server-rendered; no client React, account APIs, or native WebView runs here. */
+ * This mechanism fixture does not run React, account APIs, or a native WebView. */
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { DICTS, interpolate, type TFn } from "../src/i18n/shared";
-import { LogDetailDialog } from "../src/pages/Logs";
 
 const gui = resolve(import.meta.dir, "..");
 const inputDist = process.env.GUI_DIST ?? join(gui, "dist");
@@ -228,49 +224,8 @@ try {
       appCoversViewport: end.app.bottom >= height - 1,
     }, { end, workspace });
   }
-
-  for (const width of [320, 360, 390, 760, 761, 1280]) for (const locale of ["en", "de", "vi", "fr", "pt", "ru"] as const) for (const theme of ["light", "dark"]) {
-    for (const status of ["visible", "not_in_input", "unrecognized"] as const) {
-      const t: TFn = (key, vars) => interpolate(DICTS[locale][key], vars);
-      const observation = { clientEffort: "high" as const, sessionEffort: status === "visible" ? "max" as const : "unknown" as const, status };
-      const dialog = renderToStaticMarkup(createElement(LogDetailDialog, {
-        detail: { requestId: "request-0123456789abcdef0123456789abcdef", conversationId: "conversation-0123456789abcdef0123456789abcdef",
-          timestamp: Date.UTC(2026, 0, 1), model: "model", provider: "provider", status: 200, durationMs: 1,
-          usageStatus: "unreported", requestedEffort: "high", sessionEffortObservation: observation },
-        detailInfo: null, localeCode: locale, localeTag: locale, serverTimeZone: "UTC", t, onClose: () => {}, onFilterConversation: () => {},
-      }));
-      const html = `<!doctype html><html lang="${locale}" data-theme="${theme}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${styles.join("\n").replaceAll("</style", "<\\/style")}</style></head><body>${dialog}</body></html>`;
-      await cdp("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
-      await cdp("Page.setDocumentContent", { frameId: frameTree.frame.id, html });
-      await evaluate('document.querySelector("dialog").showModal()');
-      await paint();
-      const labels = [t("logs.effort.initialTopLevel"), t("logs.effort.initialUpdate")];
-      const measurement = await evaluate<{
-        gridWidth: number; labelWidth: number; valueWidth: number; labelLines: number[];
-        overflow: string[]; values: string[]; columns: string;
-      }>(`(() => {
-        const grid = document.querySelector('[aria-labelledby="log-detail-basic"] .log-detail-grid');
-        const cells = [...grid.children], labels = ${JSON.stringify(labels)};
-        const indices = labels.map(label => cells.findIndex(cell => cell.textContent === label));
-        if (indices.some(index => index < 0)) throw new Error('Missing initial effort label');
-        const rect = element => element.getBoundingClientRect();
-        const lines = element => { const range = document.createRange(); range.selectNodeContents(element); return range.getClientRects().length; };
-        return {gridWidth:rect(grid).width,labelWidth:rect(cells[indices[0]]).width,
-          valueWidth:rect(cells[indices[0] + 1]).width,labelLines:indices.map(index => lines(cells[index])),
-          overflow:[...cells, ...grid.querySelectorAll('button')].filter(cell => cell.scrollWidth > cell.clientWidth + 1).map(cell => cell.textContent),
-          values:indices.map(index => cells[index + 1].textContent),columns:getComputedStyle(grid).gridTemplateColumns};
-      })()`);
-      record(`log-detail-${theme}-${width}-${locale}-${status}`, {
-        valueColumnUsable: measurement.valueWidth >= 120,
-        noCellOverflow: measurement.overflow.length === 0,
-        desktopLabelsUnwrapped: width <= 760 || measurement.labelLines.every(value => value === 1),
-        observationVisible: measurement.values[0] === "high" && measurement.values[1] === (status === "visible" ? "max" : t(status === "not_in_input" ? "logs.effort.notInInput" : "logs.effort.unrecognized")),
-      }, measurement);
-      if (width === 360 && (locale === "de" || locale === "vi") && status !== "unrecognized") await screenshot(`log-detail-${theme}-${locale}-${status}`, width);
-    }
-  }
   const failures = rows.filter(row => Object.values(row.checks).includes(false));
-  await writeFile(join(output, "results.json"), JSON.stringify({ scope: "Offline synthetic shell and server-rendered log dialog with production entry and lazy App CSS; drawer effect mirrored; no client React/account/native execution", dist, assets, browser: await cdp("Browser.getVersion"), total: rows.length, failed: failures.length, cases: rows }, null, 2));
+  await writeFile(join(output, "results.json"), JSON.stringify({ scope: "Offline synthetic shell geometry with production entry and lazy App CSS; drawer effect mirrored; no real React/account/native execution", dist, assets, browser: await cdp("Browser.getVersion"), total: rows.length, failed: failures.length, cases: rows }, null, 2));
   console.log(`${failures.length ? "FAIL" : "PASS"}: ${rows.length} shared-scroll cases, ${failures.length} failures; ${output}`);
   if (failures.length) process.exitCode = 1;
 } catch (error) {

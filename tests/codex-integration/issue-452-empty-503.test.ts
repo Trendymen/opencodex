@@ -218,7 +218,6 @@ async function withPoolPassthrough(
         baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "forward",
         codexAccountMode: "pool",
-        upstreamWebsocket: false,
       },
     },
     codexAccounts: [
@@ -265,7 +264,7 @@ describe("passthrough empty 503 (#452)", () => {
     );
   });
 
-  test("oversized Pool errors fail closed before private-credential delivery", async () => {
+  test("oversized passthrough errors become bounded status-only JSON", async () => {
     const hostilePrefix = "do-not-relay-this-prefix";
     const body = hostilePrefix + "x".repeat(BOUNDED_BODY_MAX_BYTES + 1);
     await withPoolPassthrough(
@@ -280,14 +279,14 @@ describe("passthrough empty 503 (#452)", () => {
           headers: { "content-type": "application/json", authorization: "Bearer inbound-token" },
           body: JSON.stringify({ model: "gpt-5.5", input: "hi", stream: false }),
         });
-        expect(response.status).toBe(502);
+        expect(response.status).toBe(418);
         expect(response.headers.get("content-type")).toContain("application/json");
-        expect(response.headers.get("retry-after")).toBeNull();
+        expect(response.headers.get("retry-after")).toBe("4");
         const text = await response.text();
         expect(text.length).toBeLessThan(1_024);
         expect(text).not.toContain(hostilePrefix);
-        const json = JSON.parse(text) as { error?: { code?: string } };
-        expect(json.error?.code).toBe("upstream_error_protection_failed");
+        const json = JSON.parse(text) as { error?: { message?: string } };
+        expect(json.error?.message).toContain("418");
       },
     );
   });

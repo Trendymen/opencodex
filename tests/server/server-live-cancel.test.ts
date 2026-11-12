@@ -9,9 +9,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
 import * as accountStore from "../../src/codex/account-store";
-import { setCodexPoolQuotaTokenResolverForTests } from "../../src/codex/auth-api/pool-mode-gate";
 import { saveConfig } from "../../src/config";
-import { settleBackgroundWork } from "../../src/lib/background-work";
 import { startServer } from "../../src/server";
 import { activeRegistryMetrics } from "../../src/server/lifecycle";
 import type { OcxConfig } from "../../src/types";
@@ -174,27 +172,21 @@ test("a client that cancels during credential resolution releases admission befo
   // Hold credential preparation open, as a slow token refresh would, without a caller signal.
   const entered = Promise.withResolvers<void>();
   const held = Promise.withResolvers<never>();
-  void held.promise.catch(() => {});
   const tokenSpy = spyOn(accountStore, "getValidCodexToken").mockImplementation(async () => {
     entered.resolve();
     return held.promise;
   });
-  const restoreQuotaResolver = setCodexPoolQuotaTokenResolverForTests(async () => {
-    throw new accountStore.CodexCredentialRefreshBusyError();
+  let dials = 0;
+  const server = startServer(0, {
+    inspectNativeCodexOwnership: ownedServiceHomeInspection("server-live-cancel fixture"),
+    liveSidebandWebSocketFactory: () => { dials += 1; throw new Error("a cancelled join must not dial"); },
   });
-  let server: ReturnType<typeof startServer> | undefined;
-  let client: ReturnType<typeof connect> | undefined;
+  const activeTurnsBefore = activeRegistryMetrics().activeTurns.active;
+  const client = connect(Number(server.port), "127.0.0.1");
+  client.on("error", () => {});
   try {
-    let dials = 0;
-    server = startServer(0, {
-      inspectNativeCodexOwnership: ownedServiceHomeInspection("server-live-cancel fixture"),
-      liveSidebandWebSocketFactory: () => { dials += 1; throw new Error("a cancelled join must not dial"); },
-    });
-    const activeTurnsBefore = activeRegistryMetrics().activeTurns.active;
-    const socket = client = connect(Number(server.port), "127.0.0.1");
-    socket.on("error", () => {});
-    await withDeadline(new Promise<void>(resolve => socket.once("connect", () => resolve())), "client never connected");
-    socket.write([
+    await withDeadline(new Promise<void>(resolve => client.once("connect", () => resolve())), "client never connected");
+    client.write([
       "GET /v1/realtime?model=gpt-live HTTP/1.1",
       `Host: 127.0.0.1:${server.port}`,
       "Upgrade: websocket",
@@ -206,24 +198,15 @@ test("a client that cancels during credential resolution releases admission befo
     await withDeadline(entered.promise, "credential resolution never started");
     expect(activeRegistryMetrics().activeTurns.active).toBe(activeTurnsBefore + 1);
 
-    socket.destroy();
+    client.destroy();
     const deadline = Date.now() + 5_000;
     while (activeRegistryMetrics().activeTurns.active !== activeTurnsBefore && Date.now() < deadline) await Bun.sleep(5);
     expect(activeRegistryMetrics().activeTurns.active).toBe(activeTurnsBefore);
     expect(dials).toBe(0);
   } finally {
     held.reject(new Error("fixture released"));
-    client?.destroy();
-    try {
-      await server?.stop(true);
-    } finally {
-      try {
-        const drained = await settleBackgroundWork({ timeoutMs: 2_000 });
-        if (!drained.settled) throw new Error(`background work did not settle: ${drained.pending.join(", ")}`);
-      } finally {
-        restoreQuotaResolver();
-        tokenSpy.mockRestore();
-      }
-    }
+    client.destroy();
+    await server.stop(true);
+    tokenSpy.mockRestore();
   }
 }, { timeout: 15_000 });

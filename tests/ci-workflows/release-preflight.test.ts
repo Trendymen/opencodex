@@ -10,9 +10,10 @@
  * `scripts/ci/release-preflight.sh` against a real tag set with fake `gh` and `npm`.
  */
 import { describe, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
+import { VERSION_SOURCE_PATHS, writeVersionSources } from "../../scripts/release-version-sources";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { repoPath } from "../helpers/repo-root";
 import { SPAWN_BUDGET_MS } from "../helpers/test-budget";
@@ -24,7 +25,6 @@ type Workflow = { concurrency?: { group?: string; "cancel-in-progress"?: boolean
 const release = Bun.YAML.parse(readFileSync(repoPath(".github", "workflows", "release.yml"), "utf8")) as Workflow;
 const needsOf = (job: Job | undefined): string[] =>
   job?.needs === undefined ? [] : typeof job.needs === "string" ? [job.needs] : job.needs;
-const PREFLIGHT = repoPath("scripts", "ci", "release-preflight.sh");
 
 describe("dev-source release inputs", () => {
   test("resolves a source under the pinned dev workflow and exports both identities and version", () => {
@@ -299,10 +299,9 @@ type Scenario = {
   workflowSha?: string;
 };
 
-// The official release script accepts stable and preview versions, while a Fork checkout may
-// carry a ben.N package version. Exercise a copied script against matching fixture version sources.
-const manifest = JSON.parse(readFileSync(repoPath("package.json"), "utf8")) as { name: string; version: string };
-const OWN_VERSION = manifest.version.replace(/-ben\.[1-9]\d*$/, "");
+// The Fork checkout carries a ben.N version, which the official latest preflight rejects.
+// Run a copied script against matching version sources with that suffix removed.
+const OWN_VERSION = (JSON.parse(readFileSync(repoPath("package.json"), "utf8")) as { version: string }).version.replace(/-ben\.[1-9]\d*$/, "");
 const [MAJOR, MINOR] = OWN_VERSION.split(/[.-]/).map(Number) as [number, number];
 const OWN_IS_PREVIEW = OWN_VERSION.includes("-preview.");
 const OWN_REF = "refs/heads/dev";
@@ -339,23 +338,13 @@ function preflight(scenario: Scenario): { status: number | null; output: string;
     const bin = join(directory, "bin");
     mkdirSync(repo);
     mkdirSync(bin);
-    mkdirSync(join(repo, "scripts", "ci"), { recursive: true });
-    mkdirSync(join(repo, "desktop", "src-tauri"), { recursive: true });
+    for (const path of [...VERSION_SOURCE_PATHS, "scripts/ci/release-preflight.sh", "scripts/release-version-sources.ts", "scripts/version-line.ts"]) {
+      const target = join(repo, path);
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(repoPath(path), target);
+    }
     const version = scenario.version ?? OWN_VERSION;
-    const preflightScript = join(repo, "scripts", "ci", "release-preflight.sh");
-    copyFileSync(PREFLIGHT, preflightScript);
-    copyFileSync(repoPath("scripts", "release-version-sources.ts"), join(repo, "scripts", "release-version-sources.ts"));
-    copyFileSync(repoPath("scripts", "version-line.ts"), join(repo, "scripts", "version-line.ts"));
-    writeFileSync(join(repo, "desktop", "src-tauri", "tauri.conf.json"), JSON.stringify({ version }));
-    writeFileSync(join(repo, "desktop", "src-tauri", "Cargo.toml"), `[package]\nname = "opencodex-desktop"\nversion = "${version}"\n`);
-    writeFileSync(join(repo, "desktop", "src-tauri", "Cargo.lock"), `[[package]]\nname = "opencodex-desktop"\nversion = "${version}"\n`);
-    const nodeProbe = Bun.spawnSync(["node", "-p", "process.execPath"], {
-      env: { ...process.env, HOME: process.env.OCX_REAL_HOME ?? process.env.HOME },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (nodeProbe.exitCode !== 0) throw new Error(`node executable unavailable: ${nodeProbe.stderr.toString()}`);
-    symlinkSync(nodeProbe.stdout.toString().trim(), join(bin, "node"));
+    writeVersionSources(repo, version);
     writeFileSync(join(bin, "gh"), FAKE_GH, { mode: 0o755 });
     writeFileSync(join(bin, "npm"), FAKE_NPM, { mode: 0o755 });
     const gitEnv = {
@@ -368,7 +357,6 @@ function preflight(scenario: Scenario): { status: number | null; output: string;
       GIT_COMMITTER_EMAIL: "fixture@example.test",
     };
     run(repo, gitEnv, "git", "init", "-q", "-b", "release");
-    writeFileSync(join(repo, "package.json"), JSON.stringify({ name: manifest.name, version }));
     run(repo, gitEnv, "git", "add", "package.json");
     run(repo, gitEnv, "git", "commit", "-q", "-m", "release");
     const head = run(repo, gitEnv, "git", "rev-parse", "HEAD");
@@ -382,7 +370,7 @@ function preflight(scenario: Scenario): { status: number | null; output: string;
     }
     const summary = join(directory, "summary.md");
     writeFileSync(summary, "");
-    const result = Bun.spawnSync(["bash", preflightScript], {
+    const result = Bun.spawnSync(["bash", join(repo, "scripts", "ci", "release-preflight.sh")], {
       cwd: repo,
       env: {
         ...gitEnv,

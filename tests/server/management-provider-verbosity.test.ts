@@ -1,9 +1,8 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, saveConfig } from "../../src/config";
-import * as destinationPolicy from "../../src/lib/destination-policy";
 import { startServer } from "../../src/server";
 import { installIsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { managementFetch as fetch } from "../helpers/management-auth";
@@ -16,7 +15,6 @@ test("provider management validates verbosity records without replacing valid co
   const isolatedCodexHome = installIsolatedCodexHome("ocx-provider-verbosity-codex-");
   process.env.OPENCODEX_HOME = testDir;
   let server: ReturnType<typeof startServer> | undefined;
-  const resolvedError = spyOn(destinationPolicy, "providerDestinationResolvedError").mockResolvedValue(null);
   try {
     saveConfig({
       port: 0,
@@ -40,7 +38,6 @@ test("provider management validates verbosity records without replacing valid co
         provider: {
           adapter: "openai-responses",
           baseUrl: "https://api.example.test/v1",
-          liveModels: false,
           modelSupportsVerbosity: { terse: false },
         },
       }),
@@ -63,7 +60,6 @@ test("provider management validates verbosity records without replacing valid co
     }
     expect(loadConfig().providers["custom-verbosity-capability"].modelSupportsVerbosity).toEqual({ terse: false });
   } finally {
-    resolvedError.mockRestore();
     await server?.stop(true);
     if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = previousHome;

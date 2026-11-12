@@ -34,9 +34,7 @@ native.each([false, true])("a fresh Worker closes after offline Windows apply, A
     worker.postMessage({ requestId, planId: id, inspectionDeps: f.deps.inspectionDeps, target: f.target, gate, fence, aclReleaseFailure });
     // Assert the result before joining: the old bug keeps the Worker's handler alive.
     const reply = await Promise.race([replied, joined.then(() => { throw new Error("Worker closed without fixture result"); })]);
-    const initialInspection = (reply as WorkerFixtureReply & { initialInspection?: unknown }).initialInspection;
-    expect(reply.result, `initial inspection: ${JSON.stringify(initialInspection)}`).toMatchObject({ outcome: "applied", reason: "verified_target", leaseRetained: false, cleanupErrors });
-    expect(initialInspection).toMatchObject({ managed: true, reason: "managed_npm_global", evidenceArch: "x64", refusal: null });
+    expect(reply.result).toMatchObject({ outcome: "applied", reason: "verified_target", leaseRetained: false, cleanupErrors });
     await joined;
     expect(messages.filter(m => m.type === "native-start")).toHaveLength(1);
     expect(messages.filter(m => m.type === "fixture-error")).toHaveLength(0);

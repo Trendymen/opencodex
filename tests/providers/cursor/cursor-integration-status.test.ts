@@ -18,7 +18,6 @@ import type { OcxConfig } from "../../../src/types";
 import { SERVER_BUDGET_MS } from "../../helpers/test-budget";
 import { removeTreeWithRetry } from "../../helpers/remove-tree";
 import { fixturePath } from "../../helpers/repo-root";
-import { installIsolatedCodexRuntime } from "../../helpers/isolated-codex-runtime";
 
 setDefaultTimeout(SERVER_BUDGET_MS);
 
@@ -108,7 +107,6 @@ describe("cursorEffortFamily", () => {
 
 const previousHome = process.env.OPENCODEX_HOME;
 let testHome = "";
-let restoreCodexRuntime: (() => void) | undefined;
 const CURSOR_EFFORT_FIXTURE = readFileSync(fixturePath("cursor-agent-exec-effort-table.min.js"), "utf8");
 const STATIC_CURSOR_EFFORT_DEPS = { managementApi: { loadCursorEffortTable: () => null } };
 
@@ -143,15 +141,12 @@ describe("GET /api/native-integrations/cursor", () => {
   beforeEach(() => {
     testHome = mkdtempSync(join(tmpdir(), "ocx-cursor-status-"));
     process.env.OPENCODEX_HOME = testHome;
-    restoreCodexRuntime = installIsolatedCodexRuntime(testHome);
     resetCursorSeenForTests();
   });
 
   afterEach(() => {
     resetCodexModelEntitlementCacheForTests();
     resetCursorSeenForTests();
-    restoreCodexRuntime?.();
-    restoreCodexRuntime = undefined;
     if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = previousHome;
     if (testHome) removeTreeWithRetry(testHome);

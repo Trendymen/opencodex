@@ -14,7 +14,6 @@ import { jsonUtf8Bytes } from "../../src/lib/json-byte-size";
 import type { AdapterEvent, OcxConfig, OcxParsedRequest } from "../../src/types";
 import type { RequestLogContext } from "../../src/server/request-log";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
-import { probeSessionEffortSource } from "../helpers/session-effort-source-probe";
 
 const originalFetch = globalThis.fetch;
 const sourceError: AdapterEvent = { type: "error", status: 400, code: "invalid_argument", message: "Source rejected compact fixture" };
@@ -102,37 +101,6 @@ afterEach(() => {
 });
 
 describe("routed compaction emergency integration", () => {
-  test.each([false, true])("compact synthetic Responses is not a client observation (forced marker=%s)", async forced => {
-    sourceEvents = [{ type: "text_delta", text: "Preserve the user's goal." }, { type: "done" }];
-    const probe = probeSessionEffortSource(options => options.compactionRecoveryKind === "compaction-v1", forced);
-    try {
-      const response = await handleResponsesCompact(request(body(false, false), "responses/compact"), settings(), { model: "", provider: "" });
-      expect(response.status).toBe(200);
-      await response.text();
-      expect(probe.calls).toHaveLength(1);
-      expect(probe.calls[0]!.marker).not.toBe(true);
-      expect(probe.calls[0]!.observation).toEqual(forced ? { clientEffort: "high", sessionEffort: "max", status: "visible" } : undefined);
-    } finally { probe.restore(); }
-  });
-
-  test("recovery replay retains the observation captured before the request body changes", async () => {
-    const payload = body();
-    payload.reasoning = { effort: "high" };
-    (payload.input as unknown[]).unshift({ type: "configuration_update", reasoning: { effort: "max" } });
-    const log: RequestLogContext = { model: "", provider: "" };
-    const response = await handleResponses(request(payload), settings(), log, {
-      clientInitialResponses: true,
-      onRequestBodyParsed(parsed) {
-        const input = (parsed as { input: Array<{ type?: string }> }).input;
-        input.splice(0, 1);
-      },
-    });
-    expect(response.status).toBe(200);
-    await response.text();
-    expect(calls.map(call => call.model)).toEqual(["swe-2", "rescue"]);
-    expect(log.sessionEffortObservation).toEqual({ clientEffort: "high", sessionEffort: "max", status: "visible" });
-  });
-
   test("text-only compaction projects historical images before the strip step", async () => {
     sourceEvents = [{ type: "text_delta", text: "Keep the chart result." }, { type: "done" }];
     const config = settings();
@@ -486,7 +454,7 @@ describe("routed compaction emergency integration", () => {
     expect(budget.alternateTargetSends).toBe(0);
   });
 
-  test.each(["disabled", "generic-400", "policy", "auth", "partial", "side-effect", "same-model", "opaque", "agent-message", "continuation"])("keeps source failure: %s", async variant => {
+  test.each(["disabled", "generic-400", "policy", "auth", "partial", "side-effect", "same-model", "opaque", "continuation"])("keeps source failure: %s", async variant => {
     const config = settings();
     const payload = body(true);
     if (variant === "disabled") config.compactionRecovery!.allowDevinInvalidArgument = false;
@@ -497,7 +465,6 @@ describe("routed compaction emergency integration", () => {
     if (variant === "side-effect") sourceEvents = [{ type: "heartbeat", replayUnsafe: true }, sourceError];
     if (variant === "same-model") config.compactionRecovery!.model = "source/swe-2";
     if (variant === "opaque") (payload.input as unknown[]).unshift({ type: "compaction", encrypted_content: "native-opaque-fixture" });
-    if (variant === "agent-message") (payload.input as unknown[]).unshift({ type: "agent_message", content: [{ type: "input_text", text: "child result" }] });
     if (variant === "continuation") payload.previous_response_id = "missing-fixture";
     const response = await handleResponses(request(payload), config, { model: "", provider: "" });
     await response.text();

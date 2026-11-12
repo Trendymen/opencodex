@@ -112,7 +112,6 @@ function mixedConfig(): OcxConfig {
         baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "forward",
         codexAccountMode: "direct",
-        upstreamWebsocket: false,
         defaultModel: "gpt-5.5",
       },
       gateway: {
@@ -1000,7 +999,7 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
       config.providers.cursorcustom!.noVisionModels = ["auto"];
       config.providers.openai = {
         adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex",
-        authMode: "forward", codexAccountMode: "direct", upstreamWebsocket: false,
+        authMode: "forward", codexAccountMode: "direct",
       };
       config.visionSidecar = { enabled: true, backend: "openai", model: "gpt-5.6-luna" };
       if (scenario === "default-sidecars") delete config.visionSidecar;
@@ -1081,7 +1080,7 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
       config.providers.cursorcustom!.noVisionModels = ["auto"];
       config.providers.openai = {
         adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex",
-        authMode: "forward", codexAccountMode: "direct", upstreamWebsocket: false,
+        authMode: "forward", codexAccountMode: "direct",
       };
       config.webSearchSidecar = { enabled: true, backend: "openai", model: "gpt-5.6-luna" };
       saveConfig(config);
@@ -1130,7 +1129,7 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
       config.providers.cursorcustom!.noVisionModels = ["auto"];
       config.providers.openai = {
         adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex",
-        authMode: "forward", codexAccountMode: pool ? "pool" : "direct", upstreamWebsocket: false,
+        authMode: "forward", codexAccountMode: pool ? "pool" : "direct",
       };
       // Keep this auth fixture independent of the legacy sidecar model migration.
       config.visionSidecar = { enabled: true, backend: "openai", model: "gpt-5.6-luna" };
@@ -1463,7 +1462,6 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
         baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "forward",
         codexAccountMode: "direct",
-        upstreamWebsocket: false,
         defaultModel: "gpt-5.6-luna",
       };
       config.subagentModelFallback = ["gpt-5.6-luna"];
@@ -1499,7 +1497,6 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
         baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "forward",
         codexAccountMode: "direct",
-        upstreamWebsocket: false,
         defaultModel: "gpt-5.6-luna",
       };
       config.subagentModelFallback = ["gpt-5.6-luna"];
@@ -1658,7 +1655,6 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
           baseUrl: "https://chatgpt.com/backend-api/codex",
           authMode: "forward",
           codexAccountMode: "direct",
-          upstreamWebsocket: false,
           defaultModel: "gpt-5.6-luna",
         };
         config.shadowCallIntercept = {
@@ -1735,7 +1731,6 @@ describe("an admission bearer never reaches a canonical ChatGPT transport, whate
           adapter: "openai-responses",
           baseUrl: "https://chatgpt.com/backend-api/codex",
           authMode: "forward",
-          upstreamWebsocket: false,
           defaultModel: "gpt-5.5",
         },
       },

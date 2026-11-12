@@ -2,7 +2,6 @@ import type { NativeResponseControl } from "./native-response-control";
 import { PROVIDER_HEADER_DEADLINE as HEADER_DEADLINE, type ProviderHeaderDeadline as HeaderDeadline } from "../../lib/provider-admission-wait";
 import type { CodexWsPreOutputRefusalHold } from "./codex-ws-wire";
 import type { Server } from "bun";
-import { markCodexPreDispatchFailure } from "../../fork/codex-passthrough-local-errors";
 import {
   codexWsUpstreamFetch,
   currentBunRuntimeIdentity,
@@ -10,7 +9,6 @@ import {
   type BunRuntimeGateInput,
 } from "./ws-upstream";
 import type { OcxProviderConfig } from "../../types";
-import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers-destination";
 import type { WsData } from "../ws-bridge";
 import {
   requestPacingMaxConcurrentRequests,
@@ -298,6 +296,7 @@ export interface ProviderFetchOptions {
   onCodexWsQuota?: CodexWsQuotaObserver;
   /** Synchronous admission at actual credential dispatch, after pacing/backoff. */
   beforeDispatch?: (headers: Headers) => void;
+  onHttpBeforeDispatchFailure?: (error: unknown) => void;
   /** One-shot receipt after final local HTTP admission, immediately before executor entry. */
   onPhysicalDispatch?: (body?: BodyInit | null) => void;
   /** Repeatable admission for native successor creates, after pacing and auth checks. */
@@ -320,7 +319,7 @@ export function providerFetch(
   options: ProviderFetchOptions = {},
 ): ProviderFetch {
   const providerName = options.providerName ?? "<unnamed provider>";
-  const permissions = isCanonicalOpenAiForwardProvider(provider) ? options.codexPassthroughPermissions : undefined;
+  const permissions = options.codexPassthroughPermissions;
   const customExecutor = (provider as OcxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch;
   // The route is applied at the physical send (see `sendWithConnectionPolicy`). This binding is
   // only what that boundary needs to decide it.
@@ -382,7 +381,7 @@ export function providerFetch(
       // is decided inside `dispatch`, which runs after this, so the fresh-connection policy
       // wins regardless of what any caller or hook put in the header.
       try { options.beforeDispatch?.(new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))); }
-      catch (error) { if (permissions) markCodexPreDispatchFailure(error); throw error; }
+      catch (error) { options.onHttpBeforeDispatchFailure?.(error); throw error; }
       // No proxy option is attached here: a `dispatchOverride` may rebuild this request against
       // a different destination, so the route is decided at the physical send instead.
       const sharedReceipt = (init as Record<symbol, ((body: BodyInit | null | undefined) => void) | undefined> | undefined)?.[WS_FALLBACK_RECEIPT];

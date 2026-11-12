@@ -25,7 +25,7 @@ export class CodexPrivateCredentialProtectionError extends Error {
 export interface CodexPrivateCredentialGuard {
   mask(text: string): string;
   protectHeaders(headers: Headers): Headers;
-  protectJson(text: string): { changed: boolean; text: string };
+  protectJson(text: string, allowInvalidError?: boolean): { changed: boolean; text: string };
   blockRewrite: SseBlockRewrite;
 }
 
@@ -110,7 +110,7 @@ export function createCodexPrivateCredentialGuard(input: {
       return `(?:${escaped(letter)}|\\\\u${unicode}${jsonEscapes[letter] ? `|${escaped(jsonEscapes[letter]!)}` : ""})`;
     }).join("")).join("|"), "g");
   const mask = (text: string): string => literalMask(text).replace(encodedSecrets, "[REDACTED]");
-  const protectJson = (text: string): { changed: boolean; text: string } => {
+  const protectJson = (text: string, allowInvalidError = false): { changed: boolean; text: string } => {
     let changed = false;
     try {
       JSON.parse(text);
@@ -120,7 +120,11 @@ export function createCodexPrivateCredentialGuard(input: {
       });
       return { changed, text: safe };
     }
-    catch { throw new CodexPrivateCredentialProtectionError("private-invalid-json"); }
+    catch {
+      if (!allowInvalidError) throw new CodexPrivateCredentialProtectionError("private-invalid-json");
+      const safe = !text.includes("\\") && mask(text) === text ? text : "";
+      return { changed: safe !== text, text: safe };
+    }
   };
   const blockRewrite: SseBlockRewrite = block => {
     const payload = sseDataPayload(block);
@@ -155,15 +159,16 @@ export async function readCodexPrivateErrorText(response: Response, guard: Codex
   options: { privateErrorBodyReadDeadline?: boolean; stallTimeoutMs?: number } = {}): Promise<string> {
   try {
     const bounded = await readBoundedResponseBody(response, { signal, fatalUtf8: true, ...codexPrivateErrorBodyReadDeadlines(options) });
-    if (bounded.oversized) throw new CodexPrivateCredentialProtectionError("private-oversized");
+    if (bounded.oversized) return "";
     if (bounded.timedOut) throw new CodexPrivateCredentialProtectionError("private-body-timeout");
     if (!bounded.displaySafe || bounded.truncated) throw new CodexPrivateCredentialProtectionError("private-body-unreadable");
     return response.headers.get("content-type")?.toLowerCase().includes("json")
-      ? guard.protectJson(bounded.text).text : guard.mask(bounded.text);
+      ? guard.protectJson(bounded.text, true).text : guard.mask(bounded.text);
   } catch (error) {
     if (signal?.aborted) throw error;
     const decodeFailure = boundedBodyDecodeFailure(error);
-    if (decodeFailure) throw new CodexPrivateCredentialProtectionError(decodeFailure === "timeout" ? "private-body-timeout" : "private-invalid-utf8");
+    if (decodeFailure === "invalid_utf8") return "";
+    if (decodeFailure === "timeout") throw new CodexPrivateCredentialProtectionError("private-body-timeout");
     throw maskPrivateReadError(error, guard);
   }
 }

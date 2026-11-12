@@ -1,6 +1,6 @@
 # Fork 维护补充
 
-[MAINTAINERS.md](MAINTAINERS.md) 保留当前上游原文。Trendymen 的同步、候选验证、双审、Tag 和 Release 规则以 [fork-sync-automation.md](docs/fork-sync-automation.md) 为准。
+[MAINTAINERS.md](MAINTAINERS.md) 保留当前上游原文。Trendymen 的同步、候选验证、双审、Tag 和 Release 规则以 [FORK_SYNC_AUTOMATION.md](FORK_SYNC_AUTOMATION.md) 为准。
 
 - `dev` 是唯一开发和发布候选分支，可以在发布后继续开发；已发布状态以不可变 Fork Tag 和正式 Release 为准，包版本相同不表示后续提交已发布。
 - CI 采用官方 `workflow_dispatch`、`ref=dev`、`lane=all`；发布前核对同一最终 SHA 的 aggregate `ci` 和实际 checkout，不再依赖 main push CI。

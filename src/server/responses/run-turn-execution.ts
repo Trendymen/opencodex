@@ -52,7 +52,7 @@ import { awaitThoughtSignatureDurability } from "../../responses/thought-signatu
 import { undeclaredToolCallMessage } from "../responses-undeclared-tool-guard";
 import { currentTurnToolBridgeMaps, emptyToolCatalogRefusal, guardEmptyToolCatalogEvents, guardEmptyToolCatalogStream } from "../../lib/empty-tool-catalog";
 import { createNestedExecAdapterEventRepair } from "../responses-nested-exec-call-repair";
-import { COMBO_PREFLIGHT_ABORTED, COMBO_PREFLIGHT_STALLED, preflightComboAdapterEvents } from "./combo-adapter-preflight";
+import { COMBO_PREFLIGHT_ABORTED, COMBO_PREFLIGHT_STALLED, preflightComboAdapterEvents } from "../../fork/combo-adapter-preflight";
 // LOCAL PATCH (runturn-websearch)
 import { planWebSearch } from "../../web-search";
 import { runTurnWebSearchInitialParsed, runTurnWebSearchLoop } from "../../web-search/run-turn-loop";

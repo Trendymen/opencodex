@@ -107,7 +107,7 @@ function unidentifiedToolOutputMarker(item: Record<string, unknown>): string {
   const namespace = validToolOutputSourcePart(item.namespace);
   const name = validToolOutputSourcePart(item.name);
   if ((item.namespace !== undefined && !namespace) || (item.name !== undefined && !name)) {
-    return "[Tool output without call identification]";
+    return "[tool output for unknown call]";
   }
   if (namespace === "codex_app" && name === "send_message_to_thread") {
     return "[Cross-task message via codex_app.send_message_to_thread]";
@@ -118,7 +118,7 @@ function unidentifiedToolOutputMarker(item: Record<string, unknown>): string {
   if (namespace && name) return `[Tool output: ${namespace}.${name}; call_id not provided]`;
   if (namespace) return `[Tool output in namespace ${namespace}; call_id not provided]`;
   if (name) return `[Tool output: ${name}; call_id not provided]`;
-  return "[Tool output without call identification]";
+  return "[tool output for unknown call]";
 }
 
 /** Convert orphaned tool output to user-message content without discarding valid images. */
@@ -131,7 +131,7 @@ function orphanedToolOutputContent(
     ? `[tool output for ${callId}]`
     : unidentifiedItem
       ? unidentifiedToolOutputMarker(unidentifiedItem)
-      : "[Tool output without call identification]";
+      : "[tool output for unknown call]";
   if (typeof output !== "string" && !Array.isArray(output)) {
     return [{ type: "input_text", text: marker }];
   }

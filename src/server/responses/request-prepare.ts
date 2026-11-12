@@ -70,7 +70,7 @@ import {
   stripAgentMessageCiphertextInPlace,
   stripToolCallCiphertextArgumentsInPlace,
 } from "./encrypted-payload";
-import { rewriteAnnotationInstructionsInPlace } from "./annotation-instructions";
+import { rewriteAnnotationInstructionsInPlace } from "../../fork/annotation-instructions";
 import {
   codexPoolAffinityKey,
   codexRequestAffinityKey,

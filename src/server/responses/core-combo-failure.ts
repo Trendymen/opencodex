@@ -15,7 +15,7 @@ import {
 import { parseRetryAfterMs } from "../../combos";
 import type { ConsumedComboFailure, HandleResponsesOptions } from "./core-options";
 import type { OcxUsage } from "../../types";
-import { readBoundedResponseBody, type BoundedBodyOptions } from "../../lib/bounded-body";
+import { boundedBodyDecodeFailure, readBoundedResponseBody, type BoundedBodyOptions } from "../../lib/bounded-body";
 import { carryAnthropicRefusalCredential } from "../../oauth/anthropic-account-refusal";
 import { carryCodexAccountCooldownResponse } from "../../codex/account-cooldown-response";
 import { codexQuotaFailureMessage, codexQuotaOutcomeMeta } from "./core-codex-account";
@@ -97,7 +97,10 @@ export async function consumeComboFailure(
     const legacy = comboFailureEvidence(response);
     if (legacy !== undefined) void response.body?.cancel().catch(() => undefined);
     const readBody = await readBoundedResponseBody(legacy === undefined ? response : new Response(legacy), { ...bodyDeadlines, signal, reportUtf8Validity: serverError || protectText !== undefined, fatalUtf8: protectText !== undefined });
-    const body = protectText ? { ...readBody, text: protectText(readBody.text, readBody.displaySafe && !readBody.truncated && !readBody.oversized) } : readBody;
+    const protectedText = !protectText ? readBody.text : readBody.oversized
+      ? "" : protectText(readBody.text, readBody.displaySafe && !readBody.truncated);
+    const body = protectText ? { ...readBody, text: protectedText,
+      displaySafe: !readBody.oversized && readBody.displaySafe && !(readBody.text && !protectedText) } : readBody;
     if (body.displaySafe && !body.truncated && (permissions?.redactUpstreamErrors === false || localGateway)) originalErrorText = body.text;
     // A 5xx body counts as quota or classification evidence only when it decoded as valid
     // UTF-8, matching shouldRetryCodexPoolAccountQuota. A malformed byte keeps the status-only
@@ -148,7 +151,7 @@ export async function consumeComboFailure(
   } catch (error) {
     if (error instanceof CodexPrivateCredentialProtectionError) throw error;
     if (signal?.aborted) throw error;
-    if (protectText) throw new CodexPrivateCredentialProtectionError("private-body-unreadable");
+    if (protectText && boundedBodyDecodeFailure(error) !== "invalid_utf8") throw new CodexPrivateCredentialProtectionError("private-body-unreadable");
     classificationText = fallback;
   }
   const cyberFailure = isCyberPolicyCode(upstreamCode) || isCyberPolicyMessage(classificationText);

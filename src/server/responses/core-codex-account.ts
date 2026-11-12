@@ -21,8 +21,9 @@ import {
   upstreamHostHealthKey,
   resetUpstreamHostHealth,
 } from "../../codex/upstream-host-health";
-import { safeOriginLabel, fetchWithHeaderTimeout, providerFetch } from "./fetch-helpers";
+import { safeOriginLabel, fetchWithHeaderTimeout } from "./fetch-helpers";
 import type { AdapterRequest } from "../../adapters/base";
+import { codexPassthroughProviderFetch } from "../../fork/codex-passthrough-fetch";
 import { classifyPoolRecoveryDispatch } from "../../routing/probe-lease";
 import { formatErrorResponse } from "../../bridge";
 import { readBoundedResponseBody } from "../../lib/bounded-body";
@@ -1087,7 +1088,7 @@ export async function retryCodexPoolOnAlternateAccount(
               upstream.signal,
               connectMs,
               stream,
-              providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
                 codexPassthroughPermissions,
                 httpOnly,
                 providerName: route.providerName,

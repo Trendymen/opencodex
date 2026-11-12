@@ -41,7 +41,7 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 配置文件包含已移除的 OpenCode Free provider 时，主动文件读取会尝试备份原始字节，并从加载视图中移除退休条目；passive 诊断不创建副本。有效的已启用 listener 拓扑会保留；显式配置的非法拓扑会被拒绝，不会静默关闭。
 
-本地回归使用临时端口和夹具 Provider，不代表完成安装、用户服务重启、外部设备连通或付费 Provider 验收。
+安装、用户服务重启、外部设备连通和付费 Provider 接入仍需分别验收。
 
 ## Provider 配置
 
@@ -175,7 +175,9 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 全部关闭时，保留请求 JSON 值、字段是否存在、未知字段和数组顺序；显式模型/Fast 路由、选中账号认证、必要传输规则及 Provider 独立开启的 `projectResponsesLiteHostedSearchHistory` 仍生效。需要原样保留 hosted-search 历史时，也须关闭这个独立选项。JSON 可以重新序列化。需要 framing 或私有凭据保护时，不保证响应字节完全一致。关闭错误改写时，客户端 WebSocket 错误帧在 `response` 中保留完整上游错误体。
 
-OCX 实际注入的私有凭据始终在交付前受保护，包含 Pool/已存主登录凭据及敏感配置头值。无法确认安全交付时，在响应提交前返回 `upstream_error_protection_failed`，已提交的流则中止，不伪造成功终态。
+OCX 实际注入的私有凭据始终在交付前受保护，包含 Pool/已存主登录凭据及敏感配置头值。成功响应或 SSE 流无法确认安全交付时，在响应提交前返回 `upstream_error_protection_failed`，已提交的流则中止，不伪造成功终态。
+
+受保护的 HTTP 错误正文最多读取 64 KiB，并严格解码 UTF-8。标为 JSON 的完整合法正文逐字符串遮盖，其他文本整体遮盖。标为 JSON 的非法正文只有在不含反斜杠且完整文本遮盖未命中私有值时才原样保留，否则舍弃正文；超限或解码失败也会舍弃正文。正文被舍弃时，Direct 保留上游状态：默认由官方格式化器返回仅含状态信息的 JSON；`redactUpstreamErrors: false` 时返回空体。Combo 保留状态并在正文被舍弃时按状态分类。原有期限和取消规则继续生效。
 
 成功响应的正文格式既非 SSE 也非 JSON 时，只要有私有值需要保护，代理就会在交付前取消上游正文并返回上述保护错误。无正文或没有私有值需要保护时，沿用原有交付行为；caller 已持有的值不会触发这项限制。
 

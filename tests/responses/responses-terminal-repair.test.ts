@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { ResponsesTerminalRepairPolicy } from "../../src/providers/registry";
-import { hasProxyIncomplete } from "../../src/lib/client-error-body";
 import { relaySseWithFailedTail } from "../../src/server/relay";
 import {
   relayResponsesSseWithTerminalRepair,
@@ -231,45 +230,6 @@ async function repairClosedText(text: string): Promise<{ output: string; cancell
 }
 
 describe("DeepSeek Responses terminal repair", () => {
-  test("incomplete origin and the raw observation share the same repaired stream", async () => {
-    const raw = sse({ type: "response.created", response: { id: "resp_fixture", status: "in_progress" } });
-    const observed: string[] = [];
-    const lifecycle: string[] = [];
-    const context = {};
-    const budget = createTestTranslatorBudget();
-    const repaired = relayResponsesSseWithTerminalRepair(
-      streamFromText(raw), new AbortController(), POLICY, budget, new ManualScheduler(), context,
-      { onChunk: chunk => observed.push(new TextDecoder().decode(chunk)), onFinish: () => lifecycle.push("finish"), onDispose: () => lifecycle.push("dispose") },
-    );
-    try {
-      const output = await readAll(repaired);
-      expect(terminalTypes(output)).toEqual(["response.incomplete"]);
-      expect(hasProxyIncomplete(context, "missing_terminal_event")).toBe(true);
-      expect(hasProxyIncomplete(repaired, "missing_terminal_event")).toBe(true);
-      expect(observed.join("")).toBe(raw);
-      expect(lifecycle).toEqual(["finish"]);
-      expect(budget.snapshot().currentBytes).toBe(0);
-    } finally { budget.dispose(); }
-  });
-
-  test("cancelling a repaired stream disposes its raw tap without inventing an incomplete origin", async () => {
-    const source = controlledSource();
-    const context = {};
-    const budget = createTestTranslatorBudget();
-    const lifecycle: string[] = [];
-    const repaired = relayResponsesSseWithTerminalRepair(
-      source.stream, new AbortController(), POLICY, budget, new ManualScheduler(), context,
-      { onFinish: () => lifecycle.push("finish"), onDispose: () => lifecycle.push("dispose") },
-    );
-    try {
-      await repaired.cancel("fixture stop");
-      expect(source.cancelled()).toBe(true);
-      expect(lifecycle).toEqual(["dispose"]);
-      expect(hasProxyIncomplete(context, "missing_terminal_event")).toBe(false);
-      expect(budget.snapshot().currentBytes).toBe(0);
-    } finally { budget.dispose(); }
-  });
-
   test("a healthy stream with a real terminal is relayed byte-identical", async () => {
     const lifecycle = capturedToolCallLifecycle();
     const terminal = sse({

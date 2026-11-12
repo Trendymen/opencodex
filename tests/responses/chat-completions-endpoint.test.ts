@@ -10,7 +10,6 @@ import { ownedServiceHomeInspection } from "../helpers/owned-service-home-inspec
 import { OPENAI_PROVIDER_TIER_VERSION, type OcxConfig, type OcxProviderConfig } from "../../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
-import { installHttpOnlyCodexWebSocket } from "../helpers/http-only-codex-websocket";
 import { chatCompletionsToResponsesBody, ChatCompletionsRequestError } from "../../src/chat/inbound";
 import { chatCompletionsUsage } from "../../src/chat/outbound";
 import { parseRequest } from "../../src/responses/parser";
@@ -64,7 +63,6 @@ let isolatedCodexHome: IsolatedCodexHome | null = null;
 const originalFetch = globalThis.fetch;
 const { startServer, stopLeftoverServers } = createServerTracker();
 let webSocketGuard: ReturnType<typeof guardWebSocketDials> | undefined;
-const originalWebSocket = globalThis.WebSocket;
 
 // A case that calls a handler directly never takes the writer lease startServer takes, so its
 // dispatch is refused. Never file-wide: most cases here start a real server that takes it too.
@@ -72,7 +70,6 @@ let releaseSpendHome: (() => void) | undefined;
 const takeSpendHome = (): void => { releaseSpendHome ??= acquireOwnedSpendHome(); };
 
 beforeEach(() => {
-  installHttpOnlyCodexWebSocket();
   webSocketGuard = guardWebSocketDials();
   previousHome = process.env.OPENCODEX_HOME;
   isolatedCodexHome = installIsolatedCodexHome("ocx-chat-completions-");
@@ -83,7 +80,6 @@ beforeEach(() => {
 
 afterEach(async () => {
   const refusedDials = webSocketGuard?.restore() ?? [];
-  globalThis.WebSocket = originalWebSocket;
   try {
     // A timed-out case never reaches its finally; its live server would fail every later start.
     await stopLeftoverServers();

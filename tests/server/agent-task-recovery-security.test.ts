@@ -93,14 +93,7 @@ describe("agent task recovery security", () => {
 
   test("uses only the fixed ChatGPT endpoint and forwards only allowlisted credentials", async () => {
     const accountId = "acct-boundary";
-    const headers = codexHeaders(accountId, {
-      "openai-beta": "responses=experimental",
-      "user-agent": "codex-test/1",
-      cookie: "private-cookie",
-      "x-private-caller-header": "private-value",
-      "x-codex-parent-thread-id": "parent-boundary",
-    });
-    const token = headers.get("authorization")!.slice("Bearer ".length);
+    const token = fakeChatGptJwt(accountId);
     const assignment = "Keep credentials on their owning transport.";
     let recoveryUrl = "";
     let recoveryHeaders = new Headers();
@@ -127,7 +120,13 @@ describe("agent task recovery security", () => {
       routedConfig(),
       "xai/grok-4.5",
       encryptedInput(),
-      headers,
+      codexHeaders(accountId, {
+        "openai-beta": "responses=experimental",
+        "user-agent": "codex-test/1",
+        cookie: "private-cookie",
+        "x-private-caller-header": "private-value",
+        "x-codex-parent-thread-id": "parent-boundary",
+      }),
     );
 
     expect(response.status).toBe(200);

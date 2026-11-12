@@ -12,13 +12,11 @@ import { normalizeUsageEntryForTest } from "../../src/usage/log";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 
 const originalFetch = globalThis.fetch;
-const originalWebSocket = globalThis.WebSocket;
 let releaseSpendHome: (() => void) | undefined;
 afterEach(() => {
   releaseSpendHome?.();
   releaseSpendHome = undefined;
   globalThis.fetch = originalFetch;
-  globalThis.WebSocket = originalWebSocket;
 });
 
 const gateway: OcxProviderConfig = {
@@ -35,13 +33,6 @@ function config(provider: OcxProviderConfig): OcxConfig {
 
 async function drive(provider: OcxProviderConfig, stream: boolean, responseTier: unknown) {
   const sent: Record<string, unknown>[] = [];
-  let websocketAttempts = 0;
-  globalThis.WebSocket = class {
-    constructor() {
-      websocketAttempts++;
-      throw new Error("Unexpected WebSocket in HTTP fixture");
-    }
-  } as unknown as typeof WebSocket;
   const upstream = {
     id: "resp_tier", object: "response", status: "completed", model: "gpt-5.6-sol",
     output: [], usage: { input_tokens: 10, output_tokens: 2 },
@@ -66,7 +57,6 @@ async function drive(provider: OcxProviderConfig, stream: boolean, responseTier:
   const downstream = await response.text();
   expect(response.status).toBe(200);
   expect(sent).toHaveLength(1);
-  expect(websocketAttempts).toBe(0);
   expect(sent[0]?.service_tier).toBe("priority");
   expect(sent[0]).not.toHaveProperty("responseTierAuthoritative");
   if (typeof responseTier === "string") {
@@ -83,7 +73,7 @@ describe("response-tier authority on the final Responses route", () => {
     { name: "official API", provider: { ...gateway, baseUrl: "https://api.openai.com/v1" }, authoritative: true },
     { name: "direct Codex under a custom name", provider: {
       ...gateway, baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" as const,
-      responseTierAuthoritative: true, upstreamWebsocket: false,
+      responseTierAuthoritative: true,
     }, authoritative: false },
   ];
   for (const { name, provider, authoritative } of routes) {

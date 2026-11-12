@@ -8,9 +8,7 @@ import { clearAccountQuota, getAccountQuota, setAccountQuotaFromParsed } from ".
 import { clearCodexUpstreamHealth, clearThreadAccountMap, getCodexUpstreamHealth } from "../../src/codex/routing";
 import { clearPoolRotationState } from "../../src/codex/pool-rotation";
 import { clearPoolRecoveryState } from "../../src/routing/probe-lease";
-import { resetAgentTaskRecoveryState } from "../../src/server/responses/agent-task-recovery";
 import { handleResponses, handleResponsesCompact } from "../../src/server/responses";
-import { codexHeaders, encryptedInput, recoverySse } from "../helpers/agent-task-recovery";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { drainAndRemoveFixtureRoots } from "../helpers/fixture-teardown";
 import type { OcxConfig } from "../../src/types";
@@ -97,95 +95,6 @@ test("Responses secret failure during A->B refuses instead of throwing or sendin
   }) as typeof fetch;
   expect((await send(false)).status).toBe(503);
   expect(sends).toBe(1);
-});
-
-for (const cancelDuringBuild of [false, true]) test(`oneShot identity failure ${cancelDuringBuild ? "returns cancellation" : "preserves the original response"}`, async () => {
-  resetAgentTaskRecoveryState();
-  const abort = new AbortController();
-  const cfg = config();
-  cfg.agentTaskRecovery = { enabled: true };
-  cfg.codexAccountNamespaces = { side: "work" };
-  let recoveryAttempts = 0;
-  let nativeAttempts = 0;
-  let nativeAborts = 0;
-  let recoveryReturned = false;
-  let cancelledDuringBuild = false;
-  let streamOpen = false;
-  let originalStreamAborted = false;
-  let originalStream: ReadableStreamDefaultController<Uint8Array> | undefined;
-  const installationIds: Array<string | null> = [];
-  const getHeader = Headers.prototype.get;
-  // Cancel while the rebuilt request reads the installation header.
-  Headers.prototype.get = function(name: string) {
-    if (cancelDuringBuild && recoveryReturned && name.toLowerCase() === key && !abort.signal.aborted) {
-      cancelledDuringBuild = true;
-      abort.abort(new DOMException("client disconnected", "AbortError"));
-    }
-    return getHeader.call(this, name);
-  };
-  globalThis.fetch = (async (input, init) => {
-    const body = typeof init?.body === "string" ? init.body : "";
-    if (body.includes("capture_assignment")) {
-      recoveryAttempts++;
-      writeFileSync(join(home, "codex-installation-secret"), "corrupt", { mode: 0o600 });
-      recoveryReturned = true;
-      if (streamOpen && !cancelDuringBuild) {
-        streamOpen = false;
-        originalStream!.enqueue(new TextEncoder().encode("original native failure"));
-        originalStream!.close();
-      }
-      return new Response(recoverySse("Return only ok."), { headers: { "content-type": "text/event-stream" } });
-    }
-    if (!String(input).endsWith("/responses")) return Response.json({ rate_limit: { primary_window: { used_percent: 10 } } });
-    nativeAttempts++;
-    installationIds.push(new Headers(init?.headers).get(key));
-    if (nativeAttempts < 3) return new Response("discarded native failure", { status: 502 });
-    if (nativeAttempts > 3) return new Response("unexpected replay", { status: 200 });
-    const signal = init?.signal;
-    return new Response(new ReadableStream<Uint8Array>({
-      start(controller) {
-        originalStream = controller;
-        streamOpen = true;
-        signal?.addEventListener("abort", () => {
-          nativeAborts++;
-          if (streamOpen) { streamOpen = false; originalStreamAborted = true; controller.error(signal.reason); }
-        }, { once: true });
-      },
-    }), { status: 502 });
-  }) as typeof fetch;
-  try {
-    const headers = codexHeaders("acct-caller", { [key]: original });
-    headers.set("content-type", "application/json");
-    let response: Response | undefined;
-    let failure: unknown;
-    try {
-      response = await handleResponses(new Request("http://localhost/v1/responses", {
-        method: "POST", headers, signal: abort.signal,
-        body: JSON.stringify({ model: "side/gpt-5.5", stream: false,
-          input: encryptedInput({ ciphertext: `gAAAA${"A".repeat(128)}` }), client_metadata: { [key]: "body-id" } }),
-      }), cfg, { model: "", provider: "" });
-    } catch (error) { failure = error; }
-    expect(failure).toBeUndefined();
-    if (!response) throw new Error("Responses handler returned no response");
-    expect(recoveryAttempts).toBe(1);
-    expect(nativeAttempts).toBe(3);
-    expect(installationIds.every(id => id !== null && id !== original)).toBe(true);
-    if (cancelDuringBuild) {
-      expect(cancelledDuringBuild).toBe(true);
-      expect(response.status).toBe(499);
-      expect(await response.json()).toMatchObject({ error: { code: "client_cancelled" } });
-      expect(nativeAborts).toBe(1);
-      expect(originalStreamAborted).toBe(true);
-    } else {
-      expect(response.status).toBe(502);
-      expect(await response.text()).toBe("original native failure");
-      expect(nativeAborts).toBe(0);
-    }
-  } finally {
-    Headers.prototype.get = getHeader;
-    if (streamOpen) originalStream?.close();
-    resetAgentTaskRecoveryState();
-  }
 });
 
 for (const surface of ["search", "images", "live"] as const) test(`${surface} maps installation-secret refusal before upstream`, async () => {

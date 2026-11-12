@@ -250,7 +250,6 @@ describe("provider registry parity", () => {
       expect(Object.keys(map ?? {})).toContain("deepseek-flash");
     }
     expect(nativeDeepseek?.preserveReasoningContentModels).toContain("deepseek-flash");
-    expect(nativeDeepseek?.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
     expect(nativeDeepseek?.noVisionModels).not.toContain("deepseek-flash");
     // The new id keeps the Flash ladder, not the Pro one, through isDeepseekFlashModel.
     expect(nativeDeepseek?.modelReasoningEfforts?.["deepseek-flash"])
@@ -383,10 +382,9 @@ describe("provider registry parity", () => {
     // Pro and Flash both retain reasoning on tool-call continuations (#5421).
     expect(KEY_LOGIN_PROVIDERS.deepseek.preserveReasoningContentModels)
       .toEqual(["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"]);
-    expect(KEY_LOGIN_PROVIDERS.deepseek.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
-    expect(KEY_LOGIN_PROVIDERS.deepseek.modelInputModalities?.["deepseek-v4-flash"]).toEqual(["text", "image"]);
+    // #4436: first-party Flash accepts images; unprobed compatibility aliases keep the sidecar.
     expect(KEY_LOGIN_PROVIDERS.deepseek.noVisionModels).toEqual([
-      "deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro",
+      "deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro",
     ]);
   });
 
@@ -618,14 +616,13 @@ describe("provider registry parity", () => {
     expect(neuralwatt?.preserveReasoningContentModels).not.toContain("moonshotai/Kimi-K2.5");
   });
 
-  test("first-party DeepSeek Flash aliases advertise native images without widening gateway aliases (#4436)", () => {
+  test("first-party DeepSeek Flash advertises native images without widening gateway aliases (#4436)", () => {
     const provider = providerConfigSeed(PROVIDER_REGISTRY.find(entry => entry.id === "deepseek")!);
     expect(KEY_LOGIN_PROVIDERS.deepseek.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
     expect(provider.modelInputModalities?.["deepseek-flash"]).toEqual(["text", "image"]);
     expect(isModelVisionSidecarConsumer(provider, "deepseek-flash")).toBe(false);
-    expect(isModelVisionSidecarConsumer(provider, "deepseek-v4-flash")).toBe(false);
     expect(isModelVisionSidecarConsumer(provider, "deepseek-v4-flash-vision-exp")).toBe(false);
-    for (const model of ["deepseek-chat", "deepseek-reasoner"]) {
+    for (const model of ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash"]) {
       expect(isModelVisionSidecarConsumer(provider, model)).toBe(true);
     }
     // Only the Go tier was probed (2026-09-19) and only for deepseek-v4.1-flash. The sibling

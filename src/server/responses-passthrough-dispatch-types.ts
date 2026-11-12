@@ -2,11 +2,11 @@ import type {
   ResponsesRequestContext,
   ResponsesAdmissionState,
   PassthroughAdmissionState,
-} from "./core-options";
-import type { PreparedResponsesRequest } from "./request-prepare";
-import type { ResponsesTransport } from "./request-transport";
-import type { ResponsesEffects } from "./response-effects";
-import type { ResponsesSendBudget } from "./request-send-budget";
+} from "./responses/core-options";
+import type { PreparedResponsesRequest } from "./responses/request-prepare";
+import type { ResponsesTransport } from "./responses/request-transport";
+import type { ResponsesEffects } from "./responses/response-effects";
+import type { ResponsesSendBudget } from "./responses/request-send-budget";
 
 export interface PassthroughDispatchInputs {
   requestContext: Pick<ResponsesRequestContext, "config" | "logCtx" | "options" | "req">;
@@ -89,4 +89,4 @@ export interface PassthroughDispatchInputs {
 
 /** Transfer an uncommitted Copilot exchange to the existing translated pipeline without new admission. */
 export interface PassthroughAdapterHandoff { kind: "adapter-handoff" }
-export type PassthroughExchange = Exclude<Awaited<ReturnType<typeof import("./passthrough-dispatch").preparePassthroughExchange>>, Response | PassthroughAdapterHandoff>;
+export type PassthroughExchange = Exclude<Awaited<ReturnType<typeof import("./responses/passthrough-dispatch").preparePassthroughExchange>>, Response | PassthroughAdapterHandoff>;

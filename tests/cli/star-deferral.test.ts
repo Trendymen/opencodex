@@ -51,7 +51,6 @@ describe("maybeShowStarPrompt deferral flow (behavior)", () => {
   let home: string;
   const priorHome = process.env.OPENCODEX_HOME;
   const priorThread = process.env.CODEX_THREAD_ID;
-  const priorService = process.env.OCX_SERVICE;
   const stdinTTY = process.stdin.isTTY;
   const stdoutTTY = process.stdout.isTTY;
   const AGENT_ENV_VARS = [
@@ -66,7 +65,6 @@ describe("maybeShowStarPrompt deferral flow (behavior)", () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "ocx-star-deferral-"));
     process.env.OPENCODEX_HOME = home;
-    delete process.env.OCX_SERVICE;
     for (const name of AGENT_ENV_VARS) {
       savedAgentEnv.set(name, process.env[name]);
       delete process.env[name];
@@ -86,8 +84,6 @@ describe("maybeShowStarPrompt deferral flow (behavior)", () => {
     Object.defineProperty(process.stdout, "isTTY", { value: stdoutTTY, configurable: true });
     if (priorThread === undefined) delete process.env.CODEX_THREAD_ID;
     else process.env.CODEX_THREAD_ID = priorThread;
-    if (priorService === undefined) delete process.env.OCX_SERVICE;
-    else process.env.OCX_SERVICE = priorService;
     if (priorHome === undefined) delete process.env.OPENCODEX_HOME;
     else process.env.OPENCODEX_HOME = priorHome;
     removeTreeWithRetry(home);

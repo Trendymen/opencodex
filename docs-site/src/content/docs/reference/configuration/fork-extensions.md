@@ -41,7 +41,7 @@ Saving a topology change affects the next start. It neither moves an active sock
 
 When a file contains the retired OpenCode Free provider, an active file read attempts a recovery copy of the original bytes while removing the retired entries from the loaded view. Passive diagnostics create no copy. A valid enabled listener topology is retained; an invalid explicit topology is rejected rather than silently disabled.
 
-Local regression tests use temporary ports and fixture providers. They do not establish installation, a restarted user service, external-device connectivity or paid-provider access.
+Installation, a restarted user service, external-device connectivity and paid-provider access require separate acceptance.
 
 ## Provider settings
 
@@ -175,7 +175,9 @@ To disable all permissions, use the dashboard action or set all 23 leaves to `fa
 
 With all permissions off, request JSON values, field presence, unknown fields and array order are preserved, subject to explicit model/Fast routing, selected-account authentication, required transport rules and the independent provider `projectResponsesLiteHostedSearchHistory` opt-in. Leave that opt-in disabled to preserve hosted-search history unchanged. JSON can be serialized again. Responses are not guaranteed to be byte-identical when framing or private-credential protection is required. Client WebSocket error frames retain the complete upstream error body in `response` when error rewriting is disabled.
 
-Private credentials actually injected by OCX remain protected before delivery, including Pool/stored-main credentials and sensitive configured header values. If safe delivery cannot be established, the proxy returns `upstream_error_protection_failed` before committing the response, or aborts an already committed stream. It does not invent a successful terminal event.
+Private credentials actually injected by OCX remain protected before delivery, including Pool/stored-main credentials and sensitive configured header values. If safe delivery of a successful response or SSE stream cannot be established, the proxy returns `upstream_error_protection_failed` before committing the response, or aborts an already committed stream. It does not invent a successful terminal event.
+
+For a protected HTTP error, the proxy reads at most 64 KiB with strict UTF-8 decoding. A complete valid body marked as JSON is masked string by string; other text is masked as a whole. Invalid JSON marked as JSON is retained unchanged only when it contains no backslash and masking finds no private value; otherwise the body is discarded. Oversized bodies and decoding failures are also discarded. When the body is discarded, Direct keeps the upstream status: by default the upstream formatter returns status-only JSON; with `redactUpstreamErrors: false`, it returns an empty body. Combo keeps the status and classifies without the discarded body. Existing deadlines and cancellation still apply.
 
 For a successful response with a body that is neither SSE nor JSON, the proxy cancels the upstream body and returns this protection error before delivery when a private value needs protection. Bodyless responses and responses with no private value to protect retain their existing delivery behavior. A value already held by the caller does not create this restriction.
 

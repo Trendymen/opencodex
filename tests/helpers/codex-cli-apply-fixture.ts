@@ -87,7 +87,7 @@ export function createCodexCliApplyFixture(root: string, platform: NodeJS.Platfo
   privateNpm(root, installArgs(old));
   const trace = join(root, "install-trace.jsonl");
   writeFileSync(trace, "");
-  const node = Bun.which("node", { PATH: process.env.PATH }), npm = Bun.which("npm", { PATH: process.env.PATH });
+  const node = Bun.which("node"), npm = Bun.which("npm");
   if (!node || !npm) throw new Error("fixture toolchain unavailable");
   const realNpm = realpathSync.native(npm);
   const metadata = Object.fromEntries([old, target].flatMap(v => [

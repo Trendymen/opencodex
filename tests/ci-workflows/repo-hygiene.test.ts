@@ -43,8 +43,7 @@ const AGENT_SCRATCH_FILENAMES = ["design-debt.md", "_handoff.md"];
  * authors committed on their branch and every squash merge carried into `dev`.
  * Moving the images did not help: `docs-site/public/pr-screenshots/` grew the
  * same way and was published to GitHub Pages besides. Evidence images now go in
- * the PR description or on the orphan `pr-assets` branch. This Fork retains only
- * its current sync policy under `docs/`.
+ * the PR description or on the orphan `pr-assets` branch.
  */
 const RETIRED_TRACKED_DIRS = [
   "go",
@@ -62,10 +61,6 @@ const RETIRED_TRACKED_FILES = [
   "assets/request-pacing-dashboard.jpg",
   "assets/zh-tw-providers.png",
 ];
-
-function isForkOwnedDoc(path: string): boolean {
-  return path === "docs/fork-sync-automation.md";
-}
 
 function trackedFiles(): string[] {
   const result = Bun.spawnSync(["git", "ls-files"], { cwd: repoRoot, env: repositoryGitEnv() });
@@ -122,12 +117,10 @@ describe("repository hygiene", () => {
 
   test("retired directories stay untracked", () => {
     const offenders = trackedFiles().filter((path) =>
-      !isForkOwnedDoc(path)
-      && RETIRED_TRACKED_DIRS.some((dir) => path === dir || path.startsWith(`${dir}/`)),
+      RETIRED_TRACKED_DIRS.some((dir) => path === dir || path.startsWith(`${dir}/`)),
     );
 
     expect(offenders).toEqual([]);
-    expect(trackedFiles()).toContain("docs/fork-sync-automation.md");
   });
 
   test("retired PR evidence images stay untracked", () => {

@@ -4,7 +4,7 @@
 
 ## 上游同步自动化规则
 
-- 每小时上游稳定版同步自动化（含官方 Tag 保留、双审门禁、幂等收敛与完整发布流程）的规则真源见 docs/fork-sync-automation.md；该自动化相关任务必须先读取并遵循该文档。
+- 每小时上游稳定版同步自动化（含官方 Tag 保留、双审门禁、幂等收敛与完整发布流程）的规则真源见 FORK_SYNC_AUTOMATION.md；该自动化相关任务必须先读取并遵循该文档。
 - 分支职责以该文档为准：dev 是唯一开发和发布候选分支；已发布状态由不可变 Fork Tag 和正式 GitHub Release 确定。
 - rebase 冲突审查必须执行该文档规定的逐冲突证据账本、固定 SHA 独立机械重算、三层 diff、命名风险清单与默认双审；只给汇总计数、总括性解决说明或测试通过结论均不够。explorer 仅作可选取证，不因敏感路径、冲突数量或 hunk 数量自动成为发布门禁；只有 reviewer 或主线程指出未收敛的具体跨边界 path、symbol 或 edge 时，才补一个窄范围质量审查。
 - 验证选择、结果复用与有界审查按该文档执行：发布测试以同一候选 SHA 的官方 CI 为准；CI 报错后只跑报错项及直接相关回归，不再自动运行本地整体测试或 prepush。保留必要静态检查和构建，未受影响且已通过的检查不因补文档或审查附件重跑。全量 Fork diff 用于能力核对，深审聚焦本轮冲突、交叠变化、修复及受影响链路。不自动恢复已删除的 push hook。
@@ -27,15 +27,15 @@ tagged_failure=immutable-tag-consumed-revision-release-blocked
 external_evidence=task-and-release-notes-not-candidate-tree
 <!-- fork-squash-release-policy:end -->
 
-- 执行 candidate CI 前，读取 [docs/fork-sync-automation.md](docs/fork-sync-automation.md) 的候选触发、验收与失败处理规则。
+- 执行 candidate CI 前，读取 [FORK_SYNC_AUTOMATION.md](FORK_SYNC_AUTOMATION.md) 的候选触发、验收与失败处理规则。
 
 - 压缩任务开始时固定 `SQUASH_TARGET_COUNT=N`（`N>=2`）；CI 或审查未通过时只 amend `C_N` 或把修复折回所属提交并重建后继，禁止追加 `C_(N+1)`。只有同一 `C_N` SHA 的 dev candidate CI 与常规双审全部通过，才允许创建或补齐 GitHub Release。
 
 ## 测试文件与官方布局
 
-- 测试遵循官方 `tests/<domain>/` 布局。新增文件放到对应 domain，并按官方要求同时更新 `scripts/test-layout/layout.json` 的 explicit 与 `tests/fixtures/test-layout-expected.json`；resolver 能临时归类不免除登记。
-- 同一行为已有官方测试文件时，优先在原文件补充回归，不为“Fork 专项”重复建根目录测试。源码真值测试通过 `tests/helpers/repo-root.ts` 取仓库路径。
-- rebase 时，当前官方源码与测试已经完整覆盖 Fork 行为的，可以移动、改写或删除旧 Fork 测试；必须在 `FORK_CHANGES.md` 记录覆盖证据，不能只为通过测试降低断言。
+- 测试、GUI 测试、夹具、布局和 runner 默认跟随当前固定的官方基线。Fork 独有能力不再保留专项回归；默认不新增 Fork 专项测试文件，也不向官方测试追加 Fork 专属断言。
+- 官方断言与 Fork 行为冲突时，先核对断言和实际消费者，再优先修改 Fork 实现；不得用测试环境分支、降低断言或删除官方用例通过测试。
+- 只保留版本和发布元数据所必需的最小测试适配，并在任务差异清单中列明。用户在新任务中明确要求专项回归时，按官方布局及登记规则添加。
 
 ## 官方版本修改面最小化
 
@@ -50,25 +50,25 @@ external_evidence=task-and-release-notes-not-candidate-tree
 | 路径 | 职责 |
 | --- | --- |
 | `AGENTS.local.md` | Fork 开发约束与文档维护规则；新增、移动或删除 Fork 文档时更新本表。 |
-| `FORK_CHANGES.md` | 当前能力差异总览，包含官方基线、实现/回归入口和主要验证边界。 |
+| `FORK_CHANGES.md` | 当前能力差异总览，包含官方基线、实现入口和主要验证边界。 |
 | `FORK_MAINTAINERS.md` | Fork 分支、版本和发布规则补充；完整同步流程链接到下方同步政策。 |
 | `structure/fork-extensions.md` | 当前实现合同、源码边界和结构登记方式。 |
 | `docs-site/src/content/docs/reference/fork-extensions.md` | 英文用户能力概览。 |
 | `docs-site/src/content/docs/reference/configuration/fork-extensions.md` | 英文配置、默认值和操作说明。 |
 | `docs-site/src/content/docs/zh-cn/reference/fork-extensions.md` | 对应能力概览的简体中文译文。 |
 | `docs-site/src/content/docs/zh-cn/reference/configuration/fork-extensions.md` | 对应配置页的简体中文译文。 |
-| `docs/fork-sync-automation.md` | 现行同步、候选验证与发布流程的规则真源；保留现有路径。 |
+| `FORK_SYNC_AUTOMATION.md` | 现行同步、候选验证与发布流程的规则真源。 |
 
 ### 新增与形式
 
 - 上游已有文档保持当前官方基线 Tag 原文，包含 `MAINTAINERS.md`、`docs-site/` 页面和 `structure/INDEX.md`。需要说明 Fork 差异时，在对应官方文件的同目录另起文件；不得给官方正文、译文或索引插入 Fork 段落。
 - 优先更新上表中职责相符的现有文件。确需新增独立主题时，根目录使用 `FORK_<TOPIC>.md`，其余目录使用 `fork-<topic>.md`；登记路径和职责，并从现有 Fork 文档提供可点击入口。同一合同只维护一处正文，其他页面链接到它。
-- 文档使用 Markdown，以短段落、表格和必要示例说明当前差异、适用条件及证据边界。总览的每项能力保留实现及现有回归入口，缺少回归时注明；详细配置、合同和流程放在各自负责的页面，避免重复整段说明。文档站页面沿用现有 Astro/Starlight frontmatter。
+- 文档使用 Markdown，以短段落、表格和必要示例说明当前差异、适用条件及证据边界。总览的每项能力保留实现入口，并说明测试覆盖边界；详细配置、合同和流程放在各自负责的页面，避免重复整段说明。文档站页面沿用现有 Astro/Starlight frontmatter。
 - Spec/Plan、审查包、冲突账本、执行记录和测试流水默认放 Git 忽略的 `.tmp/`；只有用户明确要求才进入仓库。版本发布记录放 Release Notes，当前能力不追加版本章节或候选 SHA 流水。历史材料从 Git 查阅。
 
 ### 更新与核对
 
-- 能力新增、修复、上游化或撤回时，原地更新对应条目，并核对相关配置、合同、链接和回归入口；验证缺口继续明确标注。以“官方已覆盖”为由删除 Fork 差异条目或回归时，须有官方代码与测试的等价证据。
+- 能力新增、修复、上游化或撤回时，原地更新对应条目，并核对相关配置、合同和链接；验证缺口继续明确标注。以“官方已覆盖”为由删除 Fork 差异条目或实现时，须有官方代码与测试的等价证据。
 - 英文文档站 Fork 页面为正文来源；修改时同步对应简体中文页面，字段、默认值、条件和验证范围一致。其他官方语言页面继续采用上游版本。
 - 同步新官方基线时，以新的官方 Tag 恢复官方文档原文，再核对仍有效的 Fork 差异；删除已失效的条目和孤立文件，更新本表及链接。
 - `structure/` 新增或移动 Fork 文档时，按本目录规则更新 `structure/manifest.json` 并标记 `forkOnly: true`；完整接受结构门禁，生成的官方索引阅读顺序与源码映射排除这些条目。官方 contract registry 保持上游内容。

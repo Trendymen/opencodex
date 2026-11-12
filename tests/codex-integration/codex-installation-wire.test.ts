@@ -35,55 +35,6 @@ test("Pool identity survives token refresh and changes of caller installation", 
   expect(headersForCodexAuthContext(incoming("caller-other"), pool("account-a", "refreshed")).get(key)).toBe(a);
   expect(a).not.toBe(original);
 });
-
-for (const [label, encoded, value] of [
-  ["CJK", String.raw`\u4e2d\u6587`, "中文"],
-  ["emoji", String.raw`\ud83d\ude00`, "😀"],
-  ["Latin-1", String.raw`\u00e9`, "é"],
-  ["unpaired surrogate", String.raw`\ud800`, "\ud800"],
-] as const) test(`Pool preserves ${label} in turn metadata headers`, async () => {
-  const turnKey = "x-codex-turn-metadata";
-  const metadata = `{"installation_id":"caller-installation","note":"${encoded}","nested":{"text":"${encoded}"}}`;
-  const headers = incoming();
-  headers.set(turnKey, metadata);
-
-  const selected = await materializeCodexUpstreamAuthAsync(headers, pool());
-  const turn = selected.get(turnKey)!;
-  expect(headers.get(turnKey)).toBe(metadata);
-  expect(selected.get(key)).not.toBe(original);
-  expect(JSON.parse(turn)).toEqual({ installation_id: selected.get(key), note: value, nested: { text: value } });
-  expect((await materializeCodexUpstreamAuthAsync(selected, pool())).get(turnKey)).toBe(turn);
-
-  const other = await materializeCodexUpstreamAuthAsync(headers, pool("account-b"));
-  expect(other.get(key)).not.toBe(selected.get(key));
-  expect(JSON.parse(other.get(turnKey)!)).toEqual({ installation_id: other.get(key), note: value, nested: { text: value } });
-});
-
-test("Pool can reprocess long Latin-1 turn metadata without exceeding the size limit", async () => {
-  const turnKey = "x-codex-turn-metadata";
-  const note = "é".repeat(6000);
-  const headers = incoming();
-  headers.set(turnKey, JSON.stringify({ installation_id: "caller-installation", note }));
-
-  const selected = await materializeCodexUpstreamAuthAsync(headers, pool());
-  const turn = selected.get(turnKey)!;
-  expect(JSON.parse(turn)).toEqual({ installation_id: selected.get(key), note });
-  const reselected = await materializeCodexUpstreamAuthAsync(selected, pool());
-  expect(reselected.get(turnKey)).toBe(turn);
-  expect(JSON.parse(reselected.get(turnKey)!)).toEqual({ installation_id: selected.get(key), note });
-});
-
-test("Pool can reprocess long Unicode turn metadata in a request body", async () => {
-  const turnKey = "x-codex-turn-metadata";
-  const note = "中".repeat(6000);
-  const turn = JSON.stringify({ installation_id: "caller-installation", note });
-  const first = await build(pool(), { [turnKey]: turn });
-  const projected = JSON.parse(first.request.body).client_metadata[turnKey];
-  expect(JSON.parse(projected)).toEqual({ installation_id: new Headers(first.request.headers).get(key), note });
-  const second = await build(pool(), { [turnKey]: projected });
-  expect(JSON.parse(second.request.body).client_metadata[turnKey]).toBe(projected);
-});
-
 for (const kind of ["main", "main-pool"] as const) test(`${kind} preserves header and client metadata bytes`, async () => {
   const ctx: CodexAuthContext = kind === "main" ? { kind: "main", accountId: null } : { ...pool(), kind: "main-pool" } as CodexAuthContext;
   expect(headersForCodexAuthContext(incoming(), ctx).get(key)).toBe(original);

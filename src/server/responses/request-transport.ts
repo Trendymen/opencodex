@@ -91,6 +91,7 @@ import {
 import { isProviderApiKeyPaused, ProviderApiKeyPausedError } from "../../providers/api-key-pause";
 import { resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve";
 import { codexWsExecutorBinding, fetchWithHeaderTimeout, physicalSendGuardInit, physicalSendObserverInit, providerFetch, sendWithConnectionPolicy } from "./fetch-helpers";
+import { codexPassthroughProviderFetch } from "../../fork/codex-passthrough-fetch";
 import { resolveConnectTimeoutMs } from "../../stall-timeout";
 import { isLocalUpstream } from "../../lib/local-upstream";
 import { deepSeekImageFileBody, needsDeepSeekImageFiles } from "./deepseek-image-files";
@@ -909,7 +910,7 @@ export async function prepareResponsesTransport(
           commitKeyAttemptSend();
           sent = true;
         };
-        const fetch = providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+        const fetch = codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
                 codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
           providerName: route.providerName, modelId: route.modelId, pacingSlotAcquired: true,
           pacingSlot: attemptSlot,

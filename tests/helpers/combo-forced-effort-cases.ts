@@ -2,8 +2,6 @@ import { expect, test } from "bun:test";
 import { managementFetch as fetch } from "./management-auth";
 import { saveConfig } from "../../src/config";
 import { startServer } from "../../src/server";
-import { clearComboSelectionState, clearComboTargetCooldowns } from "../../src/combos";
-import { clearKeyCooldowns } from "../../src/providers/key-failover";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 
 interface Harness<Server> {
@@ -15,81 +13,13 @@ interface Harness<Server> {
   comboConfig(providers: OcxConfig["providers"], targets?: Array<{ provider: string; model: string }>,
     extra?: Partial<NonNullable<OcxConfig["combos"]>[string]>): OcxConfig;
   post(config: OcxConfig, raw?: Record<string, unknown>): Promise<Response>;
-  postLogged(config: OcxConfig, raw?: Record<string, unknown>, options?: { clientInitialResponses?: boolean }): Promise<Response>;
   latestAttemptReceipts(config: OcxConfig): Promise<{ log: unknown; usage: unknown }>;
 }
 
 /** Register inside the parent describe: its isolated homes, mocks and cleanup still apply. */
 export function registerComboForcedEffortCases<Server>({
-  serve, baseUrl, chatSuccess, chatStream, provider, comboConfig, post, postLogged, latestAttemptReceipts,
+  serve, baseUrl, chatSuccess, chatStream, provider, comboConfig, post, latestAttemptReceipts,
 }: Harness<Server>): void {
-  test("Responses ingress keeps the initial observation across forced combo effort and cap", async () => {
-    const bodies: Array<Record<string, unknown>> = [];
-    const upstream = serve(async request => { bodies.push(await request.json() as Record<string, unknown>); return chatSuccess("ok", "m1"); });
-    const config = comboConfig({ a: provider("openai-chat", baseUrl(upstream), "key-a", { reasoningEfforts: ["low", "medium", "high", "max"] }) }, undefined,
-      { defaultEffort: "high", defaultEffortMode: "force" });
-    config.effortCap = "medium";
-    saveConfig(config);
-    const server = startServer(0);
-    try {
-      const response = await fetch(new URL("/v1/responses", server.url), { method: "POST", headers: { "content-type": "application/json", "x-openai-subagent": "collab_spawn" }, body: JSON.stringify({
-        model: "combo/free", stream: false, reasoning: { effort: "high" }, input: [{ type: "configuration_update", reasoning: { effort: "max" } }, { role: "user", content: "hello" }],
-      }) });
-      expect(response.status).toBe(200);
-      await response.text();
-      expect(bodies[0]?.reasoning_effort).toBe("medium");
-      const { log, usage } = await latestAttemptReceipts(config);
-      for (const row of [log, usage]) expect(row).toMatchObject({
-        sessionEffortObservation: { clientEffort: "high", sessionEffort: "max", status: "visible" },
-        requestedEffort: "high->medium", effectiveEffort: "medium", reasoningWireField: "reasoning_effort", reasoningWireValue: "medium",
-      });
-    } finally { await server.stop(true); }
-  });
-
-  test("Responses combo force changes the wire effort while preserving the initial observation", async () => {
-    const bodies: Array<Record<string, unknown>> = [];
-    const upstream = serve(async request => { bodies.push(await request.json() as Record<string, unknown>); return chatSuccess("ok", "m1"); });
-    const config = comboConfig({ a: provider("openai-chat", baseUrl(upstream), "key-a", { reasoningEfforts: ["low", "medium", "high", "max"] }) }, undefined,
-      { defaultEffort: "max", defaultEffortMode: "force" });
-    saveConfig(config);
-    const server = startServer(0);
-    try {
-      const response = await fetch(new URL("/v1/responses", server.url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
-        model: "combo/free", stream: false, reasoning: { effort: "high" }, input: [{ type: "configuration_update", reasoning: { effort: "max" } }, { role: "user", content: "hello" }],
-      }) });
-      expect(response.status).toBe(200);
-      await response.text();
-      expect(bodies[0]?.reasoning_effort).toBe("max");
-      const { log, usage } = await latestAttemptReceipts(config);
-      for (const row of [log, usage]) expect(row).toMatchObject({
-        sessionEffortObservation: { clientEffort: "high", sessionEffort: "max", status: "visible" },
-        requestedEffort: "high", effectiveEffort: "max", reasoningWireField: "reasoning_effort", reasoningWireValue: "max",
-      });
-    } finally { await server.stop(true); }
-  });
-
-  test("combo child failures retain the parent observation and synthetic inputs do not create one", async () => {
-    const a = serve(() => Response.json({ error: { code: "insufficient_quota", message: "quota" } }, { status: 429 }));
-    const b = serve(() => Response.json({ error: { message: "invalid key" } }, { status: 401 }));
-    const config = comboConfig({ a: provider("openai-chat", baseUrl(a), "key-a"), b: provider("openai-chat", baseUrl(b), "key-b") }, undefined,
-      { defaultEffort: "low", defaultEffortMode: "force" });
-    const body = { reasoning: { effort: "high" }, input: [{ type: "configuration_update", reasoning: { effort: "max" } }, { role: "user", content: "hello" }] };
-    const response = await postLogged(config, body, { clientInitialResponses: true });
-    await response.text();
-    expect(response.status).toBe(429);
-    let receipts = await latestAttemptReceipts(config);
-    for (const row of [receipts.log, receipts.usage]) expect(row).toMatchObject({ sessionEffortObservation: { clientEffort: "high", sessionEffort: "max", status: "visible" } });
-    clearComboSelectionState(); clearComboTargetCooldowns(); clearKeyCooldowns();
-    const healthy = serve(() => chatSuccess("synthetic", "m1"));
-    const syntheticConfig = comboConfig({ a: provider("openai-chat", baseUrl(healthy), "key-new", { reasoningEfforts: ["low", "high", "max"] }) }, undefined,
-      { defaultEffort: "low", defaultEffortMode: "force" });
-    const synthetic = await postLogged(syntheticConfig, body);
-    await synthetic.text();
-    expect(synthetic.status).toBe(200);
-    receipts = await latestAttemptReceipts(syntheticConfig);
-    for (const row of [receipts.log, receipts.usage]) expect(row).not.toHaveProperty("sessionEffortObservation");
-  });
-
   test("force-default raises Hermes-like medium to max while fallback keeps medium", async () => {
     const efforts: unknown[] = [];
     const upstream = serve(async request => {
@@ -151,7 +81,6 @@ export function registerComboForcedEffortCases<Server>({
 
         const { log, usage } = await latestAttemptReceipts(config);
         for (const receipt of [log, usage]) {
-          expect(receipt).not.toHaveProperty("sessionEffortObservation");
           expect(receipt).toMatchObject({
             provider: "combo",
             model: "combo/free",

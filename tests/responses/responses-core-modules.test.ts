@@ -79,15 +79,8 @@ describe("Responses core module boundaries", () => {
   test("lease transfer retains both finally owners until response construction settles", () => {
     const ingress = readResponsesCoreModule("core-pipeline.ts");
     const native = readResponsesCoreModule("passthrough-execution.ts");
-    const lifetime = readResponsesCoreModule("core-lifetime.ts");
     expect(ingress).toContain("const passthroughResult = await executePassthroughResponse(");
     expect(ingress).toContain("if (passthroughResult instanceof Response) return passthroughResult;");
-    expect(ingress).toContain("const response = await execute();");
-    expect(ingress).toContain("return finish(retention ? retention.deliver(response) : response);");
-    expect(ingress.indexOf("const response = await execute();"))
-      .toBeLessThan(ingress.indexOf("return finish(retention ? retention.deliver(response) : response);"));
-    expect(ingress.indexOf("return finish(retention ? retention.deliver(response) : response);"))
-      .toBeLessThan(ingress.indexOf("} finally {"));
     expect(ingress).toContain("sendBudgetState.pendingHopPermit === unclaimedHop");
     expect(ingress.indexOf("await executePassthroughResponse("))
       .toBeLessThan(ingress.indexOf("const sidecarPlans = await executeResponsesSidecars("));
@@ -95,19 +88,13 @@ describe("Responses core module boundaries", () => {
     // Delivery is awaited inside the try, and its direct body is wrapped with
     // tool ownership before return. Both awaits must stay inside the lease owner;
     // the delivery call itself need not be the return expression.
-    const delivery = "const response = await deliverPassthroughResponse(";
-    const carry = "carryCodexPassthroughResponse(nativeExchange.upstreamResponse, response);";
-    expect(native).toContain(delivery);
-    expect(native).toContain(carry);
+    expect(native).toContain("const response = await deliverPassthroughResponse(");
     const guardedReturn = "return attachResponseToolOwnership(guardDirectPassthroughBodyInactivity(";
     expect(native).toContain(guardedReturn);
-    expect(native.indexOf(delivery)).toBeLessThan(native.indexOf(carry));
-    expect(native.indexOf(carry)).toBeLessThan(native.indexOf(guardedReturn));
+    expect(native.indexOf("await deliverPassthroughResponse("))
+      .toBeLessThan(native.indexOf(guardedReturn));
     expect(native.indexOf(guardedReturn))
       .toBeLessThan(native.indexOf("} finally {"));
-    expect(native).toContain('import { guardCodexPassthroughBodyInactivity as guardDirectPassthroughBodyInactivity } from "./core-lifetime";');
-    expect(lifetime).toContain("return carryLifetimeMarkers(response, guardDirectPassthroughBodyInactivity(response, signal, timeoutMs));");
-    expect(lifetime).toContain("carryCodexPassthroughResponse(source, target);");
     expect(native.indexOf("admissionState.pendingHostAdmissionLease = null;"))
       .toBeLessThan(native.indexOf("await preparePassthroughExchange("));
     expect(native).toMatch(/finally\s*\{\s*if \(nativeHostState\.lease\)\s*\{\s*releaseUpstreamHostAdmission\(nativeHostState\.lease\);\s*releaseCodexAuthContextProbeLease\(admissionState\.authCtx\);/);

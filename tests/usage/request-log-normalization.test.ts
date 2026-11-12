@@ -34,30 +34,6 @@ describe("request log metadata", () => {
     }
   });
 
-  test("direct ingress copies a mutable row and retains the normalized attempt roster", () => {
-    const previousHome = process.env.OPENCODEX_HOME;
-    const home = mkdtempSync(join(tmpdir(), "ocx-mutable-normalization-log-"));
-    process.env.OPENCODEX_HOME = home;
-    clearRequestLogsForTests();
-    try {
-      const attempt = { ordinal: 1, provider: "openai", model: "model", adapter: "openai-chat",
-        status: 500, durationMs: 100, sendCount: 3, recoveryKinds: [], usageStatus: "unreported" as const,
-        liveOnlyMetadata: "retained" };
-      const attempts = [attempt];
-      const entry = log({ client: "unknown", attempts });
-      addRequestLog(entry);
-      expect(getRequestLogEntries()[0]).not.toBe(entry);
-      expect(getRequestLogEntries()[0]).toEqual(entry);
-      expect(getRequestLogEntries()[0]!.attempts).toBe(attempts);
-      expect(getRequestLogEntries()[0]!.attempts![0]).toBe(attempt);
-    } finally {
-      clearRequestLogsForTests();
-      if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
-      else process.env.OPENCODEX_HOME = previousHome;
-      removeTreeWithRetry(home);
-    }
-  });
-
   test("new direct rows receive unknown client without changing the caller", () => {
     const previousHome = process.env.OPENCODEX_HOME;
     const home = mkdtempSync(join(tmpdir(), "ocx-new-client-log-"));

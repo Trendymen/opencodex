@@ -1,8 +1,8 @@
-import type { ResponsesRequestContext, ResponsesAdmissionState } from "./core-options";
-import type { PreparedResponsesRequest } from "./request-prepare";
-import type { ResponsesTransport } from "./request-transport";
-import type { ResponsesEffects } from "./response-effects";
-import type { ResponsesSendBudget } from "./request-send-budget";
+import type { ResponsesRequestContext, ResponsesAdmissionState } from "./responses/core-options";
+import type { PreparedResponsesRequest } from "./responses/request-prepare";
+import type { ResponsesTransport } from "./responses/request-transport";
+import type { ResponsesEffects } from "./responses/response-effects";
+import type { ResponsesSendBudget } from "./responses/request-send-budget";
 
 export interface AdapterDispatchInputs {
   requestContext: Pick<ResponsesRequestContext, "options" | "config" | "logCtx" | "req">;

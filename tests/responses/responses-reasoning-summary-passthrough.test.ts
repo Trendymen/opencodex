@@ -9,10 +9,12 @@ let releaseSpendHome: (() => void) | undefined;
 
 /**
  * The passthrough relay for DeepSeek's native /responses endpoint emits
- * content-channel reasoning (reasoning_text.delta + content items). The Fork
- * preserves that raw content for replay and adds a summary projection only
- * when the client explicitly requests one. A provider-level display default
- * alone cannot relabel raw reasoning as a summary.
+ * content-channel reasoning (reasoning_text.delta + content items) in BOTH
+ * display modes: Codex applies its own raw-reasoning display policy, so a
+ * requested summary must not rewrite the native passthrough shape either.
+ * Hidden thinking (hideThinkingSummary) and visible summary get the same
+ * content-channel passthrough; the hidden variant additionally arrives as an
+ * envelope-only item upstream when the adapter layer handles suppression.
  */
 
 function deepseekSeed() {
@@ -101,15 +103,16 @@ describe("passthrough reasoning summary rewrite honors hideThinkingSummary", () 
     expect(text).toContain('"content":[{"type":"reasoning_text","text":"think"}]');
   });
 
-  test("SSE: requested summary preserves content while adding a summary projection", async () => {
+  test("SSE: requested summary keeps the native content-channel passthrough", async () => {
     const response = await runHandleResponses(
       { model: "deepseek-v4-flash", input: "ping", stream: true, reasoning: { effort: "max", summary: "detailed" } },
       SSE_UPSTREAM_FRAMES.join(""),
       "text/event-stream",
     );
     const text = await response.text();
-    expect(text).toContain("response.reasoning_summary_text.delta");
-    expect(text).toContain('"summary":[{"type":"summary_text","text":"**think**\\n\\nthink"}]');
+    expect(text).toContain("response.reasoning_text.delta");
+    expect(text).not.toContain("response.reasoning_summary_text.delta");
+    expect(text).toContain('"content":[{"type":"reasoning_text","text":"think"}]');
   });
 
   test("bounded JSON: hidden thinking keeps the content shape", async () => {
@@ -123,15 +126,15 @@ describe("passthrough reasoning summary rewrite honors hideThinkingSummary", () 
     expect(text).not.toContain('"summary":[{"type":"summary_text"');
   });
 
-  test("bounded JSON: requested summary retains item content while adding summary", async () => {
+  test("bounded JSON: requested summary keeps the content shape", async () => {
     const response = await runHandleResponses(
       { model: "deepseek-v4-flash", input: "ping", stream: false, reasoning: { effort: "max", summary: "detailed" } },
       JSON_UPSTREAM,
       "application/json",
     );
     const text = await response.text();
-    expect(text).toContain('"summary":[{"type":"summary_text","text":"think"}]');
     expect(text).toContain('"content":[{"type":"reasoning_text","text":"think"}]');
+    expect(text).not.toContain('"summary":[{"type":"summary_text"');
   });
 
   test("SSE: hideRawReasoning stays inert on the native passthrough relay", async () => {

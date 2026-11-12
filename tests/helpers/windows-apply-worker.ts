@@ -1,8 +1,6 @@
 /** Owned offline fixture driver, never a production dispatch or installer input. */
 import { applyCodexCliUpdate } from "../../src/codex/cli-update-apply";
 import { createCodexCliWorkerLifetime } from "../../src/codex/cli-update-worker";
-import { inspectCodexCliInstall, type CodexCliInstallReport } from "../../src/codex/cli-install-provenance";
-import { windowsCodexCliPlanEvidence, windowsCodexCliPlanRefusalForTests } from "../../src/codex/cli-windows-plan-provenance";
 import { allocateCodexCliUpdateGateOwner, createWorkerCommitWindow, codexCliUpdateIsCancelled } from "../../src/codex/cli-update-selection-gate";
 import { startWindowsCliChild } from "../../src/codex/windows-cli-child";
 import { setWindowsOwnerAclAsyncRunnerForTests } from "../../src/lib/windows-owner-acl";
@@ -11,17 +9,6 @@ import type { WindowsApplyAcquisition, WindowsApplyAuthorityPins } from "../../s
 import { ptr } from "bun:ffi";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { win32 } from "node:path";
-
-export function describeWindowsFixtureInspection(report: CodexCliInstallReport) {
-  return {
-    managed: report.managed,
-    reason: report.reason,
-    candidateAvailable: report.candidateAvailable,
-    selectionAttested: report.selectionAttested,
-    evidenceArch: windowsCodexCliPlanEvidence(report)?.arch ?? null,
-    refusal: windowsCodexCliPlanRefusalForTests(report),
-  };
-}
 
 declare const self: Worker;
 if (Bun.isMainThread === false) {
@@ -33,7 +20,6 @@ if (Bun.isMainThread === false) {
     const { requestId, planId, inspectionDeps, target, gate, fence, aclReleaseFailure, replaceLock } = event.data;
     let anchor: { acquisition?: WindowsApplyAcquisition; owner?: { authority: Awaited<ReturnType<typeof openWindowsCliApplyAuthority>> } } | undefined;
     let replacementCreated = false;
-    let initialInspection: (ReturnType<typeof describeWindowsFixtureInspection> & { elapsedMs: number }) | undefined;
     const nativeSettlements: { terminal: boolean; cleanupComplete: boolean }[] = [];
     const abort = new AbortController();
     const view = new Int32Array(gate), word = new Int32Array(fence);
@@ -41,12 +27,6 @@ if (Bun.isMainThread === false) {
     try {
       const result = await applyCodexCliUpdate(planId, {
         platform: "win32", inspectionDeps, signal: abort.signal,
-        inspect: async deps => {
-          const started = performance.now();
-          const report = await inspectCodexCliInstall(deps);
-          initialInspection ??= { ...describeWindowsFixtureInspection(report), elapsedMs: Math.round(performance.now() - started) };
-          return report;
-        },
         isCancelled: codexCliUpdateIsCancelled(fence),
         commitWindow: createWorkerCommitWindow({ gate, fence, owner }),
         retainExecution: owner => { anchor = owner; return lifetime.retain(owner); },
@@ -94,7 +74,7 @@ if (Bun.isMainThread === false) {
           return child;
         },
       });
-      self.postMessage({ type: "result", requestId, result, initialInspection, cleanupConfirmed: (!replaceLock || replacementCreated) && nativeSettlements.length > 0
+      self.postMessage({ type: "result", requestId, result, cleanupConfirmed: (!replaceLock || replacementCreated) && nativeSettlements.length > 0
         && nativeSettlements.every(item => item.terminal && item.cleanupComplete) });
     } catch {
       self.postMessage({ type: "fixture-error", requestId });

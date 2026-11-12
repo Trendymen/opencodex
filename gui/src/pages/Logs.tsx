@@ -301,11 +301,6 @@ function reasoningWireLabel(log: ReasoningLogFields): string | undefined {
   return `${log.reasoningWireField}=${log.reasoningWireValue}`;
 }
 
-export function SessionEffortIndicator({ observation, t }: { observation?: SessionEffortObservation; t: TFn }) {
-  if (!observation) return null;
-  return <>{" · "}<span title={t("logs.effort.initialUpdate")}>{observation.status === "visible" ? observation.sessionEffort : t("logs.effort.unknown")}</span></>;
-}
-
 function servedModelLabel(log: { model: string; resolvedModel?: string; servedModel?: string; wireModel?: string }): ReactNode {
   if (isModelRerouted(log)) {
     return <>{modelLabel(log.wireModel ?? log.model)}{" → "}{modelLabel(log.servedModel!)}</>;
@@ -975,7 +970,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
                   {/* The wire field (reasoning_effort=high) stays in the title and the detail
                       dialog; as a second line it repeated the label and, in mono, outgrew the
                       column and painted over the next cell. */}
-                  {columns.effort && <td className="mono log-reasoning-cell" title={reasoningWire}>{effortLabel(log)}<SessionEffortIndicator observation={log.sessionEffortObservation} t={t} /></td>}
+                  {columns.effort && <td className="mono log-reasoning-cell" title={reasoningWire}>{effortLabel(log)}</td>}
                   {columns.tokens && (
                   <td className="text-right font-mono tabular-nums" title={tokensTitle(log, t)}>
                     {(() => {
