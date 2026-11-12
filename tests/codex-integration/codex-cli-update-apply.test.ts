@@ -50,6 +50,8 @@ function publishedNodeArgs(f: ReturnType<typeof fixture>, args: string[], proces
   const bunPreload = repoPath("tests", "helpers", "fork-codex-cli-process-preload.ts");
   const bun = process.execPath;
   const target = realpathSync.native(f.launcher);
+  const config = join(dirname(preload), "bunfig.toml");
+  writeFileSync(config, "");
   writeFileSync(preload, `const fs = require("node:fs"), cp = require("node:child_process"), spawn = cp.spawn;
 const root = ${JSON.stringify(f.root)}, launcher = ${JSON.stringify(launcher)}, expected = ${JSON.stringify(args)};
 const bun = ${JSON.stringify(bun)}, entry = ${JSON.stringify(cliEntry)}, target = ${JSON.stringify(target)};
@@ -64,7 +66,8 @@ cp.spawn = function (file, args, options) {
   if (file !== bun || !Array.isArray(args) || args[0] !== entry
     || !/^--ocx-internal-launch-proof=[A-Za-z0-9_-]{43}$/.test(args[1] || "")
     || JSON.stringify(args.slice(2)) !== JSON.stringify(expected)) throw new Error("unexpected published CLI fixture Bun launch");
-  return spawn.call(this, file, ["--preload", ${JSON.stringify(bunPreload)}, ...args], {
+  const fixtureOptions = expected[0] === "start" ? [] : [${JSON.stringify(`--config=${config}`)}, "--preload", ${JSON.stringify(bunPreload)}];
+  return spawn.call(this, file, [...fixtureOptions, ...args], {
     ...options, env: { ...options.env, OCX_FIXTURE_CODEX_PROCESS_MODE: ${JSON.stringify(processFixture)} },
   });
 };
@@ -74,10 +77,10 @@ require("node:module").syncBuiltinESMExports();
 }
 function cli(f: ReturnType<typeof fixture>, args: string[], processFixture: ProcessFixture = "empty") {
   const publishedArgs = ["system", "codex-cli-update", ...args, "--json"];
-  const result = spawnSync(Bun.which("node")!, publishedNodeArgs(f, publishedArgs, processFixture), {
+  const result = spawnSync(Bun.which("node", { PATH: process.env.PATH })!, publishedNodeArgs(f, publishedArgs, processFixture), {
     cwd: f.root, encoding: "utf8", env: { ...f.env, NODE_OPTIONS: undefined }, timeout: 60_000,
   });
-  expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
+  expect(result.error).toBeUndefined(); expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout);
 }
 function fixtureInWorkspaceScratch() {
@@ -92,7 +95,7 @@ function fixtureInWorkspaceScratch() {
 }
 
 function managementTestEnv(f: ReturnType<typeof fixture>) {
-  const node = Bun.which("node");
+  const node = Bun.which("node", { PATH: process.env.PATH });
   if (!node) throw new Error("fixture node executable unavailable");
   const home = f.home;
   const configDir = join(home, "ocx");
@@ -311,7 +314,7 @@ test("HTTP fixture npm wrapper returns all metadata under an ESM ancestor", () =
   const root = createCodexCliTestRoot("ocx-http-npm-module-"); roots.push(root);
   writeFileSync(join(root, "package.json"), JSON.stringify({ private: true, type: "module" }));
   const fakeBin = join(root, "bin"); mkdirSync(fakeBin);
-  const node = Bun.which("node"); if (!node) throw new Error("fixture node unavailable");
+  const node = Bun.which("node", { PATH: process.env.PATH }); if (!node) throw new Error("fixture node unavailable");
   const f = fixtureArtifactSet("linux", "x64");
   const main = { ...f.mainManifest, dist: { integrity: f.artifacts.main.integrity, tarball: f.artifacts.main.tarball } };
   const backing = { name: f.artifacts.backing.name, version: f.artifacts.backing.version,
@@ -425,7 +428,7 @@ postMessage({ text: await run("/usr/bin/printf", ["real-command"]),
       [wrongArgs, f.env], [args, { ...f.env, CODEX_CLI_PATH: "/usr/bin/true" }],
       [args, { ...f.env, OPENCODEX_BUN_PATH: "/usr/bin/true" }],
     ] as const) {
-      const child = spawnSync(Bun.which("node")!, argv, { encoding: "utf8", timeout: 10_000,
+      const child = spawnSync(Bun.which("node", { PATH: process.env.PATH })!, argv, { encoding: "utf8", timeout: 10_000,
         env: { ...env, NODE_OPTIONS: undefined } });
       expect(child.error).toBeUndefined(); expect(child.status).not.toBe(0);
       expect(child.stderr).toContain("unexpected published CLI fixture identity");

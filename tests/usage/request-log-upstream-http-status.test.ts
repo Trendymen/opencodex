@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { normalizePersistedUsageRow, readUsageEntries, resetUsageReadCacheForTests } from "../../src/usage/log";
+import { normalizePersistedUsageRow, readUsageEntries, resetUsageReadCacheForTests, usageLogPath } from "../../src/usage/log";
 import { requestLogEntryFromPersistedUsage, addFinalRequestLog, beginRequestAttempt, noteProviderAttemptSend, type RequestLogContext, type RequestLogEntry } from "../../src/server/request-log";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -17,6 +17,45 @@ test("upstream HTTP status survives final logging and persisted projections", ()
   expect(requestLogEntryFromPersistedUsage(normalized!)).toMatchObject({ upstreamHttpStatus: 200 });
 });
 
+test.each([
+  "private-sse-read-timeout", "private-body-timeout", "private-invalid-json", "private-invalid-utf8",
+  "private-oversized", "private-budget", "private-header-name", "private-body-unreadable",
+])("local protection code %s survives logging, persistence and hydration without error text", code => {
+  const entries: RequestLogEntry[] = [];
+  const attempt = beginRequestAttempt(1, "openai", "gpt-test", "openai-responses");
+  addFinalRequestLog("local-protection", 1, { model: "gpt-test", provider: "openai", upstreamHttpStatus: 200,
+    errorCode: code, causeHint: "local-refusal", terminalSource: "synthetic", upstreamError: "sensitive-local-canary",
+    activeAttempt: attempt, attempts: [attempt] }, 502, { terminalStatus: "failed" }, entry => entries.push(entry));
+  const live = entries[0]!;
+  const persisted = normalizePersistedUsageRow(live)!;
+  const hydrated = requestLogEntryFromPersistedUsage(persisted);
+  for (const row of [live, persisted, hydrated]) {
+    expect(row).toMatchObject({ errorCode: code, failureCause: "local-refusal", terminalSource: "synthetic", upstreamHttpStatus: 200,
+      attempts: [expect.objectContaining({ errorCode: code, upstreamHttpStatus: 200 })] });
+    expect(row).not.toHaveProperty("upstreamError");
+    expect(row).not.toHaveProperty("upstreamCondition");
+    expect(JSON.stringify(row)).not.toContain("sensitive-local-canary");
+  }
+});
+
+test("unknown private-like codes remain bounded and nonlocal evidence remains classified", () => {
+  const row = { requestId: "fixture", timestamp: 1, provider: "openai", model: "gpt-test", status: 502, durationMs: 1,
+    usageStatus: "unreported", errorCode: "private-arbitrary-canary", upstreamError: "sensitive-upstream-canary" };
+  const normalized = normalizePersistedUsageRow(row)!;
+  expect(normalized).toMatchObject({ errorCode: "upstream_server_error", upstreamCondition: "upstream_failed" });
+  expect(JSON.stringify(normalized)).not.toContain("canary");
+});
+
+test("a known protection code alone does not hide genuine upstream evidence", () => {
+  const row = { requestId: "fixture", timestamp: 1, provider: "openai", model: "gpt-test", status: 502, durationMs: 1,
+    usageStatus: "unreported", errorCode: "private-invalid-json", upstreamError: "sensitive-upstream-canary" };
+  for (const markers of [{}, { failureCause: "local-refusal", terminalSource: "upstream" }, { terminalSource: "synthetic" }]) {
+    const normalized = normalizePersistedUsageRow({ ...row, ...markers })!;
+    expect(normalized).toMatchObject({ errorCode: "private-invalid-json", upstreamCondition: "upstream_failed" });
+    expect(JSON.stringify(normalized)).not.toContain("sensitive-upstream-canary");
+  }
+});
+
 test("persisted HTTP status accepts only integer HTTP response statuses", () => {
   const row = { requestId: "fixture", timestamp: 1, provider: "openai", model: "gpt-test", status: 502, durationMs: 1, usageStatus: "unreported" };
   for (const value of [99, 600, 200.5, "200", Infinity, null]) {
@@ -29,9 +68,11 @@ test("the original upstream HTTP status reaches usage.jsonl and rehydrated logs"
   const home = mkdtempSync(join(tmpdir(), "ocx-http-status-")); const previousHome = process.env.OPENCODEX_HOME;
   process.env.OPENCODEX_HOME = home;
   try { addFinalRequestLog("http-status-fixture", Date.now(), { model: "gpt-test", provider: "openai", upstreamHttpStatus: 400,
-    errorCode: "private-invalid-json", causeHint: "local-refusal", terminalSource: "synthetic" }, 502);
+    errorCode: "private-invalid-json", causeHint: "local-refusal", terminalSource: "synthetic", upstreamError: "sensitive-local-canary" }, 502);
     const [row] = readUsageEntries();
     expect(row).toMatchObject({ upstreamHttpStatus: 400, status: 502, errorCode: "private-invalid-json", failureCause: "local-refusal" });
+    expect(row).not.toHaveProperty("upstreamCondition");
+    expect(readFileSync(usageLogPath(), "utf8")).not.toContain("sensitive-local-canary");
     expect(requestLogEntryFromPersistedUsage(row!)).toHaveProperty("upstreamHttpStatus", 400);
   } finally { if (previousHome === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = previousHome;
     resetUsageReadCacheForTests(); removeTreeWithRetry(home); }

@@ -637,6 +637,39 @@ describe("raised inbound body admission lifetime", () => {
     });
   }
 
+  test("deep JSON capture keeps expanded reservation and transfers the source lease", async () => {
+    const depth = 500_000;
+    const text = "[".repeat(depth) + "1e20" + "]".repeat(depth);
+    const serializedBytes = 2 * depth + 21;
+    const req = admissionRequest("/v1/responses", text);
+    const translator = createTranslatorBudget();
+    let source: CodexRequestSource | undefined;
+    let response: Response | undefined;
+    try {
+      response = await admittedBodyWork(async () => {
+        await readJsonRequestBody(req, translator, RAISED_BODY_LIMIT, { onDecodedJson(capture) {
+          assert.equal(capture.jsonText, text);
+          assert.equal(capture.serializedBytes, serializedBytes);
+          source = retainCodexRequestSource(capture, translator);
+          assert.throws(() => capture.takeTextLease(), /already transferred/);
+        } });
+        assert.equal(translator.snapshot().currentBytes, text.length + serializedBytes);
+        const copy = materializeCodexRequestSource(source!, translator);
+        assert.ok(Array.isArray(copy.body));
+        copy.release();
+        return finalizeAccountLease(new Response("held"), () => source?.release(), () => source?.release());
+      }, req);
+      assert.equal(testBudget.snapshot().reservedBytes, serializedBytes);
+      assert.equal(await response.text(), "held");
+      assert.equal(translator.snapshot().currentBytes, serializedBytes);
+      assert.throws(() => materializeCodexRequestSource(source!, translator), /unavailable/);
+    } finally {
+      await response?.body?.cancel().catch(() => undefined);
+      source?.release();
+      translator.dispose();
+    }
+  });
+
   for (const end of ["eof", "cancel"] as const) {
     test(`compressed captured source and admission release on response ${end}`, async () => {
       const text = `{"input":"${"x".repeat(4096)}","n":1e20}`;

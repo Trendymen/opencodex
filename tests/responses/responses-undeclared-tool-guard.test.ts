@@ -93,10 +93,10 @@ describe("undeclared tool call guard", () => {
   });
 
   test("refuseUndeclared true invokes onReject only for an actual undeclared rejection", () => {
-    const rejected: string[] = [];
+    const rejected: string[] = []; const refusals: string[] = [];
     const rewrite = createUndeclaredToolCallGuardBlockRewrite(
       new Set(["exec"]), undefined, undefined, undefined, undefined,
-      { refuseUndeclared: true }, name => rejected.push(name),
+      { refuseUndeclared: true, onRefusal: message => refusals.push(message) }, name => rejected.push(name),
     );
     const declaredCall = frame("response.output_item.added", {
       output_index: 0,
@@ -109,9 +109,15 @@ describe("undeclared tool call guard", () => {
 
     expect(rewrite(declaredCall)).toEqual([declaredCall]);
     expect(rejected).toEqual([]);
-    expect(rewrite(undeclared).join("\n")).toContain("response.failed");
+    expect(refusals).toEqual([]);
+    const output = rewrite(undeclared).join("\n");
+    expect(output).toContain("response.failed");
+    expect(output).not.toContain("other_tool");
     expect(rewrite(undeclared)).toEqual([]);
     expect(rejected).toEqual(["other_tool"]);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toContain("undeclared client tool");
+    expect(refusals[0]).not.toContain("other_tool");
   });
 
   test("relays a declared call untouched", async () => {

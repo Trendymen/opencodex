@@ -19,7 +19,7 @@ const baseProcessAllowlist: readonly (readonly [string, string, number])[] = [
   ["bin/ocx.mjs:<module>:child.kill()","pre-mutation: terminate own sync child after delegate publication failure",1],
   ["src/update/posix-install-supervisor.mjs:supervise:process.kill(-pid, \"SIGKILL\")","supervisor child: terminates only the installer group this supervisor spawned",2],
   ["bin/ocx.mjs:runPackageManagerSelfUpdate:process.exit(10)","pre-mutation session start refusal or mutation entry refusal; scanner checks the latter exact branch",2],
-  ["bin/ocx.mjs:runPackageManagerSelfUpdate:process.exit(1)","terminal failure only; cannot publish successful update",32],
+  ["bin/ocx.mjs:runPackageManagerSelfUpdate:process.exit(1)","terminal failures include session preflight refusal and unconfirmed installer termination; cannot publish successful update",34],
   ["bin/ocx.mjs:runPackageManagerSelfUpdate:process.exit(0)","ordinary launcher/help/probe or terminal prompt outcome; update success remains guarded",1],
   ["bin/ocx.mjs:fail:process.exit(1)","terminal failure only; cannot publish successful update",1],
   ["bin/ocx.mjs:<module>:process.exit(0)","ordinary launcher/help/probe or terminal prompt outcome; update success remains guarded",4],

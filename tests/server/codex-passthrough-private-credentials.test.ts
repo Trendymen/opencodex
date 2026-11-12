@@ -40,7 +40,7 @@ test.each(["direct", "pool"] as const)("unclassified private success fails close
   try {
     const response = await fixture.request(input);
     expect(response.status).toBe(502); const text = await response.text();
-    expect(text).toContain("upstream_error_protection_failed"); expect(text).not.toContain(secret);
+    expect(text).toContain("upstream_error_protection_failed"); expect(text).toContain("Upstream error could not be delivered safely."); expect(text).not.toContain(secret);
     expect(response.headers.get("x-echo") ?? "").not.toContain(secret);
     expect(cancelled).toBe(1); expect(body!.locked).toBe(false); expect(upstreamSignal!.aborted).toBe(true);
     expect(fixture.seen).toHaveLength(1); expect(activeDuringSend).toBeGreaterThan(0); expect(getActiveTurnCount()).toBe(0);
@@ -49,7 +49,10 @@ test.each(["direct", "pool"] as const)("unclassified private success fails close
     }
     expect(budgets.length).toBeGreaterThan(0); for (const budget of budgets) expect(budget.snapshot().currentBytes).toBe(0);
     expect(entries.at(-1)).toMatchObject({ status: 502, upstreamHttpStatus: 200, errorCode: "private-body-unreadable",
-      failureCause: "local-refusal", terminalSource: "synthetic", upstreamError: "Private response protection could not verify the bounded body." });
+      failureCause: "local-refusal", terminalSource: "synthetic",
+      attempts: [expect.objectContaining({ errorCode: "private-body-unreadable", upstreamHttpStatus: 200 })] });
+    expect(entries.at(-1)).not.toHaveProperty("upstreamError");
+    expect(entries.at(-1)).not.toHaveProperty("upstreamCondition");
     expect(JSON.stringify(entries)).not.toContain(secret);
   } finally { hostAcquireSpy.mockRestore(); hostResetSpy.mockRestore(); budgetSpy.mockRestore(); unobserve(); await fixture.close(); }
 });

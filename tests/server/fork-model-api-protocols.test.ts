@@ -85,7 +85,7 @@ test("auxiliary Responses HTTP, compact and WebSocket retain native fields and e
   } finally { socket?.close(); try { await fixture?.close(); } finally { await upstream.stop(true); } }
 });
 
-test("native Messages/count preserve query, body and upstream errors; Chat keeps its own wire shape", async () => {
+test("native Messages/count preserve requests and normalize upstream errors; Chat keeps its own wire shape", async () => {
   const received: Array<{ path: string; query: string; body: unknown; credential: string | null }> = [];
   const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     const url = new URL(req.url);
@@ -109,9 +109,14 @@ test("native Messages/count preserve query, body and upstream errors; Chat keeps
       expect(await response.json()).toMatchObject(expected);
       expect(received.at(-1)).toMatchObject({ query: "?beta=true", body, credential: "sk-ant-test-upstream" });
     }
-    const failed = await fetch(`${fixture.apiUrl}/v1/messages?fail=1`, { method: "POST", headers, body: JSON.stringify(body) });
-    expect(failed.status).toBe(529);
-    expect(await failed.json()).toMatchObject({ error: { type: "overloaded_error", message: "fixture overload" } });
+    for (const base of [fixture.apiUrl, fixture.primaryUrl]) for (const path of ["/v1/messages", "/v1/messages/count_tokens"]) {
+      const failed = await fetch(`${base}${path}?fail=1`, { method: "POST", headers, body: JSON.stringify(body) });
+      expect(failed.status).toBe(529);
+      const failure = await failed.json();
+      expect(failure).toEqual({ type: "error", error: { type: "overloaded_error", message: "The provider is temporarily unavailable; retry later." } });
+      expect(JSON.stringify(failure)).not.toContain("fixture overload");
+      expect(received.at(-1)).toMatchObject({ path, query: "?fail=1", body, credential: "sk-ant-test-upstream" });
+    }
     const chat = await fetch(`${fixture.apiUrl}/v1/chat/completions`, { method: "POST", headers: jsonHeaders, body: JSON.stringify({ model: "chat/fixture-chat", messages: body.messages, temperature: 0.3 }) });
     expect(chat.status).toBe(200);
     expect(await chat.json()).toMatchObject({ object: "chat.completion", choices: [{ message: { content: "native chat" } }] });

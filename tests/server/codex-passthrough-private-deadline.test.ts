@@ -31,8 +31,11 @@ test("enabled private deadline keeps the five second refusal and original upstre
   }, upstream: async () => new Response(new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } }), { headers: { "content-type": "text/event-stream" } }) });
   try { const response = await fixture.request({ model: "gpt-5.6-sol", stream: true, input: "synthetic" }); await response.text();
     expect(response.status).toBe(502); expect(cancelled).toBe(true);
-    expect(entries.at(-1)).toMatchObject({ upstreamHttpStatus: 200, errorCode: "private-sse-read-timeout", failureCause: "local-refusal",
-      terminalSource: "synthetic", upstreamError: "Private SSE read deadline exceeded (5 seconds)." });
+    expect(entries.at(-1)).toMatchObject({ status: 502, upstreamHttpStatus: 200, errorCode: "private-sse-read-timeout",
+      failureCause: "local-refusal", terminalSource: "synthetic" });
+    expect(entries.at(-1)?.attempts?.at(-1)).toMatchObject({ upstreamHttpStatus: 200, errorCode: "private-sse-read-timeout" });
+    expect(entries.at(-1)).not.toHaveProperty("upstreamError");
+    expect(entries.at(-1)).not.toHaveProperty("upstreamCondition");
     expect(fixture.seen).toHaveLength(1);
   } finally { unobserve(); await fixture.close(); }
 }, 12_000);

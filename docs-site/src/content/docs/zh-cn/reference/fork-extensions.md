@@ -26,4 +26,6 @@ description: 相对已 rebase 上游版本的兼容与维护差异。
 
 Fork 提供磁盘诊断、独立文本样本开关和 `install:local` 的包/服务/Volta 回滚。`ben.N` 先比较上游主版本，再比较 Fork 修订；同主版本 stable 不覆盖 Fork，已发布 Tag 保持不变。
 
+开发和发布候选统一使用 `dev`。已发布版本由不可变 Fork Tag 和正式 GitHub Release 确定；发布前使用官方 workflow 对精确 dev 提交执行完整 `workflow_dispatch` 检查，不再依赖 main push CI。
+
 Standalone web search 标识、真实 backend ciphertext 恢复和 Windows 全局替换/服务恢复仍需绑定实现的端到端验收；合成测试不证明这些结果。
