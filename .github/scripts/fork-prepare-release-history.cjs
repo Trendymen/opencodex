@@ -17,11 +17,11 @@ function gitEnvironment() {
     if (allowed.has(key.toUpperCase()) && value !== undefined) env[key] = value;
   }
   return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull, GIT_TERMINAL_PROMPT: '0',
-    GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: devNull };
+    GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_GRAFT_FILE: devNull };
 }
 
 function runGit(args, env, stage, input) {
-  const result = spawnSync('git', ['-c', 'credential.helper=', '-c', 'http.extraHeader=',
+  const result = spawnSync('git', ['--no-lazy-fetch', '-c', 'credential.helper=', '-c', 'http.extraHeader=',
     '-c', 'http.followRedirects=false', ...args], {
     env, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 60_000, maxBuffer: 1024 * 1024,
   });
