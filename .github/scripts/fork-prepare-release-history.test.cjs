@@ -3,9 +3,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
-const { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
-const { join } = require('node:path');
+const { delimiter, join } = require('node:path');
 
 const script = join(__dirname, 'fork-prepare-release-history.cjs');
 function prepare(options) {
@@ -114,6 +114,39 @@ test('ignores checkout-local URL rewriting when contacting the fixed source', t 
   prepare({ repoRoot: f.repoRoot, officialUrl: f.source, mappings: f.mappings });
   assert.equal(f.has(f.stable), true);
   assert.equal(f.has(f.preview), true);
+});
+
+test('does not lazy fetch missing objects from the checkout promisor', t => {
+  const f = fixture(t);
+  const marker = join(f.root, 'promisor-invoked'), uploadPack = join(f.root, 'promisor-upload-pack');
+  writeFileSync(uploadPack, `#!${process.execPath}\nconst { writeFileSync } = require('node:fs');\nconst { spawnSync } = require('node:child_process');\nwriteFileSync(${JSON.stringify(marker)}, 'called');\nconst result = spawnSync('git-upload-pack', process.argv.slice(2), { stdio: 'inherit' });\nprocess.exit(result.status ?? 1);\n`, { mode: 0o700 });
+  f.git(f.repoRoot, 'config', 'remote.promisor.url', f.source);
+  f.git(f.repoRoot, 'config', 'remote.promisor.promisor', 'true');
+  f.git(f.repoRoot, 'config', 'remote.promisor.partialclonefilter', 'blob:none');
+  f.git(f.repoRoot, 'config', 'remote.promisor.uploadpack', uploadPack);
+  f.git(f.repoRoot, 'config', 'extensions.partialClone', 'promisor');
+  prepare({ repoRoot: f.repoRoot, officialUrl: f.source, mappings: f.mappings });
+  assert.equal(existsSync(marker), false, 'checkout promisor was contacted');
+  for (const sha of [f.stable, f.preview]) {
+    assert.equal(execFileSync('git', ['-C', f.repoRoot, 'cat-file', '-t', sha], {
+      env: { ...process.env, GIT_NO_LAZY_FETCH: '1' }, encoding: 'utf8',
+    }).trim(), 'commit');
+  }
+});
+
+test('fails closed when Git cannot disable lazy fetch', t => {
+  const f = fixture(t);
+  const bin = join(f.root, 'bin'), marker = join(f.root, 'unsafe-git-command');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'git'), `#!${process.execPath}\nif (process.argv[2] === '--no-lazy-fetch') process.exit(129);\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, 'called');\nprocess.exit(1);\n`, { mode: 0o700 });
+  const previous = process.env.PATH;
+  process.env.PATH = `${bin}${delimiter}${previous ?? ''}`;
+  try {
+    assert.throws(() => prepare({ repoRoot: f.repoRoot, officialUrl: f.source, mappings: f.mappings }), /read local object/);
+  } finally {
+    if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
+  }
+  assert.equal(existsSync(marker), false, 'an unsupported Git ran a command without the fail-closed option');
 });
 
 test('reports temporary directory failures without exposing their paths', t => {
