@@ -7,7 +7,7 @@
 - 每小时上游稳定版同步自动化（含官方 Tag 保留、双审门禁、幂等收敛与完整发布流程）的规则真源见 docs/fork-sync-automation.md；该自动化相关任务必须先读取并遵循该文档。
 - 分支职责以该文档为准：dev 是唯一开发和发布候选分支；已发布状态由不可变 Fork Tag 和正式 GitHub Release 确定。
 - rebase 冲突审查必须执行该文档规定的逐冲突证据账本、固定 SHA 独立机械重算、三层 diff、命名风险清单与默认双审；只给汇总计数、总括性解决说明或测试通过结论均不够。explorer 仅作可选取证，不因敏感路径、冲突数量或 hunk 数量自动成为发布门禁；只有 reviewer 或主线程指出未收敛的具体跨边界 path、symbol 或 edge 时，才补一个窄范围质量审查。
-- 验证选择、结果复用与有界审查按该文档执行：实现期定向检查，最终实现一次官方 prepush；未受影响且已通过的检查不因补文档或审查附件重跑。全量 Fork diff 是能力核对材料，深审聚焦本轮冲突、交叠变化、修复及受影响链路。不自动恢复已删除的 push hook。
+- 验证选择、结果复用与有界审查按该文档执行：发布测试以同一候选 SHA 的官方 CI 为准；CI 报错后只跑报错项及直接相关回归，不再自动运行本地整体测试或 prepush。保留必要静态检查和构建，未受影响且已通过的检查不因补文档或审查附件重跑。全量 Fork diff 用于能力核对，深审聚焦本轮冲突、交叠变化、修复及受影响链路。不自动恢复已删除的 push hook。
 - 发布使用一次 `git push --atomic` 包含 dev、Fork Tag 和官方 Tag；dev 使用精确 expected-OID lease，两个 Tag 不 force。不再创建或更新 main、sync 或 upstream-release 发布指针。既有引用按同步政策迁移，未知引用保持原状。
 
 <!-- fork-squash-release-policy:start -->

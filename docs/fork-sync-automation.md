@@ -159,16 +159,16 @@ FORK_CHANGES.md 是当前 Fork 已提交能力及相对官方覆盖状态的维�
 - 新官方稳定 Tag 的 `AGENTS.md`、目录级 `AGENTS.md`、package scripts、测试布局和 CI 拓扑是本轮默认基线。Fork 只保留有当前能力证据支持的差异。
 - Fork 测试只固定 Fork 新增语义，不固定官方自行维护的 job 名、shard 数、timeout、目录旧路径或实现细节；官方门禁改变时，先采用官方合同，再补最小 Fork 断言。
 - 同一行为已由当前官方源码与测试完整覆盖时，删除重复 Fork 实现或测试，并在 `FORK_CHANGES.md` 留下证据。不能为了让旧 Fork 测试继续通过而恢复已经过时的官方结构。
-- 验证命令失败时，先在 `NEW_OFFICIAL` 的干净临时工作区运行同一命令。官方基线同样失败且不影响本轮 Fork 修改路径或发布产物时，记录为 upstream-baseline residual risk，不算 Fork 回归；不能借此忽略只在 Fork 候选出现的失败，也不能改弱断言。
+- CI 或定向验证失败时，在 `NEW_OFFICIAL` 的干净临时目录对照同一报错项；不为对照启动本地整体测试。官方基线同样失败且不影响本轮 Fork 修改路径或发布产物时，记录为 upstream-baseline residual risk，不算 Fork 回归；不能借此忽略只在 Fork 候选出现的失败，也不能改弱断言。
 - 测试文件使用官方 `tests/<domain>/` 布局；当前命令和维护文档更新真实路径，已经结束的历史 Spec/Plan 不做纯路径批量改写。
 
 ### 验证选择与结果复用
 
-- 相对 rebase 前固定的 Fork SHA 核对模型 API 入口能力清单：默认关闭、两种拓扑、原生数据面/凭据与管理隔离、保存后待重启、真实状态及本机证明。涉及该链路时显式执行 `bun test tests/config/fork-model-api-listener-config.test.ts tests/cli/fork-model-api-port.test.ts tests/server/fork-model-api-listener.test.ts tests/server/fork-model-api-protocols.test.ts tests/server/fork-model-api-access.test.ts tests/server/fork-model-api-status.test.ts`；不能仅凭导入图选择覆盖源码读取、子进程或临时 socket 映射。
-- 实现和冲突修复期间只跑相关定向测试；跨模块时用 `bun scripts/test.ts --changed=origin/dev`，并记录该次 `origin/dev` 的完整 SHA。若远端已经包含候选而使 changed 集合失去覆盖意义，直接指定受影响的测试文件；不能把空集合当作验证通过。源码读取、子进程、fixture 等间接依赖需显式补测。
-- 新官方基线完成适配后，对最终实现运行一次当前官方 `prepush`；它已包含的 typecheck、全量测试、privacy scan 等不再逐项重复执行。GUI 或文档站构建按本轮实际影响和官方规则补充。保持官方 runner 的默认并发，不以降并发、加 timeout 或删除断言替代通过。
+- 相对 rebase 前固定的 Fork SHA 核对模型 API 入口能力清单：默认关闭、两种拓扑、原生数据面/凭据与管理隔离、保存后待重启、真实状态及本机证明。该链路的回归入口为 `tests/config/fork-model-api-listener-config.test.ts`、`tests/cli/fork-model-api-port.test.ts`、`tests/server/fork-model-api-listener.test.ts`、`tests/server/fork-model-api-protocols.test.ts`、`tests/server/fork-model-api-access.test.ts` 和 `tests/server/fork-model-api-status.test.ts`；CI 命中相关失败时按实际报错及直接依赖挑选，不仅靠导入图推断源码读取、子进程或临时 socket 覆盖。
+- 测试以同一最终候选 SHA 的官方 CI 为准。CI 报错后只在本地运行报错项及直接相关回归，保留具体命令、输入和结果；不再自动运行本地完整测试池、`bun run test`、`bun run prepush`，也不以宽范围 changed 测试代替定向定位。用户单独明确要求时才运行更广测试。
+- 发布前完成适用的 typecheck、privacy scan 等静态检查；GUI 和文档站构建按实际影响及目录规则补充。已执行的本地整体测试失败或超时如实保留，不要求先把本地全体单测跑绿才推送 CI 候选。官方 CI 的事件、平台、分片、并发、断言和预算保持，不以增加 timeout 或删断言取得通过。
 - 同一实现、依赖、测试输入、runner 和环境未变时，复用已通过的检查，不因进入双审、补附件或整理日志重跑。只改说明文字时，先证明其不是测试/构建输入；若文档被源码真值测试读取，重跑对应测试；若影响文档站则构建文档站。更新后的文本仍需 privacy scan 和 `git diff --check`。
-- 生产代码、依赖、测试或构建/runner 的实质变化仍须在最终实现上完成适用的完整门禁。修复期间先跑定向检查，修复收敛后再跑全量；不要每修一条 finding 就重复全量。这里的“完整验证”指本节适用检查，不要求未受影响的 GUI/docs 构建重复运行。
+- 生产代码、依赖、测试或构建/runner 的实质变化须完成受影响的静态检查和定向回归，并取得最终 SHA 的官方 CI。审查修复与 CI 修复均不触发本地整体测试；未受影响的 GUI/docs 构建和其他已通过检查继续复用。
 - 验证记录保留命令、工作目录、实际执行 SHA、退出码和日志。复用时列出旧 SHA 到当前 SHA 的差异及未受影响依据，不把旧日志改标成新 SHA 的执行结果。需要 exact-SHA CI 的发布任务仍按原要求检查最终 SHA；本地验证复用不豁免 CI 或未关闭 finding。
 
 ## 官方 Tag 保留规则
@@ -476,7 +476,7 @@ Tag 集 preflight；发现高于目标 revision 的有效 Tag、集合漂移或 
 5. revision：新官方 vX.Y.Z 首次派生固定 X.Y.Z-ben.1 / vX.Y.Z-ben.1。同基线已有 Release 不自动递增；仅用户明确要求才允许 ben.2、ben.3。`ben.N` 按官方基线独立维护：即使完整 Tag 集已有更新官方稳定版，明确授权的旧基线维护修订仍可继续，但必须存在精确官方基线 Tag、不得低于同基线最高有效 ben revision、不得复用或移动既有 Fork Tag，也不得声称包含更新官方版本能力。普通 stable/preview 仍遵守全局单调版本门禁。重复 heartbeat 幂等。
 6. 完成并提交全部 rebase、冲突、版本与实现修复。
 7. 创建下一个候选尝试 `AK`（首次为 `A1`，否则最大 `K + 1`），捕获 `CANDIDATE_IMPLEMENTATION_HEAD_AK`，不得从后续 HEAD 反推。按该 SHA 原地更新 FORK_CHANGES.md 的当前官方 Tag/SHA、能力差异、代码与测试入口、覆盖/移除结论及已知边界，不追加版本历史。实现 commit、shortstat、包版本、目标 Tag、逐冲突 ledger 和验证证据保存在本轮任务记录，供第 10 步 review package 使用。只保留仍影响维护判断的移除结论，旧 PASS 不沿用。
-8. 文档更新后按“验证选择与结果复用”完成最终验证；新基线的最终实现必须有当前官方 prepush 的通过证据。验证促成实现修改时把当前 `AK` 标记为 abandoned，以最大 `K + 1` 回到第 7 步；验证失败的 `AK` 不得占用 `RN`，也不得写入 `PRIOR_FINDINGS`。
+8. 文档更新后按“验证选择与结果复用”完成适用的本地静态检查和必要构建，记录已知失败与未验证项；本地整体测试或全体单测通过不再是候选门禁。正式发布仍要求第 10 步同 SHA 的官方 CI 通过。实现修改时把当前 `AK` 标记为 abandoned，以最大 `K + 1` 回到第 7 步；未形成完整 SHA 对的尝试不占用 `RN`，也不写入 `PRIOR_FINDINGS`。
 9. 验证通过后只暂存 `FORK_CHANGES.md`，核对 staged list 与 diff check，创建 docs-only commit，并机械验证其父提交等于当前 `CANDIDATE_IMPLEMENTATION_HEAD_AK`。此时才将完整 SHA 对晋升为下一个审查轮次：尚无轮次时创建 `R1`；已有 reviewed round 时使用当前最大 `N + 1`。令 `IMPLEMENTATION_HEAD_RN=CANDIDATE_IMPLEMENTATION_HEAD_AK`、`RELEASE_COMMIT_RN=<docs-only commit>`，两者同时存在后才算分配成功。
 10. 生成最新完整 `RN` 的 review package，执行机械集合/冲突 replay 对账、命名风险检查与双审门禁（见上）。首次真实派发使用 `REVIEW_PHASE: INITIAL`。任一 Critical/Important finding 都从新 `AK` 回到第 7 步；新候选经第 7–9 步晋升为下一完整 `RN` 后，按 `REVIEW_PHASE: RE_REVIEW` 复用原 reviewer 并保留完整 `PRIOR_FINDINGS`。未取得两个 `PASS`，以及仅在明确未收敛跨边界风险时所需的窄审 `PASS` 前，禁止后续 push、Tag、Release。
     以精确lease只推最终 `RELEASE_COMMIT_RN` 到远端dev，再显式dispatch官方ci.yml（ref=dev、lane=all）。原子发布前取得同一完整SHA的aggregate ci completed success及各主仓库实际checkout证据。基线verifier始终执行相同的正式Release、Tag身份及官方基线祖先检查，不设marker例外。
