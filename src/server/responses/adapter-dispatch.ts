@@ -571,7 +571,7 @@ export async function prepareAdapterExchange(
       onDispatch?: () => void,
       preserveFailureResponse?: Response,
     ): Promise<Response | { failed: Response }> => {
-      let replacementAdmitted = false, dispatchConfirmed = false;
+      let replacementAdmitted = false, dispatchConfirmed = false, physicalAdmissionRefused = false;
       // Only budgets without a physical observer need this legacy workflow report.
       let fastDowngradeWorkflowCharged = false;
       const chargeFastDowngradeWorkflowSend = (): void => {
@@ -731,7 +731,10 @@ export async function prepareAdapterExchange(
                 codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                     dispatchOverride: oauthDispatch(retryRequest),
                     onPhysicalDispatch: deferredRefetch ? () => {
-                      if (!deferredRefetch.beforeDispatch()) throw new SendBudgetExhaustedError(errorDestinationLabel(retryRequest.url));
+                      if (!deferredRefetch.beforeDispatch()) {
+                        physicalAdmissionRefused = true;
+                        throw new SendBudgetExhaustedError(errorDestinationLabel(retryRequest.url));
+                      }
                       confirmDispatch();
                     } : undefined,
                     providerName: route.providerName,
@@ -785,7 +788,8 @@ export async function prepareAdapterExchange(
           releaseCodexAuthContextProbeLease(admissionState.authCtx);
           return { failed: codexRefusal };
         }
-        if (preserveFailureResponse && (recovery !== "reasoning-effort-downgrade" || err instanceof SendBudgetExhaustedError) && !replacementAdmitted && !options.abortSignal?.aborted)
+        if (preserveFailureResponse && (recovery !== "reasoning-effort-downgrade" || err instanceof SendBudgetExhaustedError) && !replacementAdmitted && !options.abortSignal?.aborted
+          && !(physicalAdmissionRefused && err instanceof SendBudgetExhaustedError && wasAccountAutoPaused(preserveFailureResponse)))
           return { failed: preserveFailureResponse };
         cleanupUpstreamAbort();
         upstream.abort();

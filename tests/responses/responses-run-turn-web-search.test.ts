@@ -143,10 +143,23 @@ for (const streaming of [true, false]) {
       { type: "done" },
     ]];
     const tools = [{ type: "namespace", name: "functions", tools: [{ type: "custom", name: "exec", description: "Run JavaScript" }] }];
-    const output = await run(streaming, false, undefined, false, true, tools);
-    expect(output).toContain("undeclared client tool");
-    expect(output).toContain("web__run");
-    expect(attempts).toHaveLength(1);
+    const realFetch = globalThis.fetch;
+    let externalSends = 0;
+    globalThis.fetch = Object.assign(async () => { externalSends++; return Response.json({ results: [] }); }, { preconnect() {} }) as typeof fetch;
+    try {
+      let status = 0;
+      const output = await run(streaming, false, undefined, false, true, tools, undefined, undefined, response => { status = response.status; });
+      expect(status).toBe(502);
+      expect(JSON.parse(output)).toEqual({ error: {
+        message: "routed provider emitted undeclared client tool; only request-declared tools may be called",
+        type: "upstream_error", code: "upstream_server_error",
+      } });
+      expect(output).not.toContain("web__run");
+      expect(output).not.toContain('"type":"function_call"');
+      expect(output).not.toContain('"type":"custom_tool_call"');
+      expect(attempts).toHaveLength(1);
+      expect(externalSends).toBe(0);
+    } finally { globalThis.fetch = realFetch; }
   });
   if (streaming) test("combo preflight bounds a silent partial nested exec call and releases its barrier", async () => {
     events = [[
