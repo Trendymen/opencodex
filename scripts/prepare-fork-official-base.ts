@@ -1,11 +1,10 @@
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { forkBaseVersion } from "../src/fork/version-policy.mjs";
 import { redactSecretString, redactUrlForLog, redactUserPath } from "../src/lib/redact";
 
 const ZERO_OID = "0".repeat(40);
-const MARKER_REF = "refs/ocx-ci/fork-marker";
 const OFFICIAL_TAG_REF = "refs/ocx-ci/official-tag";
 const OFFICIAL_URL = "https://github.com/lidge-jun/opencodex.git";
 const OFFICIAL_RELEASE_API = "https://api.github.com/repos/lidge-jun/opencodex/releases/tags";
@@ -42,7 +41,6 @@ export type GitRunner = (cwd: string, args: readonly string[]) => {
 
 export type GitOperation =
   | "fetch Fork version history"
-  | "fetch origin marker"
   | "init official verifier"
   | "fetch official refs"
   | "verify official ancestry"
@@ -127,13 +125,6 @@ function matchesOfficialRelease(evidence: unknown, tag: string, peeledCommit: st
     && release.target_commitish === peeledCommit;
 }
 
-function runningCandidateCi(): boolean {
-  return process.env.GITHUB_ACTIONS === "true"
-    && process.env.GITHUB_EVENT_NAME === "workflow_dispatch"
-    && process.env.GITHUB_REF === "refs/heads/dev"
-    && process.env.OCX_CANDIDATE_CI_LANE === "all";
-}
-
 function hasLeadingZeroNumericPreviewPart(value: string): boolean {
   const preview = value.split("-preview.")[1];
   return preview?.split(".").some(part => /^0\d+$/.test(part)) ?? false;
@@ -189,9 +180,14 @@ function ownedPathSpellings(paths: readonly string[]): string[] {
 
 function gitEnvironment(globalConfig: string): Record<string, string> {
   const environment: Record<string, string> = {};
+  const ignored = new Set([
+    "OCX_OFFICIAL_RELEASE_API_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_INDEX_FILE", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE", "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_NAMESPACE",
+  ]);
   for (const [key, value] of Object.entries(process.env)) {
     const name = key.toUpperCase();
-    if (value !== undefined && !name.startsWith("GIT_CONFIG") && name !== "OCX_OFFICIAL_RELEASE_API_TOKEN") {
+    if (value !== undefined && !name.startsWith("GIT_CONFIG") && !ignored.has(name)) {
       environment[key] = value;
     }
   }
@@ -205,6 +201,8 @@ function gitEnvironment(globalConfig: string): Record<string, string> {
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: globalConfig,
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_GRAFT_FILE: devNull,
   };
 }
 
@@ -282,12 +280,10 @@ function cleanup(
 ): Error | undefined {
   let error: Error | undefined;
   if (runGit) {
-    for (const ref of [MARKER_REF, OFFICIAL_TAG_REF]) {
-      try {
-        runOrThrow(runGit, "cleanup official verifier", repoRoot, ["update-ref", "-d", ref], ownedPaths);
-      } catch (caught) {
-        error ??= caught instanceof Error ? caught : new Error(String(caught));
-      }
+    try {
+      runOrThrow(runGit, "cleanup official verifier", repoRoot, ["update-ref", "-d", OFFICIAL_TAG_REF], ownedPaths);
+    } catch (caught) {
+      error = caught instanceof Error ? caught : new Error(String(caught));
     }
   }
   try {
@@ -303,7 +299,6 @@ export function prepareForkOfficialBase(options: {
   officialRepositoryUrl: string;
   runGit?: GitRunner;
   filesystem?: Pick<typeof import("node:fs"), "chmodSync" | "writeFileSync">;
-  allowPendingOfficialMarker?: boolean;
   officialReleaseEvidence?: unknown;
 }): PrepareForkOfficialBaseResult {
   let classification: VersionClassification;
@@ -313,6 +308,9 @@ export function prepareForkOfficialBase(options: {
     throw new Error(safeGitDiagnostic("prepare official base", error, [options.repoRoot]));
   }
   if (classification.kind === "non-fork") return { kind: "not-fork", version: classification.version };
+  if (options.officialReleaseEvidence === undefined) {
+    throw new OfficialReleaseEvidenceRequiredError(classification.tag);
+  }
 
   let verifierRoot: string;
   try {
@@ -330,8 +328,6 @@ export function prepareForkOfficialBase(options: {
   let runGit: GitRunner | undefined = options.runGit;
   let primary: Error | undefined;
   let result: PrepareForkOfficialBaseResult | undefined;
-  const allowPendingOfficialMarker = options.allowPendingOfficialMarker === true && runningCandidateCi();
-
   try {
     runGit ??= productionGitRunner(join(verifierRoot, "gitconfig"));
     filesystem.chmodSync(verifierRoot, 0o700);
@@ -342,17 +338,6 @@ export function prepareForkOfficialBase(options: {
     filesystem.chmodSync(globalConfig, 0o600);
     runOrThrow(runGit, "init official verifier", options.repoRoot, ["init", "--bare", bareDir], ownedPaths);
     refreshOwnedPaths(bareDir);
-    const mainQuery = runOrThrow(runGit, "fetch official refs", options.repoRoot, [
-      `--git-dir=${bareDir}`, "ls-remote", "--heads", "--", options.officialRepositoryUrl, "refs/heads/main",
-    ], ownedPaths).stdout;
-    const hasOfficialMain = mainQuery !== "";
-    if (hasOfficialMain && !/^[0-9a-f]{40}\trefs\/heads\/main\r?\n?$/.test(mainQuery)) {
-      throw new Error("invalid official main ref response");
-    }
-    if (!hasOfficialMain && options.officialReleaseEvidence === undefined) {
-      throw new OfficialReleaseEvidenceRequiredError(classification.tag);
-    }
-    runOrThrow(runGit, "cleanup official verifier", options.repoRoot, ["update-ref", "-d", MARKER_REF], ownedPaths);
     runOrThrow(runGit, "cleanup official verifier", options.repoRoot, ["update-ref", "-d", OFFICIAL_TAG_REF], ownedPaths);
     const head = runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
       ["rev-parse", "HEAD"], ownedPaths).stdout.trim();
@@ -375,13 +360,8 @@ export function prepareForkOfficialBase(options: {
         }
       }
     }
-    runOrThrow(runGit, "fetch origin marker", options.repoRoot, [
-      "fetch", "--no-tags", "--no-write-fetch-head", "origin",
-      "+refs/heads/upstream-release:" + MARKER_REF,
-    ], ownedPaths);
     runOrThrow(runGit, "fetch official refs", options.repoRoot, [
       `--git-dir=${bareDir}`, "fetch", "--no-tags", "--no-filter", options.officialRepositoryUrl,
-      ...(hasOfficialMain ? ["+refs/heads/main:refs/heads/official-main"] : []),
       `+refs/tags/${classification.tag}:refs/tags/${classification.tag}`,
     ], ownedPaths);
     const bareTagRef = `refs/tags/${classification.tag}`;
@@ -403,11 +383,7 @@ export function prepareForkOfficialBase(options: {
     if (refKind === "lightweight" && rawTagOid !== peeledCommit) {
       throw new Error("lightweight official release ref does not equal its peeled commit");
     }
-    if (hasOfficialMain) {
-      runOrThrow(runGit, "verify official ancestry", options.repoRoot, [
-        `--git-dir=${bareDir}`, "merge-base", "--is-ancestor", peeledCommit, "refs/heads/official-main",
-      ], ownedPaths);
-    } else if (!matchesOfficialRelease(options.officialReleaseEvidence, classification.tag, peeledCommit)) {
+    if (!matchesOfficialRelease(options.officialReleaseEvidence, classification.tag, peeledCommit)) {
       throw new Error("invalid official release evidence");
     }
     runOrThrow(runGit, "import official tag", options.repoRoot, [
@@ -420,14 +396,28 @@ export function prepareForkOfficialBase(options: {
     if (importedType !== bareType || importedRaw !== rawTagOid || importedPeeled !== peeledCommit) {
       throw new Error("imported official tag does not match verified official tag");
     }
-    const marker = runOrThrow(runGit, "verify official tag", options.repoRoot, ["rev-parse", `${MARKER_REF}^{commit}`], ownedPaths).stdout.trim();
-    if (marker !== peeledCommit) {
-      if (!hasOfficialMain || !allowPendingOfficialMarker) {
-        throw new Error("official release tag does not match origin upstream-release");
+    let ancestry = runGit(options.repoRoot, ["merge-base", "--is-ancestor", peeledCommit, head]);
+    if (ancestry.exitCode === 1) {
+      const shallow = runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
+        ["rev-parse", "--is-shallow-repository"], ownedPaths).stdout.trim();
+      if (shallow === "true") {
+        runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
+          ["fetch", "--unshallow", "--no-tags", "--no-write-fetch-head", "origin", head], ownedPaths);
+        ancestry = runGit(options.repoRoot, ["merge-base", "--is-ancestor", peeledCommit, head]);
+      } else if (shallow !== "false") {
+        throw new Error("invalid shallow repository status");
       }
-      runOrThrow(runGit, "verify official ancestry", options.repoRoot, [
-        `--git-dir=${bareDir}`, "merge-base", "--is-ancestor", marker, peeledCommit,
-      ], ownedPaths);
+    }
+    if (ancestry.exitCode !== 0) {
+      const error = ancestry.exitCode === 1
+        ? new Error("official release tag is not an ancestor of HEAD")
+        : outputOrError(ancestry);
+      throw new Error(safeGitDiagnostic("verify official ancestry", error, ownedPaths));
+    }
+    const currentHead = runOrThrow(runGit, "verify official ancestry", options.repoRoot,
+      ["rev-parse", "HEAD"], ownedPaths).stdout.trim();
+    if (currentHead !== head) {
+      throw new Error("HEAD changed during official base verification");
     }
     const localTagRef = `refs/tags/${classification.tag}`;
     const existing = readExistingTag(runGit, options.repoRoot, localTagRef, ownedPaths);
@@ -447,13 +437,10 @@ export function prepareForkOfficialBase(options: {
       peeledCommit,
     };
   } catch (error) {
-    primary = error instanceof OfficialReleaseEvidenceRequiredError
-      ? error
-      : new Error(safeGitDiagnostic("prepare official base", error, ownedPaths));
+    primary = new Error(safeGitDiagnostic("prepare official base", error, ownedPaths));
   }
 
-  const cleanupError = cleanup(primary instanceof OfficialReleaseEvidenceRequiredError ? undefined : runGit,
-    options.repoRoot, verifierRoot, ownedPaths);
+  const cleanupError = cleanup(runGit, options.repoRoot, verifierRoot, ownedPaths);
   if (primary) {
     if (cleanupError) {
       throw new Error(primary.message.slice(0, 512 - CLEANUP_FAILURE_SUFFIX.length) + CLEANUP_FAILURE_SUFFIX);
@@ -469,7 +456,6 @@ export async function prepareForkOfficialBaseCli(): Promise<PrepareForkOfficialB
   const options = {
     repoRoot: CLI_REPO_ROOT,
     officialRepositoryUrl: OFFICIAL_URL,
-    allowPendingOfficialMarker: runningCandidateCi(),
   };
   try {
     return prepareForkOfficialBase(options);

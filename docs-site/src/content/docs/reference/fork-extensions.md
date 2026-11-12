@@ -26,4 +26,6 @@ Encrypted task recovery adds strict backend-envelope handling, one bounded nativ
 
 The Fork provides disk diagnostics, independent text-sample controls, and `install:local` package/service/Volta rollback. `ben.N` versions compare the upstream core first and the Fork revision second; a stable release of the same core does not overwrite the Fork. Published tags remain immutable.
 
+Development and release candidates use `dev`. A published build is identified by its immutable Fork tag and formal GitHub Release. Release validation uses the upstream workflow's complete `workflow_dispatch` run on the exact `dev` commit; it does not depend on a `main` push run.
+
 Standalone web search's provider flag, real backend-ciphertext recovery, and Windows global replacement/service recovery still need implementation-bound end-to-end acceptance. Synthetic tests do not establish those results.

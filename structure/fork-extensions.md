@@ -12,7 +12,7 @@
 ## 请求与工具边界
 
 - `src/server/index/serve-options.ts` 和 `src/server/index/websocket-handler.ts` 标记外部 Responses 初始请求；`src/server/responses/request-prepare.ts` 在改写或续接展开前通过 `src/usage/session-effort-observation.ts` 观察顶层强度及直接输入中的更新。未知更新使结果未知，后续合法更新可恢复确定性；续接 ID 不用于推断历史。`src/server/responses/policy-fallback.ts` 在策略重试间共享捕获状态，包括初次没有观察的情况；组合和重试保留逻辑请求的初始观察。
-- `src/server/request-log.ts` 与 `src/usage/log.ts` 只保留强度枚举和固定状态，旧记录可缺省。日志入环前浅拷贝条目，即使观察缺失也不保留调用方外层对象；外层观察属性及内部字段各仅读取一次，访问器或代理读取失败时丢弃该观察。`gui/src/pages/Logs.tsx` 分开显示初始顶层和更新；观察不证明转发或上游采用，WebSocket 后续帧可能改变设置。
+- `src/server/request-log.ts` 与 `src/usage/log.ts` 只保留强度枚举和固定状态，旧记录可缺省。`src/fork/request-log-projection.ts` 在入环前快照可变行及包含观察字段的行；已冻结且没有观察字段的安全行可沿用官方对象复用。外层观察属性及内部字段各仅读取一次，访问器或代理读取失败时丢弃该观察。`gui/src/pages/Logs.tsx` 分开显示初始顶层和更新；观察不证明转发或上游采用，WebSocket 后续帧可能改变设置。
 - GPT 家族和官方目的地分开判断。官方 Responses 保持原生消息/schema；Lite header 到 WS metadata 的映射在对应许可允许时只补缺失字段。
 - `agentMessageFormat`、GLM/Kimi lowering 和 `encrypted` 注解清理在出站副本上运行，保持原 input、工具授权和重放状态。可信直接 key-auth relay 的注解例外不扩大到 combo。
 - `src/adapters/openai-responses/tool-output-recovery.ts` 将孤儿工具输出转为用户消息时，同时保留官方 item provenance 与 Fork 的合法来源标签；历史工具声明继续按官方当前轮目录判断。
@@ -73,7 +73,7 @@
 
 ## 安装与维护边界
 
-- CI 的 job、条件、分片、worker 和运行预算跟随官方 `.github/workflows/ci.yml` 与 `scripts/ci/run-bun-test-batches.sh`；Fork 保留 `scripts/prepare-fork-official-base.ts` 的官方基线、Tag 和 marker 校验。候选触发与精确 SHA 验收见[同步政策](../docs/fork-sync-automation.md)。本地 runner 继续沿用官方主池和预算，保留 Fork helper 与隔离回归。`scripts/test-run-lock.ts` 在成员写入后确认路径是普通文件；注册失败仍使用脱敏诊断，owner 更换时沿用让出与重试。
+- CI 的 job、条件、分片、worker 和运行预算跟随官方 `.github/workflows/ci.yml` 与 `scripts/ci/run-bun-test-batches.sh`；Fork 的 `scripts/prepare-fork-official-base.ts` 从包版本推导官方基线，核对固定上游正式 Release、Tag raw/peeled 和候选历史。开发与发布候选统一在 dev，不依赖 main、sync 或 upstream-release。候选触发与精确 SHA 验收见[同步政策](../docs/fork-sync-automation.md)。本地 runner 继续沿用官方主池和预算，保留 Fork helper 与隔离回归。`scripts/test-run-lock.ts` 在成员写入后确认路径是普通文件；注册失败仍使用脱敏诊断，owner 更换时沿用让出与重试。
 - 当前版本 Fork Tag 已在本地但浅克隆无法证明祖先时，准备步骤固定 HEAD 并只从 origin 补全该 commit 的历史；不改分支、Tag 或 FETCH_HEAD。版本 guard 继续拒绝补全后的非祖先。`tests/ci-workflows/fork-ci-official-baseline.test.ts` 使用真实本地浅克隆覆盖补全、分叉和失败清理。
 - `scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts` 在离线验证后的同卷 stage 上替换包；根 manifest 保持冻结。Volta、服务、readiness、plist 和包字节共用失败回滚边界。
 - `src/update/transactional-install.mjs` 在 stage 验证后及每次 live→backup rename 重试前要求 `mayReplacePackage` 同步返回 `true`；重试时在该调用前后复核 Fork pending marker 身份。marker 身份不符时保留现有 marker 并报告 `pending-owner`；`recoveryUnsafe: true` 优先拒绝 launcher/服务恢复，即使 `rolledBack: true`。只有旧包未改且 `lstat` 确认 marker 不存在时，`pending-marker` 失败才按安全状态处理。`tests/update/update-transactional.test.ts` 包含授权、marker 身份和恢复判定回归。

@@ -11,9 +11,26 @@ import { createCodexPrivateCredentialGuard, protectCodexPrivateSse } from "../..
 import { createTranslatorBudget } from "../../src/lib/translator-budget";
 import { handleResponses } from "../../src/server/responses/core";
 import { PROXY_KEY } from "../helpers/reserve-ingress-fixture";
+import { NativeContinuationRefusalError } from "../../src/server/responses/native-continuation-refusal";
+import { workflowRefusalResponse } from "../../src/server/workflow-refusal";
+import { WORKFLOW_LOCAL_REFUSAL_HEADER } from "../../src/lib/workflow-budget";
 import type { OcxConfig } from "../../src/types";
 
 const off = resolveCodexPassthroughPermissions(disabledCodexPassthrough());
+test("a local continuation refusal retains its workflow header with terminal synthesis disabled", async () => {
+  const refusal = workflowRefusalResponse("workflow-sends-exhausted");
+  const source = new ReadableStream<Uint8Array>({ pull(controller) { controller.error(new NativeContinuationRefusalError(refusal)); } });
+  const response = markCodexPassthroughResponse(new Response(source, { headers: { "content-type": "text/event-stream" } }), off);
+  const sent: any[] = []; const closed: number[] = []; const terminals: string[] = [];
+  const socket = { data: {}, readyState: 1, send(text: string) { sent.push(JSON.parse(text)); return text.length; },
+    getBufferedAmount: () => 0, close(code: number) { closed.push(code); } } as any;
+  await sendResponseToWebSocket(socket, response, () => true, { onTerminal: status => terminals.push(status) });
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toMatchObject({ type: "error", status: 429, headers: { [WORKFLOW_LOCAL_REFUSAL_HEADER]: "workflow_sends_exhausted" } });
+  expect(terminals).toEqual(["failed"]);
+  expect(closed).toEqual([]);
+});
+
 for (const terminal of ["response.done", "response.failed"] as const) test(`combo preflight retains selected child permissions through final WS: ${terminal}`, async () => {
   let config!: OcxConfig;
   const error = { type: "server_error", code: "upstream_server_error", message: "fixture preflight failure" };

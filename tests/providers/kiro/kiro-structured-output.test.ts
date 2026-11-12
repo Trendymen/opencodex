@@ -5,6 +5,7 @@ import {
   KIRO_STRUCTURED_OUTPUT_TOOL_NAME,
 } from "../../../src/adapters/kiro-constants";
 import { resetKiroThrottleStateForTests } from "../../../src/adapters/kiro-retry";
+import { ROUTED_PROGRESS_CONTRACT } from "../../../src/fork/routed-progress-contract";
 import { parseKiroStructuredText, parseKiroStructuredToolInput, kiroStructuredOutputSpec } from "../../../src/adapters/kiro/structured-output";
 import { encodeMessage } from "../../../src/lib/eventstream-decoder";
 import { createTranslatorBudget, releaseTranslatedEvent } from "../../../src/lib/translator-budget";
@@ -133,7 +134,16 @@ describe("Kiro structured-output payload", () => {
     expect(names).toEqual(["bash", KIRO_STRUCTURED_OUTPUT_TOOL_NAME]);
     expect(current.content).toContain("Tool contract:");
     expect(current.content).toContain("Ordinary assistant text is mid-task commentary");
+    expect(current.content.split(ROUTED_PROGRESS_CONTRACT)).toHaveLength(2);
     expect(current.content).not.toContain(KIRO_COMPLETION_TOOL_NAME);
+  });
+
+  test("a tool-free structured turn does not reserve progress space from the output schema", async () => {
+    const schema = { type: "object", properties: { title: { type: "string", description: "x".repeat(15_100) } } };
+    const { current, names } = await payloadOf(structuredRequest({ type: "json_schema", name: "response", schema }));
+    expect(names).toEqual([KIRO_STRUCTURED_OUTPUT_TOOL_NAME]);
+    expect(current.content).toContain(JSON.stringify(schema));
+    expect(current.content).not.toContain(ROUTED_PROGRESS_CONTRACT);
   });
 
   test("a non-object or composed root is wrapped under `value`, with definitions hoisted", async () => {

@@ -11,12 +11,18 @@ import { boundedServiceTier } from "../lib/response-service-tier";
 
 export { boundedServiceTier };
 
+const PRIVATE_PROTECTION_CODES: ReadonlySet<string> = new Set([
+  "private-sse-read-timeout", "private-body-timeout", "private-invalid-json", "private-invalid-utf8",
+  "private-oversized", "private-budget", "private-header-name", "private-body-unreadable",
+]);
+
 /**
  * Every error code a row may carry. Codes outside this set (an upstream-supplied code that reached a
  * writer, a future writer's typo) collapse to the status fallback below. http_NNN codes are formatted
  * by the proxy from a numeric status and stay valid.
  */
 export const LOG_ERROR_CODES: ReadonlySet<string> = new Set([
+  ...PRIVATE_PROTECTION_CODES,
   // classifyError and requestLogErrorCode outputs
   "spend_ledger_storage_unavailable", "previous_response_not_found", "client_cancelled", "client_closed_request",
   "cyber_policy", "input_admission_refused", "inbound_body_too_large", "context_length_exceeded",
@@ -86,6 +92,8 @@ export interface ErrorDetailSource {
   provider?: unknown;
   errorCode?: unknown;
   terminalStatus?: unknown;
+  terminalSource?: unknown;
+  failureCause?: unknown;
   upstreamError?: unknown;
   upstreamErrorCode?: unknown;
   upstreamErrorType?: unknown;
@@ -140,7 +148,9 @@ export function errorDetailFor(entry: ErrorDetailSource): ErrorDetail {
   // A recorded condition is kept under the same rules that derive one: failed and not a client close.
   let upstreamCondition: UpstreamCondition | undefined = failed && !clientClosed && isUpstreamCondition(entry.upstreamCondition)
     ? entry.upstreamCondition : undefined;
-  const evidence = str(entry.upstreamError) ?? str(entry.upstreamErrorCode) ?? str(entry.upstreamErrorType);
+  const localProtection = errorCode !== undefined && PRIVATE_PROTECTION_CODES.has(errorCode)
+    && entry.failureCause === "local-refusal" && entry.terminalSource === "synthetic";
+  const evidence = localProtection ? undefined : str(entry.upstreamError) ?? str(entry.upstreamErrorCode) ?? str(entry.upstreamErrorType);
   if (!upstreamCondition && failed && !clientClosed && evidence !== undefined && status !== undefined) {
     upstreamCondition = classifyUpstreamCondition({
       status,
