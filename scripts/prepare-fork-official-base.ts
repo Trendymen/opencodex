@@ -254,16 +254,19 @@ function readExistingTag(
   ownedPaths: readonly string[],
 ): { type: string; raw: string; peeled: string } | undefined {
   try {
+    const exists = runGit(repoRoot, ["show-ref", "--exists", tagRef]);
+    if (exists.exitCode === 2) return undefined;
+    if (exists.exitCode !== 0) throw outputOrError(exists);
     const type = runGit(repoRoot, ["cat-file", "-t", tagRef]);
-    if (type.exitCode !== 0) return undefined;
+    if (type.exitCode !== 0) throw outputOrError(type);
     const refType = type.stdout.trim();
     if (refType !== "commit" && refType !== "tag") {
       throw new Error("existing local official tag has unsupported object type");
     }
     const raw = runGit(repoRoot, ["rev-parse", tagRef]);
-    if (raw.exitCode !== 0) return undefined;
+    if (raw.exitCode !== 0) throw outputOrError(raw);
     const peeled = runGit(repoRoot, ["rev-parse", `${tagRef}^{commit}`]);
-    if (peeled.exitCode !== 0) return undefined;
+    if (peeled.exitCode !== 0) throw outputOrError(peeled);
     const rawOid = raw.stdout.trim();
     const peeledCommit = peeled.stdout.trim();
     if (refType === "commit" && rawOid !== peeledCommit) {
@@ -363,29 +366,26 @@ export function prepareForkOfficialBase(options: {
         }
       }
     }
-    runOrThrow(runGit, "fetch official refs", options.repoRoot, [
-      `--git-dir=${bareDir}`, "fetch", "--depth=1", "--no-tags", "--no-filter", options.officialRepositoryUrl,
-      `+refs/tags/${classification.tag}:refs/tags/${classification.tag}`,
-    ], ownedPaths);
     const bareTagRef = `refs/tags/${classification.tag}`;
-    const bareType = runOrThrow(runGit, "verify official tag", options.repoRoot, [
-      `--git-dir=${bareDir}`, "cat-file", "-t", bareTagRef,
-    ], ownedPaths).stdout.trim();
-    const refKind = bareType === "commit"
-      ? "lightweight"
-      : bareType === "tag"
-        ? "annotated"
-        : undefined;
-    if (!refKind) throw new Error("official release ref has unsupported object type");
-    const rawTagOid = runOrThrow(runGit, "verify official tag", options.repoRoot, [
-      `--git-dir=${bareDir}`, "rev-parse", bareTagRef,
-    ], ownedPaths).stdout.trim();
-    const peeledCommit = runOrThrow(runGit, "verify official tag", options.repoRoot, [
-      `--git-dir=${bareDir}`, "rev-parse", `${bareTagRef}^{commit}`,
-    ], ownedPaths).stdout.trim();
-    if (refKind === "lightweight" && rawTagOid !== peeledCommit) {
-      throw new Error("lightweight official release ref does not equal its peeled commit");
+    const advertised = runOrThrow(runGit, "verify official tag", options.repoRoot, [
+      `--git-dir=${bareDir}`, "ls-remote", "--tags", options.officialRepositoryUrl, bareTagRef, `${bareTagRef}^{}`,
+    ], ownedPaths).stdout.replaceAll("\r\n", "\n").split("\n");
+    if (advertised.pop() !== "" || advertised.length < 1 || advertised.length > 2) {
+      throw new Error("verify official tag: invalid remote tag advertisement");
     }
+    let rawTagOid: string | undefined;
+    let advertisedPeeled: string | undefined;
+    for (const line of advertised) {
+      const match = /^([0-9a-f]{40})\t([^\t\n]+)$/.exec(line);
+      if (!match) throw new Error("verify official tag: invalid remote tag advertisement");
+      if (match[2] === bareTagRef && rawTagOid === undefined) rawTagOid = match[1];
+      else if (match[2] === `${bareTagRef}^{}` && advertisedPeeled === undefined) advertisedPeeled = match[1];
+      else throw new Error("verify official tag: invalid remote tag advertisement");
+    }
+    if (!rawTagOid) throw new Error("verify official tag: invalid remote tag advertisement");
+    const peeledCommit = advertisedPeeled ?? rawTagOid;
+    const bareType = advertisedPeeled ? "tag" : "commit";
+    const refKind = advertisedPeeled ? "annotated" : "lightweight";
     if (!matchesOfficialRelease(options.officialReleaseEvidence, classification.tag, peeledCommit)) {
       throw new Error("invalid official release evidence");
     }
@@ -396,6 +396,52 @@ export function prepareForkOfficialBase(options: {
       if (output === `${peeledCommit} missing\n` || output === `${peeledCommit} missing\r\n`) return false;
       throw new Error("verify official ancestry: invalid local object response");
     };
+    const localTagRef = `refs/tags/${classification.tag}`;
+    const localRef = runGit(options.repoRoot, ["show-ref", "--exists", localTagRef]);
+    if (localRef.exitCode !== 0 && localRef.exitCode !== 2) {
+      throw new Error(safeGitDiagnostic("verify official tag", outputOrError(localRef), ownedPaths));
+    }
+    let reuseLocalTag = false;
+    if (localRef.exitCode === 0) {
+      const localRaw = runOrThrow(runGit, "verify official tag", options.repoRoot,
+        ["rev-parse", "--verify", "--quiet", localTagRef], ownedPaths).stdout.trim();
+      if (localRaw !== rawTagOid) {
+        readExistingTag(runGit, options.repoRoot, localTagRef, ownedPaths);
+        throw new Error("existing local official tag does not match verified official tag");
+      }
+      const rawObject = runOrThrow(runGit, "verify official tag", options.repoRoot,
+        ["cat-file", "--batch-check=%(objectname) %(objecttype)"], ownedPaths, `${rawTagOid}\n`).stdout;
+      if (rawObject !== `${rawTagOid} missing\n` && rawObject !== `${rawTagOid} missing\r\n`) {
+        if (rawObject !== `${rawTagOid} ${bareType}\n` && rawObject !== `${rawTagOid} ${bareType}\r\n`) {
+          throw new Error("verify official tag: invalid local tag object");
+        }
+        if (hasOfficialCommit()) {
+          const local = readExistingTag(runGit, options.repoRoot, localTagRef, ownedPaths);
+          if (!local || local.type !== bareType || local.raw !== rawTagOid || local.peeled !== peeledCommit) {
+            throw new Error("existing local official tag does not match verified official tag");
+          }
+          reuseLocalTag = true;
+        }
+      }
+    }
+    if (!reuseLocalTag) {
+      runOrThrow(runGit, "fetch official refs", options.repoRoot, [
+        `--git-dir=${bareDir}`, "fetch", "--depth=1", "--no-tags", "--no-filter", options.officialRepositoryUrl,
+        `+${bareTagRef}:${bareTagRef}`,
+      ], ownedPaths);
+      const fetchedType = runOrThrow(runGit, "verify official tag", options.repoRoot,
+        [`--git-dir=${bareDir}`, "cat-file", "-t", bareTagRef], ownedPaths).stdout.trim();
+      if (fetchedType !== "commit" && fetchedType !== "tag") {
+        throw new Error("official release ref has unsupported object type");
+      }
+      const fetchedRaw = runOrThrow(runGit, "verify official tag", options.repoRoot,
+        [`--git-dir=${bareDir}`, "rev-parse", bareTagRef], ownedPaths).stdout.trim();
+      const fetchedPeeled = runOrThrow(runGit, "verify official tag", options.repoRoot,
+        [`--git-dir=${bareDir}`, "rev-parse", `${bareTagRef}^{commit}`], ownedPaths).stdout.trim();
+      if (fetchedType !== bareType || fetchedRaw !== rawTagOid || fetchedPeeled !== peeledCommit) {
+        throw new Error("verify official tag: fetched tag does not match remote advertisement");
+      }
+    }
     let ancestry = hasOfficialCommit()
       ? runGit(options.repoRoot, ["merge-base", "--is-ancestor", peeledCommit, head])
       : undefined;
@@ -418,22 +464,22 @@ export function prepareForkOfficialBase(options: {
         : outputOrError(ancestry);
       throw new Error(safeGitDiagnostic("verify official ancestry", error, ownedPaths));
     }
-    runOrThrow(runGit, "import official tag", options.repoRoot, [
-      "fetch", "--no-tags", "--no-write-fetch-head", bareDir,
-      `+refs/tags/${classification.tag}:${OFFICIAL_TAG_REF}`,
-    ], ownedPaths);
-    const importedType = runOrThrow(runGit, "verify official tag", options.repoRoot, ["cat-file", "-t", OFFICIAL_TAG_REF], ownedPaths).stdout.trim();
-    const importedRaw = runOrThrow(runGit, "verify official tag", options.repoRoot, ["rev-parse", OFFICIAL_TAG_REF], ownedPaths).stdout.trim();
-    const importedPeeled = runOrThrow(runGit, "verify official tag", options.repoRoot, ["rev-parse", `${OFFICIAL_TAG_REF}^{commit}`], ownedPaths).stdout.trim();
-    if (importedType !== bareType || importedRaw !== rawTagOid || importedPeeled !== peeledCommit) {
-      throw new Error("imported official tag does not match verified official tag");
+    if (!reuseLocalTag) {
+      runOrThrow(runGit, "import official tag", options.repoRoot, [
+        "fetch", "--no-tags", "--no-write-fetch-head", bareDir, `+${bareTagRef}:${OFFICIAL_TAG_REF}`,
+      ], ownedPaths);
+      const importedType = runOrThrow(runGit, "verify official tag", options.repoRoot, ["cat-file", "-t", OFFICIAL_TAG_REF], ownedPaths).stdout.trim();
+      const importedRaw = runOrThrow(runGit, "verify official tag", options.repoRoot, ["rev-parse", OFFICIAL_TAG_REF], ownedPaths).stdout.trim();
+      const importedPeeled = runOrThrow(runGit, "verify official tag", options.repoRoot, ["rev-parse", `${OFFICIAL_TAG_REF}^{commit}`], ownedPaths).stdout.trim();
+      if (importedType !== bareType || importedRaw !== rawTagOid || importedPeeled !== peeledCommit) {
+        throw new Error("imported official tag does not match verified official tag");
+      }
     }
     const currentHead = runOrThrow(runGit, "verify official ancestry", options.repoRoot,
       ["rev-parse", "HEAD"], ownedPaths).stdout.trim();
     if (currentHead !== head) {
       throw new Error("HEAD changed during official base verification");
     }
-    const localTagRef = `refs/tags/${classification.tag}`;
     const existing = readExistingTag(runGit, options.repoRoot, localTagRef, ownedPaths);
     if (existing) {
       if (existing.type !== bareType || existing.raw !== rawTagOid || existing.peeled !== peeledCommit) {
