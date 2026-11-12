@@ -1,5 +1,6 @@
 import * as nodePin from "../../scripts/lib/test-runner-node";
 import { describe, expect, spyOn, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -15,6 +16,69 @@ const desktopLifecycleFiles = [
   "claude-integration/claude-desktop-first-party.test.ts",
   "claude-integration/claude-desktop-first-party-guards.test.ts",
 ];
+
+test("Fork upstream baseline preserves the fixed official CI graph", () => {
+  const path = repoPath(".github", "workflows", "fork-upstream-baseline.yml");
+  expect(existsSync(path)).toBe(true);
+  if (!existsSync(path)) return;
+
+  type Step = { name?: string; uses?: string; run?: string; with?: Record<string, unknown> };
+  type Job = { steps?: Step[] };
+  type Workflow = {
+    name: string;
+    "run-name": string;
+    on: unknown;
+    permissions: unknown;
+    concurrency: { group: string; "cancel-in-progress": string };
+    jobs: Record<string, Job>;
+  };
+  const sha = "61147ec681bc8374d350e0eae08b71c117c6df30";
+  const workflow = Bun.YAML.parse(readFileSync(path, "utf8")) as Workflow;
+  expect(workflow.name).toBe(`Fork upstream baseline ${sha} (diagnostic, not release evidence)`);
+  expect(workflow["run-name"]).toBe(`Fork upstream baseline ${sha} (diagnostic, not release evidence)`);
+  expect(workflow.on).toEqual({ workflow_dispatch: {} });
+  expect(workflow.permissions).toEqual({ contents: "read" });
+  expect(workflow.concurrency.group).toStartWith("fork-upstream-baseline-");
+  const checkouts = Object.entries(workflow.jobs).flatMap(([id, job]) =>
+    (job.steps ?? []).filter(step => step.uses?.startsWith("actions/checkout@"))
+      .map(step => ({ id, step })));
+  expect(checkouts).toHaveLength(20);
+  for (const { id, step } of checkouts) {
+    expect(step.with?.repository).toBe("lidge-jun/opencodex");
+    expect(step.with?.ref).toBe(sha);
+    expect(step.with?.["persist-credentials"]).toBe(false);
+    delete step.with!.repository;
+    if (id === "changes") delete step.with!.ref;
+    else step.with!.ref = id === "windows-native-claim" ? "${{ github.sha }}" : "${{ needs.changes.outputs.checkout_ref }}";
+  }
+  for (const id of ["changes", "select-windows-runner"]) {
+    const guard = workflow.jobs[id]?.steps?.find(step => step.name === "Validate dispatch source");
+    expect(guard?.run).toContain('[ "$REF" != refs/heads/dev ]');
+  }
+
+  const { validateRun } = require(repoPath(".github", "scripts", "release-evidence.cjs")) as {
+    validateRun: (run: unknown, ci: unknown, kind: string, sourceSha: string) => void;
+  };
+  const diagnostic = { id: 7, workflow_id: 43, repository: { id: 1273824907 }, head_repository: { id: 1273824907 },
+    event: "workflow_dispatch", head_branch: "dev", status: "completed", conclusion: "success", run_attempt: 1,
+    head_sha: sha, display_title: workflow["run-name"] };
+  expect(() => validateRun(diagnostic, { id: 42 }, "ci", sha)).toThrow("unqualified run metadata");
+  expect(() => validateRun({ ...diagnostic, workflow_id: 42 }, { id: 42 }, "ci", sha)).toThrow("CI lane or source mismatch");
+
+  workflow.name = "Cross-platform CI";
+  workflow["run-name"] = "ocx-ci-v1 lane=${{ github.event.inputs.lane || 'all' }} sha=${{ github.sha }}";
+  workflow.on = { pull_request: {}, workflow_dispatch: { inputs: { lane: {
+    description: "all (default), release-gates, macos-control, or windows-native-claim",
+    type: "choice", default: "all", options: ["all", "release-gates", "macos-control", "windows-native-claim"],
+  } } } };
+  workflow.concurrency.group = workflow.concurrency.group.replace(/^fork-upstream-baseline-/, "cross-platform-ci-");
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value !== null && typeof value === "object"
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)]))
+      : value;
+  const digest = createHash("sha256").update(JSON.stringify(canonical(workflow))).digest("hex");
+  expect(digest).toBe("6b2eb9e85e5d23d0fec44368a9e6a394d5112ab2aafbe48846dfb841ca485686");
+});
 
 test("Fork Windows update diagnostics keep their fixed partial scope", () => {
   const path = repoPath(".github", "workflows", "fork-ci-update-diagnostics.yml");
