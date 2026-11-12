@@ -172,7 +172,7 @@ test("the PUT response is installed before controls re-enable", async () => {
   });
   await waitFor(() => container.querySelector('button.switch[aria-label="Usage extraction"]') != null);
   expect(container.querySelector('button.switch[aria-label="Response/reasoning text (persisted)"]')
-    ?.getAttribute("aria-pressed")).toBe("false");
+    ?.getAttribute("aria-checked")).toBe("false");
 
   const usageSwitch = () => container.querySelector<HTMLButtonElement>('button.switch[aria-label="Usage extraction"]');
   expect(usageSwitch()?.getAttribute("aria-checked")).toBe("false");
