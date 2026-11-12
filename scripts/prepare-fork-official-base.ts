@@ -33,7 +33,7 @@ export type PrepareForkOfficialBaseResult =
     peeledCommit: string;
   };
 
-export type GitRunner = (cwd: string, args: readonly string[]) => {
+export type GitRunner = (cwd: string, args: readonly string[], input?: string) => {
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -208,8 +208,10 @@ function gitEnvironment(globalConfig: string): Record<string, string> {
 
 function productionGitRunner(globalConfig: string): GitRunner {
   const environment = gitEnvironment(globalConfig);
-  return (cwd, args) => {
-    const result = Bun.spawnSync(["git", ...args], { cwd, env: environment, stdout: "pipe", stderr: "pipe" });
+  return (cwd, args, input) => {
+    const result = Bun.spawnSync(["git", "--no-lazy-fetch", ...args], {
+      cwd, env: environment, stdin: input === undefined ? undefined : Buffer.from(input), stdout: "pipe", stderr: "pipe",
+    });
     return {
       exitCode: result.exitCode,
       stdout: new TextDecoder().decode(result.stdout),
@@ -233,9 +235,10 @@ function runOrThrow(
   cwd: string,
   args: readonly string[],
   ownedPaths: readonly string[],
+  input?: string,
 ) {
   try {
-    const result = runGit(cwd, args);
+    const result = runGit(cwd, args, input);
     const error = outputOrError(result);
     if (error) throw error;
     return result;
@@ -361,7 +364,7 @@ export function prepareForkOfficialBase(options: {
       }
     }
     runOrThrow(runGit, "fetch official refs", options.repoRoot, [
-      `--git-dir=${bareDir}`, "fetch", "--no-tags", "--no-filter", options.officialRepositoryUrl,
+      `--git-dir=${bareDir}`, "fetch", "--depth=1", "--no-tags", "--no-filter", options.officialRepositoryUrl,
       `+refs/tags/${classification.tag}:refs/tags/${classification.tag}`,
     ], ownedPaths);
     const bareTagRef = `refs/tags/${classification.tag}`;
@@ -386,6 +389,35 @@ export function prepareForkOfficialBase(options: {
     if (!matchesOfficialRelease(options.officialReleaseEvidence, classification.tag, peeledCommit)) {
       throw new Error("invalid official release evidence");
     }
+    const hasOfficialCommit = () => {
+      const output = runOrThrow(runGit!, "verify official ancestry", options.repoRoot,
+        ["cat-file", "--batch-check=%(objectname) %(objecttype)"], ownedPaths, `${peeledCommit}\n`).stdout;
+      if (output === `${peeledCommit} commit\n` || output === `${peeledCommit} commit\r\n`) return true;
+      if (output === `${peeledCommit} missing\n` || output === `${peeledCommit} missing\r\n`) return false;
+      throw new Error("verify official ancestry: invalid local object response");
+    };
+    let ancestry = hasOfficialCommit()
+      ? runGit(options.repoRoot, ["merge-base", "--is-ancestor", peeledCommit, head])
+      : undefined;
+    if (!ancestry || ancestry.exitCode === 1) {
+      const shallow = runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
+        ["rev-parse", "--is-shallow-repository"], ownedPaths).stdout.trim();
+      if (shallow === "true") {
+        runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
+          ["fetch", "--unshallow", "--no-tags", "--no-write-fetch-head", "origin", head], ownedPaths);
+        ancestry = hasOfficialCommit()
+          ? runGit(options.repoRoot, ["merge-base", "--is-ancestor", peeledCommit, head])
+          : undefined;
+      } else if (shallow !== "false") {
+        throw new Error("invalid shallow repository status");
+      }
+    }
+    if (!ancestry || ancestry.exitCode !== 0) {
+      const error = !ancestry || ancestry.exitCode === 1
+        ? new Error("official release tag is not an ancestor of HEAD")
+        : outputOrError(ancestry);
+      throw new Error(safeGitDiagnostic("verify official ancestry", error, ownedPaths));
+    }
     runOrThrow(runGit, "import official tag", options.repoRoot, [
       "fetch", "--no-tags", "--no-write-fetch-head", bareDir,
       `+refs/tags/${classification.tag}:${OFFICIAL_TAG_REF}`,
@@ -395,24 +427,6 @@ export function prepareForkOfficialBase(options: {
     const importedPeeled = runOrThrow(runGit, "verify official tag", options.repoRoot, ["rev-parse", `${OFFICIAL_TAG_REF}^{commit}`], ownedPaths).stdout.trim();
     if (importedType !== bareType || importedRaw !== rawTagOid || importedPeeled !== peeledCommit) {
       throw new Error("imported official tag does not match verified official tag");
-    }
-    let ancestry = runGit(options.repoRoot, ["merge-base", "--is-ancestor", peeledCommit, head]);
-    if (ancestry.exitCode === 1) {
-      const shallow = runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
-        ["rev-parse", "--is-shallow-repository"], ownedPaths).stdout.trim();
-      if (shallow === "true") {
-        runOrThrow(runGit, "fetch Fork version history", options.repoRoot,
-          ["fetch", "--unshallow", "--no-tags", "--no-write-fetch-head", "origin", head], ownedPaths);
-        ancestry = runGit(options.repoRoot, ["merge-base", "--is-ancestor", peeledCommit, head]);
-      } else if (shallow !== "false") {
-        throw new Error("invalid shallow repository status");
-      }
-    }
-    if (ancestry.exitCode !== 0) {
-      const error = ancestry.exitCode === 1
-        ? new Error("official release tag is not an ancestor of HEAD")
-        : outputOrError(ancestry);
-      throw new Error(safeGitDiagnostic("verify official ancestry", error, ownedPaths));
     }
     const currentHead = runOrThrow(runGit, "verify official ancestry", options.repoRoot,
       ["rev-parse", "HEAD"], ownedPaths).stdout.trim();

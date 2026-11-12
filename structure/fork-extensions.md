@@ -74,7 +74,7 @@
 ## 安装与维护边界
 
 - CI 的 job、条件、分片、worker 和运行预算跟随官方 `.github/workflows/ci.yml` 与 `scripts/ci/run-bun-test-batches.sh`；Fork 的 `scripts/prepare-fork-official-base.ts` 从包版本推导官方基线，核对固定上游正式 Release、Tag raw/peeled 和候选历史。开发与发布候选统一在 dev，不依赖 main、sync 或 upstream-release。候选触发与精确 SHA 验收见[同步政策](../docs/fork-sync-automation.md)。本地 runner 继续沿用官方主池和预算，保留 Fork helper 与隔离回归。`scripts/test-run-lock.ts` 在成员写入后确认路径是普通文件；注册失败仍使用脱敏诊断，owner 更换时沿用让出与重试。
-- 当前版本 Fork Tag 已在本地但浅克隆无法证明祖先时，准备步骤固定 HEAD 并只从 origin 补全该 commit 的历史；不改分支、Tag 或 FETCH_HEAD。版本 guard 继续拒绝补全后的非祖先。`tests/ci-workflows/fork-ci-official-baseline.test.ts` 使用真实本地浅克隆覆盖补全、分叉和失败清理。
+- 官方 Tag 在独立临时仓库中按一层历史抓取，用于核对 Tag 对象与 Release 身份；候选祖先证明在 checkout 中完成。浅克隆缺少基线对象或无法证明祖先时，准备步骤固定 HEAD 并只从 origin 补全该 commit 的历史，再导入已验证 Tag；不改分支、现有 Tag 或 FETCH_HEAD，不向 checkout 写入新的浅边界。版本 guard 继续拒绝补全后的非祖先。`tests/ci-workflows/fork-ci-official-baseline.test.ts` 使用真实本地浅克隆覆盖补全、分叉、Tag 身份与失败清理。
 - `scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts` 在离线验证后的同卷 stage 上替换包；根 manifest 保持冻结。Volta、服务、readiness、plist 和包字节共用失败回滚边界。
 - `src/update/transactional-install.mjs` 在 stage 验证后及每次 live→backup rename 重试前要求 `mayReplacePackage` 同步返回 `true`；重试时在该调用前后复核 Fork pending marker 身份。marker 身份不符时保留现有 marker 并报告 `pending-owner`；`recoveryUnsafe: true` 优先拒绝 launcher/服务恢复，即使 `rolledBack: true`。只有旧包未改且 `lstat` 确认 marker 不存在时，`pending-marker` 失败才按安全状态处理。`tests/update/update-transactional.test.ts` 包含授权、marker 身份和恢复判定回归。
 - `readPendingMarker` 统一供事务和 `bootRestoreProbe` 使用，只把 `lstat` 抛出的 `ENOENT` 判为 absent。符号链接、非普通文件、其他 stat 错误及随后的读取/解析失败都判 invalid；启动恢复在此状态下不清理或替换 live、backup、pending marker 和 recovery 记录。`tests/update/update-transactional.test.ts` 交叉覆盖健康/损坏 live、悬空链接、指向有效 marker 的链接、目录和读取失败。

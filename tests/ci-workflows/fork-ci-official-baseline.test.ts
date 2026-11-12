@@ -49,8 +49,8 @@ function hostileGitDiagnostic(ownedPath: string): string {
   return `${adversarial.join("\n")}\n${"neutral diagnostic filler ".repeat(220)}`;
 }
 
-function git(cwd: string, args: readonly string[]) {
-  const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+function git(cwd: string, args: readonly string[], input?: string) {
+  const result = Bun.spawnSync(["git", "--no-lazy-fetch", ...args], { cwd, stdin: input === undefined ? undefined : Buffer.from(input), stdout: "pipe", stderr: "pipe" });
   return {
     exitCode: result.exitCode,
     stdout: decoder.decode(result.stdout),
@@ -245,7 +245,7 @@ function runOutsideCandidate<T>(run: () => T): T {
 function prepare(
   fixture: Fixture,
   officialUrl = pathToFileURL(fixture.official).href,
-  runGit?: (cwd: string, args: readonly string[]) => ReturnType<typeof git>,
+  runGit?: (cwd: string, args: readonly string[], input?: string) => ReturnType<typeof git>,
   options: { officialReleaseEvidence?: unknown } = {},
 ) {
   const rawFetchHead = requireGit(fixture.checkout, ["rev-parse", "--git-path", "FETCH_HEAD"]);
@@ -356,10 +356,11 @@ describe("Fork CI official baseline preparation", () => {
   test("fetches fixed HEAD history when a shallow checkout cannot prove the official tag ancestry", () => {
     const fixture = createUnreleasedShallowFixture();
     const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
+    expect(git(fixture.checkout, ["cat-file", "-t", fixture.officialTagCommit]).exitCode).not.toBe(0);
     const calls: string[][] = [];
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
       calls.push([...args]);
-      return git(cwd, args);
+      return git(cwd, args, input);
     }, { officialReleaseEvidence: {
       tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
     } });
@@ -367,6 +368,11 @@ describe("Fork CI official baseline preparation", () => {
     expect(calls.filter(args => args.includes("--unshallow"))).toEqual([
       ["fetch", "--unshallow", "--no-tags", "--no-write-fetch-head", "origin", head],
     ]);
+    const bareDir = calls.find(args => args[0] === "init" && args[1] === "--bare")?.[2];
+    const importIndex = calls.findIndex(args => args[0] === "fetch" && args.includes(bareDir!));
+    const unshallowIndex = calls.findIndex(args => args.includes("--unshallow"));
+    expect(unshallowIndex).toBeGreaterThan(-1);
+    expect(importIndex).toBeGreaterThan(unshallowIndex);
     expect(requireGit(fixture.checkout, ["rev-parse", "HEAD"])).toBe(head);
     expect(git(fixture.checkout, ["merge-base", "--is-ancestor", fixture.officialTagCommit, head]).exitCode).toBe(0);
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
@@ -375,12 +381,12 @@ describe("Fork CI official baseline preparation", () => {
   test("does not treat a fatal official ancestry query as an unproven shallow history", () => {
     const fixture = createFixture();
     const calls: string[][] = [];
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
       calls.push([...args]);
       if (args[0] === "merge-base" && args.includes(fixture.officialTagCommit)) {
         return { exitCode: 128, stdout: "", stderr: "fatal ancestry failure" };
       }
-      return git(cwd, args);
+      return git(cwd, args, input);
     }, { officialReleaseEvidence: {
       tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
     } });
@@ -389,14 +395,80 @@ describe("Fork CI official baseline preparation", () => {
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
 
+  test.skipIf(process.platform === "win32")("does not lazily fetch a missing ancestry object from a checkout promisor", () => {
+    const fixture = createFixture();
+    const tree = requireGit(fixture.checkout, ["rev-parse", "HEAD^{tree}"]);
+    const parent = requireGit(fixture.checkout, ["commit-tree", tree, "-p", fixture.officialTagCommit, "-m", "fixture parent"]);
+    const head = requireGit(fixture.checkout, ["commit-tree", tree, "-p", parent, "-m", "fixture head"]);
+    requireGit(fixture.checkout, ["push", pathToFileURL(fixture.official).href, `${parent}:refs/heads/promisor-fixture`]);
+    requireGit(fixture.checkout, ["update-ref", "HEAD", head]);
+    rmSync(join(fixture.checkout, ".git", "objects", parent.slice(0, 2), parent.slice(2)));
+    const marker = join(fixture.root, "promisor-invoked");
+    const uploadPack = join(fixture.root, "promisor-upload-pack");
+    writeFileSync(uploadPack, `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "called");\nprocess.exit(1);\n`, { mode: 0o700 });
+    requireGit(fixture.checkout, ["config", "remote.promisor.url", pathToFileURL(fixture.official).href]);
+    requireGit(fixture.checkout, ["config", "remote.promisor.promisor", "true"]);
+    requireGit(fixture.checkout, ["config", "remote.promisor.partialclonefilter", "blob:none"]);
+    requireGit(fixture.checkout, ["config", "remote.promisor.uploadpack", uploadPack]);
+    requireGit(fixture.checkout, ["config", "core.repositoryformatversion", "1"]);
+    requireGit(fixture.checkout, ["config", "extensions.partialClone", "promisor"]);
+    const unsafeQuery = Bun.spawnSync(["git", "cat-file", "-t", parent], { cwd: fixture.checkout, stdout: "pipe", stderr: "pipe" });
+    expect(unsafeQuery.exitCode).not.toBe(0);
+    expect(existsSync(marker), decoder.decode(unsafeQuery.stderr)).toBe(true);
+    rmSync(marker);
+    const prepared = prepare(fixture);
+    const fakeBin = join(fixture.root, "git-wrapper");
+    const gitLog = join(fixture.root, "git-wrapper.jsonl");
+    const realGit = Bun.which("git");
+    expect(realGit).toBeTruthy();
+    mkdirSync(fakeBin);
+    writeFileSync(join(fakeBin, "git"), `#!${process.execPath}\nconst { appendFileSync } = require("node:fs");\nconst { spawnSync } = require("node:child_process");\nconst args = process.argv.slice(2);\nappendFileSync(${JSON.stringify(gitLog)}, JSON.stringify(args) + "\\n");\nconst result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: "inherit" });\nprocess.exit(result.status ?? 1);\n`, { mode: 0o700 });
+    const previousPath = process.env.PATH;
+    try {
+      process.env.PATH = `${fakeBin}${delimiter}${previousPath ?? ""}`;
+      expect(prepared.run).toThrow("verify official ancestry");
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+    const commands = readFileSync(gitLog, "utf8").trim().split("\n").map(JSON.parse) as string[][];
+    expect(commands.find(args => args.includes("merge-base"))?.[0]).toBe("--no-lazy-fetch");
+    expect(commands.every(args => args[0] === "--no-lazy-fetch")).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+    expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test.each(["fatal", "malformed", "wrong type"])("rejects an invalid local object probe: %s", mode => {
+    const fixture = createUnreleasedShallowFixture();
+    const calls: string[][] = [];
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
+      calls.push([...args]);
+      if (args.includes("--batch-check=%(objectname) %(objecttype)")) {
+        expect(args[0]).toBe("cat-file");
+        expect(input).toBe(`${fixture.officialTagCommit}\n`);
+        if (mode === "fatal") return { exitCode: 128, stdout: "", stderr: "fatal object probe" };
+        const stdout = mode === "wrong type" ? `${fixture.officialTagCommit} blob\n` : "unexpected response\n";
+        return { exitCode: 0, stdout, stderr: "" };
+      }
+      return git(cwd, args, input);
+    });
+    expect(prepared.run).toThrow("verify official ancestry");
+    expect(calls.some(args => args.includes("--unshallow"))).toBe(false);
+    const bareDir = calls.find(args => args[0] === "init" && args[1] === "--bare")?.[2];
+    expect(calls.some(args => args[0] === "fetch" && args.includes(bareDir!))).toBe(false);
+    expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
   test("rejects failure to fetch fixed HEAD history for an unproven official ancestor", () => {
     const fixture = createUnreleasedShallowFixture();
     const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
     const calls: string[][] = [];
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
       calls.push([...args]);
       if (args.includes("--unshallow")) return { exitCode: 128, stdout: "", stderr: "history fetch failed" };
-      return git(cwd, args);
+      return git(cwd, args, input);
     });
     expect(prepared.run).toThrow("history fetch failed");
     expect(calls.filter(args => args.includes("--unshallow"))).toEqual([
@@ -408,16 +480,22 @@ describe("Fork CI official baseline preparation", () => {
   });
 
   test("rejects a fatal official ancestry recheck after fetching shallow history", () => {
-    const fixture = createUnreleasedShallowFixture();
+    const fixture = createFixture();
     let checks = 0;
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
-      if (args[0] === "merge-base" && args.includes(fixture.officialTagCommit) && ++checks === 2) {
-        return { exitCode: 128, stdout: "", stderr: "fatal ancestry recheck" };
+    const calls: string[][] = [];
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
+      calls.push([...args]);
+      if (args[0] === "merge-base" && args.includes(fixture.officialTagCommit)) {
+        checks++;
+        return checks === 1
+          ? { exitCode: 1, stdout: "", stderr: "" }
+          : { exitCode: 128, stdout: "", stderr: "fatal ancestry recheck" };
       }
-      return git(cwd, args);
+      return git(cwd, args, input);
     });
     expect(prepared.run).toThrow("verify official ancestry");
     expect(checks).toBe(2);
+    expect(calls.some(args => args.includes("--unshallow"))).toBe(true);
     expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
@@ -425,11 +503,11 @@ describe("Fork CI official baseline preparation", () => {
   test("rejects a HEAD change during official ancestry verification", () => {
     const fixture = createFixture();
     let headReads = 0;
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
       if (args[0] === "rev-parse" && args[1] === "HEAD" && ++headReads === 2) {
         return { exitCode: 0, stdout: "a".repeat(40) + "\n", stderr: "" };
       }
-      return git(cwd, args);
+      return git(cwd, args, input);
     });
     expect(prepared.run).toThrow("HEAD changed during official base verification");
     expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
@@ -481,13 +559,15 @@ describe("Fork CI official baseline preparation", () => {
   test("imports the observed lightweight official tag into an origin-only shallow checkout", () => {
     const fixture = createFixture();
     expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe("true");
+    const shallowPath = resolve(fixture.checkout, requireGit(fixture.checkout, ["rev-parse", "--git-path", "shallow"]));
+    const beforeShallow = readFileSync(shallowPath);
     expect(git(fixture.checkout, ["show-ref", "--verify", "--quiet", "refs/tags/v2.35.0"]).exitCode).not.toBe(0);
     expect(requireGit(fixture.checkout, ["tag", "--list", "v*"]).split("\n").filter(Boolean)).toEqual(["v2.35.0-ben.1"]);
     expect(requireGit(fixture.official, ["rev-list", "--count", `${fixture.officialTagCommit}..refs/heads/main`])).toBe("2");
     const calls: string[][] = [];
-    const prepared = prepare(fixture, pathToFileURL(fixture.official).href, (cwd, args) => {
+    const prepared = prepare(fixture, pathToFileURL(fixture.official).href, (cwd, args, input) => {
       calls.push([...args]);
-      return git(cwd, args);
+      return git(cwd, args, input);
     });
     const result = prepared.run();
     expect(result).toMatchObject({ kind: "prepared", tag: "v2.35.0", refKind: "lightweight" });
@@ -500,11 +580,10 @@ describe("Fork CI official baseline preparation", () => {
     expect(officialFetch).toBeDefined();
     const bareDir = calls.find(args => args[0] === "init" && args[1] === "--bare")?.[2];
     expect(officialFetch).toEqual([
-      `--git-dir=${bareDir}`, "fetch", "--no-tags", "--no-filter", pathToFileURL(fixture.official).href,
+      `--git-dir=${bareDir}`, "fetch", "--depth=1", "--no-tags", "--no-filter", pathToFileURL(fixture.official).href,
       "+refs/tags/v2.35.0:refs/tags/v2.35.0",
     ]);
-    expect(officialFetch?.some(arg => arg === "--depth" || arg.startsWith("--depth=")
-      || arg.startsWith("--shallow") || arg === "--unshallow")).toBe(false);
+    expect(readFileSync(shallowPath)).toEqual(beforeShallow);
     const checkoutFetches = calls.filter(args => args.includes("fetch") && !args.includes(pathToFileURL(fixture.official).href));
     expect(checkoutFetches.every(args => args.includes("--no-write-fetch-head"))).toBe(true);
     expect(calls.some(args => args.includes("--unshallow"))).toBe(false);
@@ -526,7 +605,35 @@ describe("Fork CI official baseline preparation", () => {
     expect(checkoutType).toBeGreaterThan(importIndex);
     expect(checkoutRaw).toBeGreaterThan(checkoutType);
     expect(checkoutPeeled).toBeGreaterThan(checkoutRaw);
-    expect(calls.findIndex(args => args[0] === "merge-base")).toBeGreaterThan(checkoutPeeled);
+    expect(calls.findIndex(args => args[0] === "merge-base")).toBeLessThan(importIndex);
+    assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
+  });
+
+  test.each([false, true])("verifier fetch keeps the tag tree but not its parent (annotated=%s)", annotated => {
+    const fixture = createFixture();
+    if (annotated) {
+      requireGit(fixture.official, ["tag", "-d", "v2.35.0"]);
+      requireGit(fixture.official, ["tag", "-a", "v2.35.0", "-m", "official release", fixture.officialTagCommit]);
+    }
+    const parent = requireGit(fixture.official, ["rev-parse", `${fixture.officialTagCommit}~1`]);
+    const tree = requireGit(fixture.official, ["rev-parse", `${fixture.officialTagCommit}^{tree}`]);
+    const blob = requireGit(fixture.official, ["rev-parse", `${fixture.officialTagCommit}:package.json`]);
+    let inspected: { shallow: string; parentExit: number; treeType: string; blobType: string } | undefined;
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
+      const result = git(cwd, args, input);
+      if (result.exitCode === 0 && args[0]?.startsWith("--git-dir=") && args.includes("fetch")) {
+        const dir = args[0];
+        inspected = {
+          shallow: requireGit(cwd, [dir, "rev-parse", "--is-shallow-repository"]),
+          parentExit: git(cwd, [dir, "cat-file", "-e", parent]).exitCode,
+          treeType: requireGit(cwd, [dir, "cat-file", "-t", tree]),
+          blobType: requireGit(cwd, [dir, "cat-file", "-t", blob]),
+        };
+      }
+      return result;
+    });
+    expect(prepared.run()).toMatchObject({ kind: "prepared", refKind: annotated ? "annotated" : "lightweight" });
+    expect(inspected).toEqual({ shallow: "true", parentExit: 1, treeType: "tree", blobType: "blob" });
     assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
   });
 
@@ -606,10 +713,10 @@ describe("Fork CI official baseline preparation", () => {
   test("does not depend on an official main query", () => {
     const fixture = createFixture();
     const calls: string[][] = [];
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
       calls.push([...args]);
       if (args.includes("ls-remote")) return { exitCode: 128, stdout: "", stderr: "remote query failed" };
-      return git(cwd, args);
+      return git(cwd, args, input);
     }, { officialReleaseEvidence: {
       tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
     } });
@@ -621,12 +728,12 @@ describe("Fork CI official baseline preparation", () => {
   test("rejects an official tag whose imported raw identity differs", () => {
     const fixture = createFixture();
     const calls: string[][] = [];
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
       calls.push([...args]);
       if (args[0] === "rev-parse" && args[1] === "refs/ocx-ci/official-tag") {
         return { exitCode: 0, stdout: "a".repeat(40) + "\n", stderr: "" };
       }
-      return git(cwd, args);
+      return git(cwd, args, input);
     }, { officialReleaseEvidence: {
       tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
     } });
@@ -638,11 +745,11 @@ describe("Fork CI official baseline preparation", () => {
 
   test("rejects an official repository fetch failure even with Release evidence", () => {
     const fixture = createFixture();
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
       if (args.includes("fetch") && args.includes(pathToFileURL(fixture.official).href)) {
         return { exitCode: 1, stdout: "", stderr: "official fetch failed" };
       }
-      return git(cwd, args);
+      return git(cwd, args, input);
     }, { officialReleaseEvidence: {
       tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
     } });
@@ -654,11 +761,11 @@ describe("Fork CI official baseline preparation", () => {
   test("rejects an official tag fetch failure when main is absent", () => {
     const fixture = createFixture();
     requireGit(fixture.official, ["branch", "-m", "main", "dev"]);
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
       if (args.includes("fetch") && args.includes(pathToFileURL(fixture.official).href)) {
         return { exitCode: 1, stdout: "", stderr: "tag fetch failed" };
       }
-      return git(cwd, args);
+      return git(cwd, args, input);
     }, { officialReleaseEvidence: {
       tag_name: "v2.35.0", draft: false, prerelease: false, target_commitish: fixture.officialTagCommit,
     } });
@@ -763,7 +870,7 @@ describe("Fork CI official baseline preparation", () => {
     const root = mkdtempSync(join(tmpdir(), "ocx-fork-release-cli-"));
     roots.push(root);
     const fakeScript = join(root, "fake-git.mjs");
-    writeFileSync(fakeScript, `import { appendFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\nif (args[0] === "rev-parse" && args.includes("--verify")) process.exit(1);\nif (args[0] === "cat-file" && args.at(-1).startsWith("refs/tags/")) process.exit(1);\nif (args.includes("cat-file")) { process.stdout.write("commit\\n"); process.exit(0); }\nif (args.includes("rev-parse")) process.stdout.write("a".repeat(40) + "\\n");\n`);
+    writeFileSync(fakeScript, `import { appendFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nif (args.shift() !== "--no-lazy-fetch") process.exit(129);\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\nif (args[0] === "rev-parse" && args.includes("--verify")) process.exit(1);\nif (args[0] === "cat-file" && args.at(-1).startsWith("refs/tags/")) process.exit(1);\nif (args.includes("--batch-check=%(objectname) %(objecttype)")) { process.stdout.write("a".repeat(40) + " commit\\n"); process.exit(0); }\nif (args.includes("cat-file")) { process.stdout.write("commit\\n"); process.exit(0); }\nif (args.includes("rev-parse")) process.stdout.write("a".repeat(40) + "\\n");\n`);
     const preload = join(root, "preload.mjs");
     writeFileSync(preload, `import { appendFileSync } from "node:fs";\nconst spawnSync = Bun.spawnSync.bind(Bun);\nBun.spawnSync = (command, options) => {\n  if (command[0] === "git") {\n    appendFileSync(process.env.FAKE_GIT_ENV_LOG, String(Object.keys(options.env ?? {}).some(key => ["OCX_OFFICIAL_RELEASE_API_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_INDEX_FILE", "GIT_SHALLOW_FILE", "GIT_REPLACE_REF_BASE", "GIT_NAMESPACE"].includes(key.toUpperCase()))) + "\\n");\n    return spawnSync([process.execPath, ${JSON.stringify(fakeScript)}, ...command.slice(1)], options);\n  }\n  return spawnSync(command, options);\n};\nglobalThis.fetch = async (url, init) => {\n  const header = new Headers(init.headers).get("authorization");\n  appendFileSync(process.env.FAKE_RELEASE_LOG, JSON.stringify({ url: String(url), credentials: init.credentials, redirect: init.redirect, authorization: header !== null, usesToken: header === "Bearer " + process.env.OCX_OFFICIAL_RELEASE_API_TOKEN }) + "\\n");\n  if (process.env.FAKE_RELEASE_MODE === "network") throw new Error("network failure");\n  if (process.env.FAKE_RELEASE_MODE === "http") return new Response("unavailable", { status: 503 });\n  if (process.env.FAKE_RELEASE_MODE === "auth-http") return new Response(process.env.OCX_OFFICIAL_RELEASE_API_TOKEN, { status: 403, headers: { "x-ratelimit-remaining": "0" } });\n  return new Response(process.env.FAKE_RELEASE_JSON);\n};\n`);
     const scriptPath = fileURLToPath(new URL("../../scripts/prepare-fork-official-base.ts", import.meta.url));
@@ -841,9 +948,9 @@ describe("Fork CI official baseline preparation", () => {
   test("Fork version commit probe uses a cmd-safe Git revision token", () => {
     const fixture = createReleasedForkFixture();
     const calls: string[][] = [];
-    prepare(fixture, undefined, (cwd, args) => {
+    prepare(fixture, undefined, (cwd, args, input) => {
       calls.push([...args]);
-      return git(cwd, args);
+      return git(cwd, args, input);
     }).run();
     const probe = calls.find(args => args[0] === "rev-parse" && args[1] === "--verify" && args[2] === "--quiet");
     expect(probe).toEqual(["rev-parse", "--verify", "--quiet", "refs/tags/v2.35.0-ben.2~0"]);
@@ -858,9 +965,9 @@ describe("Fork CI official baseline preparation", () => {
     expect(requireGit(fixture.official, ["rev-list", "--count", "v2.35.0-ben.2..HEAD"])).toBe("4");
     expect(releasedForkError(fixture.checkout)).toContain("tag is not on HEAD history");
     const calls: string[][] = [];
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
       calls.push([...args]);
-      return git(cwd, args);
+      return git(cwd, args, input);
     });
     const refs = requireGit(fixture.checkout, ["show-ref"]);
     prepared.run();
@@ -886,14 +993,17 @@ describe("Fork CI official baseline preparation", () => {
       }
       expect(requireGit(fixture.checkout, ["rev-parse", "--is-shallow-repository"])).toBe(String(!full));
       expect(releasedForkError(fixture.checkout)).toBeNull();
+      const shallowPath = resolve(fixture.checkout, requireGit(fixture.checkout, ["rev-parse", "--git-path", "shallow"]));
+      const beforeShallow = existsSync(shallowPath) ? readFileSync(shallowPath) : undefined;
       const calls: string[][] = [];
-      const prepared = prepare(fixture, undefined, (cwd, args) => {
+      const prepared = prepare(fixture, undefined, (cwd, args, input) => {
         calls.push([...args]);
-        return git(cwd, args);
+        return git(cwd, args, input);
       });
       prepared.run();
       expect(releasedForkError(fixture.checkout)).toBeNull();
       expect(calls.some(args => args.includes("--unshallow"))).toBe(false);
+      expect(existsSync(shallowPath) ? readFileSync(shallowPath) : undefined).toEqual(beforeShallow);
       assertNoOwnedResidue(fixture, prepared.beforeFetchHead, prepared.sentinel, prepared.beforeVerifierRoots);
     }
   });
@@ -917,12 +1027,12 @@ describe("Fork CI official baseline preparation", () => {
     const fixture = createReleasedForkFixture();
     const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
     const calls: string[][] = [];
-    const prepared = prepare(fixture, undefined, (cwd, args) => {
+    const prepared = prepare(fixture, undefined, (cwd, args, input) => {
       calls.push([...args]);
       if (args[0] === "merge-base") {
         return { exitCode: 128, stdout: "", stderr: `fatal ancestry query:\n${hostileGitDiagnostic(fixture.checkout)}` };
       }
-      return git(cwd, args);
+      return git(cwd, args, input);
     });
     const refs = requireGit(fixture.checkout, ["show-ref"]);
     let message = "";
@@ -946,14 +1056,14 @@ describe("Fork CI official baseline preparation", () => {
       const head = requireGit(fixture.checkout, ["rev-parse", "HEAD"]);
       const rawTag = requireGit(fixture.checkout, ["rev-parse", "refs/tags/v2.35.0-ben.2"]);
       const calls: string[][] = [];
-      const prepared = prepare(fixture, undefined, (cwd, args) => {
+      const prepared = prepare(fixture, undefined, (cwd, args, input) => {
         calls.push([...args]);
         if (args.includes("--unshallow")) {
           const stderr = hostileGitDiagnostic(fixture.checkout);
           if (throws) throw new Error(stderr);
           return { exitCode: 1, stdout: "", stderr };
         }
-        return git(cwd, args);
+        return git(cwd, args, input);
       });
       let message = "";
       try { prepared.run(); } catch (error) { message = String(error); }
@@ -1199,6 +1309,9 @@ describe("Fork CI official baseline preparation", () => {
       if (args[0] === "update-ref" && args[1] === "-d" && cleanupOnlyDeletes++ >= 1) {
         throw new Error(`cleanup ${"secret" + "-token"}`);
       }
+      if (args.includes("--batch-check=%(objectname) %(objecttype)")) {
+        return { exitCode: 0, stdout: `${"a".repeat(40)} commit\n`, stderr: "" };
+      }
       if (args.includes("cat-file")) return { exitCode: 0, stdout: "tag\n", stderr: "" };
       if (args.includes("merge-base")) return { exitCode: 0, stdout: "", stderr: "" };
       if (args.includes("rev-parse") && args.some(value => value.includes("^{commit}"))) {
@@ -1319,7 +1432,7 @@ describe("Fork CI official baseline preparation", () => {
     mkdirSync(fakeBin);
     const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
     const fakeScript = join(root, "default-runner-git.mjs");
-    writeFileSync(fakeScript, `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");\n`);
+    writeFileSync(fakeScript, `import { appendFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nif (args.shift() !== "--no-lazy-fetch") process.exit(129);\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\n`);
     if (process.platform === "win32") writeFileSync(fakeGit, `@echo off\n"${process.execPath}" "${fakeScript}" %*\n`);
     else {
       writeFileSync(fakeGit, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`);
@@ -1367,7 +1480,7 @@ describe("Fork CI official baseline preparation", () => {
     const fakeGitLog = join(fixture.root, "git-args.jsonl");
     mkdirSync(fakeBin);
     const fakeScript = join(fixture.root, "fake-git.mjs");
-    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nconst env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase().startsWith("GIT_CONFIG") || key.toUpperCase() === "PATH"));\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify({ args, env }) + "\\n");\nconst deletes = rows.filter(row => row.args?.[0] === "update-ref" && row.args?.[1] === "-d").length;\nconst bare = rows.flatMap(row => row.args?.[0] === "init" ? [row.args[2]] : row.args ?? []).find(value => value?.startsWith("--git-dir="))?.slice("--git-dir=".length) ?? rows.find(row => row.args?.[0] === "init")?.args?.[2] ?? "";\nif (args.includes("ls-remote")) { process.stdout.write("a".repeat(40) + "\\trefs/heads/main\\n"); process.exit(0); }\nif (args.includes("fetch") && args.includes("https://github.com/lidge-jun/opencodex.git")) { process.stderr.write(bare + "\\n" + process.env.FAKE_GIT_ERROR); process.exit(1); }\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 1) { process.stderr.write("cleanup " + bare); process.exit(1); }\nprocess.exit(0);\n`);
+    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nif (args.shift() !== "--no-lazy-fetch") process.exit(129);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nconst env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase().startsWith("GIT_CONFIG") || key.toUpperCase() === "PATH"));\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify({ args, env }) + "\\n");\nconst deletes = rows.filter(row => row.args?.[0] === "update-ref" && row.args?.[1] === "-d").length;\nconst bare = rows.flatMap(row => row.args?.[0] === "init" ? [row.args[2]] : row.args ?? []).find(value => value?.startsWith("--git-dir="))?.slice("--git-dir=".length) ?? rows.find(row => row.args?.[0] === "init")?.args?.[2] ?? "";\nif (args.includes("ls-remote")) { process.stdout.write("a".repeat(40) + "\\trefs/heads/main\\n"); process.exit(0); }\nif (args.includes("fetch") && args.includes("https://github.com/lidge-jun/opencodex.git")) { process.stderr.write(bare + "\\n" + process.env.FAKE_GIT_ERROR); process.exit(1); }\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 1) { process.stderr.write("cleanup " + bare); process.exit(1); }\nprocess.exit(0);\n`);
     const fakeGit = join(fakeBin, process.platform === "win32" ? "git.cmd" : "git");
     if (process.platform === "win32") {
       writeFileSync(fakeGit, `@echo off\n"${process.execPath}" "${fakeScript}" %*\n`);
@@ -1442,7 +1555,7 @@ describe("Fork CI official baseline preparation", () => {
     roots.push(root);
     const fakeLog = join(root, "calls.jsonl");
     const fakeScript = join(root, "fake-git.mjs");
-    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\nconst bare = rows.find(row => row[0] === "init")?.[2] ?? "";\nconst deletes = rows.filter(row => row[0] === "update-ref" && row[1] === "-d").length;\nif (args.includes("ls-remote")) { process.stdout.write("a".repeat(40) + "\\trefs/heads/main\\n"); process.exit(0); }\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 1) { process.stderr.write("cleanup " + bare); process.exit(1); }\nif (args.includes("cat-file")) { process.stdout.write("tag\\n"); process.exit(0); }\nif (args.includes("rev-parse")) { if (args[1]?.startsWith("refs/tags/") && !args.some(value => value.startsWith("--git-dir="))) process.exit(1); process.stdout.write(args.some(value => value.includes("^{commit}")) ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n"); process.exit(0); }\nprocess.exit(0);\n`);
+    writeFileSync(fakeScript, `import { appendFileSync, readFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nif (args.shift() !== "--no-lazy-fetch") process.exit(129);\nconst rows = (() => { try { return readFileSync(process.env.FAKE_GIT_LOG, "utf8").trim().split("\\n").filter(Boolean).map(JSON.parse); } catch { return []; } })();\nappendFileSync(process.env.FAKE_GIT_LOG, JSON.stringify(args) + "\\n");\nconst bare = rows.find(row => row[0] === "init")?.[2] ?? "";\nconst deletes = rows.filter(row => row[0] === "update-ref" && row[1] === "-d").length;\nif (args.includes("ls-remote")) { process.stdout.write("a".repeat(40) + "\\trefs/heads/main\\n"); process.exit(0); }\nif (args[0] === "update-ref" && args[1] === "-d" && deletes >= 1) { process.stderr.write("cleanup " + bare); process.exit(1); }\nif (args.includes("--batch-check=%(objectname) %(objecttype)")) { process.stdout.write("a".repeat(40) + " commit\\n"); process.exit(0); }\nif (args.includes("cat-file")) { process.stdout.write("tag\\n"); process.exit(0); }\nif (args.includes("rev-parse")) { if (args[1]?.startsWith("refs/tags/") && !args.some(value => value.startsWith("--git-dir="))) process.exit(1); process.stdout.write(args.some(value => value.includes("^{commit}")) ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n"); process.exit(0); }\nprocess.exit(0);\n`);
     const preload = join(root, "git-preload.mjs");
     // Keep the real CLI entry while passing Git argv through a native executable on Windows.
     writeFileSync(preload, `const spawnSync = Bun.spawnSync.bind(Bun);\nBun.spawnSync = (command, options) => spawnSync(command[0] === "git" ? [process.execPath, ${JSON.stringify(fakeScript)}, ...command.slice(1)] : command, options);\nglobalThis.fetch = async url => Response.json({ tag_name: String(url).split("/").at(-1), draft: false, prerelease: false, target_commitish: "a".repeat(40) });\n`);
