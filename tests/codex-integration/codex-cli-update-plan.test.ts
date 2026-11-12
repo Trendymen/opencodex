@@ -1005,12 +1005,26 @@ describe("registry configuration isolation", () => {
     // disposable HOME while the rest stay stubbed. npm_config_offline makes the
     // registry leg fail fast without network; the residue assertions hold either way.
     const fakeHome = createCodexCliTestRoot("ocx-update-test-home-");
+    let ownedCwd = "", cleanupError = "none";
+    const originalRemove = fs.rmSync;
+    const removal = spyOn(fs, "rmSync").mockImplementation((path, options) => {
+      try { return originalRemove(path, options); }
+      catch (error) {
+        if (path === ownedCwd) {
+          const code = (error as NodeJS.ErrnoException).code;
+          cleanupError = code === "EBUSY" || code === "EPERM" || code === "EACCES" || code === "ENOTEMPTY" ? code : "other";
+        }
+        throw error;
+      }
+    });
     try {
       const calls: CapturedCall[] = [];
       const ownedDuringRun: string[] = [];
       let realRan = false;
+      let realExit: { error: string | null; status: number | null; signal: NodeJS.Signals | null; doubleLoading: boolean } | undefined;
       const spawn = ((bin: string, args: string[], options: Record<string, unknown>) => {
         const cwd = options.cwd as string;
+        ownedCwd = cwd;
         const call: CapturedCall = {
           bin, args, options,
           cwdHadSentinel: existsSync(join(cwd, "package.json")),
@@ -1026,27 +1040,33 @@ describe("registry configuration isolation", () => {
           : [...args, "--offline", "--fetch-retries=0", "--fetch-timeout=1000"];
         const result = spawnSync(bin, offlineArgs, { ...options, env, timeout: 10_000, windowsHide: true, encoding: "utf8" });
         realRan = true;
-        // A spawn that never started (ENOENT, timeout kill) proves nothing; require
-        // a real process exit so the residue assertions actually bound npm's writes.
-        expect(result.error).toBeUndefined();
-        expect(result.status === 0 || result.status === 1).toBe(true);
-        expect(result.stderr).not.toContain("double-loading config");
+        realExit = { error: result.error ? (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT" ? "timeout" : "spawn-error" : null,
+          status: result.status, signal: result.signal, doubleLoading: (result.stderr ?? "").includes("double-loading config") };
+        if (realExit.error || ![0, 1].includes(realExit.status ?? -1) || realExit.doubleLoading) return { status: null, stdout: "" };
         // The owned root is still live here, so residue inside it is observable
         // before the resolver's finally removes it.
         for (const name of readdirSync(cwd)) ownedDuringRun.push(name);
         return (capturingSpawn(RESOLVE_OUTPUTS).spawn as typeof spawnSync)(bin, args, options);
       }) as never;
-      await resolveArtifact("latest", spawn);
-      expect(realRan).toBe(true);
+      const target = await resolveArtifact("latest", spawn);
+      const diagnostic = `npm=${JSON.stringify(realExit ?? null)} cleanup=${cleanupError}`;
+      // Resolver failures are caught, so check the real child's result after it returns.
+      expect(realRan, diagnostic).toBe(true);
+      expect(realExit?.error, diagnostic).toBeNull();
+      expect([0, 1], diagnostic).toContain(realExit?.status);
+      expect(realExit?.signal, diagnostic).toBeNull();
+      expect(realExit?.doubleLoading, diagnostic).toBe(false);
+      expect(target.kind, diagnostic).toBe("resolved");
       const cwd = calls[0]!.options.cwd as string;
       // Anything npm persisted was inside the owned root and is removed with it;
       // the disposable HOME stays completely empty (no ~/.npm, no ~/.npmrc, no _logs).
       for (const name of ownedDuringRun) {
         expect(["package.json", "ocx-update.npmrc", "ocx-update-global.npmrc", "npm-cache", "node-compile-cache"].includes(name)).toBe(true);
       }
-      expect(existsSync(cwd)).toBe(false);
-      expect(readdirSync(fakeHome)).toEqual([]);
+      expect(existsSync(cwd), diagnostic).toBe(false);
+      expect(readdirSync(fakeHome), diagnostic).toEqual([]);
     } finally {
+      removal.mockRestore();
       rmSync(fakeHome, { recursive: true, force: true });
     }
   }, 15_000);
