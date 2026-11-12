@@ -58,6 +58,8 @@ CI 的官方基线准备步骤验证正式 Release、导入精确官方 Tag 并�
 
 来源准备先在隔离的 Git 配置上下文中向固定官方 URL 查询精确 Tag 的 raw/peeled OID，并核对正式 Release 身份。本地已持有相同类型、raw/peeled 身份的 Tag 和 commit 时复用对象；只有确证对象缺失才回到临时仓库的一层历史抓取，并复核抓取对象与远端查询一致，异常或同名 Tag 冲突不作为缓存缺失处理。祖先证明使用候选 checkout：浅克隆缺少基线对象或无法证明祖先时，先从 origin 补全固定 HEAD 的历史，再导入已验证 Tag；不把临时仓库的浅边界写入 checkout，也不使用部分克隆或隐式对象抓取。
 
+`ls-remote` 的 peeled 查询使用单字符通配模式 `refs/tags/<Tag>?{}`，避免 Windows `git.cmd` 参数中的 `^`；返回行仍只接受精确 raw ref 和精确 `^{}` peeled ref，其他匹配项直接拒绝。
+
 若当前版本的 Fork Tag 已在本地、仓库为浅克隆且尚不能证明该 Tag 是 HEAD 祖先，准备步骤先固定 HEAD，再执行 `git fetch --unshallow --no-tags --no-write-fetch-head origin <固定的HEAD>`。完整仓库、已可证明祖先或尚无当前 Fork Tag 时不补取历史；fetch 失败拒绝继续，补全后仍由原版本 guard 拒绝真实非祖先。此步骤不改变 checkout、分支、Tag 或 FETCH_HEAD。
 
 candidate CI 失败、缺失或指向旧 SHA 时，暂不建 Tag 或发布，继续定位并修复。远端 dev 保留无 Tag 候选；实现变化后形成新审查轮次，以最新远端 dev 的精确 lease 再推并取得新 SHA CI。同一候选的基础设施故障有界恢复，保留已通过 jobs 和历史失败证据。推送结果不确定时先读实际 OID；dispatch 结果不确定时先查对应 run，不重复触发。发布仍提交完整三引用原子集合，即使 dev 已等于候选，也保留其 refspec 和精确 lease。

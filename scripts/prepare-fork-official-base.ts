@@ -368,7 +368,7 @@ export function prepareForkOfficialBase(options: {
     }
     const bareTagRef = `refs/tags/${classification.tag}`;
     const advertised = runOrThrow(runGit, "verify official tag", options.repoRoot, [
-      `--git-dir=${bareDir}`, "ls-remote", "--tags", options.officialRepositoryUrl, bareTagRef, `${bareTagRef}^{}`,
+      `--git-dir=${bareDir}`, "ls-remote", "--tags", options.officialRepositoryUrl, bareTagRef, `${bareTagRef}?{}`,
     ], ownedPaths).stdout.replaceAll("\r\n", "\n").split("\n");
     if (advertised.pop() !== "" || advertised.length < 1 || advertised.length > 2) {
       throw new Error("verify official tag: invalid remote tag advertisement");
