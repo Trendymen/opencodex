@@ -55,6 +55,8 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 `agentMessageFormat` 和 `inferResponsesMessagePhaseModels` 通过配置或管理 API 使用。POST 省略保留最新值，PATCH `null` 清除；`agentMessageFormat` 的 POST `null` 拒绝。显式格式转换保留身份及原请求/重放对象。
 
+未设置 `agentMessageFormat` 时，forward 鉴权沿用上游默认并保留原生 `agent_message`。第三方目的地显式设置 `user_message` 时，仍可转换可读内容。
+
 `inferResponsesMessagePhaseModels` 也覆盖名单内第三方模型的普通 JSON 响应。满足其条件时，按模型启用的推断优先，避免两套缓冲改写吞掉同一个 EOF 尾项。其他路由继续使用官方 Provider 级 `messagePhaseInference`，作用于 SSE 及由 SSE 重建的 JSON。
 
 `opencode-go` 预设仅在缺失时补 `preserveResponsesReasoningContent: true`，显式 `false` 优先。推动该默认值的拒绝样本来自 DeepSeek，同 Provider 其他 Responses 模型尚未全部验证保留回放。
@@ -78,7 +80,7 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 | `normalizeEncryptedContent` | 解封装 OCX1，并按既有身份切换条件规范化 native compaction 密文。关闭时跳过该规范化；任务恢复失败处理单独保留。 |
 | `snapshotSkillsCatalog` | 在既有 skills 配置要求时应用技能目录快照。 |
 | `rewriteAnnotationInstructions` | 改写已识别的 Codex 注解说明，要求输出裸 directive。 |
-| `bridgeLiteMetadata` | 把已识别的 Lite header 补到缺失的请求 metadata，不覆盖显式值。 |
+| `bridgeLiteMetadata` | 构造 canonical 上游 WebSocket 帧时映射有效的 Lite header，显式 HTTP header 优先同名 metadata。HTTP 请求 metadata 和其他字段保持原样。 |
 
 ### 响应
 
@@ -201,7 +203,7 @@ customModels 类型、CRUD 和 catalog 行已是官方能力。Fork 增加严格
 
 ## 加密子任务恢复
 
-恢复默认关闭，启用后使用额外的认证 ChatGPT 请求。以下示例开启恢复，其余字段使用 Fork 默认值：
+恢复默认关闭，启用后使用额外的认证 ChatGPT 请求。以下示例开启恢复，其余字段使用 Fork 严格后端任务的默认值：
 
 ```json
 {
@@ -216,7 +218,7 @@ customModels 类型、CRUD 和 catalog 行已是官方能力。Fork 增加严格
 }
 ```
 
-`timeoutMs` 限制每次尝试，响应首字节/空闲等待仍限 45 秒。`maxRetries` 允许最多两次额外超时尝试；既有 `retries` 处理短暂 HTTP/传输失败，额度跨超时尝试共享且受当前尝试 deadline 限制。取消和 `invalid_encrypted_content` 停止两类重试。
+已准入的 strict backend `NEW_TASK` 与严格子→父 `MESSAGE` 中，`timeoutMs` 限制每次尝试（默认 120000 毫秒），首字节/空闲等待上限为 45 秒，`maxRetries` 最多允许两次超时重试。其他受支持的加密任务使用一个共享期限（默认 45000 毫秒，或显式配置的 `timeoutMs`），不使用 `maxRetries`。`retries` 在当前期限内处理短暂 HTTP/传输失败；取消与 `invalid_encrypted_content` 会停止两类重试。
 
 原生 transient 5xx 恢复只准入 strict `NEW_TASK`，按共享发送预算对已选择的同一目标重放一次。已准入父任务加密 `MESSAGE` 的超时可生成无密文重发通知，不声称正文已读；strict 密文和恢复 body 不写 continuation storage。
 

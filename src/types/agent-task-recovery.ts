@@ -4,9 +4,9 @@ export type OcxAgentTaskRecoveryConfig = {
   model?: string;
   /** Reasoning effort sent to the recovery model. Default: medium. */
   reasoningEffort?: string;
-  /** Per-attempt recovery request timeout in milliseconds. Default: 120000. */
+  /** Milliseconds per strict backend attempt (default 120000), or per ordinary recovery (default 45000). */
   timeoutMs?: number;
-  /** Number of bounded timeout retries after the first attempt. Default: 2. */
+  /** Extra timeout attempts for admitted strict backend tasks only. Default: 2. */
   maxRetries?: number;
   /** Maximum in-memory ciphertext-to-assignment entries. Default: 200. */
   cacheEntries?: number;

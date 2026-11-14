@@ -13,15 +13,17 @@ import {
   setGlobalContextCapValue,
   setProviderContextCap,
 } from "../../providers/context-cap";
-import { clearModelCache } from "../../codex/model-cache";
 import { captureConfigTopLevelRollback } from "../../config/rebase-provenance";
-import { reconcileLiveStateStores } from "../../lib/state-store-registrations";
 import { jsonResponse } from "../auth-cors";
 import type { ManagementContext } from "./context";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import { isPlainRecord } from "./shared";
 
-export async function handleProviderContextCapRoutes(ctx: ManagementContext): Promise<Response | null> {
+export async function handleProviderContextCapRoutes(ctx: ManagementContext, onSaved: {
+  provider(provider: string): ReturnType<ManagementContext["convergeCodexCatalog"]>;
+  global(affected: string[], applyToAll: boolean): ReturnType<ManagementContext["convergeCodexCatalog"]>;
+  all(before: string[], names: string[]): ReturnType<ManagementContext["convergeCodexCatalog"]>;
+}): Promise<Response | null> {
   const { req, url, config, convergeCodexCatalog, deps } = ctx;
   if (url.pathname === "/api/provider-context-caps" && req.method === "GET") {
     return jsonResponse({
@@ -91,9 +93,7 @@ export async function handleProviderContextCapRoutes(ctx: ManagementContext): Pr
       return jsonResponse({ error: "value must be a positive number" }, 400);
     }
     persistCaps(() => setProviderContextCap(config, provider, enabled, perProviderValue));
-    reconcileLiveStateStores();
-    clearModelCache(provider);
-    return respond(await convergeCodexCatalog());
+    return respond(await onSaved.provider(provider));
   }
 
   if (body.value !== undefined) {
@@ -108,9 +108,7 @@ export async function handleProviderContextCapRoutes(ctx: ManagementContext): Pr
     const affected = Object.keys(providerContextCaps(config));
     const applyToAll = body.setAll === true;
     persistCaps(() => setGlobalContextCapValue(config, normalizedValue, applyToAll));
-    reconcileLiveStateStores();
-    if (applyToAll) for (const provider of affected) clearModelCache(provider);
-    return respond(await convergeCodexCatalog());
+    return respond(await onSaved.global(affected, applyToAll));
   }
 
   if (body.setAll !== undefined) {
@@ -119,9 +117,7 @@ export async function handleProviderContextCapRoutes(ctx: ManagementContext): Pr
     const before = Object.keys(providerContextCaps(config));
     const names = Object.keys(config.providers);
     persistCaps(() => setAllProviderContextCaps(config, names, enabled));
-    reconcileLiveStateStores();
-    for (const provider of new Set([...before, ...names])) clearModelCache(provider);
-    return respond(await convergeCodexCatalog());
+    return respond(await onSaved.all(before, names));
   }
 
   return jsonResponse({ error: "provider string and enabled boolean are required" }, 400);

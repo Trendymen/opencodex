@@ -268,7 +268,7 @@ async function chooseListenPort(
   const config = loadConfig();
   const preferred = requestedPort ?? config.port ?? 10100;
   const topology = resolveForkModelApiTopology(config, preferred);
-  const hardPin = (requestedPort !== undefined && requestedPort > 0) || topology.mode !== "disabled";
+  const hardPin = (requestedPort !== undefined && requestedPort > 0) || (preferred > 0 && topology.mode !== "disabled");
   // Only an EXPLICITLY ported listener reserves a port. The companion form (`{enabled:true}`
   // with no port) deliberately shares the public port on 127.0.0.1, so treating it as a
   // reservation — via `effectiveLoopbackListenerPort` — would refuse every start on a
@@ -308,7 +308,7 @@ async function chooseListenPort(
       // the reclaim deadline and the final listen. Still never hop off `--port`.
       preferRetryMs: hardPin ? 5_000 : 750,
       preferRetryIntervalMs: 50,
-      allowEphemeralFallback: preferred === 0 || !hardPin,
+      allowEphemeralFallback: !hardPin,
       // Never hand the public listener the port the loopback listener is configured to
       // bind (#1102). Without this, `--port <loopback port>` binds the public listener
       // first and the loopback bind then fails, rolling back a startup that was only

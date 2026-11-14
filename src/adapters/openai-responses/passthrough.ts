@@ -197,25 +197,6 @@ export function applyConfiguredResponsesMaxOutputTokens(
   return { ...body, max_output_tokens: budget };
 }
 
-function addCanonicalForwardResponsesLiteMetadata(body: unknown, incoming: IncomingMeta): unknown {
-  if (incoming.headers.get("x-openai-internal-codex-responses-lite") !== "true" || !isPlainObject(body)) {
-    return body;
-  }
-  if (Object.hasOwn(body, "client_metadata") && !isPlainObject(body.client_metadata)) return body;
-  const clientMetadata = body.client_metadata;
-  if (isPlainObject(clientMetadata)
-    && Object.hasOwn(clientMetadata, "ws_request_header_x_openai_internal_codex_responses_lite")) {
-    return body;
-  }
-  return {
-    ...body,
-    client_metadata: {
-      ...(isPlainObject(clientMetadata) ? clientMetadata : {}),
-      ws_request_header_x_openai_internal_codex_responses_lite: "true",
-    },
-  };
-}
-
 export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): ProviderAdapter & { passthrough: true } {
   return {
     name: "openai-responses",
@@ -579,7 +560,6 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         if (override && override.kind !== "main-pool") {
           finalBody = isolateCodexPoolClientMetadata(finalBody, override.chatgptAccountId);
         }
-        if (permissions?.bridgeLiteMetadata !== false) finalBody = addCanonicalForwardResponsesLiteMetadata(finalBody, incoming);
         if (permissions?.synthesizeRoutingHint !== false) {
           const routingHeaders = new Headers(headers);
           applyCodexRoutingHint(routingHeaders, finalBody);

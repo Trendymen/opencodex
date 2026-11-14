@@ -1,6 +1,5 @@
 import { resolveForkModelApiTopology } from "../fork/model-api-listener-config";
 import { createForkModelApiListener } from "../fork/model-api-listener";
-import { loopbackRouteAllowed } from "./index/loopback-route-allowlist";
 import { remoteWorkspaceEnabled } from "../remote-control/workspace-activation";
 import { scheduleDesktopCompatibilityStartup } from "./index/desktop-compatibility-startup";
 import { AuxiliaryListenerBindError } from "./ports";
@@ -184,7 +183,7 @@ import {
   type NativeMainStartupLifecycle,
 } from "../codex/native-profile-startup";
 import { EXTERNAL_CALL_PREFIX, LiveCallBindings } from "./live-call-bindings";
-import { contextRelayActivated } from "../codex/context-compat";
+import { contextEndpoint, contextRelayActivated } from "../codex/context-compat";
 import { fetchAllModels, handleManagementAPI, VERSION, type ManagementApiDeps } from "./management-api";
 import {
   createManagementSessionControl,
@@ -374,6 +373,47 @@ function startServerWithSpendLedgerOwner(port: number | undefined, deps: StartSe
   const publicPolicy = (): RequestPolicyView => config;
   const loopbackPolicy = (): RequestPolicyView => requestPolicyView(config, "127.0.0.1");
   void publicPolicy;
+
+  /**
+   * The unauthenticated loopback listener admits only these data-plane routes; all others 404.
+   * The inference handlers still apply the receiving listener's admission and credential checks.
+   * The count_tokens route does not spend provider quota, and /v1/models lets clients load an
+   * online catalog when no catalog was materialized locally. Management, health and GUI routes
+   * are not admitted here.
+   */
+  function loopbackRouteAllowed(url: URL, req: Request): boolean {
+    const path = url.pathname;
+    if (path === "/v1/responses") {
+      return req.method === "POST" || req.headers.get("upgrade")?.toLowerCase() === "websocket";
+    }
+    if (path === "/v1/responses/compact") return req.method === "POST";
+    if (path === "/v1/messages" || path === "/v1/chat/completions") return req.method === "POST";
+    if (path === "/v1/messages/count_tokens") return req.method === "POST";
+    if (path === "/v1/audio/transcriptions") return req.method === "POST";
+    if (path === "/v1/audio/transcriptions/stream") return req.headers.get("upgrade")?.toLowerCase() === "websocket";
+    if (path === "/v1/alpha/search") return req.method === "POST";
+    if (contextEndpoint(path)) return req.method === "POST";
+    if (path === "/v1/images/generations" || path === "/v1/images/edits") {
+      return req.method === "POST";
+    }
+    if (path === "/v1/models") return req.method === "GET";
+    // Realtime voice — a directly-spawned `codex app-server` needs these for desktop voice
+    // the same way it needs /v1/responses. Two shapes, same trust model as /v1/responses:
+    //  - standalone sessions (codex-rs thread/realtime/start, WebSocket transport):
+    //    WebSocket upgrades on the bare /v1/realtime and /v1/live paths only;
+    //  - WebRTC calls (desktop v3 voice): POST call-create on /v1/live or
+    //    /v1/realtime/calls, then the sideband join as a WebSocket upgrade on the keyed
+    //    /v1/live/{callId}, /v1/realtime/calls/{callId}, or /v1/realtime?call_id= form
+    //    (the join reaches this listener through the injected
+    //    experimental_realtime_ws_base_url; openai/codex #35830).
+    // Plain HTTP on the upgrade paths stays rejected.
+    const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
+    if (path === "/v1/realtime") return isWebSocketUpgrade;
+    if (path === "/v1/live") return isWebSocketUpgrade || req.method === "POST";
+    if (path === "/v1/realtime/calls") return req.method === "POST";
+    if (/^\/v1\/(?:live|realtime\/calls)\/[^/]+\/?$/.test(path)) return isWebSocketUpgrade;
+    return false;
+  }
 
   /**
    * Routes the loopback hub-management listener will serve. This is default-deny so adding a
@@ -612,9 +652,12 @@ function startServerWithSpendLedgerOwner(port: number | undefined, deps: StartSe
       get remoteWorkspaceStopping() { return remoteWorkspaceStopping; },
     });
 
-    server = spendLedgerLifecycle.track(bindListener({ ...serveOptions, port: listenPort, hostname: bindHost }));
-
     forkModelApiListener.start(serveOptions);
+    if (deps.bindListener) {
+      server = spendLedgerLifecycle.track(deps.bindListener({ ...serveOptions, port: listenPort, hostname: bindHost }));
+    } else {
+      server = spendLedgerLifecycle.track(Bun.serve<WsData>({ ...serveOptions, port: listenPort, hostname: bindHost }));
+    }
 
     // Both binds are one startup transaction (#1102). If the loopback bind fails after the
     // public one succeeded, leaving the public listener up would strand it: the CLI's port

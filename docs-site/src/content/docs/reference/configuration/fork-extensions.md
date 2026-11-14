@@ -55,6 +55,8 @@ With a valid window and more than 512 estimated tokens remaining, the injected b
 
 `agentMessageFormat` and `inferResponsesMessagePhaseModels` use config or the management API. An omitted POST field retains the latest value; PATCH `null` clears it. `agentMessageFormat` POST `null` is rejected. Explicit format conversion preserves identities and the original request/replay objects.
 
+With `agentMessageFormat` unset, forward authentication keeps native `agent_message` items under the upstream default. An explicit `user_message` setting can still convert readable content at third-party destinations.
+
 `inferResponsesMessagePhaseModels` also covers ordinary JSON responses for its listed third-party models. When its conditions match, model-scoped inference takes precedence so two buffering rewrites cannot consume the same EOF tail. Other routes retain upstream's provider-level `messagePhaseInference` option for SSE and JSON reconstructed from SSE.
 
 The `opencode-go` preset defaults `preserveResponsesReasoningContent` to `true` only when absent; explicit `false` wins. The refusal sample motivating it came from DeepSeek. Other Responses models on that provider have not all been validated with retained replay.
@@ -78,7 +80,7 @@ The paths in these tables are relative to `codexPassthrough`. All defaults are `
 | `normalizeEncryptedContent` | Decode OCX1 envelopes and normalize native compaction ciphertext under the existing identity-change conditions. Disabling this skips that normalization; task-recovery failure handling remains separate. |
 | `snapshotSkillsCatalog` | Apply the skills-catalog snapshot when the existing skills settings require it. |
 | `rewriteAnnotationInstructions` | Rewrite recognized Codex annotation instructions to request bare directives. |
-| `bridgeLiteMetadata` | Copy the recognized Lite header into missing request metadata without replacing explicit values. |
+| `bridgeLiteMetadata` | Map a valid Lite header when building a canonical upstream WebSocket frame; the explicit HTTP header takes precedence over same-name metadata. HTTP request metadata and other fields stay unchanged. |
 
 ### Response
 
@@ -201,7 +203,7 @@ If `POST /api/providers` fails before publication, it restores the previous prov
 
 ## Encrypted task recovery
 
-Recovery remains disabled by default and uses an additional authenticated ChatGPT request when enabled. This example enables recovery with the Fork's backend defaults:
+Recovery remains disabled by default and uses an additional authenticated ChatGPT request when enabled. This example enables recovery with the Fork's strict backend defaults:
 
 ```json
 {
@@ -216,7 +218,7 @@ Recovery remains disabled by default and uses an additional authenticated ChatGP
 }
 ```
 
-`timeoutMs` bounds each attempt; response first-byte/inactivity stalls remain capped at 45 seconds. `maxRetries` permits at most two further timeout attempts. The existing `retries` allowance handles transient HTTP/transport failures, is shared across timeout attempts, and stays within the attempt deadline. Cancellation and `invalid_encrypted_content` stop both paths.
+For admitted strict backend `NEW_TASK` and strict child-to-parent `MESSAGE` envelopes, `timeoutMs` bounds each attempt (default 120000 ms), first-byte/inactivity stalls are capped at 45 seconds, and `maxRetries` allows up to two additional timeout attempts. Other supported encrypted tasks use one shared deadline (default 45000 ms, or the configured `timeoutMs`) and do not use `maxRetries`. `retries` covers transient HTTP/transport failures within the active deadline; cancellation and `invalid_encrypted_content` stop both paths.
 
 Native transient-5xx recovery only admits a strict `NEW_TASK`, then replays the same selected target once using the shared send budget. Admitted encrypted parent `MESSAGE` timeouts can produce a ciphertext-free resend notice; it does not claim that the message was read. Strict ciphertext and recovered bodies are excluded from continuation storage.
 

@@ -259,19 +259,7 @@ export function replaceSseDataPayload(block: string, payload: string): string {
   const { newline, lines } = splitSseBlock(block);
   const rewritten: string[] = [];
   let replaced = false;
-  let eventType: string | undefined;
-  try {
-    const parsed = JSON.parse(payload) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      && typeof (parsed as { type?: unknown }).type === "string") {
-      eventType = (parsed as { type: string }).type;
-    }
-  } catch { /* preserve the original event field for non-JSON payloads */ }
   for (const line of lines) {
-    if (line.startsWith("event:") && eventType !== undefined) {
-      rewritten.push(`event: ${eventType}`);
-      continue;
-    }
     if (line !== "data" && !line.startsWith("data:")) {
       rewritten.push(line);
       continue;

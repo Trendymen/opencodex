@@ -87,7 +87,7 @@ export function agentTaskRecoveryConfig(config: OcxConfig): AgentTaskRecoveryOpt
       : "medium",
     timeoutMs: Number.isFinite(raw.timeoutMs) && (raw.timeoutMs ?? 0) >= 1_000
       ? Math.min(120_000, Math.floor(raw.timeoutMs!))
-      : 120_000,
+      : undefined,
     maxRetries: Number.isFinite(raw.maxRetries) && (raw.maxRetries ?? -1) >= 0
       ? Math.min(2, Math.floor(raw.maxRetries!))
       : 2,
@@ -109,6 +109,7 @@ interface AgentEnvelope {
   taskName: string | null;
   sender: string;
   ciphertexts: readonly string[];
+  strictBackendCiphertext: boolean;
   author: string;
   recipient: string;
 }
@@ -215,6 +216,7 @@ function findEnvelope(input: unknown): AgentEnvelope | null {
     taskName,
     sender,
     ciphertexts,
+    strictBackendCiphertext,
     author: itemRecord.author,
     recipient: itemRecord.recipient,
   };
@@ -353,6 +355,7 @@ interface AdmittedRecovery {
   envelope: AgentEnvelope;
   admission: RecoveryAdmission;
   cacheKey: string;
+  extendedTimeout: boolean;
 }
 
 type RecoveryAdmissionResult =
@@ -369,6 +372,7 @@ function admittedRecovery(
   if (!envelope) return { admitted: false, reason: "unsupported_envelope" };
   const admission = recoveryAdmission(req, config);
   if (!admission) return { admitted: false, reason: "admission_denied" };
+  const extendedTimeout = envelope.strictBackendCiphertext || isStrictChildMessageForParent(input, envelope);
   // A JSON-encoded fixed-order tuple, not a delimiter-joined string: a field that carries the
   // delimiter shifts every boundary after it, so two envelopes could hash to one entry and one
   // recovery would replay for the other. A FINAL_ANSWER that omits its Task name line carries no
@@ -383,9 +387,10 @@ function admittedRecovery(
       envelope.recipient,
       envelope.sender,
       envelope.ciphertexts,
+      extendedTimeout,
     ]))
     .digest("hex");
-  return { admitted: true, recovery: { envelope, admission, cacheKey } };
+  return { admitted: true, recovery: { envelope, admission, cacheKey, extendedTimeout } };
 }
 
 function recoveryPayload(envelope: AgentEnvelope, model: string, reasoningEffort: string): string {
@@ -530,6 +535,7 @@ async function attemptRecovery(
   abortSignal: AbortSignal | undefined,
   deadlineSignal: AbortSignal,
   remainingMs: number,
+  extendedTimeout: boolean,
 ): Promise<RecoveryAttempt> {
   const terminal = (resolution: AgentTaskRecoveryResolution): RecoveryAttempt => ({
     resolution,
@@ -556,13 +562,15 @@ async function attemptRecovery(
         retryHeaders: response.headers,
       };
     }
+    const bodyTimeoutMs = extendedTimeout ? remainingMs : options.timeoutMs ?? 45_000;
+    const stallTimeoutMs = extendedTimeout ? Math.min(remainingMs, RECOVERY_STALL_TIMEOUT_MS) : bodyTimeoutMs;
     const body = await readBoundedResponseBody(response, {
       signal,
       fatalUtf8: true,
       maxBytes: MAX_RECOVERY_RESPONSE_BYTES,
-      totalTimeoutMs: remainingMs,
-      inactivityTimeoutMs: Math.min(remainingMs, RECOVERY_STALL_TIMEOUT_MS),
-      firstByteTimeoutMs: Math.min(remainingMs, RECOVERY_STALL_TIMEOUT_MS),
+      totalTimeoutMs: bodyTimeoutMs,
+      inactivityTimeoutMs: stallTimeoutMs,
+      firstByteTimeoutMs: stallTimeoutMs,
     });
     if (abortSignal?.aborted) return terminal({ recovered: false, reason: "recovery_aborted" });
     if (deadlineSignal.aborted || body.timedOut) {
@@ -597,11 +605,14 @@ async function requestRecovery(
   admission: RecoveryAdmission,
   envelope: AgentEnvelope,
   options: AgentTaskRecoveryOptions,
+  extendedTimeout: boolean,
   abortSignal?: AbortSignal,
 ): Promise<AgentTaskRecoveryResolution> {
-  const timeoutMs = Number.isFinite(options.timeoutMs) && (options.timeoutMs ?? 0) >= 1_000
-    ? Math.min(120_000, Math.floor(options.timeoutMs!)) : 120_000;
-  const maxRetries = Number.isFinite(options.maxRetries)
+  const timeoutMs = extendedTimeout
+    ? (Number.isFinite(options.timeoutMs) && (options.timeoutMs ?? 0) >= 1_000
+      ? Math.min(120_000, Math.floor(options.timeoutMs!)) : 120_000)
+    : options.timeoutMs ?? 45_000;
+  const maxRetries = !extendedTimeout ? 0 : Number.isFinite(options.maxRetries)
     ? Math.max(0, Math.min(2, Math.floor(options.maxRetries!))) : 2;
   const retries = Number.isFinite(options.retries)
     ? Math.max(0, Math.min(MAX_RECOVERY_RETRIES, Math.floor(options.retries!))) : 0;
@@ -617,12 +628,12 @@ async function requestRecovery(
     try {
       for (;;) {
         if (abortSignal?.aborted) return { recovered: false, reason: "recovery_aborted" };
-        if (controller.signal.aborted || Date.now() >= deadline) {
+        if (controller.signal.aborted || (extendedTimeout && Date.now() >= deadline)) {
           if (timeoutAttempt === maxRetries) return { recovered: false, reason: "recovery_timeout" };
           break;
         }
         const { resolution, retryKind, retryHeaders } = await attemptRecovery(
-          admission, envelope, options, signal, abortSignal, controller.signal, deadline - Date.now(),
+          admission, envelope, options, signal, abortSignal, controller.signal, deadline - Date.now(), extendedTimeout,
         );
         if (retryKind === "timeout") {
           if (timeoutAttempt === maxRetries) return resolution;
@@ -718,11 +729,11 @@ export async function recoverEncryptedAgentTaskWithResult(
   // turn this process into a plaintext oracle for an unauthenticated caller.
   const admitted = admittedRecovery(req, input, config, context.parentThreadId);
   if (!admitted.admitted) return { recovered: false, reason: admitted.reason };
-  const { admission, cacheKey, envelope } = admitted.recovery;
+  const { admission, cacheKey, envelope, extendedTimeout } = admitted.recovery;
   const result = await resolveCachedAgentTaskRecoveryWithResult(
     cacheKey,
     options.cacheEntries ?? 200,
-    signal => requestRecovery(admission, envelope, options, signal),
+    signal => requestRecovery(admission, envelope, options, extendedTimeout, signal),
     context.abortSignal,
   );
   if (!result.recovered) {

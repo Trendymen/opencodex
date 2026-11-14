@@ -1959,7 +1959,23 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     });
   }
 
-  const contextCapResponse = await handleProviderContextCapRoutes(ctx);
+  const contextCapResponse = await handleProviderContextCapRoutes(ctx, {
+    provider: async provider => {
+      reconcileLiveStateStores();
+      clearModelCache(provider);
+      return await convergeCodexCatalog();
+    },
+    global: async (affected, applyToAll) => {
+      reconcileLiveStateStores();
+      if (applyToAll) for (const provider of affected) clearModelCache(provider);
+      return await convergeCodexCatalog();
+    },
+    all: async (before, names) => {
+      reconcileLiveStateStores();
+      for (const provider of new Set([...before, ...names])) clearModelCache(provider);
+      return await convergeCodexCatalog();
+    },
+  });
   if (contextCapResponse !== null) return contextCapResponse;
 
   // Complete GUI picker presets, derived from the canonical provider registry. The GUI is a

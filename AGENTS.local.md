@@ -57,6 +57,8 @@ external_evidence=task-and-release-notes-not-candidate-tree
 | `docs-site/src/content/docs/reference/configuration/fork-extensions.md` | 英文配置、默认值和操作说明。 |
 | `docs-site/src/content/docs/zh-cn/reference/fork-extensions.md` | 对应能力概览的简体中文译文。 |
 | `docs-site/src/content/docs/zh-cn/reference/configuration/fork-extensions.md` | 对应配置页的简体中文译文。 |
+| `docs-site/src/content/docs/es/reference/fork-extensions.md` | 对应能力概览的西班牙语译文。 |
+| `docs-site/src/content/docs/es/reference/configuration/fork-extensions.md` | 对应配置页的西班牙语译文。 |
 | `FORK_SYNC_AUTOMATION.md` | 现行同步、候选验证与发布流程的规则真源。 |
 
 ### 新增与形式
@@ -69,7 +71,7 @@ external_evidence=task-and-release-notes-not-candidate-tree
 ### 更新与核对
 
 - 能力新增、修复、上游化或撤回时，原地更新对应条目，并核对相关配置、合同和链接；验证缺口继续明确标注。以“官方已覆盖”为由删除 Fork 差异条目或实现时，须有官方代码与测试的等价证据。
-- 英文文档站 Fork 页面为正文来源；修改时同步对应简体中文页面，字段、默认值、条件和验证范围一致。其他官方语言页面继续采用上游版本。
+- 英文文档站 Fork 页面为正文来源；修改时同步对应简体中文和西班牙语页面，字段、默认值、条件和验证范围一致。其他官方语言页面继续采用上游版本。
 - 同步新官方基线时，以新的官方 Tag 恢复官方文档原文，再核对仍有效的 Fork 差异；删除已失效的条目和孤立文件，更新本表及链接。
 - `structure/` 新增或移动 Fork 文档时，按本目录规则更新 `structure/manifest.json` 并标记 `forkOnly: true`；完整接受结构门禁，生成的官方索引阅读顺序与源码映射排除这些条目。官方 contract registry 保持上游内容。
 - 完成文档变更前，核对所有官方文档相对基线无修改/删除差异，并检查新文档的路径和链接；涉及 `structure/` 时按规则先暂存，再运行 `bun run structure:check`；涉及文档站时按目录规则运行构建。只改本文件的维护规则时，核对文档清单、职责和约束一致性，不重复运行未受影响的构建。

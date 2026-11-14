@@ -8,7 +8,7 @@ import { createAutoPauseRefreshErrorMapper } from "./account-auto-pause-recovery
 import { physicalSendAccounting } from "./deferred-send-reporter";
 import { adoptCodexWsStage, capturePassthroughAffinity } from "./passthrough-observations";
 import { codexPassthroughStreamPolicy, resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
-import { codexPassthroughProviderFetch } from "../../fork/codex-passthrough-fetch";
+import { codexPassthroughProviderFetch as providerFetch } from "../../fork/codex-passthrough-fetch";
 import type { PassthroughDispatchInputs, PassthroughAdapterHandoff } from "../responses-passthrough-dispatch-types";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { requestPacingOverloadResponse } from "./pacing-overload";
@@ -176,7 +176,6 @@ import { unboundPoolSpendRefusalResponse } from "../workflow-refusal";
 import { createNativeContinuationDispatch } from "./native-continuation-send";
 import { guardPassthroughCompletion, isResetReplacementStream, parseOutboundRequestBody, selectPassthroughResetResponse } from "./passthrough-completion";
 import { maybeRecoverNativeEncryptedAgentTask } from "../../fork/passthrough-agent-task-recovery";
-import { createPassthroughReasoningSummaryProjection } from "../responses-reasoning-summary-rewrite";
 import { createNestedExecAdapterEventRepair, createNestedExecPassthroughRepair, } from "../responses-nested-exec-call-repair";
 import { createInboundResponsesDebugObserver } from "../../fork/inbound-response-debug";
 import { isDebugEnabled } from "../../lib/debug-settings";
@@ -499,15 +498,8 @@ export async function preparePassthroughExchange(
       : undefined;
     const passiveQuotaObserved = hasPassiveAccountQuota(route.providerName)
       && route.provider.authMode === "oauth";
-    const { projectContentChannelReasoning, reasoningReplayProjection, wrapCacheRecorder } = createPassthroughReasoningSummaryProjection(
-      parsed._rawBody,
-      route.provider,
-      route.modelId,
-      translatorBudget,
-    );
     const noteInspectedPayload = (payload: unknown) => {
       if (!inboundDebugUsesRawTerminalRepairTap) inboundDebugObserver?.notePayload(payload);
-      reasoningReplayProjection?.notePayload(payload);
       // First terminal stays authoritative even in metadata-only inspection, which
       // intentionally continues parsing after a failed/incomplete terminal.
       const terminal = inspectedTerminalStatus(payload);
@@ -649,7 +641,6 @@ export async function preparePassthroughExchange(
         publishAcceptedResponse(normalizedReplayResponse);
       }
     };
-    const rememberClientVisiblePassthroughResponse = wrapCacheRecorder(rememberPassthroughResponseChecked);
     recordAdapterReasoning(logCtx, request);
     recordAdapterTier(logCtx, request);
     const actualHostKey = upstreamHostHealthKey(
@@ -781,7 +772,7 @@ export async function preparePassthroughExchange(
       signal,
       sendConnectMs(),
       true,
-      codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+      providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
         httpOnly: true,
         providerName: route.providerName,
         modelId: route.modelId,
@@ -987,7 +978,7 @@ export async function preparePassthroughExchange(
             headers: request.headers,
             body: request.body,
           }, recovery), upstream.signal, sendConnectMs(), upstreamRequestsStream,
-            codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+            providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
               httpOnly: canonicalBufferedJson,
               nativeControl: nativeResponseControlEligible(route.provider, options.nativeControl) && options.inboundTransport === "websocket" && !options.comboAttempt
                 && responseEffects.plaintextV2AgentMessageToolNames.size === 0
@@ -1136,7 +1127,7 @@ export async function preparePassthroughExchange(
               headers: request.headers,
               body: request.body,
             }, innerRecovery), upstream.signal, sendConnectMs(), upstreamRequestsStream,
-              codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+              providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
                 httpOnly: canonicalBufferedJson,
                 nativeControl: nativeResponseControlEligible(route.provider, options.nativeControl) && options.inboundTransport === "websocket" && !options.comboAttempt
                   && responseEffects.plaintextV2AgentMessageToolNames.size === 0
@@ -1270,7 +1261,7 @@ export async function preparePassthroughExchange(
         const replayGuard = isCanonicalOpenAiForwardProvider(route.provider)
           ? createCodexAuthDispatchGuard(admissionState.authCtx, options.codexAuthPolicy ?? config, route.modelId, options.admission, options.visionDescribeTerminal === true) : undefined;
         let replayNotified = false;
-        const oauthReplayExecutor = codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+        const oauthReplayExecutor = providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
             httpOnly: canonicalBufferedJson,
             nativeControl: nativeResponseControlEligible(route.provider, options.nativeControl) && options.inboundTransport === "websocket" && !options.comboAttempt
               && responseEffects.plaintextV2AgentMessageToolNames.size === 0
@@ -1420,7 +1411,7 @@ export async function preparePassthroughExchange(
               headers: request.headers,
               body: request.body,
             }, recovery), upstream.signal, sendConnectMs(), upstreamRequestsStream,
-              codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+              providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
                 httpOnly: canonicalBufferedJson,
                 nativeControl: nativeResponseControlEligible(route.provider, options.nativeControl) && options.inboundTransport === "websocket" && !options.comboAttempt
                   && responseEffects.plaintextV2AgentMessageToolNames.size === 0
@@ -1569,7 +1560,7 @@ export async function preparePassthroughExchange(
               headers: request.headers,
               body: request.body,
             }, recovery), upstream.signal, sendConnectMs(), upstreamRequestsStream,
-              codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
+              providerFetch(route.provider, options.codexWsRuntimeIdentity, { codexPassthroughPermissions: currentCodexPermissions(),
                 httpOnly: canonicalBufferedJson,
                 nativeControl: nativeResponseControlEligible(route.provider, options.nativeControl) && options.inboundTransport === "websocket" && !options.comboAttempt
                   && responseEffects.plaintextV2AgentMessageToolNames.size === 0
@@ -1964,8 +1955,6 @@ export async function preparePassthroughExchange(
     declaredNamelessClientCallTypes,
     authorizedBareNamespaceToolAliases,
     normalizeFunctionCompletionJson,
-    projectContentChannelReasoning,
-    reasoningReplayProjection,
     nestedExecRepairPlan,
     nestedExecRepairCoordinator,
     nestedExecInspection,
@@ -1979,7 +1968,6 @@ export async function preparePassthroughExchange(
     notePlaintextClientTerminal(status: ResponsesTerminalStatus): void {
       plaintextClientTerminal ??= status;
     },
-    rememberClientVisiblePassthroughResponse,
     get undeclaredToolGuardActive(): typeof undeclaredToolGuardActive {
       return undeclaredToolGuardActive;
     },

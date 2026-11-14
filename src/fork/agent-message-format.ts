@@ -43,5 +43,5 @@ export function agentMessageConversionOptions(args: {
     return undefined;
   }
 
-  return thirdPartyNonGptRoute ? { allowStringContent: false } : undefined;
+  return !forward && thirdPartyNonGptRoute ? { allowStringContent: false } : undefined;
 }

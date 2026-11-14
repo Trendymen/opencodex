@@ -583,47 +583,10 @@ function inspectGlobalPnpmGraph(packageDir, store, escaped, storeAlias = store) 
 }
 
 /** Verification manifest for a staged (or live) package tree. */
-function verifyTreeWithDependencyLookup(packageDir, expectedVersion, dependencyDir, inspectAllLinks = false, allowPackageRootSymlink = false) {
+function verifyTreeWithDependencyLookup(packageDir, expectedVersion, dependencyDir, inspectAllLinks = false) {
   const failures = [];
-  let canonicalRoot;
-  try {
-    const rootStat = lstatSync(packageDir);
-    const allowedSymlink = allowPackageRootSymlink && rootStat.isSymbolicLink();
-    if ((!rootStat.isDirectory() && !allowedSymlink) || (rootStat.isSymbolicLink() && !allowedSymlink)) {
-      return { ok: false, failures: ["package root must be a regular directory"] };
-    }
-    canonicalRoot = realpathSync(packageDir);
-    const canonicalRootStat = lstatSync(canonicalRoot);
-    if (!canonicalRootStat.isDirectory() || canonicalRootStat.isSymbolicLink()) {
-      return { ok: false, failures: ["package root must resolve to a regular directory"] };
-    }
-  } catch (error) {
-    return { ok: false, failures: ["package root unreadable: " + (error?.message ?? String(error))] };
-  }
-  const regularFile = (parts, label, minimumSize = 0) => {
-    const path = join(packageDir, ...parts);
-    for (let index = 0; index < parts.length; index += 1) {
-      const ancestor = join(packageDir, ...parts.slice(0, index + 1));
-      try {
-        const stat = lstatSync(ancestor);
-        if (stat.isSymbolicLink()) return label + " must not be a symlink";
-      } catch {
-        return label + " absent";
-      }
-    }
-    try {
-      const stat = lstatSync(path);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size < minimumSize) return label + " missing or truncated";
-      if (!canonicalPathIsContained(canonicalRoot, realpathSync(path))) return label + " escapes package root";
-      return null;
-    } catch {
-      return label + " absent";
-    }
-  };
   let pkg;
   try {
-    const packageJsonFailure = regularFile(["package.json"], "package.json");
-    if (packageJsonFailure) return { ok: false, failures: [packageJsonFailure] };
     pkg = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
   } catch (error) {
     return { ok: false, failures: ["package.json unreadable: " + (error?.message ?? String(error))] };
@@ -632,26 +595,19 @@ function verifyTreeWithDependencyLookup(packageDir, expectedVersion, dependencyD
     failures.push("package.json version " + pkg.version + " != expected " + expectedVersion);
   }
   const launcher = join(packageDir, "bin", "ocx.mjs");
-  const launcherFailure = regularFile(["bin", "ocx.mjs"], "bin/ocx.mjs", 1024);
-  if (launcherFailure) failures.push(launcherFailure);
+  try {
+    const st = statSync(launcher);
+    if (!st.isFile() || st.size < 1024) failures.push("bin/ocx.mjs missing or truncated");
+  } catch {
+    failures.push("bin/ocx.mjs absent");
+  }
   // The bundled Bun binary is the load-bearing artifact: without it the launcher exits
   // before serving anything, and a boot probe that called this tree healthy would reap
   // the only backup (review High 3). Size-gate the real binary, not just its package.json.
   const bunPkgDir = dependencyDir(packageDir, "bun") ?? ownTreeBunDir(packageDir);
   if (bunPkgDir) {
-    let bunRootUnsafe = false;
-    let canonicalBunRoot;
-    try {
-      canonicalBunRoot = realpathSync(bunPkgDir);
-      if (dependencyDir === candidateTreeDependencyDir) {
-        const nodeModules = lstatSync(join(packageDir, "node_modules"));
-        if (!nodeModules.isDirectory() || nodeModules.isSymbolicLink()) bunRootUnsafe = true;
-      }
-    } catch {
-      bunRootUnsafe = true;
-    }
-    const bunTree = bunRootUnsafe ? { largest: undefined, unsafe: true } : findLargestFile(bunPkgDir, canonicalBunRoot);
-    if (bunTree.unsafe || !bunTree.largest || bunTree.largest.size < 10 * 1024 * 1024) {
+    const bunBinary = findLargestFile(bunPkgDir);
+    if (!bunBinary || bunBinary.size < 10 * 1024 * 1024) {
       failures.push("bundled Bun binary missing or truncated (< 10MB)");
     }
   }
@@ -663,40 +619,14 @@ function verifyTreeWithDependencyLookup(packageDir, expectedVersion, dependencyD
     ? deps.filter(name => name === "bun" || name === "zod")
     : deps.slice(0, 2);
   for (const name of sentinels) {
-    if (dependencyDir === candidateTreeDependencyDir) {
-      try {
-        const nodeModules = lstatSync(join(packageDir, "node_modules"));
-        if (!nodeModules.isDirectory() || nodeModules.isSymbolicLink()) {
-          failures.push("sentinel dependency missing: " + name);
-          continue;
-        }
-      } catch {
-        failures.push("sentinel dependency missing: " + name);
-        continue;
-      }
-    }
-    const dependencyRoot = dependencyDir(packageDir, name);
-    if (!dependencyRoot) {
-      failures.push("sentinel dependency missing: " + name);
-      continue;
-    }
-    try {
-      const canonicalDependencyRoot = realpathSync(dependencyRoot);
-      const manifestPath = join(dependencyRoot, "package.json");
-      const manifestStat = lstatSync(manifestPath);
-      if (!manifestStat.isFile() || manifestStat.isSymbolicLink()
-        || !canonicalPathIsContained(canonicalDependencyRoot, realpathSync(manifestPath))) {
-        failures.push("sentinel dependency missing: " + name);
-      }
-    } catch {
-      failures.push("sentinel dependency missing: " + name);
-    }
+    if (!dependencyDir(packageDir, name)) failures.push("sentinel dependency missing: " + name);
   }
   return failures.length === 0 ? { ok: true, failures: [] } : { ok: false, failures };
 }
 
 /**
- * npm (and every recovery decision): the candidate must be self-contained. Used by
+ * npm (and every recovery decision): look up dependencies under the candidate path,
+ * following filesystem links. Used by
  * transactionalNpmUpdate's stage and post-swap checks and by bootRestoreProbe.
  */
 export function verifyInstallTree(packageDir, expectedVersion) {
@@ -761,7 +691,7 @@ export function verifyPnpmInstallTree(packageDir, expectedVersion, store, global
     inspectAncestorRoots(resolve(packageDir), store, escaped, true, lexicalStore);
   }
   const result = verifyTreeWithDependencyLookup(packageDir, expectedVersion,
-    (path, name) => pnpmOwnedDependencyDir(path, name, store, globalLinks, escaped, undefined, lexicalStore), globalLinks, true);
+    (path, name) => pnpmOwnedDependencyDir(path, name, store, globalLinks, escaped, undefined, lexicalStore), globalLinks);
   if (globalLinks) inspectGlobalPnpmGraph(real, store, escaped, lexicalStore);
   if (escaped.size) return { ok: false, failures: [...escaped].concat(result.failures) };
   return result;
@@ -914,7 +844,6 @@ export function launcherUsableAfterNpmUpdate(tx) {
     && (tx?.ok || tx?.rolledBack === true || ["stage", "verify", "authorize", "pending-marker", "swap-backup"].includes(tx?.phase)));
 }
 
-/** Largest regular file under a directory tree (bounded depth) — locates the Bun binary. */
 function canonicalPathIsContained(rootPath, childPath, platform = process.platform) {
   const root = normalizePathIdentity(rootPath, platform);
   const child = normalizePathIdentity(childPath, platform);
@@ -922,31 +851,23 @@ function canonicalPathIsContained(rootPath, childPath, platform = process.platfo
   return remainder.length > 0 && !remainder.startsWith("..") && !isAbsolute(remainder);
 }
 
-function findLargestFile(root, canonicalPackageRoot, depth = 3) {
+/** Largest regular file under a directory tree (bounded depth) — locates the Bun binary. */
+function findLargestFile(root, depth = 3) {
   let best;
   let names = [];
-  try { names = readdirSync(root); } catch { return { largest: undefined, unsafe: true }; }
+  try { names = readdirSync(root); } catch { return undefined; }
   for (const name of names) {
     const full = join(root, name);
     let st;
-    try { st = lstatSync(full); } catch { return { largest: undefined, unsafe: true }; }
-    if (st.isSymbolicLink()) return { largest: undefined, unsafe: true };
+    try { st = statSync(full); } catch { continue; }
     if (st.isFile()) {
-      try {
-        if (!canonicalPathIsContained(canonicalPackageRoot, realpathSync(full))) {
-          return { largest: undefined, unsafe: true };
-        }
-      } catch {
-        return { largest: undefined, unsafe: true };
-      }
       if (!best || st.size > best.size) best = { path: full, size: st.size };
     } else if (st.isDirectory() && depth > 0) {
-      const sub = findLargestFile(full, canonicalPackageRoot, depth - 1);
-      if (sub.unsafe) return sub;
-      if (sub.largest && (!best || sub.largest.size > best.size)) best = sub.largest;
+      const sub = findLargestFile(full, depth - 1);
+      if (sub && (!best || sub.size > best.size)) best = sub;
     }
   }
-  return { largest: best, unsafe: false };
+  return best;
 }
 
 /** Bounded Windows-class rename retry: EPERM/EBUSY/EACCES from AV/indexers clears in ms. */

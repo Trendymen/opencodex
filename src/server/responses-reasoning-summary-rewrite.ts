@@ -1,4 +1,3 @@
-import type { SsePayloadRewrite } from "./sse-payload-rewrite";
 import {
   createTranslatorBudget,
   type TranslatorBudget,
@@ -6,22 +5,13 @@ import {
 import {
   replaceSseDataPayload,
   sseDataPayload,
+  splitSseBlock,
   type SseBlockRewrite,
 } from "./sse-payload-rewrite";
 
 /**
- * Route content-channel reasoning from native-Responses upstreams through the
- * expandable summary channel (issue #45).
- *
- * Codex renders the expandable reasoning trace from the Responses reasoning
- * item's `summary[]` channel. DeepSeek's native `/responses` endpoint emits
- * raw thinking on the content channel instead (`response.reasoning_text.delta`
- * plus items with `content: [{type: "reasoning_text", text}]` and an empty
- * `summary`), so routed DeepSeek turns showed the "Worked for Xs" timer with
- * nothing to expand. Native OpenAI upstreams already emit summary-channel
- * events; this rewrite is a no-op for them (no reasoning_text events to
- * rewrite) and only engages when the upstream produces content-channel
- * reasoning.
+ * Project translated content-channel reasoning into an expandable summary.
+ * Native Responses passthrough keeps the upstream content channel unchanged.
  *
  * Streaming display projection: the first part keeps the established shape
  * (bold title + first sentence emitted as one summary delta, closed by the
@@ -31,15 +21,27 @@ import {
  * preview refreshes in GPT-like bursts instead of growing one monolithic
  * item. Terminal snapshots reuse the emitted parts for `summary[]`.
  *
- * Replay compatibility: Codex echoes the reasoning item it received back into
- * the next request's input. DeepSeek's Responses API accepts summary-shaped
- * reasoning input items (verified live), and raw reasoning `content` is kept
- * verbatim on every terminal snapshot so provider-side reasoning state and
- * opaque replay data survive unchanged.
+ * Terminal snapshots retain raw reasoning `content` and opaque replay data.
  */
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function replaceSummarySsePayload(block: string, payload: Record<string, unknown>): string {
+  const rewritten = replaceSseDataPayload(block, JSON.stringify(payload));
+  if (rewritten === block || typeof payload.type !== "string" || !payload.type.startsWith("response.reasoning_summary_")) {
+    return rewritten;
+  }
+  let original: unknown;
+  try {
+    original = JSON.parse(sseDataPayload(block) ?? "");
+  } catch {
+    return rewritten;
+  }
+  if (!isPlainObject(original) || typeof original.type !== "string" || original.type === payload.type) return rewritten;
+  const { newline, lines } = splitSseBlock(rewritten);
+  return lines.map(line => line.startsWith("event:") ? `event: ${payload.type}` : line).join(newline);
 }
 
 function reasoningTextOf(item: Record<string, unknown>): string {
@@ -278,7 +280,6 @@ function rewriteTerminalItems(payload: Record<string, unknown>, parts: string[])
  * comes first) with a complete added/delta/done lifecycle per part.
  */
 export function createReasoningSummaryChannelBlockRewrite(options?: {
-  onCompletedResponse?: (response: Record<string, unknown>) => void;
   translatorBudget?: TranslatorBudget;
   /** xAI's Chat adapter omits content-part events, so preserve its live first reasoning delta. */
   emitInitialSparseDelta?: boolean;
@@ -347,13 +348,13 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
   ): string[] => {
     if (state.partZeroAdded) return [];
     state.partZeroAdded = true;
-    return [replaceSseDataPayload(block, JSON.stringify({
+    return [replaceSummarySsePayload(block, {
       type: "response.reasoning_summary_part.added",
       item_id: payload.item_id,
       output_index: payload.output_index,
       summary_index: 0,
       part: { type: "summary_text", text: "" },
-    }))];
+    })];
   };
 
   const closePartZero = (
@@ -366,23 +367,23 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
     const output: string[] = [];
     if (!state.partZeroTextDone) {
       state.partZeroTextDone = true;
-      output.push(replaceSseDataPayload(block, JSON.stringify({
+      output.push(replaceSummarySsePayload(block, {
         type: "response.reasoning_summary_text.done",
         item_id: payload.item_id,
         output_index: payload.output_index,
         summary_index: 0,
         text,
-      })));
+      }));
     }
     if (!state.partZeroDone) {
       state.partZeroDone = true;
-      output.push(replaceSseDataPayload(block, JSON.stringify({
+      output.push(replaceSummarySsePayload(block, {
         type: "response.reasoning_summary_part.done",
         item_id: payload.item_id,
         output_index: payload.output_index,
         summary_index: 0,
         part: { type: "summary_text", text },
-      })));
+      }));
     }
     return output;
   };
@@ -394,13 +395,13 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
   ): string[] => {
     if (!state.partZeroAdded || state.partZeroDone) return [];
     state.partZeroDone = true;
-    return [replaceSseDataPayload(block, JSON.stringify({
+    return [replaceSummarySsePayload(block, {
       type: "response.reasoning_summary_part.done",
       item_id: payload.item_id,
       output_index: payload.output_index,
       summary_index: 0,
       part: { type: "summary_text", text: "" },
-    }))];
+    })];
   };
 
   const emitPartZero = (
@@ -415,13 +416,13 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
     state.buffer = "";
     return [
       ...ensurePartZeroAdded(block, payload, state),
-      replaceSseDataPayload(block, JSON.stringify({
+      replaceSummarySsePayload(block, {
         type: "response.reasoning_summary_text.delta",
         item_id: payload.item_id,
         output_index: payload.output_index,
         summary_index: 0,
         delta: projected,
-      })),
+      }),
     ];
   };
 
@@ -460,7 +461,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
         part: { type: "summary_text", text },
       },
     ];
-    return events.map(event => replaceSseDataPayload(block, JSON.stringify(event)));
+    return events.map(event => replaceSummarySsePayload(block, event));
   };
 
   // Emit the residual buffer as a final part and close the still-open first
@@ -538,7 +539,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
       if (!state && prior) return [];
       if (!state) {
         const rewritten = rewritePayload(payload, projectRawReasoningSummary);
-        return rewritten === null ? [block] : [replaceSseDataPayload(block, JSON.stringify(rewritten))];
+        return rewritten === null ? [block] : [replaceSummarySsePayload(block, rewritten)];
       }
       const fullRaw = typeof payload.text === "string" ? payload.text : state.buffer;
       return closeForTerminal(block, payload, state, fullRaw);
@@ -558,7 +559,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
         state.partZeroAdded = true;
       }
       const rewritten = rewritePayload(payload, projectRawReasoningSummary);
-      return rewritten === null ? [block] : [replaceSseDataPayload(block, JSON.stringify(rewritten))];
+      return rewritten === null ? [block] : [replaceSummarySsePayload(block, rewritten)];
     }
 
     if (payload.type === "response.content_part.done") {
@@ -579,7 +580,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
         return closeEmptyPartZero(block, payload, state);
       }
       const rewritten = rewritePayload(payload, projectRawReasoningSummary);
-      return rewritten === null ? [block] : [replaceSseDataPayload(block, JSON.stringify(rewritten))];
+      return rewritten === null ? [block] : [replaceSummarySsePayload(block, rewritten)];
     }
 
     if (payload.type === "response.failed" || payload.type === "response.incomplete") {
@@ -622,7 +623,7 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
       }
       const rewritten = rewritePayload(terminalPayload, projectRawReasoningSummary);
       const finalPayload = rewritten ?? terminalPayload;
-      output.push(finalPayload === payload ? block : replaceSseDataPayload(block, JSON.stringify(finalPayload)));
+      output.push(finalPayload === payload ? block : replaceSummarySsePayload(block, finalPayload));
       return output;
     }
 
@@ -667,11 +668,9 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
             ...payload,
             response: { ...response, output: rewrittenItems },
           };
-          options?.onCompletedResponse?.(completedPayload.response);
-          output.push(replaceSseDataPayload(block, JSON.stringify(completedPayload)));
+          output.push(replaceSummarySsePayload(block, completedPayload));
           return output;
         }
-        options?.onCompletedResponse?.(response);
       }
       if (pending.size > 0) {
         const output: string[] = [];
@@ -707,13 +706,13 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
         closed.set(stateId, {
           parts: [...state.parts],
         });
-        output.push(replaceSseDataPayload(block, JSON.stringify(rewritten ?? payload)));
+        output.push(replaceSummarySsePayload(block, rewritten ?? payload));
         return output;
       }
     }
 
     const rewritten = rewritePayload(payload, projectRawReasoningSummary);
-    return rewritten === null ? [block] : [replaceSseDataPayload(block, JSON.stringify(rewritten))];
+    return rewritten === null ? [block] : [replaceSummarySsePayload(block, rewritten)];
   };
 
   rewrite.flush = () => {
@@ -738,73 +737,14 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
   return rewrite;
 }
 
-/** 用客户端 reasoning 重写规则投影 inspector 重建出的终态 response。 */
-export function createReasoningSummaryReplayProjection(options?: { translatorBudget?: TranslatorBudget }): {
-  notePayload(payload: unknown): void;
-  projectSnapshot(response: Record<string, unknown>): Record<string, unknown> | undefined;
-  dispose(): void;
-} {
-  let completedResponse: Record<string, unknown> | undefined;
-  const rewrite = createReasoningSummaryChannelBlockRewrite({
-    onCompletedResponse: response => { completedResponse = response; },
-    translatorBudget: options?.translatorBudget,
-  });
-  const dispatch = (payload: unknown): Record<string, unknown> | undefined => {
-    completedResponse = undefined;
-    rewrite(`data: ${JSON.stringify(payload)}\n\n`);
-    return completedResponse;
-  };
-  return {
-    notePayload(payload) {
-      dispatch(payload);
-    },
-    projectSnapshot(response) {
-      return dispatch({ type: "response.completed", response });
-    },
-    dispose() {
-      rewrite.dispose?.();
-    },
-  };
-}
-
-/** Payload rewrite for passthrough relays whose upstream emits content-channel reasoning. */
-export function createReasoningSummaryChannelPayloadRewrite(): SsePayloadRewrite {
-  return (payload: string): string => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(payload);
-    } catch {
-      return payload;
-    }
-    if (!isPlainObject(parsed)) return payload;
-    const rewritten = rewritePayload(parsed);
-    return rewritten !== null ? JSON.stringify(rewritten) : payload;
-  };
-}
-
 /**
- * Object-level variant for the non-streaming passthrough: the bounded-JSON
- * relay bypasses the SSE payload rewrite, so reasoning items inside a full
- * Responses JSON document need the same normalization before plain JSON
- * serialization or forced JSON-to-SSE reframing. Returns the same reference
+ * Project a translated non-streaming response. Returns the same reference
  * when nothing changed.
  */
 export function rewriteReasoningSummaryInJson(value: unknown): unknown {
   if (!isPlainObject(value)) return value;
   const rewritten = rewritePayload(value);
   return rewritten !== null ? rewritten : value;
-}
-
-/** String-level variant of {@link rewriteReasoningSummaryInJson}. */
-export function rewriteReasoningSummaryInJsonString(json: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    return json;
-  }
-  const rewritten = rewriteReasoningSummaryInJson(parsed);
-  return rewritten === parsed ? json : JSON.stringify(rewritten);
 }
 
 /** True when a request asks to project a content-channel reasoning trace. */
@@ -823,11 +763,7 @@ export function shouldProjectContentChannelReasoning(
 }
 
 /**
- * True when a routed native-Responses provider emits content-channel reasoning
- * (raw `reasoning_text`) instead of the summary channel. DeepSeek's
- * `/responses` endpoint is the current example: it ships raw thinking with an
- * empty `summary` and keeps `preserveReasoningContentModels` so multi-turn
- * replays round-trip.
+ * Match routes whose translated output may use content-channel reasoning.
  */
 export function routeUsesContentChannelReasoning(
   provider: { statelessResponses?: boolean; preserveReasoningContentModels?: string[] },
@@ -838,29 +774,4 @@ export function routeUsesContentChannelReasoning(
   const normalizedModelId = modelId.toLowerCase();
   return Array.isArray(preserved)
     && preserved.some(id => id.toLowerCase() === normalizedModelId);
-}
-
-type ReplayResponseSnapshot = { id?: unknown; output?: unknown; status?: unknown; model?: unknown };
-
-export function createPassthroughReasoningSummaryProjection(
-  rawBody: unknown,
-  provider: Parameters<typeof shouldProjectContentChannelReasoning>[1],
-  modelId: string,
-  translatorBudget: TranslatorBudget,
-) {
-  const projectContentChannelReasoning = shouldProjectContentChannelReasoning(rawBody, provider, modelId);
-  const reasoningReplayProjection = projectContentChannelReasoning
-    ? createReasoningSummaryReplayProjection({ translatorBudget })
-    : undefined;
-  return {
-    projectContentChannelReasoning,
-    reasoningReplayProjection,
-    wrapCacheRecorder(remember: (response: ReplayResponseSnapshot) => void) {
-      return (response: ReplayResponseSnapshot): void => {
-        const projected = reasoningReplayProjection?.projectSnapshot(response as Record<string, unknown>);
-        if (reasoningReplayProjection && projected === undefined) return;
-        remember(projected ?? response);
-      };
-    },
-  };
 }
