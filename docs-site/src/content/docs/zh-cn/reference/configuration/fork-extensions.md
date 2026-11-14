@@ -99,7 +99,7 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 生效的 `maxInboundBodyBytes` 大于 256 MiB 时，共享的 `maxConcurrentInboundBodyBytes` 准入预算生效。普通读取的 body 会在转移 Fork 请求文本 lease 前，根据解压及序列化大小更新 reservation。保留的 JSON 文本使用独立的 translator-budget lease。准入 reservation 持有到响应 EOF、错误或取消完成；文本 lease 在请求来源完成、错误、取消或 abort 时释放。官方限制与适用范围见[入站正文准入](/zh-cn/reference/inbound-body-admission/)。
 
-Remote Link turn 可以携带已解析的 body。代理先按官方序列化大小限制和预算观察处理；仅在需要 Fork source 且尚未持有时，才额外序列化并保留一份 JSON 文本。translator budget 观察其大小，文本及其观察量随来源释放。深层 `JSON.stringify` 和真实 Remote Link 的内存使用尚未验收，因此不能据此认定该路径保持官方无第二副本的目标。
+Remote Link turn 可以携带已解析的 body。代理先按官方序列化大小限制和预算观察处理；仅在需要 Fork source 且尚未持有时，才额外序列化并保留一份 JSON 文本。translator budget 观察其大小，文本及其观察量随来源释放。深层合法 JSON 会使递归 `JSON.stringify` 栈溢出并返回无效 JSON 错误。Link WebSocket 发布门仍关闭，开门前须修复该缺陷。真实 Remote Link 内存使用仍未验收，该路径未达到官方无第二副本的目标。
 
 ### 请求与返回头
 
