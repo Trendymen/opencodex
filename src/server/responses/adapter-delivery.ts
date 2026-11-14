@@ -34,6 +34,7 @@ import { readDisplaySafeErrorText, normalizeUpstreamErrorText } from "./core-err
 import { sanitizeNonReplayableUpstreamError } from "./non-replayable-error";
 import { isNonReplayableResponse } from "../../lib/upstream-retry";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
+import { isXaiResponsesDestination } from "../../providers/xai-transport";
 import { currentTurnToolBridgeMaps, guardEmptyToolCatalogEvents, guardEmptyToolCatalogStream } from "../../lib/empty-tool-catalog";
 import { guardCompactionSummary } from "../../responses/compaction-summary";
 import { createNestedExecAdapterEventRepair } from "../responses-nested-exec-call-repair";
@@ -134,6 +135,9 @@ export async function deliverAdapterResponse(
   const clientToolCatalog = requestState.clientToolCatalogRestriction && route.provider.authMode !== "forward"
     ? requestState.clientToolCatalogRestriction : undefined;
   const deliveryToolBridgeMaps = currentTurnToolBridgeMaps(toolBridgeMaps, clientToolCatalog);
+  const projectReasoningSummary = () => !(transportState.activeAdapter.name === "openai-chat"
+    && isXaiResponsesDestination(route.provider))
+    && shouldProjectContentChannelReasoning(parsed._rawBody, route.provider, route.modelId);
 
   const { repairSource: repairAdapterEventSource, repairBatch: repairAdapterEventBatch } = createNestedExecAdapterEventRepair({
     rawBody: parsed._rawBody,
@@ -298,15 +302,10 @@ export async function deliverAdapterResponse(
         onCompletedResponse,
       },
     );
-    if (shouldProjectContentChannelReasoning(parsed._rawBody, route.provider, route.modelId)) {
+    if (projectReasoningSummary()) {
       sseStream = relaySseWithBlockRewrite(
         sseStream,
-        createReasoningSummaryChannelBlockRewrite({
-          translatorBudget,
-          ...(logCtx.provider === "xai" && transportState.activeAdapter.name === "openai-chat"
-            ? { emitInitialSparseDelta: true }
-            : {}),
-        }),
+        createReasoningSummaryChannelBlockRewrite({ translatorBudget }),
         translatorBudget,
       );
     }
@@ -442,7 +441,7 @@ export async function deliverAdapterResponse(
     notifyResponseComplete(json);
     const lastError = events.findLast(event => event.type === "error");
     const status = json.status === "failed" && lastError && isContinuationBodyStall(lastError) ? 504 : 200;
-    const responseJson = shouldProjectContentChannelReasoning(parsed._rawBody, route.provider, route.modelId)
+    const responseJson = projectReasoningSummary()
       ? rewriteReasoningSummaryInJson(json)
       : json;
     return new Response(JSON.stringify(responseJson), { status, headers: { "Content-Type": "application/json" } });

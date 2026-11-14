@@ -43,8 +43,7 @@ export function npmUpdateFailureGuidance({ phase, rolledBack, recoveryUnsafe, pk
   const manual = manualUpdateFailureGuidance({
     bin: "npm", args: ["install", "-g", "--allow-scripts=bun", pkgName + "@" + (version || tag || "latest")],
   });
-  const kept = UNTOUCHED_PHASES.has(phase ?? "") || rolledBack === true
-    || (phase === "pending-marker" && recoveryUnsafe !== true);
+  const kept = UNTOUCHED_PHASES.has(phase ?? "") || rolledBack === true;
   if (recoveryUnsafe === true) {
     return {
       previousVersionKept: kept,

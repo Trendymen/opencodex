@@ -7,6 +7,7 @@ import { mergeStaticImports } from "./update-review-table";
 
 const baseStaticImports: Readonly<Record<string, readonly string[]>> = {
   "bin/ocx.mjs": [
+    'import { forkUpdateDecision } from "../src/fork/version-policy.mjs";',
     // Pre-mutation mutex admission and session/argument verification.
     'import { acquireSyncGuard, staleUpdateMarkerHint } from "../src/update/sync-update-mutex.mjs";',
     'import { isOrchestratedUpdateArgv, parseOrchestratedUpdateArgs, parseOrchestratedChildArgs } from "../src/update/orchestrated-arguments.mjs";',
@@ -97,6 +98,7 @@ const baseStaticImports: Readonly<Record<string, readonly string[]>> = {
     "import { guardedRun, UpdateMutationRefusedError, type UpdateMutationAuthorizer } from \"./mutation-guard.mjs\";"
   ],
   "src/update/index.ts": [
+    'import { forkUpdateDecision } from "../fork/version-policy.mjs";',
     // Child identity/session setup precedes mutation; installer supervisors authorize their spawns.
     'import { createLegacyUpdateSession, createOrchestratedChildSession, decodeOrchestratedExpect } from "./orchestrated-session.mjs";',
     'import { protectOrchestratedWorkerSignals } from "./orchestrated-child.mjs";',
@@ -216,6 +218,7 @@ const baseStaticImports: Readonly<Record<string, readonly string[]>> = {
     "import { renameSync, rmSync, unlinkSync } from \"node:fs\";"
   ],
   "src/update/notify.ts": [
+    'import { forkBaseVersion } from "../fork/version-policy.mjs";',
     "import { probeSpawn } from \"./mutation-guard.mjs\";",
     "import { existsSync, readFileSync } from \"node:fs\";",
     "import { join } from \"node:path\";",

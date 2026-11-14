@@ -18,7 +18,7 @@ import { isPolicyCandidateRefusal, isMandatoryToolChoiceRefusal, mandatoryToolCh
 import { fallbackTriggerForStatus, guardFallbackHop } from "../../routing/fallback-policy";
 import { captureAdmissionPolicy } from "../capture-admission-policy";
 import { upstreamCodeForComboFailure } from "../../bridge/errors";
-import { captureCodexPassthroughTurn, releaseCodexPassthroughTurnSource } from "../../fork/codex-passthrough-turn";
+import { captureCodexPassthroughTurn, codexPassthroughSourceRequired, releaseCodexPassthroughTurnSource } from "../../fork/codex-passthrough-turn";
 import { createTranslatorBudget } from "../../lib/translator-budget";
 import { finalizeAccountLease, finalizeOwnedTranslatorBudget } from "./core-lifetime";
 
@@ -359,6 +359,7 @@ export async function handleResponsesWithPolicyFallback(
 ): Promise<Response> {
   const turn = options.codexPassthroughTurn ?? captureCodexPassthroughTurn(config.providers, options.inboundWire ?? "responses");
   if (!turn || options.codexPassthroughTurn) return handleResponsesWithPolicyFallbackInner(req, config, logCtx, options, deps);
+  if (!codexPassthroughSourceRequired(turn)) return handleResponsesWithPolicyFallbackInner(req, config, logCtx, { ...options, codexPassthroughTurn: turn }, deps);
   const budget = options.translatorBudget ?? createTranslatorBudget();
   const signal = options.abortSignal ?? req.signal;
   const release = () => { releaseCodexPassthroughTurnSource(turn); signal.removeEventListener("abort", release); };

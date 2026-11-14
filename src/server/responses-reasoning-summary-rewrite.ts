@@ -192,8 +192,6 @@ type PendingReasoning = {
   partZeroAdded: boolean;
   partZeroTextDone: boolean;
   partZeroDone: boolean;
-  /** Whether upstream supplied the content-part lifecycle for this reasoning item. */
-  contentPartSeen: boolean;
   seenSequenceNumbers: Set<number>;
   sequenceIdentityBytes: number;
   lastBlock?: string;
@@ -281,8 +279,6 @@ function rewriteTerminalItems(payload: Record<string, unknown>, parts: string[])
  */
 export function createReasoningSummaryChannelBlockRewrite(options?: {
   translatorBudget?: TranslatorBudget;
-  /** xAI's Chat adapter omits content-part events, so preserve its live first reasoning delta. */
-  emitInitialSparseDelta?: boolean;
 }): SseBlockRewrite {
   const pending = new Map<string, PendingReasoning>();
   const closed = new Map<string, ClosedReasoning>();
@@ -297,7 +293,6 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
         partZeroAdded: false,
         partZeroTextDone: false,
         partZeroDone: false,
-        contentPartSeen: false,
         seenSequenceNumbers: new Set(),
         sequenceIdentityBytes: 0,
       };
@@ -513,9 +508,6 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
       state.lastEvent = payload;
       state.buffer += payload.delta;
       if (!state.parts.length) {
-        if (options?.emitInitialSparseDelta === true && !state.contentPartSeen) {
-          return emitPartZero(block, payload, state, state.buffer);
-        }
         if (!titleReady(state.buffer)) return [];
         return emitPartZero(block, payload, state, state.buffer);
       }
@@ -555,7 +547,6 @@ export function createReasoningSummaryChannelBlockRewrite(options?: {
         const state = stateOf(payload.item_id);
         state.lastBlock = block;
         state.lastEvent = payload;
-        state.contentPartSeen = true;
         state.partZeroAdded = true;
       }
       const rewritten = rewritePayload(payload, projectRawReasoningSummary);

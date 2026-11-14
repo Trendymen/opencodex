@@ -27,7 +27,7 @@
 - `src/fork/codex-passthrough-contract.ts` 是配置、面板和运行时共用的纯 23 项目录。默认 `true` 只允许既有处理，仍受原功能开关约束；配置说明统一见 [Fork 配置](../docs-site/src/content/docs/reference/configuration/fork-extensions.md#gpt-subscription-processing)。
 - `src/adapters/openai-responses/passthrough.ts` 对未声明 hosted-search 工具的请求做自动历史投影时，检查 `normalizeRequestParameters`；显式 `projectResponsesLiteHostedSearchHistory` 沿用独立的 Provider opt-in 条件。非 canonical 路径继续采用官方默认处理。
 - canonical forward 的 `additional_tools` 提升同样检查 `normalizeRequestParameters`；关闭该许可或全关时保留输入条目及顶层 `tools` 的值、存在性和顺序。其他目的地沿用官方自动提升及 Provider opt-in 条件。
-- `codex-passthrough-turn.ts` 按 turn 冻结 Provider 覆盖值，最终 native Responses + canonical forward 目的地才解析许可；Direct、Pool、模型级 adapter 和 fallback 使用同一判断。它按当前许可、目的地和客户端偏好计算上游流模式与 JSON 客户端的 HTTP 选择；发送、恢复、预算和取消仍由 dispatch 管理。响应携带实际尝试的许可，非官方目的地不能继承父目标许可。
+- `codex-passthrough-turn.ts` 按 turn 冻结 Provider 覆盖值，最终 native Responses + canonical forward 目的地才解析许可；Direct、Pool、模型级 adapter 和 fallback 使用同一判断。原生 Responses 在入口没有 canonical 候选时仍携带不持有来源的 turn；读取期间配置新增 canonical 目标时，来源不可用则在官方账号认证及 canonical transport 派发前拒绝，Combo、policy 与 compaction 继承该状态。它按当前许可、目的地和客户端偏好计算上游流模式与 JSON 客户端的 HTTP 选择；发送、恢复、预算和取消仍由 dispatch 管理。响应携带实际尝试的许可，非官方目的地不能继承父目标许可。
 - `src/server/responses/core-lifetime.ts` 的预算与账号 lease 包装共用 marker 搬运，保留官方 same-target retry hold、模型计划拒绝、本地账号冷却标记、禁止重放状态及 Fork 的实际订阅许可和本地失败身份；包装后的响应继续使用原有 EOF、错误与取消释放路径。
 - `src/adapters/openai-responses/transport.ts` 在共享传输构建点转发 caller 的 routing hint。关闭 hint 合成时，Provider 静态同名头优先；开启时仍按最终 body 合成。`normalizeEncryptedContent: false` 跳过 OCX1 解封装和 native compaction 密文规范化；默认开启时沿用官方身份切换清理条件。
 - `src/server/responses/core-pipeline.ts` 为准备阶段的早退响应附上 admission 许可；路由确定后为实际尝试的响应附上许可，包括 retention 交付后的响应与无效摘要的 502。retention 的 prepare、deliver、dispose 和发送资源释放仍由官方 pipeline 管理。
@@ -53,7 +53,7 @@
 - `src/types/agent-task-recovery.ts` 保存 `OcxConfig.agentTaskRecovery` 的原有七个可选字段及默认值说明；`src/types/config.ts` 通过 `import type` 引用，不增加运行时依赖或改变配置结构。
 - `src/server/responses-passthrough-dispatch-types.ts` 与 `src/server/responses-adapter-dispatch-types.ts` 分别保存对应 dispatch 的参数类型，母文件通过 `import type` 引用，发送预算、取消和恢复逻辑仍在母文件中。
 - `src/server/responses/account-auto-pause-recovery.ts` 只在凭据跳转预算允许且已选中替补后，按现有有界错误读取保存失败响应、释放旧 body 的 pacing slot，再进入替补发送。没有跳转预算、没有替补或 body 被外部 reader 锁定时不读取原 body；重建失败保留原响应。已预留跳转但物理发送准入明确因预算拒绝时，沿用官方本地429；其他发送前失败仍保留原响应，请求取消沿用abort路径。
-- `src/server/responses-reasoning-summary-rewrite.ts` 仅用于客户端请求 summary 且路由满足条件的转译适配器响应；已有 summary 不重复投影。原生 Responses 沿用官方 content-channel 合同，在 SSE、JSON 和已存重放中保留 content，不再通过 Fork 投影为 summary。
+- `src/server/responses-reasoning-summary-rewrite.ts` 仅用于客户端请求 summary 且路由满足条件的转译适配器响应；已有 summary 不重复投影。xAI 官方目的地的 `openai-chat` 响应保留原始 reasoning content，并在完成前流式交付，不做 summary 投影；流式、JSON 和已存重放形状一致。原生 Responses 沿用官方 content-channel 合同，在 SSE、JSON 和已存重放中保留 content，不再通过 Fork 投影为 summary。
 - `src/server/relay.ts` 和 `src/server/relay-eager.ts` 使用官方 `src/server/bare-upstream-error.ts` 的 typed/untyped 证据归并：typed 优先于 untyped，同类取后，真实终态与已确认的 policy terminal 按官方边界处理。Fork 不再增加 `cleanEof` / `pendingRead` 竞争读取重放；正常 EOF flush、私有凭据保护和 `synthesizeTerminalFailure: false` 时不合成失败终态仍受各自原条件约束。
 - projection 的唯一序号按 32 字节计入共享 `translatorBudget`；EOF、失败和取消完成资源释放，超限沿用 `translation_buffer_limit`。flush 不扩大到 reader error / nested-exec barrier。
 - Fork 的 `inferResponsesMessagePhaseModels` 只作用于显式列出的第三方原生 Responses 模型，包含普通 JSON 交付；宣布阶段的 `final_answer` 不足以证明最终相位，已有 phase 和后续工作证据共同决定交付结果。命中该名单时优先使用 Fork 推断，避免两层缓冲吞掉 EOF 尾项。其余路由按官方 `messagePhaseInference` 控制 SSE 推断及由 SSE 重建的 JSON，保留官方适用条件。
@@ -81,11 +81,11 @@
 
 - CI 的 job、条件、分片、worker 和运行预算跟随官方 `.github/workflows/ci.yml` 与 `scripts/ci/run-bun-test-batches.sh`；Fork 的 `scripts/prepare-fork-official-base.ts` 从包版本推导官方基线，核对固定上游正式 Release、Tag raw/peeled 和候选历史。开发与发布候选统一在 dev，不依赖 main、sync 或 upstream-release。候选触发与精确 SHA 验收见[同步政策](../FORK_SYNC_AUTOMATION.md)。
 - 官方 Tag 的精确 raw/peeled 查询在隔离 Git 配置中执行，固定官方 URL；Windows 参数约束及返回行的精确匹配见[同步政策](../FORK_SYNC_AUTOMATION.md)。本地 Tag、commit 的对象类型和身份完全一致时复用，确证对象缺失才回到独立临时仓库的一层历史抓取。异常或同名 Tag 冲突直接拒绝。候选祖先证明在 checkout 中完成：浅克隆缺少基线对象或无法证明祖先时，准备步骤固定 HEAD 并只从 origin 补全该 commit 的历史，再导入已验证 Tag；不改分支、现有 Tag 或 FETCH_HEAD，不向 checkout 写入新的浅边界。版本 guard 继续拒绝补全后的非祖先。
-- `scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts` 在离线验证后的同卷 stage 上替换包；根 manifest 保持冻结。Volta、服务、readiness、plist 和包字节共用失败回滚边界。
-- `src/update/transactional-install.mjs` 在 stage 验证后及每次 live→backup rename 重试前要求 `mayReplacePackage` 同步返回 `true`；重试时在该调用前后复核 Fork pending marker 身份。marker 身份不符时保留现有 marker 并报告 `pending-owner`；`recoveryUnsafe: true` 优先拒绝 launcher/服务恢复，即使 `rolledBack: true`。只有旧包未改且 `lstat` 确认 marker 不存在时，`pending-marker` 失败才按安全状态处理。
-- 安装树内容沿用官方校验，按需核对目标版本、launcher、Bun 大小和依赖；校验会跟随符号链接，不证明链接目标均位于包目录内。该合同也用于启动恢复和编排结果验证，目录对象身份、pending marker 与替换授权另行检查。
-- `readPendingMarker` 统一供事务和 `bootRestoreProbe` 使用，只把 `lstat` 抛出的 `ENOENT` 判为 absent。符号链接、非普通文件、其他 stat 错误及随后的读取/解析失败都判 invalid；启动恢复在此状态下不清理或替换 live、backup、pending marker 和 recovery 记录。
-- 停服、包回滚和 plist 恢复全部确认成功后，才恢复原先已加载的服务；不安全/未知状态拒绝继续 restart。Windows pending transaction 的 wrapper 和 probe 成对维护。
+- `scripts/install-local.ts`、`scripts/install-local-vendor.ts`、`scripts/install-local-volta.ts` 严格核对官方 `runNpm` 参数并保留唯一 stage 的 `--prefix`，使用已准备的 tarball 离线安装；回调返回 stage 成功前校验包身份、字体和 CLI，失败保留旧 live 并尝试清理 stage，清理失败时保留并记录，根 manifest 保持冻结。官方事务完成后依次静态校验 live 身份和字体、同步并验证 Volta、检查 launcher/CLI，再按条件处理服务、debug 和 readiness；这些后续步骤失败不自动回滚包。Volta 元数据同步自身失败时仍使用 `restoreBeforeImages` 和 journal 做内部补偿，不提供面向后续服务或 readiness 失败的登记回滚句柄。
+- 事务失败且要求重启时，只有 `recoveryUnsafe` 不为 `true`，且阶段为 `stage`、`verify`、`authorize`、`swap-backup` 之一或报告 `rolledBack: true`，才可尝试恢复原运行状态；其他事务失败不自动重启。`double-fault` 只有报告 `rolledBack: true` 且未标为 `recoveryUnsafe` 才可能恢复。该恢复不依赖延迟提交句柄，也不把包事务成功后的失败称为旧包已恢复；`src/update/update-failure-guidance.mjs` 仍优先提示不安全的恢复状态。
+- `src/update/transactional-install.mjs` 使用官方 stage 验证、swap 后验证和失败时回滚；`mayReplacePackage` 须在 stage 验证后及每次 live→backup rename 重试前同步返回 `true`。成功后事务返回 `done`，不提供延迟提交或外部 rollback 句柄。
+- 安装树内容沿用官方校验，按需核对目标版本、launcher、Bun 大小和依赖；校验会跟随符号链接，不证明链接目标均位于包目录内。Fork 原有目录对象身份、pending 事务所有权、专用 marker 写入和延迟提交保护已撤回；官方验证及替换授权不等价覆盖这些保护。
+- 启动恢复和新事务开始前仅用 `lstat` 检查旧 `.ocx-transaction.json`：已有任意条目或非 `ENOENT` 检查错误时，分别返回 `failed` 或 `pending-existing` / `recoveryUnsafe: true`；不读取、写入或删除该 marker，也不探测 PID。启动器对 `failed` 只警告并继续启动；旧 pending 不自动恢复或删除，处理前须人工核查事务、包与备份。检查后新建 marker 仍有竞态。
 - macOS `install:local` 补写 `OCX_DEBUG=1` / `OCX_PROVIDER_TEXT_DEBUG=1`，运行安装命令须当前用户明确授权。普通自更新保留官方同步/异步事务路径及 Windows 安装进程树退出屏障，字体补丁不扩展为滚动 CSS 改写。
 - `src/fork/version-policy.mjs` 维护 `ben.N` 单调版本。更新、通知和 launcher 使用同一规则；Tag/Release 见 [Fork 维护补充](../FORK_MAINTAINERS.md) 和同步政策。
 - 原生 Windows 恢复、PID reuse、断电和父目录替换竞态仍需实际环境验证；`src/usage/telemetry-contract.ts` 的恢复类型、GUI 标签及 `src/web-search/passthrough-bridge.ts` 的诊断观察保留各自合同。

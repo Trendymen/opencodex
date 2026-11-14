@@ -22,9 +22,11 @@ import {
   assertRootManifestUnchanged,
   defaultLocalPackageStageOptions,
   prepareBundledLocalPackage,
+  type LocalPackageStageOptions,
   type PreparedLocalPackage,
 } from "./install-local-vendor";
 import {
+  launcherUsableAfterNpmUpdate,
   transactionalNpmUpdate,
   verifyInstallTree,
 } from "../src/update/transactional-install.mjs";
@@ -100,15 +102,6 @@ type InstallLocalRun = (command: string[], options?: InstallLocalRunOptions) => 
 type LaunchdPlistWriteDeps = {
   patch?: (path: string) => void;
   validate?: (path: string) => void;
-};
-
-type LaunchdPlistRollbackDeps = {
-  platform?: NodeJS.Platform;
-};
-
-type LaunchdPlistLoadDeps = {
-  launchctl?: typeof runLaunchctl;
-  platform?: NodeJS.Platform;
 };
 
 type CapturedCommandResult = { status: number; stdout: string; stderr: string; errorCode?: string };
@@ -229,43 +222,6 @@ export function ensureProviderDebugLaunchdDefault(
     (deps.patch ?? patchProviderDebugWithPlutil)(temporary);
     (deps.validate ?? validateProviderDebugPlist)(temporary);
   });
-  return true;
-}
-
-export type ProviderDebugLaunchdSnapshot = {
-  restore(): void;
-};
-
-/** Save the pre-install launchd definition so a pending package transaction can restore it. */
-export function captureProviderDebugLaunchdSnapshot(
-  plistPath = launchdProxyPlistPath(),
-  deps: LaunchdPlistRollbackDeps = {},
-): ProviderDebugLaunchdSnapshot | undefined {
-  if ((deps.platform ?? process.platform) !== "darwin") return undefined;
-  if (!existsSync(plistPath)) throw new Error(`launchd plist not found: ${plistPath}`);
-  const stat = lstatSync(plistPath);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("launchd plist must be a regular file");
-  const contents = readFileSync(plistPath);
-  const mode = stat.mode & 0o777;
-
-  return {
-    restore(): void {
-      replaceLaunchdPlistAtomically(plistPath, contents, mode);
-    },
-  };
-}
-
-/** Load a restored launchd definition after the lifecycle has confirmed the new runtime is stopped. */
-export function loadRestoredLaunchd(
-  plistPath = launchdProxyPlistPath(),
-  deps: LaunchdPlistLoadDeps = {},
-): boolean {
-  if ((deps.platform ?? process.platform) !== "darwin") return false;
-  const launchctl = deps.launchctl ?? runLaunchctl;
-  const loaded = launchctl(["load", "-w", plistPath]);
-  if (!loaded.ok || launchctlLoadFailed(loaded.stderr)) {
-    throw new Error(`launchctl could not load restored ${plistPath}: ${loaded.stderr || "command failed"}`);
-  }
   return true;
 }
 
@@ -435,62 +391,40 @@ export function assertNoRunningService(
 export interface LocalInstallLifecycleDeps {
   stop: () => void | Promise<void>;
   verifyStopped: () => void | Promise<void>;
-  replace: () => void | LocalInstallPendingTransaction | Promise<void | LocalInstallPendingTransaction>;
+  replace: () => void | Promise<void>;
   afterReplace?: () => void | Promise<void>;
-  beforeCommit?: () => void | Promise<void>;
-  /** Restores configuration only; it must not start or reload a service. */
-  afterRollback?: () => void | Promise<void>;
-  /** Starts a restored runtime after compensation and returns whether ready() must run. */
-  restartAfterRollback?: () => boolean | Promise<boolean>;
+  beforeComplete?: () => void | Promise<void>;
   restart: () => void | Promise<void>;
   ready: () => void | Promise<void>;
 }
 
-type LocalInstallTransactionResult = {
-  ok: boolean;
-  phase: string;
-  error?: string;
-  recoveryUnsafe?: boolean;
-  markerWriteFailed?: boolean;
-  markerCleanupFailed?: boolean;
-};
-
-export type LocalInstallPendingTransaction = {
-  commit: () => LocalInstallTransactionResult;
-  rollback: () => LocalInstallTransactionResult;
-};
-
-export function withLocalInstallRegistration(
-  transaction: LocalInstallPendingTransaction,
-  registration: ReturnType<typeof createVoltaRegistrationSync>,
-): LocalInstallPendingTransaction {
-  if (!registration) return transaction;
-  return {
-    commit: () => {
-      try {
-        registration.verify();
-      } catch (error) {
-        return {
-          ok: false,
-          phase: "registration-verify",
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-      return transaction.commit();
+export function replacePreparedLocalPackage(
+  packageDir: string,
+  name: string,
+  version: string,
+  prepared: Pick<PreparedLocalPackage, "tarball" | "npmCache">,
+  runCommand: LocalPackageStageOptions["run"] = defaultLocalPackageStageOptions.run,
+  log: (line: string) => void = () => {},
+): void {
+  let stageError: string | undefined;
+  const transaction = transactionalNpmUpdate({
+    packageDir,
+    pkgName: name,
+    targetVersion: version,
+    tag: "latest",
+    runNpm: args => {
+      const result = runPreparedLocalStage(args, prepared, packageDir, name, version, runCommand);
+      stageError = result.error;
+      return { status: result.status };
     },
-    rollback: () => {
-      try {
-        return registration.rollback(transaction.rollback);
-      } catch (error) {
-        return {
-          ok: false,
-          phase: "registration-rollback",
-          error: error instanceof Error ? error.message : String(error),
-          recoveryUnsafe: true,
-        };
-      }
-    },
-  };
+    log,
+  });
+  if (!transaction.ok) {
+    throw Object.assign(
+      new Error(`local package transaction failed (${transaction.phase}): ${stageError ?? transaction.error}`),
+      { localInstallRecoverySafe: transaction.recoveryUnsafe !== true && launcherUsableAfterNpmUpdate(transaction) },
+    );
+  }
 }
 
 export async function runLocalInstallLifecycle(
@@ -498,97 +432,30 @@ export async function runLocalInstallLifecycle(
   deps: LocalInstallLifecycleDeps,
 ): Promise<void> {
   await deps.stop();
-  try {
-    await deps.verifyStopped();
-  } catch (verifyError) {
-    throw verifyError;
-  }
-  let transaction: LocalInstallPendingTransaction | undefined;
+  await deps.verifyStopped();
   let replacementCompleted = false;
   try {
-    transaction = (await deps.replace()) ?? undefined;
+    await deps.replace();
     replacementCompleted = true;
     await deps.afterReplace?.();
     if (restart) {
       await deps.restart();
       await deps.ready();
     }
-    await deps.beforeCommit?.();
-    if (transaction) {
-      const committed = transaction.commit();
-      if (!committed.ok) throw Object.assign(
-        new Error(`local package transaction commit failed (${committed.phase}): ${committed.error ?? "unknown error"}`),
-        { localInstallRecoverySafe: committed.recoveryUnsafe !== true },
-      );
-    }
-    return;
+    await deps.beforeComplete?.();
   } catch (replaceError) {
-    if (transaction) {
-      const recoveryErrors: unknown[] = [];
-      if (restart) {
-        try {
-          await deps.stop();
-          await deps.verifyStopped();
-        } catch (error) {
-          recoveryErrors.push(error);
-        }
-      }
-      if (recoveryErrors.length === 0) {
-        try {
-          const rolledBack = transaction.rollback();
-          if (!rolledBack.ok) {
-            recoveryErrors.push(Object.assign(
-              new Error(`local package transaction rollback failed (${rolledBack.phase}): ${rolledBack.error ?? "unknown error"}`),
-              { localInstallRecoverySafe: false },
-            ));
-          }
-        } catch (error) {
-          recoveryErrors.push(error);
-        }
-      }
-      try {
-        await deps.afterRollback?.();
-      } catch (error) {
-        recoveryErrors.push(error);
-      }
-      if (restart && recoveryErrors.length === 0) {
-        try {
-          const started = deps.restartAfterRollback
-            ? await deps.restartAfterRollback()
-            : (await deps.restart(), true);
-          if (started) await deps.ready();
-        } catch (error) {
-          recoveryErrors.push(error);
-        }
-      }
-      if (recoveryErrors.length > 0) {
-        const rollbackError = recoveryErrors.length === 1
-          ? recoveryErrors[0]
-          : new AggregateError(recoveryErrors, "local install rollback compensation failed");
-        throw Object.assign(
-          new AggregateError(
-            [replaceError, rollbackError],
-            "local package replacement failed and the previous package or proxy mode could not be restored",
-          ),
-          { localInstallRecoverySafe: false },
-        );
-      }
-      throw replaceError;
-    }
-    if (replacementCompleted) throw replaceError;
-    const recoverySafe = !replaceError
-      || typeof replaceError !== "object"
-      || !("localInstallRecoverySafe" in replaceError)
-      || (replaceError as { localInstallRecoverySafe?: unknown }).localInstallRecoverySafe !== false;
+    if (replacementCompleted) throw new AggregateError(
+      [replaceError], "local package was replaced; a later step failed and the previous package was not automatically restored",
+    );
+    const recoverySafe = !!replaceError && typeof replaceError === "object"
+      && "localInstallRecoverySafe" in replaceError
+      && replaceError.localInstallRecoverySafe === true;
     if (restart && recoverySafe) {
       try {
         await deps.restart();
         await deps.ready();
       } catch (restartError) {
-        throw new AggregateError(
-          [replaceError, restartError],
-          "local package replacement failed and the previous proxy mode could not be restored",
-        );
+        throw new AggregateError([replaceError, restartError], "local package replacement failed and the previous proxy mode could not be restored");
       }
     }
     throw replaceError;
@@ -605,20 +472,18 @@ export async function runLocalInstallLifecycleWithManifestGuard(
     stop: deps.stop,
     verifyStopped: deps.verifyStopped,
     replace: async () => {
-      // The service is already confirmed stopped at this point. Classify this guard as a
-      // pre-replacement failure so the base lifecycle restores the previous proxy mode.
-      assertManifest("local install stop verification");
-      assertManifest("global package replacement admission");
+      try {
+        assertManifest("local install stop verification");
+        assertManifest("global package replacement admission");
+      } catch (error) {
+        throw Object.assign(new Error("source manifest changed before package replacement", { cause: error }), { localInstallRecoverySafe: true });
+      }
       return await deps.replace();
     },
     afterReplace: deps.afterReplace,
-    afterRollback: deps.afterRollback,
-    restartAfterRollback: deps.restartAfterRollback,
-    // Once replacement starts, service recovery wins over source-tree diagnostics.
-    // A later completion/cleanup check still reports drift without stranding the proxy.
     restart: deps.restart,
     ready: deps.ready,
-    beforeCommit: () => { assertManifest("local install lifecycle completion"); },
+    beforeComplete: () => { assertManifest("local install lifecycle completion"); },
   });
 }
 
@@ -1035,6 +900,67 @@ export function localGlobalInstallCommand(
   return ["npm", "install", "-g", ...localGlobalInstallArgs(prepared), prepared.tarball];
 }
 
+function verifyLocalPackageTree(packageDir: string, name: string, version: string): { root: string; cli: string } {
+  const checked = verifyInstallTree(packageDir, version);
+  if (!checked.ok) throw new Error("package tree verification failed: " + checked.failures.join("; "));
+  const validated = validatePackageRoot(packageDir, name, version);
+  const cli = validated && validatedPackageCli(validated.root);
+  if (!validated || !cli) throw new Error("package identity or CLI entrypoint is invalid");
+  assertGuiFontStack(join(validated.root, "gui", "dist", "assets"), "installed gui/dist/assets");
+  return { root: validated.root, cli };
+}
+
+export function runPreparedLocalStage(
+  args: string[],
+  prepared: Pick<PreparedLocalPackage, "tarball" | "npmCache">,
+  packageDir: string,
+  name: string,
+  version: string,
+  runCommand: LocalPackageStageOptions["run"] = defaultLocalPackageStageOptions.run,
+): { status: number; error?: string } {
+  try {
+    if (!packageIdentitySafe(name, version) || !isAbsolute(prepared.tarball) || !isAbsolute(prepared.npmCache)) {
+      throw new Error("invalid prepared package identity or path");
+    }
+    const prefix = args[3];
+    const expected = ["install", "-g", "--prefix", prefix, "--allow-scripts=bun", "--no-audit", "--no-fund", `${name}@${version}`];
+    if (!prefix || !isAbsolute(prefix) || dirname(resolve(prefix)) !== resolve(dirname(packageDir))
+      || !basename(prefix).startsWith(".ocx-staging-") || args.length !== expected.length
+      || !args.every((arg, index) => arg === expected[index])) {
+      throw new Error("unsupported transactional npm staging arguments");
+    }
+    const tarball = lstatSync(prepared.tarball);
+    const cache = lstatSync(prepared.npmCache);
+    const stage = lstatSync(prefix);
+    if (!tarball.isFile() || tarball.isSymbolicLink() || !cache.isDirectory() || cache.isSymbolicLink()
+      || !stage.isDirectory() || stage.isSymbolicLink()) throw new Error("prepared package or staging path is invalid");
+    const install = runCommand([
+      "npm", "install", "-g", "--prefix", prefix, ...localGlobalInstallArgs(prepared), prepared.tarball,
+    ], root, { ...process.env });
+    if (install.timedOut || install.exitCode !== 0) throw new Error(`offline staging install failed (${install.exitCode})`);
+    const candidates = [join(prefix, "lib", "node_modules", ...name.split("/")), join(prefix, "node_modules", ...name.split("/"))];
+    const stagedPackage = candidates.find(candidate => existsSync(join(candidate, "package.json")));
+    if (!stagedPackage) throw new Error("staged package directory not found");
+    const verified = verifyLocalPackageTree(stagedPackage, name, version);
+    const probeEnv: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH ?? "",
+      OPENCODEX_HOME: join(prefix, ".ocx-version-home"),
+      CODEX_HOME: join(prefix, ".codex-version-home"),
+      TEMP: prefix,
+      TMP: prefix,
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...(process.env.PATHEXT ? { PATHEXT: process.env.PATHEXT } : {}),
+    };
+    const cli = runCommand([process.execPath, verified.cli, "--version"], prefix, probeEnv, { timeoutMs: 5_000 });
+    if (cli.timedOut || cli.exitCode !== 0 || cli.stdout.trim() !== `opencodex ${version}`) {
+      throw new Error("staged CLI version did not match the package transaction target");
+    }
+    return { status: 0 };
+  } catch (error) {
+    return { status: 1, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export type LocalInstallSourcePreparationDeps = Readonly<{
   readManifestBytes(): string;
   build(): void;
@@ -1153,11 +1079,6 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
     if (launchdLoad?.state === "unknown") {
       throw new Error(`launchd service state is unknown; refusing local install: ${launchdLoad.detail ?? "probe failed"}`);
     }
-    const launchdSnapshot = launchdLoad
-      ? captureProviderDebugLaunchdSnapshot(
-        launchdProxyPlistPath(),
-      )
-      : undefined;
     await runLocalInstallLifecycleWithManifestGuard(restart, {
       stop: () => {
         console.log("==> Stopping current proxy...");
@@ -1180,75 +1101,20 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
       },
       replace: () => {
         console.log("==> Replacing global package transactionally...");
-        const verifyLocalTree = (packageDir: string, expectedVersion?: string) => {
-          const base = verifyInstallTree(packageDir, expectedVersion);
-          if (!base.ok) return base;
-          if (!validatePackageRoot(packageDir, name, expectedVersion)) {
-            return { ok: false, failures: ["installed package identity or entrypoint is invalid"] };
-          }
-          try {
-            assertGuiFontStack(join(packageDir, "gui", "dist", "assets"), "installed gui/dist/assets");
-            return { ok: true, failures: [] };
-          } catch (error) {
-            return { ok: false, failures: [error instanceof Error ? error.message : String(error)] };
-          }
-        };
-        const transaction = transactionalNpmUpdate({
-          packageDir: installedPackageRoot,
-          pkgName: name,
-          targetVersion: version,
-          tag: "latest",
-          packageSpec: preparedPackage.tarball,
-          installArgs: localGlobalInstallArgs(preparedPackage),
-          runNpm: (args: string[]) => ({ status: runCaptured(["npm", ...args]).status }),
-          verifyStage: verifyLocalTree,
-          verifyLive: (packageDir: string, expectedVersion?: string) => {
-            const verified = verifyLocalTree(packageDir, expectedVersion);
-            if (!verified.ok) return verified;
-            try {
-              const runtime = resolveLocalInstallRuntime(packageDir, name, expectedVersion ?? version);
-              const versionResult = runCaptured([...runtime.command, "--version"], localInstallRuntimeEnv(runtime));
-              if (versionResult.status !== 0 || versionResult.stdout.trim() !== `opencodex ${expectedVersion ?? version}`) {
-                throw new Error("installed CLI version did not match the package transaction target");
-              }
-              return verified;
-            } catch (error) {
-              return { ok: false, failures: [error instanceof Error ? error.message : String(error)] };
-            }
-          },
-          verifyRollback: packageDir => verifyLocalTree(packageDir),
-          deferCommit: true,
-          log: (line: string) => console.log(`    ${line}`),
-        });
-        if (!transaction.ok) {
-          const error = Object.assign(
-            new Error(`local package transaction failed (${transaction.phase}): ${transaction.error}`),
-            {
-              localInstallRecoverySafe: transaction.recoveryUnsafe !== true
-                && (transaction.phase !== "double-fault" || transaction.rolledBack === true),
-            },
-          );
-          throw error;
-        }
-        console.log("    installed GUI font stack verified");
-        if (!transaction.commit || !transaction.rollback) {
-          throw Object.assign(new Error("local package transaction did not return a pending commit handle"), {
-            localInstallRecoverySafe: false,
-          });
-        }
-        return withLocalInstallRegistration({ commit: transaction.commit, rollback: transaction.rollback }, registration);
+        replacePreparedLocalPackage(installedPackageRoot, name, version, preparedPackage, undefined, line => console.log(`    ${line}`));
       },
       afterReplace: () => {
+        verifyLocalPackageTree(installedPackageRoot, name, version);
         registration?.sync();
+        registration?.verify();
+        const runtime = resolveLocalInstallRuntime(installedPackageRoot, name, version);
+        const versionResult = runCaptured([...runtime.command, "--version"], localInstallRuntimeEnv(runtime));
+        if (versionResult.status !== 0 || versionResult.stdout.trim() !== `opencodex ${version}`) {
+          throw new Error("installed CLI version did not match the package transaction target");
+        }
+        console.log("    installed GUI font stack verified");
         localInstallAfterReplace(serviceWasInstalled, restart);
       },
-      afterRollback: () => { launchdSnapshot?.restore(); },
-      restartAfterRollback: launchdSnapshot
-        ? () => {
-          if (launchdLoad?.state !== "loaded-current" && launchdLoad?.state !== "loaded-stale") return false;
-          return loadRestoredLaunchd(launchdProxyPlistPath());
-        }
-        : undefined,
       restart: () => {
         console.log(serviceWasInstalled
           ? "==> Refreshing background service with packaged proxy..."

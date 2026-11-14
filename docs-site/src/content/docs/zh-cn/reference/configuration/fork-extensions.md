@@ -234,8 +234,8 @@ ocx debug provider-text off
 
 主日志与引用工件在 UTC 日期/小时目录下共用 4 MiB 分组，两个根目录的可管理数据最多保留七天和 20 GiB。清理先删最旧主日志，再删工件；unsafe/不可读旁路条目不计入该预算。样本脱敏并限制单字符串/每轮额度。手动删除前先停代理，再一起删除 `provider-debug` 和 `provider-debug-artifacts`，只删工件会损坏保留引用。
 
-`bun run install:local` 是须明确请求的本机维护操作：离线 staging 并验证依赖闭包，同步 Volta，服务 ready 后才提交替换。macOS 补写 `OCX_DEBUG=1` / `OCX_PROVIDER_TEXT_DEBUG=1`；`--no-restart` 的服务配置只写磁盘 plist，不 reload 服务。字体栈补丁保留，旧滚动 CSS 补丁已退役。
+`bun run install:local` 是须明确请求的本机维护操作：核对官方 stage 参数并保留唯一 stage 的 `--prefix`，将准备好的 tarball 离线安装，并在 stage 成功前校验包身份、字体栈和 CLI。stage 校验失败会保留旧 live 包并尝试清理 stage；清理失败时保留并记录。官方 swap 与交换后校验成功后包事务结束，适用的事务内失败仍由官方回滚处理。随后校验 live 身份和字体、同步并验证 Volta、检查 launcher 和 CLI，再按条件处理服务、debug 和 readiness。Volta 元数据同步自身失败时仍执行内部补偿。事务失败且要求重启时，只有 `recoveryUnsafe` 不为 `true`，且阶段为 `stage`、`verify`、`authorize`、`swap-backup` 之一或报告 `rolledBack: true`，才可尝试恢复原运行状态；其他事务失败不自动重启。包事务成功后的失败不会自动恢复旧包；服务或 readiness 失败不会自动恢复 Volta 登记，须核查包、Volta 和服务的实际状态。macOS 补写 `OCX_DEBUG=1` / `OCX_PROVIDER_TEXT_DEBUG=1`；`--no-restart` 的服务配置只写磁盘 plist，不 reload 服务。字体栈补丁保留，旧滚动 CSS 补丁已退役。
 
-共享安装事务要求同步授权包替换，并在每次移动 live 包前的授权调用前后核对 pending marker 身份。恢复状态不安全时，即使报告已回滚，也会拒绝 launcher 和服务恢复。只有旧包未改且确认 marker 不存在，`pending-marker` 失败才视为安全；否则应在重试前检查事务状态。
+共享安装事务保留官方 `mayReplacePackage` 同步授权：stage 校验后和每次 live→backup rename 重试前均须授权。成功后不提供延迟提交或 rollback 句柄。Fork 原有目录身份、pending 事务所有权和 marker 写入保护已撤回；官方事务不等价覆盖这些保证。
 
-启动恢复同样先用 `lstat` 检查 marker 目录项，只有 `ENOENT` 表示不存在。符号链接、非普通文件或 stat/read/parse 失败都会阻止自动清理和恢复，保留 marker、包备份与 recovery 记录。发现目录项后再读取失败，不会改判为不存在。
+启动恢复和新事务开始前，只读 `lstat` 检查旧 `.ocx-transaction.json` 目录项。已有任意条目或非 `ENOENT` 检查错误时，启动恢复返回 `failed`，新事务返回 `pending-existing` 及 `recoveryUnsafe: true`；检查不读取、写入或删除该 marker，也不探测 PID。启动器对恢复失败只发警告并继续启动。旧 pending 不自动恢复或删除，处理前须人工核查事务、包与备份；检查后新建 marker 仍可能发生竞态。

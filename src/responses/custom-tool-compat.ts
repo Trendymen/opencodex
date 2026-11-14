@@ -192,7 +192,7 @@ function rewriteForUpstream(
       || isPlainObject(value.parameters);
     if (!isDefinition) return { ...rest, type: "function" };
     const inputDescription = value.name === "exec"
-      ? "JavaScript source for unified exec. This exact exec function is the only top-level entry for code-mode nested tools. Invoke nested tools inside JavaScript with await tools.<name>(...), and use text(...) to return their result. Never emit nested tool names such as web__run or functions.exec as top-level function calls."
+      ? "JavaScript source for unified exec. Use await tools.exec_command(...) for shell commands and text(...) to return textual output; do not provide a bare shell command."
       : "Raw input for this client-executed custom tool.";
     return {
       ...rest,

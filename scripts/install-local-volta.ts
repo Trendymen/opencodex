@@ -27,7 +27,6 @@ export type VoltaRegistrationSyncOptions = {
 export type VoltaRegistrationSync = {
   sync(): void;
   verify(): void;
-  rollback<T extends { ok: boolean }>(restorePackage: () => T): T;
 };
 
 type VoltaContext = {
@@ -391,7 +390,7 @@ function restoreBeforeImages(context: VoltaContext, records: RegistrationPath[])
   return complete;
 }
 
-function syncOwned(context: VoltaContext, journal: string, preserveJournalOnFailure: boolean): void {
+function syncOwned(context: VoltaContext, journal: string): void {
   const current = snapshot(context, false, true);
   const ownedJournal = updateJournal(context, journal, current, "metadata-sync-pending");
   if (current.records.every(record => JSON.parse(record.before).version === current.version)) {
@@ -409,22 +408,11 @@ function syncOwned(context: VoltaContext, journal: string, preserveJournalOnFail
     removeJournal(context, ownedJournal);
   } catch (error) {
     const restored = restoreBeforeImages(context, completed);
-    if (!preserveJournalOnFailure
-      && restored
+    if (restored
       && current.records.every(record => readFileSync(record.path, "utf8") === record.before)) {
       try { removeJournal(context, ownedJournal); } catch { /* preserve the journal */ }
     }
     throw error;
-  }
-}
-
-function assertTrustedRegistrationSnapshot(context: VoltaContext, trusted: RegistrationSnapshot): void {
-  if (existsSync(context.journal)) throw new Error("Volta registration recovery journal is present");
-  for (const record of trusted.records) {
-    validateRegistrationTarget(context, record.path, "Volta registration");
-    if (readFileSync(record.path, "utf8") !== record.before) {
-      throw new Error("Volta registration changed before package rollback");
-    }
   }
 }
 
@@ -435,30 +423,21 @@ export function createVoltaRegistrationSync(
 ): VoltaRegistrationSync | null {
   const context = resolveVoltaContext(packageRoot, packageName, options);
   if (!context) return null;
-  let trusted = snapshot(context, false);
+  snapshot(context, false);
 
   return {
     sync(): void {
       const current = snapshot(context, false);
       if (current.records.every(record => JSON.parse(record.before).version === current.version)) {
-        trusted = snapshot(context, true);
+        snapshot(context, true);
         return;
       }
       const journal = writeJournal(context, current, "metadata-sync-pending");
-      syncOwned(context, journal, false);
-      trusted = snapshot(context, true);
+      syncOwned(context, journal);
+      snapshot(context, true);
     },
     verify(): void {
       snapshot(context, true);
-    },
-    rollback<T extends { ok: boolean }>(restorePackage: () => T): T {
-      assertTrustedRegistrationSnapshot(context, trusted);
-      const journal = writeJournal(context, trusted, "package-rollback-pending");
-      const result = restorePackage();
-      if (!result.ok) return result;
-      syncOwned(context, journal, true);
-      trusted = snapshot(context, true);
-      return result;
     },
   };
 }

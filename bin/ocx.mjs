@@ -352,7 +352,9 @@ async function runPackageManagerSelfUpdate(manager, child) {
   const latest = child?.version ?? (latestResult.status === 0 && typeof latestResult.stdout === "string" ? latestResult.stdout.trim() : "");
 
   console.log(`opencodex v${current} (installed via ${manager}, tag ${tag})`);
-  const forkDecision = forkUpdateDecision(latest || null, current, tag);
+  const forkDecision = typeof current === "string" && current.includes("-ben.")
+    ? forkUpdateDecision(latest || null, current, tag)
+    : latest && latest === current ? "same" : "proceed";
   if (forkDecision === "same") {
     console.log(`Already on the latest ${tag} version (v${latest}).`);
     process.exit(0);
@@ -1498,8 +1500,6 @@ if (process.argv[2] !== "sync" && !orchestratedUpdate && !passiveCapabilities &&
     const probe = bootRestoreProbe(resolve(here, ".."));
     if (probe.action === "restored") {
       console.warn(`opencodex: previous update left a broken install — restored the backup from ${probe.from}.`);
-    } else if (probe.action === "aborted") {
-      console.warn("opencodex: cleared a completed or abandoned package transaction marker.");
     } else if (probe.action === "failed") {
       console.warn(`opencodex: a backup from a failed update exists but could not be restored automatically: ${probe.error}`);
     }

@@ -1576,7 +1576,7 @@ export async function prepareResponsesRequest(
     if (!options.comboReplaySnapshot) observeLinkTurnExpansion(options.linkTurn, req, logCtx, linkExpansionBody, "unexpanded");
   }
   let commitCanonicalEffects: (() => void) | undefined;
-  if (inboundWire === "responses" && isCanonicalOpenAiForwardProvider(route.provider)) {
+  if (options.codexPassthroughTurn !== undefined && inboundWire === "responses" && isCanonicalOpenAiForwardProvider(route.provider)) {
     if (options.abortSignal?.aborted || req.signal.aborted) return clientCancelledResponse();
     const source = codexPassthroughRequestSource(options.codexPassthroughTurn);
     if (!source || !codexPermissions) return formatErrorResponse(503, "codex_request_source_unavailable", "Original Codex request source is unavailable; retry the request.");

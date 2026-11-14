@@ -13,7 +13,7 @@ description: 相对已 rebase 上游版本的兼容与维护差异。
 - Ark GLM/Kimi 和 BigModel GLM 的 Responses 路由降低不支持的工具 schema，并处理 assistant prefill 限制。普通第三方工具清理 ChatGPT 专用 `encrypted` 注解，保留同名属性和 literal。官方目的地和显式可信直接 relay 保留注解，combo 不继承直接路由例外。
 - OpenAI Chat、Google、Command Code、Anthropic、Kiro 和 Cursor 适配器在各自工具条件满足时为请求加入进度提示，部分路径还加入工具发现和补丁顺序提示。模型 catalog 和原生 Responses 不自动追加这些提示，模型是否输出可见进度不作保证。code-mode 结果回显和宿主提示沿用官方处理；代理不合成进度，不执行或自动重试补丁。
 - 当前声明允许的 nested `functions.exec` / `web__run` 及受支持的 `spawn_agent.fork_turns` 完成参数执行有界修复。官方 routed custom-tool 基础保持不变；Fork 将 custom tool output 转为字符串，并在 Console Go 严格目的地合并可安全匹配的重复 `call_id` 输出。工具声明仍决定授权范围。
-- 按模型启用的原生 Responses phase 推断包含普通 JSON 交付，并保留官方 Provider 级 SSE 选项。reasoning 摘要投影只用于客户端显式请求 summary 的转译适配器响应。原生 Responses 在 SSE、JSON 和已存重放中保留 content-channel reasoning。
+- 按模型启用的原生 Responses phase 推断包含普通 JSON 交付，并保留官方 Provider 级 SSE 选项。reasoning 摘要投影在客户端请求时用于符合条件的转译适配器响应。`openai-chat` 指向已识别的标准端口官方 xAI HTTPS 目的地时不做该投影，并在 SSE、JSON 和已存重放中保留原始 reasoning 内容。原生 Responses 在 SSE、JSON 和已存重放中保留 content-channel reasoning。
 - 注解说明使用裸 chip 指令。输出修复保留代码块，但不按本轮注解数量启用，也不处理跨行 code span；native 直通仅在许可允许时改写入站说明。
 - 对应处理许可开启时，SSE flush 和终态处理保留有效上游错误与单枚 `[DONE]`。Canonical 转发只在构造上游 WebSocket 帧时桥接 Lite header，显式 HTTP 值优先同名 metadata。HTTP 请求 metadata 保持原样。
 - Ark quota 错误保留原消息和 reset，阻止自动重试。BigModel Codex 发现接受 `models[].slug`。
@@ -24,7 +24,7 @@ description: 相对已 rebase 上游版本的兼容与维护差异。
 
 加密子任务恢复增加 strict backend envelope、原生 transient 5xx 重试耗尽后的单次重放，以及已准入父任务 `MESSAGE` 超时后的无密文通知。拒解密文是终局，不转发到普通第三方路由，也不写 continuation state；恢复保持显式启用。
 
-Fork 提供磁盘诊断、独立文本样本开关和 `install:local` 的包/服务/Volta 回滚。`ben.N` 先比较上游主版本，再比较 Fork 修订；同主版本 stable 不覆盖 Fork，已发布 Tag 保持不变。
+Fork 提供磁盘诊断、独立文本样本开关和 `install:local` 离线 staging。包事务成功后的失败不会自动回滚包；服务或 readiness 失败不会自动恢复 Volta 登记。`ben.N` 先比较上游主版本，再比较 Fork 修订；同主版本 stable 不覆盖 Fork，已发布 Tag 保持不变。
 
 开发和发布候选统一使用 `dev`。已发布版本由不可变 Fork Tag 和正式 GitHub Release 确定；发布前使用官方 workflow 对精确 dev 提交执行完整 `workflow_dispatch` 检查，不再依赖 main push CI。
 

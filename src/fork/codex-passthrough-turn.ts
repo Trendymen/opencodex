@@ -10,7 +10,7 @@ import { carryCodexLocalFailure } from "./codex-passthrough-local-errors";
 
 declare const turnBrand: unique symbol;
 export type CodexPassthroughTurn = { readonly [turnBrand]: true };
-type TurnState = { overrides: Readonly<Record<string, CodexPassthroughPermissions>>; source?: CodexRequestSource; released: boolean };
+type TurnState = { overrides: Readonly<Record<string, CodexPassthroughPermissions>>; sourceRequired: boolean; source?: CodexRequestSource; released: boolean };
 const turns = new WeakMap<CodexPassthroughTurn, TurnState>();
 const responses = new WeakMap<Response, CodexPassthroughPermissions | null>();
 
@@ -33,11 +33,12 @@ export function shouldRetainCodexRequestSource(providers: Readonly<Record<string
 }
 
 export function captureCodexPassthroughTurn(providers: Readonly<Record<string, OcxProviderConfig>>, inboundWire: InboundWire): CodexPassthroughTurn | undefined {
-  if (!shouldRetainCodexRequestSource(providers, inboundWire)) return undefined;
+  if (inboundWire !== "responses") return undefined;
+  const sourceRequired = shouldRetainCodexRequestSource(providers, inboundWire);
   const overrides = Object.fromEntries(Object.entries(providers).filter(([name, provider]) => possibleProvider(name, provider))
     .map(([name, provider]) => [name, resolveCodexPassthroughPermissions(readCodexPassthroughConfig(provider?.codexPassthrough).value)]));
   const turn = Object.freeze({}) as CodexPassthroughTurn;
-  turns.set(turn, { overrides: Object.freeze(overrides), released: false });
+  turns.set(turn, { overrides: Object.freeze(overrides), sourceRequired, released: false });
   return turn;
 }
 
@@ -62,12 +63,12 @@ export function codexPassthroughStreamPolicy(provider: OcxProviderConfig, permis
 }
 
 export function codexPassthroughSourceRequired(turn: CodexPassthroughTurn | undefined): boolean {
-  return !!turn && turns.has(turn);
+  return !!turn && turns.get(turn)?.sourceRequired === true;
 }
 
 export function retainCodexPassthroughTurnSource(turn: CodexPassthroughTurn | undefined, capture: DecodedJsonCapture, budget: TranslatorBudget, request?: Request): void {
   const state = turn && turns.get(turn);
-  if (!state) return;
+  if (!state?.sourceRequired) return;
   if (state.source) { bindCodexRequestSourceItems(state.source, capture.value, request); return; }
   const source = retainCodexRequestSource(capture, budget);
   if (state.released) source.release();

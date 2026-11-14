@@ -833,11 +833,13 @@ export async function deliverPassthroughResponse(
       try { errorText = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal, privateErrorReadOptions)
         : await readDisplaySafeErrorText(upstreamResponse, upstream.signal, ""); }
       catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
-      if (upstreamResponse.status === 413 && codexPermissions?.synthesizeTerminalFailure !== false) {
-        if (options.clientModelLabel) projectLocalModelRefusalLog(logCtx, options.clientModelLabel);
-        return clientRequestedStream
-          ? streamingContextOverflowResponse(clientFacingModelText(options.clientModelLabel), translatorBudget)
-          : jsonContextOverflowResponse();
+      if (upstreamResponse.status === 413) {
+        if (codexPermissions?.synthesizeTerminalFailure !== false) {
+          if (options.clientModelLabel) projectLocalModelRefusalLog(logCtx, options.clientModelLabel);
+          return clientRequestedStream
+            ? streamingContextOverflowResponse(clientFacingModelText(options.clientModelLabel), translatorBudget)
+            : jsonContextOverflowResponse();
+        }
       }
       const policyRefusal = rewriteUpstreamPolicyRefusal({
         status: upstreamResponse.status,
