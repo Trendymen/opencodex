@@ -73,7 +73,10 @@ export async function maybeRecoverNativeEncryptedAgentTask<TFailure>({
   markBodyNonPersistable(parsed._rawBody);
   try {
     const reparsed = parseRequest(parsed._rawBody);
-    const retried = await replay({ ...parsed, context: reparsed.context, _rawBody: reparsed._rawBody });
+    const recoveredParsed = { ...parsed, context: reparsed.context, _rawBody: reparsed._rawBody };
+    // Keep the microtask boundary previously crossed when recovery returned to dispatch.
+    await Promise.resolve();
+    const retried = await replay(recoveredParsed);
     if ("failed" in retried) {
       return abortSignal?.aborted || req.signal.aborted
         ? { kind: "failed", response: retried.failed }
