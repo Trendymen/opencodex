@@ -95,7 +95,9 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 原生 Responses 流式 Combo 尝试中，即使 `synthesizeTerminalFailure: false`，真实 `response.done` 的 `response.status: "completed"` 且包含 output 数组时仍须遵守官方必选工具合同。检查不会改动有效 block。`repairResponseToolCalls: false` 时，检查器不能把客户端未收到的修复后名称当作履约。缺少必选调用仅可在提交前且重放安全时重试；观察到 hosted 工具效果时禁止重放。
 
-生效的 `maxInboundBodyBytes` 大于 256 MiB 时，共享的 `maxConcurrentInboundBodyBytes` 准入预算生效。解压及序列化大小会在转移 Fork 请求文本 lease 前更新 reservation。保留的 JSON 文本使用独立的 translator-budget lease。准入 reservation 持有到响应 EOF、错误或取消完成；文本 lease 在请求来源完成、错误、取消或 abort 时释放。官方限制与适用范围见[入站正文准入](/zh-cn/reference/inbound-body-admission/)。
+生效的 `maxInboundBodyBytes` 大于 256 MiB 时，共享的 `maxConcurrentInboundBodyBytes` 准入预算生效。普通读取的 body 会在转移 Fork 请求文本 lease 前，根据解压及序列化大小更新 reservation。保留的 JSON 文本使用独立的 translator-budget lease。准入 reservation 持有到响应 EOF、错误或取消完成；文本 lease 在请求来源完成、错误、取消或 abort 时释放。官方限制与适用范围见[入站正文准入](/zh-cn/reference/inbound-body-admission/)。
+
+Remote Link turn 可以携带已解析的 body。代理先按官方序列化大小限制和预算观察处理；仅在需要 Fork source 且尚未持有时，才额外序列化并保留一份 JSON 文本。translator budget 观察其大小，文本及其观察量随来源释放。深层 `JSON.stringify` 和真实 Remote Link 的内存使用尚未验收，因此不能据此认定该路径保持官方无第二副本的目标。
 
 ### 请求与返回头
 

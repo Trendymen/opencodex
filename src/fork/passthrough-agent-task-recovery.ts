@@ -6,7 +6,7 @@ import { parseRequest } from "../responses/parser";
 import { agentTaskRecoveryConfig, recoverEncryptedAgentTask } from "../server/responses/agent-task-recovery";
 import { hasStrictBackendEncryptedAgentTask } from "../server/responses/encrypted-payload";
 
-interface NativeEncryptedTaskRecoveryInput {
+interface NativeEncryptedTaskRecoveryInput<TFailure> {
   transientRetryExhausted: boolean;
   upstreamResponse: Response;
   inboundWire: string;
@@ -18,14 +18,17 @@ interface NativeEncryptedTaskRecoveryInput {
   req: Request;
   parentThreadId: string | null;
   abortSignal?: AbortSignal;
+  replay: (parsed: OcxParsedRequest) => Promise<Response | { failed: TFailure }>;
+  restore: (response: Response) => Response;
 }
 
-type NativeEncryptedTaskRecoveryResult =
+type NativeEncryptedTaskRecoveryResult<TFailure> =
   | { kind: "skipped" }
   | { kind: "aborted"; reason: unknown }
-  | { kind: "recovered"; parsed: OcxParsedRequest };
+  | { kind: "failed"; response: TFailure }
+  | { kind: "replayed"; response: Response };
 
-export async function maybeRecoverNativeEncryptedAgentTask({
+export async function maybeRecoverNativeEncryptedAgentTask<TFailure>({
   transientRetryExhausted,
   upstreamResponse,
   inboundWire,
@@ -37,7 +40,9 @@ export async function maybeRecoverNativeEncryptedAgentTask({
   req,
   parentThreadId,
   abortSignal,
-}: NativeEncryptedTaskRecoveryInput): Promise<NativeEncryptedTaskRecoveryResult> {
+  replay,
+  restore,
+}: NativeEncryptedTaskRecoveryInput<TFailure>): Promise<NativeEncryptedTaskRecoveryResult<TFailure>> {
   const input = (parsed._rawBody as { input?: unknown } | undefined)?.input;
   if (!transientRetryExhausted
     || !isTransientUpstreamStatus(upstreamResponse.status)
@@ -68,7 +73,13 @@ export async function maybeRecoverNativeEncryptedAgentTask({
   markBodyNonPersistable(parsed._rawBody);
   try {
     const reparsed = parseRequest(parsed._rawBody);
-    return { kind: "recovered", parsed: { ...parsed, context: reparsed.context, _rawBody: reparsed._rawBody } };
+    const retried = await replay({ ...parsed, context: reparsed.context, _rawBody: reparsed._rawBody });
+    if ("failed" in retried) {
+      return abortSignal?.aborted || req.signal.aborted
+        ? { kind: "failed", response: retried.failed }
+        : { kind: "skipped" };
+    }
+    return { kind: "replayed", response: restore(retried) };
   } catch {
     return { kind: "skipped" };
   }

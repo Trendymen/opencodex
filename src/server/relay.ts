@@ -1311,7 +1311,6 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
     clearFrameState();
     clearCompletedItems();
     firstResponseId = undefined;
-    cleanEofFailure = null;
   };
 
   const ensureCandidateCapacity = (requiredBytes: number): void => {

@@ -1175,27 +1175,15 @@ export async function preparePassthroughExchange(
       transientRetryExhausted, upstreamResponse, inboundWire, threadSpawn,
       comboAttempt: options.comboAttempt, provider: route.provider, parsed, config, req,
       parentThreadId, abortSignal: options.abortSignal,
+      replay: recovered => { adoptParsedRequest(recovered); parsed = recovered; return rebuildAndRefetch("agent-task-recovery", undefined, true, upstreamResponse); },
+      restore: response => preOutputRefusals.restore(response),
     });
     if (taskRecovery.kind === "aborted") return transportFailureResponse(taskRecovery.reason);
-    let agentTaskRecoveryReplayTerminal = false;
-    if (taskRecovery.kind === "recovered") {
-      try {
-        adoptParsedRequest(taskRecovery.parsed);
-        parsed = taskRecovery.parsed;
-        const retried = await rebuildAndRefetch("agent-task-recovery", undefined, true, upstreamResponse);
-        if ("failed" in retried) {
-          if (options.abortSignal?.aborted || req.signal.aborted) return retried.failed;
-        } else {
-          upstreamResponse = preOutputRefusals.restore(retried);
-          agentTaskRecoveryReplayTerminal = true;
-        }
-      } catch {
-        // Optional recovery keeps the original terminal response when a bounded replay cannot be built.
-      }
-    }
+    if (taskRecovery.kind === "failed") return taskRecovery.response;
+    if (taskRecovery.kind === "replayed") upstreamResponse = taskRecovery.response;
     // Keep recovery kinds in sync with the generic `recovery:` loop below.
     passthroughRecovery: for (;;) {
-      if (agentTaskRecoveryReplayTerminal) break;
+      if (taskRecovery.kind === "replayed") break;
       if (wasAccountAutoPaused(upstreamResponse) && route.provider.authMode !== "forward") {
         const recovered = await recoverAutoPausedAccount({ requestKey: transportState, response: upstreamResponse, signal: upstream.signal, reserve: reserveCredentialHop,
           remaining: transientSendCapFor(transientRetryPolicyFor(route.provider)?.attempts, sendBudgetState.targetSendsUsed),
