@@ -53,7 +53,7 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 - 安装树内容验证采用官方实现，支持官方允许的软链接布局；该验证不证明链接目标物理位于包目录内。Fork 原有目录对象身份、pending 事务所有权、专用 marker 写入和延迟提交保护已撤回，不声称官方合同覆盖这些保护。
 - `X.Y.Z-ben.N` 更新保持同基线修订单调，稳定版同基线不覆盖 Fork，Tag 不可变。入口：[version policy](src/fork/version-policy.mjs)。同步和发布按 [现行政策](FORK_SYNC_AUTOMATION.md) 执行。
 - gates 的[历史对象准备器](.github/scripts/fork-prepare-release-history.cjs)只为缺失的官方旧发布对象核对固定 Tag 与 SHA 并导入对象，保持 checkout、refs 和 `FETCH_HEAD`；查询本地对象时禁用 promisor 隐式补取，Git 不支持该约束时拒绝继续。准备对象不授予发布资格。[发布证据策略](.github/scripts/release-evidence-policy.json)单独登记当前 Fork 执行输入的精确指纹，保留官方历史策略记录；只有精确匹配的输入组合可使用对应记录。
-- 官方基线准备先向固定上游查询精确 Tag 的 raw/peeled 身份；本地已持有相同类型和身份的 Tag、commit 时复用对象，缺少对象才在临时仓库抓取一层历史。候选 checkout 仍须证明基线祖先，必要时先补齐固定 HEAD 历史；异常或同名 Tag 冲突直接拒绝，不增加 CI 预算。
+- 官方基线准备始终核对固定上游的正式 Release 和精确 Tag raw/peeled 身份。固定 HEAD 的浅历史先加深 64 层并运行同一祖先检查，不足时保留完整补取；Git fatal、抓取失败和真实非祖先继续拒绝。本地 raw 对象的类型、OID 与 peeled commit 完全匹配时即可复用，不要求预存同名 Tag 引用；真正缺失才从临时仓库抓取一层官方历史。已有 Tag 冲突、HEAD 漂移、凭据隔离与 CAS 约束保持，不增加 CI 预算。
 - 开发与发布候选统一在 `dev`，CI 的事件、job、条件、分片和预算跟随官方。Fork 的[来源准备](scripts/prepare-fork-official-base.ts)始终核对固定官方仓库的正式 Release、精确发布 SHA、Tag 类型及 raw/peeled 身份，并证明官方基线为固定候选 HEAD 的祖先；不依赖 main 或 upstream-release。浅克隆按固定 HEAD 补取历史，查询 fatal、抓取失败、HEAD 漂移或本地同名 Tag 不符均拒绝继续。Git 子进程排除 API token、仓库及对象库覆盖，禁用 replace/graft；Actions 只向固定官方 API 发送只读短期 token，本地缺省不带 token，错误只保留状态或固定阶段。候选以精确 lease 推至 dev 后执行 `workflow_dispatch lane=all`，核对同一完整 SHA 的 aggregate ci 和实际 checkout，不再要求 main push CI。本地不再自动跑整体测试，CI 失败后只定向验证报错项及直接相关回归。dev 与两个不可变 Tag 的原子发布及幂等恢复见[现行政策](FORK_SYNC_AUTOMATION.md)。
 
 ## 保留边界
