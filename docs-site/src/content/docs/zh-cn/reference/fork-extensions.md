@@ -25,6 +25,8 @@ description: 相对已 rebase 上游版本的兼容与维护差异。
 
 加密子任务恢复增加 strict backend envelope、原生 transient 5xx 重试耗尽后的单次重放，以及已准入父任务 `MESSAGE` 超时后的无密文通知。拒解密文是终局，不转发到普通第三方路由，也不写 continuation state；恢复保持显式启用。
 
+日志表格保持独立滚动，状态读屏辅助文字不会再撑出页面空白。
+
 Fork 提供磁盘诊断、独立文本样本开关和 `install:local` 离线 staging。包事务成功后的失败不会自动回滚包；服务或 readiness 失败不会自动恢复 Volta 登记。`ben.N` 先比较上游主版本，再比较 Fork 修订；同主版本 stable 不覆盖 Fork，已发布 Tag 保持不变。
 
 开发和发布候选统一使用 `dev`。已发布版本由不可变 Fork Tag 和正式 GitHub Release 确定；发布前使用官方 workflow 对精确 dev 提交执行完整 `workflow_dispatch` 检查，不再依赖 main push CI。
