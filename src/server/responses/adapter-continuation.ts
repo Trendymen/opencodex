@@ -3,6 +3,7 @@ import { providerAffinityGenerationIsCurrent } from "../../providers/api-key-sel
 import { bindAnthropicRejectionResponse } from "../../adapters/anthropic-rejection-memo";
 import { deferPhysicalSendReporter } from "./deferred-send-reporter";
 import { responsesSpendTarget } from "./request-spend-target";
+import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { rotateAnthropicAccountOnResponseForInstance } from "../../oauth/anthropic-account-refusal";
 import type { ResponsesRequestContext } from "./core-options";
 import type { PreparedResponsesRequest } from "./request-prepare";
@@ -21,7 +22,8 @@ import {
 } from "../request-log";
 import { noteAttemptRecoveryWithheld } from "../request-log";
 import { withProviderRequestSlot } from "../../providers/request-pacing";
-import { providerFetch, fetchWithHeaderTimeout, safeHostLabel } from "./fetch-helpers";
+import { fetchWithHeaderTimeout, safeHostLabel } from "./fetch-helpers";
+import { codexPassthroughProviderFetch } from "../../fork/codex-passthrough-fetch";
 import { isLocalUpstream } from "../../lib/local-upstream";
 import {
   transientRetryPolicyFor,
@@ -263,7 +265,8 @@ export function createAdapterContinuations(
               onPhysicalSend: send => noteAdapterPhysicalSend(continuationEstimate, send),
               onRecoveryWithheld: noteAdapterRecoveryWithheld,
               stream: nextParsed.stream,
-              executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              executor: codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                 pacingSlotAcquired: true,
                 pacingSlot,
                 dispatchOverride: oauthDispatch(builtContinuationRequest, nextParsed),
@@ -297,7 +300,8 @@ export function createAdapterContinuations(
               upstream.signal,
               route.provider.authMode === "forward" ? connectMs : 0,
               nextParsed.stream,
-              providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
               dispatchOverride: oauthDispatch(builtContinuationRequest, nextParsed),
                 onPhysicalDispatch: deferredContinuation ? () => {
                   if (!deferredContinuation.beforeDispatch()) throw new SendBudgetExhaustedError(errorDestinationLabel(builtContinuationRequest.url));

@@ -275,6 +275,7 @@ export const codexWsExecutorBinding = (execute: unknown): CodexWsExecutor | unde
 
 export interface ProviderFetchOptions {
   accountAutoPause?: (name: string, provider: OcxProviderConfig, headers: Headers) => AccountAutoPauseObserver | undefined;
+  codexPassthroughPermissions?: import("../../fork/codex-passthrough-contract").CodexPassthroughPermissions;
   /**
    * Keep this send on HTTP even where the WebSocket upstream would normally be selected.
    *
@@ -295,6 +296,7 @@ export interface ProviderFetchOptions {
   onCodexWsQuota?: CodexWsQuotaObserver;
   /** Synchronous admission at actual credential dispatch, after pacing/backoff. */
   beforeDispatch?: (headers: Headers) => void;
+  onHttpBeforeDispatchFailure?: (error: unknown) => void;
   /** One-shot receipt after final local HTTP admission, immediately before executor entry. */
   onPhysicalDispatch?: (body?: BodyInit | null) => void;
   /** Repeatable admission for native successor creates, after pacing and auth checks. */
@@ -317,6 +319,7 @@ export function providerFetch(
   options: ProviderFetchOptions = {},
 ): ProviderFetch {
   const providerName = options.providerName ?? "<unnamed provider>";
+  const permissions = options.codexPassthroughPermissions;
   const customExecutor = (provider as OcxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch;
   // The route is applied at the physical send (see `sendWithConnectionPolicy`). This binding is
   // only what that boundary needs to decide it.
@@ -377,7 +380,8 @@ export function providerFetch(
       // mutator, and the copy it receives is deliberately not threaded onward. `Connection`
       // is decided inside `dispatch`, which runs after this, so the fresh-connection policy
       // wins regardless of what any caller or hook put in the header.
-      options.beforeDispatch?.(new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)));
+      try { options.beforeDispatch?.(new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))); }
+      catch (error) { options.onHttpBeforeDispatchFailure?.(error); throw error; }
       // No proxy option is attached here: a `dispatchOverride` may rebuild this request against
       // a different destination, so the route is decided at the physical send instead.
       const sharedReceipt = (init as Record<symbol, ((body: BodyInit | null | undefined) => void) | undefined> | undefined)?.[WS_FALLBACK_RECEIPT];
@@ -408,7 +412,8 @@ export function providerFetch(
       && shouldUseCodexWsUpstream(input, init, runtime, upstreamWebsocket)) {
       const keyedPacing = provider.requestPacing?.enabled
         && (provider.requestPacing.keys || provider.requestPacing.keySelection === "round-robin");
-      if (keyedPacing || (options.providerName && requestPacingMaxConcurrentRequests(provider, options.modelId) > 0)) {
+      if (keyedPacing || (permissions?.localErrorPolicies.requestPacingAdmission !== false
+        && options.providerName && requestPacingMaxConcurrentRequests(provider, options.modelId) > 0)) {
         if (!pacingWebsocketDowngradeWarned.has(providerName)
           && pacingWebsocketDowngradeWarned.size < EGRESS_DOWNGRADE_NOTICE_LIMIT) {
           pacingWebsocketDowngradeWarned.add(providerName);
@@ -436,7 +441,7 @@ export function providerFetch(
       const wsSend = codexWsExecutor((url: Parameters<typeof globalThis.fetch>[0], wsInit?: RequestInit) => codexWsUpstreamFetch(String(url),
         { ...(wsInit ?? init), [TURN_STATE_BINDING_INIT]: turnStateBinding(providerName, sendHeaders(wsInit ?? init)) } as RequestInit,
         fallback, runtime, options.onCodexWsQuota, options.beforeDispatch, options.nativeControl,
-        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold, options.onContinuationDispatch),
+        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold, options.onContinuationDispatch, permissions),
         { provider, http: markEgressTransparentExecutor(fallback) });
       // A WS frame is a physical send like any other, so it runs the same override: that is where a
       // key-auth send is committed to its attempt row and the send budget is rebound to the
@@ -456,6 +461,7 @@ export function providerFetch(
   };
   let pacingSlotAcquired = options.pacingSlotAcquired === true;
   const waitForPacing = async (signal?: AbortSignal): Promise<ProviderRequestSlot | undefined> => {
+    if (permissions?.localErrorPolicies.requestPacingAdmission === false) return undefined;
     if (pacingSlotAcquired) {
       pacingSlotAcquired = false;
       if (!options.pacingSlot && requestPacingMaxConcurrentRequests(provider, options.modelId) > 0) {

@@ -5,6 +5,7 @@ import { formatClientRetryAfter } from "../../lib/client-retry-after";
 import { SendBudgetExhaustedError, errorDestinationText, providerErrorDestinationLabel } from "../../lib/upstream-retry";
 import { appendLoadedToolDefinitions, toolLoadingModelMatches } from "../../claude/inbound-tool-loading";
 import { applyChatToolDispatch } from "../../claude/chat-tool-dispatch";
+import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { isRec } from "../../claude/inbound-records";
 import { isOpenCodeGoResponsesUrl } from "../../adapters/opencode-go-additional-tools";
 import { buildResponsesTransport } from "../../adapters/openai-responses/transport";
@@ -90,6 +91,7 @@ import {
 import { isProviderApiKeyPaused, ProviderApiKeyPausedError } from "../../providers/api-key-pause";
 import { resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve";
 import { codexWsExecutorBinding, fetchWithHeaderTimeout, physicalSendGuardInit, physicalSendObserverInit, providerFetch, sendWithConnectionPolicy } from "./fetch-helpers";
+import { codexPassthroughProviderFetch } from "../../fork/codex-passthrough-fetch";
 import { resolveConnectTimeoutMs } from "../../stall-timeout";
 import { isLocalUpstream } from "../../lib/local-upstream";
 import { deepSeekImageFileBody, needsDeepSeekImageFiles } from "./deepseek-image-files";
@@ -630,7 +632,10 @@ export async function prepareResponsesTransport(
   /** Bind the negotiated wire adapter and its built requests to the serving credential's authority. */
   const resolveSelectionAdapter = (provider: OcxProviderConfig, retention = config.cacheRetention): ProviderAdapter => {
     if (copilotAutoAdapter) provider = { ...provider, adapter: copilotAutoAdapter };
-    const resolved = resolveAdapter(provider, retention, route.providerName);
+    const adapterProvider = options.comboAttempt && provider.allowEncryptedV2AgentTasks === true
+      ? { ...provider, allowEncryptedV2AgentTasks: false }
+      : provider;
+    const resolved = resolveAdapter(adapterProvider, retention, route.providerName);
     // Capture this physical adapter's destination. A retry/rebind gets a fresh decision, and
     // each build projects a copy so unselected fallbacks retain the original tool catalog.
     const discovery = options.anthropicToolLoadingSource;
@@ -662,7 +667,12 @@ export async function prepareResponsesTransport(
         return buildWithOriginalCatalog({ ...requestParsed, _rawBody: projected }, incoming);
       };
     }
-    if (route.provider.authMode === "forward") return resolved;
+    if (route.provider.authMode === "forward") {
+      const build = resolved.buildRequest.bind(resolved);
+      const permissions = resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: adapterProvider, inboundWire });
+      if (permissions) resolved.buildRequest = (requestParsed, incoming) => build(requestParsed, { ...incoming, codexPassthroughPermissions: permissions });
+      return resolved;
+    }
     const binding: DispatchBinding | undefined = route.provider.authMode === "oauth"
       ? oauthSelection && servingOAuthSnapshot
         ? { kind: "oauth", selection: { ...oauthSelection }, snapshot: servingOAuthSnapshot }
@@ -900,7 +910,8 @@ export async function prepareResponsesTransport(
           commitKeyAttemptSend();
           sent = true;
         };
-        const fetch = providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+        const fetch = codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
           providerName: route.providerName, modelId: route.modelId, pacingSlotAcquired: true,
           pacingSlot: attemptSlot,
           turnScopedPacing: true,

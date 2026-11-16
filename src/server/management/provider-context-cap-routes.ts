@@ -1,0 +1,124 @@
+import {
+  hasOwnProvider,
+  isValidProviderName,
+  saveConfigPreservingClaudeCode,
+} from "../../config";
+import {
+  DEFAULT_PROVIDER_CONTEXT_CAP,
+  globalContextCapValue,
+  providerContextCap,
+  providerContextCaps,
+  selectedProviderContextCaps,
+  setAllProviderContextCaps,
+  setGlobalContextCapValue,
+  setProviderContextCap,
+} from "../../providers/context-cap";
+import { captureConfigTopLevelRollback } from "../../config/rebase-provenance";
+import { jsonResponse } from "../auth-cors";
+import type { ManagementContext } from "./context";
+import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
+import { isPlainRecord } from "./shared";
+
+export async function handleProviderContextCapRoutes(ctx: ManagementContext, onSaved: {
+  provider(provider: string): ReturnType<ManagementContext["convergeCodexCatalog"]>;
+  global(affected: string[], applyToAll: boolean): ReturnType<ManagementContext["convergeCodexCatalog"]>;
+  all(before: string[], names: string[]): ReturnType<ManagementContext["convergeCodexCatalog"]>;
+}): Promise<Response | null> {
+  const { req, url, config, convergeCodexCatalog, deps } = ctx;
+  if (url.pathname === "/api/provider-context-caps" && req.method === "GET") {
+    return jsonResponse({
+      cap: DEFAULT_PROVIDER_CONTEXT_CAP,
+      value: globalContextCapValue(config),
+      caps: providerContextCaps(config),
+      values: selectedProviderContextCaps(config),
+    });
+  }
+
+  if (url.pathname !== "/api/provider-context-caps" || req.method !== "PUT") return null;
+
+  let rawBody: unknown;
+  try {
+    rawBody = await readManagementJsonBody(req);
+  } catch (error) {
+    rethrowManagementBodyTooLarge(error);
+    return jsonResponse({ error: "invalid JSON body" }, 400);
+  }
+  if (!isPlainRecord(rawBody)) {
+    return jsonResponse({ error: "provider-context-caps body must be a plain object" }, 400);
+  }
+  const body = rawBody as { provider?: unknown; enabled?: unknown; value?: unknown; setAll?: unknown };
+  const respond = (catalogRefresh: Awaited<ReturnType<typeof convergeCodexCatalog>>) => jsonResponse({
+    ok: true,
+    cap: DEFAULT_PROVIDER_CONTEXT_CAP,
+    value: globalContextCapValue(config),
+    caps: providerContextCaps(config),
+    values: selectedProviderContextCaps(config),
+    catalogRefresh,
+  });
+  const persistCaps = (mutate: () => void) => {
+    const rollback = captureConfigTopLevelRollback(config, ["contextCapValue", "providerContextCaps", "providerContextCapValues"]);
+    try {
+      if (config.providerContextCaps) config.providerContextCaps = { ...config.providerContextCaps };
+      if (config.providerContextCapValues) config.providerContextCapValues = { ...config.providerContextCapValues };
+      mutate();
+      (deps.saveConfigPreservingClaudeCode ?? saveConfigPreservingClaudeCode)(config);
+    } catch (error) {
+      rollback();
+      throw error;
+    }
+  };
+
+  const hasProviderFields = Object.hasOwn(body, "provider") || Object.hasOwn(body, "enabled");
+  if (hasProviderFields) {
+    if (typeof body.provider !== "string" || typeof body.enabled !== "boolean") {
+      return jsonResponse({ error: "provider and enabled are required together" }, 400);
+    }
+    if (Object.hasOwn(body, "setAll")) {
+      return jsonResponse({ error: "setAll cannot be combined with provider updates" }, 400);
+    }
+  }
+
+  if (typeof body.provider === "string" && typeof body.enabled === "boolean") {
+    const provider = body.provider.trim();
+    const enabled = body.enabled;
+    if (!isValidProviderName(provider)) {
+      return jsonResponse({ error: "provider name must use letters, numbers, dot, underscore, or hyphen and cannot be a reserved object key" }, 400);
+    }
+    if (!hasOwnProvider(config.providers, provider)) return jsonResponse({ error: "unknown provider" }, 404);
+    if (body.value !== undefined && (typeof body.value !== "number" || !Number.isFinite(body.value))) {
+      return jsonResponse({ error: "value must be a positive number" }, 400);
+    }
+    const perProviderValue = typeof body.value === "number" ? Math.floor(body.value) : undefined;
+    if (perProviderValue !== undefined && perProviderValue < 1) {
+      return jsonResponse({ error: "value must be a positive number" }, 400);
+    }
+    persistCaps(() => setProviderContextCap(config, provider, enabled, perProviderValue));
+    return respond(await onSaved.provider(provider));
+  }
+
+  if (body.value !== undefined) {
+    if (typeof body.value !== "number" || !Number.isFinite(body.value)) {
+      return jsonResponse({ error: "value must be a positive number" }, 400);
+    }
+    const normalizedValue = Math.floor(body.value);
+    if (normalizedValue < 1) return jsonResponse({ error: "value must be a positive number" }, 400);
+    if (body.setAll !== undefined && typeof body.setAll !== "boolean") {
+      return jsonResponse({ error: "setAll must be a boolean" }, 400);
+    }
+    const affected = Object.keys(providerContextCaps(config));
+    const applyToAll = body.setAll === true;
+    persistCaps(() => setGlobalContextCapValue(config, normalizedValue, applyToAll));
+    return respond(await onSaved.global(affected, applyToAll));
+  }
+
+  if (body.setAll !== undefined) {
+    if (typeof body.setAll !== "boolean") return jsonResponse({ error: "setAll must be a boolean" }, 400);
+    const enabled = body.setAll;
+    const before = Object.keys(providerContextCaps(config));
+    const names = Object.keys(config.providers);
+    persistCaps(() => setAllProviderContextCaps(config, names, enabled));
+    return respond(await onSaved.all(before, names));
+  }
+
+  return jsonResponse({ error: "provider string and enabled boolean are required" }, 400);
+}

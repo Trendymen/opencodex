@@ -2,7 +2,8 @@ import type { CodexAuthPolicyConfig } from "./auth-context";
 import type { OcxConfig } from "../types";
 import type { CodexQuotaScope } from "./routing";
 import { MAIN_CODEX_ACCOUNT_ID } from "./account-id";
-import { computeCodexUsageScore, getCodexQuotaHealthSnapshot, isEffectiveCodexAccountPinned } from "./routing";
+import { computeCodexUsageScore, isEffectiveCodexAccountPinned } from "./routing";
+import { codexQuotaPrecheckSnapshot, type CodexAccountSelectionOptions } from "./routing/selection";
 import { getEffectiveCodexAutoSwitchThreshold } from "./account-auto-switch";
 import { codexAccountUsesCreditsAfterLimit, codexUsageLimitResetAt } from "./account-credit-use";
 import { CODEX_UNKNOWN_USAGE_SCORE, getAccountQuota, getMainPolicyQuota } from "./quota";
@@ -53,6 +54,7 @@ export function requestOwnedMainPinState(
   requestScopedMainCredential: boolean,
   fixedAccountId: string | undefined,
   quotaScope?: CodexQuotaScope,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): { candidate: boolean; preserve: boolean } {
   const candidate = requestScopedMainCredential
     && fixedAccountId === undefined
@@ -65,7 +67,7 @@ export function requestOwnedMainPinState(
     preserve: candidate && !(callerMatchesObservedMain(headers)
       && (isMainAccountHardLocked(policy)
         || mainCreditsHoldResetAt(policy) !== undefined
-        || getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, quotaScope)?.cooldownUntil)),
+        || codexQuotaPrecheckSnapshot(config, MAIN_CODEX_ACCOUNT_ID, quotaScope, selectionOptions)?.cooldownUntil)),
   };
 }
 

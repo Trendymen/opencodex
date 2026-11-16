@@ -907,6 +907,9 @@ export const PROVIDER_REGISTRY_CORE: readonly ProviderRegistryEntry[] = [
     // Go rejects reasoning.encrypted_content with previous_response_id (#3838).
     // Use explicit replay history and the existing stateless Responses policy.
     statelessResponses: true,
+    // Console Go 的 deepseek-flash 续轮曾因缺少 reasoning_text 返回 400。
+    // 保留正文是机制推断，未做清空/保留对照；同 Provider 其他 Responses 模型尚未实测。
+    preserveResponsesReasoningContent: true,
     /* [Decision Log]
     - 목적과 의도: Route the exact models OpenCode Go documents on the Responses endpoint — GPT 5.6 Luna, Grok 4.6/4.7, and Muse Spark Contributor (#2617; opencode.ai/docs/go).
     - 기존 구현 및 제약 조건: The provider is mixed-wire but its provider-wide `openai-chat` adapter sent Luna to `/chat/completions`; explicit user `modelAdapters` entries must remain authoritative.
