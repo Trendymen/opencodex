@@ -712,6 +712,9 @@ async function gatherRoutedModelsUncached(
       ...(base.supportsReasoningSummaries === undefined && replaced.supportsReasoningSummaries !== undefined ? { supportsReasoningSummaries: replaced.supportsReasoningSummaries } : {}),
       ...(base.codexToolMode === undefined && replaced.codexToolMode !== undefined ? { codexToolMode: replaced.codexToolMode } : {}),
       ...(base.capabilities === undefined && replaced.capabilities !== undefined ? { capabilities: replaced.capabilities } : {}),
+      ...(base.pricingStatus === undefined && replaced.pricingStatus !== undefined
+        ? { pricingStatus: replaced.pricingStatus }
+        : {}),
     } : base;
     // A custom-only model may never appear in /models or the provider's configured roster.
     // Fill only its absent context; a full hint overlay would overwrite custom capabilities.

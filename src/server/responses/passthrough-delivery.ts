@@ -33,10 +33,10 @@ import {
   relayWithAbort,
 } from "../relay";
 import { isUsageDebugEnabled } from "../../usage/debug";
-import { isNonReplayableResponse, isReplayRefusalResponse } from "../../lib/upstream-retry";
+import { isNonReplayableResponse, isReplayRefusalResponse, markResponseNonReplayable } from "../../lib/upstream-retry";
 import { sanitizeNonReplayableUpstreamError } from "./non-replayable-error";
 import { sliceChunks, teeWithBoundedInspection } from "../inspection-tee";
-import { markPacedStream } from "../../lib/paced-stream";
+import { carryPacedStream, markPacedStream, pacedQueuingStrategy } from "../../lib/paced-stream";
 import { LINK_PACED_SLICE_BYTES, linkTurnPacesReads } from "../link-turn";
 import {
   codexForwardTerminalOutcomeRecorder,
@@ -60,6 +60,7 @@ import { consumeComboFailure } from "./core-combo-failure";
 import { clientCancelledResponse, readDisplaySafeErrorText } from "./core-errors";
 import { streamingContextOverflowResponse, jsonContextOverflowResponse } from "./context-overflow";
 import { formatPassthroughUpstreamError } from "./passthrough-error";
+import { codexLocalFailure, decideCodexLocalError } from "../../fork/codex-passthrough-local-errors";
 import { rewriteUpstreamPolicyRefusal } from "./policy-refusal";
 import { stampMetaMusePlanRefusal } from "../../providers/meta-muse-plan-refusal";
 import {
@@ -77,6 +78,7 @@ import { relayResponsesSseWithTerminalRepair } from "../responses-terminal-repai
 import {
   hasResponsesSnapshotRepair,
   createResponsesSnapshotBlockRewrite,
+  repairResponsesSnapshotJson,
 } from "../responses-snapshot-repair";
 import { rewriteResponsesIncompleteReasonJson } from "../../responses/incomplete-reason";
 import { createResponsesModelPayloadRewrite, rewriteResponsesModelJson } from "../responses-model-rewrite";
@@ -127,9 +129,10 @@ import {
   restorePlaintextV2AgentMessageCallsInJsonResult,
   PLAINTEXT_V2_AGENT_MESSAGE_RESTORE_OVERFLOW_MESSAGE,
 } from "../../responses/plaintext-v2-agent-messages";
-import { createResponsesFieldBackfillBlockRewrite } from "./responses-field-backfill";
+import { backfillResponsesFieldsJson, createResponsesFieldBackfillBlockRewrite } from "./responses-field-backfill";
 import { createHostedImageDisplayRewrite, isLocalCodexImageClient } from "../responses-hosted-image-display";
 import { createResponsesFunctionToolRepairBlockRewrite } from "../responses-function-tool-repair";
+import { repairFunctionCallsInJson } from "../../responses/function-call-compat";
 import {
   createUndeclaredToolCallGuardBlockRewrite,
   currentTurnWireToolCatalogBody,
@@ -190,6 +193,25 @@ import {
   type BufferedResponsesSseResult,
 } from "./buffered-sse-json";
 import { bufferedResetSelectionStartedAt } from "./passthrough-completion";
+import { usesVolcengineAgentPlanResponses } from "../../fork/glm-kimi-compat";
+import { rendersArkQuotaAsClientError } from "../../fork/ark-quota-display";
+import {
+  createResponsesMessagePhaseBlockRewrite,
+  rewriteResponsesMessagePhasesInJsonString,
+  routeUsesResponsesMessagePhaseInference,
+} from "../../fork/responses-message-phase";
+import {
+  createNestedExecCallRepairBlockRewrite,
+  createNestedExecClientOutcomeBlockRewrite,
+} from "../responses-nested-exec-call-repair";
+import { repairNestedExecCallsInJson } from "../../responses/nested-exec-call-repair";
+import { createInboundResponsesDebugObserver, persistInboundResponsesDebugSummary } from "../../fork/inbound-response-debug";
+import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
+import { codexRawJsonSse, relayUnmodifiedCodexSse } from "../../fork/codex-passthrough-response";
+import { codexPrivateCredentialSources, createCodexPrivateCredentialGuard, readCodexPrivateErrorText,
+  protectCodexPrivateSse, codexPrivateProtectionFailure, CodexPrivateCredentialProtectionError, codexPrivateErrorBodyReadDeadlines } from "../../fork/codex-passthrough-secrets";
+
+import { isDebugEnabled } from "../../lib/debug-settings";
 
 const PLAINTEXT_V2_SSE_PREFIX_LIMIT = 4096;
 
@@ -404,6 +426,7 @@ export async function deliverPassthroughResponse(
     | "subagentFallbackAccountId"
     | "clientRequestedStream"
     | "translatorBudget"
+    | "substituteMainCredential"
     | "inboundWire"
   >,
   transportState: Pick<ResponsesTransport, "requestBindings">,
@@ -445,6 +468,13 @@ export async function deliverPassthroughResponse(
     | "normalizeFunctionCompletionJson"
     | "localUpstream"
     | "terminalOutcomeRecorded"
+    | "nestedExecRepairPlan"
+    | "nestedExecRepairCoordinator"
+    | "nestedExecInspection"
+    | "inboundDebugObserver"
+    | "inboundDebugUsesRawTerminalRepairTap"
+    | "isEventStream"
+    | "notePlaintextClientTerminal"
   >,
   dispatchSidecarSend?: AuxiliaryModelSend,
 ): Promise<Response> {
@@ -472,9 +502,13 @@ export async function deliverPassthroughResponse(
     rememberPassthroughResponse,
     noteInspectedPayload,
     normalizeFunctionCompletionJson,
+    nestedExecRepairPlan,
+    nestedExecRepairCoordinator,
+    nestedExecInspection,
+    inboundDebugObserver,
   } = nativeExchange;
   const { commitReasoningReplayServingRoute, recordTerminalOutcomes } = responseEffects;
-  const { parsed, subagentQuotaFailureModel, clientRequestedStream, translatorBudget } = requestState;
+  const { parsed, subagentQuotaFailureModel, clientRequestedStream, translatorBudget, inboundWire } = requestState;
   // #7427: opt-in estimated usage for a provider that omits it. Client-facing only; the request log,
   // spend and quota read the provider's original body.
   const estimateUsage = estimatesMissingUsage(route.provider, options);
@@ -482,7 +516,6 @@ export async function deliverPassthroughResponse(
   const inputEstimate = (): number => usageInputEstimate ??= estimateInputTokens(parsed, route.modelId, route.provider);
   const { openAiSidecar } = sidecarState;
   const { requestBindings } = transportState;
-
   let upstreamResponse = nativeExchange.upstreamResponse;
   // Judge the restored native payload before display projection can erase hosted-call evidence.
   const requiredToolFailure = async (text: string): Promise<Response | undefined> => {
@@ -493,8 +526,120 @@ export async function deliverPassthroughResponse(
     const verdict = await guardBufferedComboRequiredTool(candidate, parsed._rawBody, route.provider.adapter);
     return verdict.ok ? undefined : verdict;
   };
+  if (!isReplayRefusalResponse(upstreamResponse) && !codexLocalFailure(upstreamResponse)
+    && !isCodexWsPreludeProjection(upstreamResponse) && !isCodexWsUpstreamResponse(upstreamResponse)) {
+    logCtx.upstreamHttpStatus = upstreamResponse.status;
+    if (logCtx.activeAttempt) logCtx.activeAttempt.upstreamHttpStatus = upstreamResponse.status;
+  } else delete logCtx.upstreamHttpStatus;
+  const codexPermissions = resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire });
+  const privateGuard = codexPermissions ? createCodexPrivateCredentialGuard({ outboundHeaders: nativeExchange.request.headers,
+    callerHeaders: req.headers, sources: codexPrivateCredentialSources(admissionState.authCtx, requestState.substituteMainCredential, route.provider.headers),
+    configuredHeaders: route.provider.headers, translatorBudget }) : undefined;
+  const privateErrorReadOptions = { privateErrorBodyReadDeadline: codexPermissions?.privateErrorBodyReadDeadline,
+    stallTimeoutMs: resolveStallTimeoutMs(config.stallTimeoutSec, { localUpstream: nativeExchange.localUpstream }) };
+  let privateFailureNoted = false;
+  const notePrivateFailure = (error: CodexPrivateCredentialProtectionError): void => {
+    if (privateFailureNoted) return; privateFailureNoted = true;
+    logCtx.errorCode = error.code; logCtx.causeHint = "local-refusal"; logCtx.terminalSource = "synthetic";
+    logCtx.terminalHttpStatus = 502; logCtx.upstreamError = error.message;
+    options.onNativePassthroughTerminal?.("failed");
+  };
+  const privateFailure = (error: CodexPrivateCredentialProtectionError): Response => {
+    notePrivateFailure(error); upstream.abort(error); releaseCodexAuthContextProbeLease(admissionState.authCtx);
+    nestedExecInspection?.dispose(); nestedExecRepairCoordinator?.dispose();
+    const response = codexPrivateProtectionFailure(); markResponseNonReplayable(response); return response;
+  };
+  const protectSse = async (body: ReadableStream<Uint8Array>) => privateGuard ? protectCodexPrivateSse(body, privateGuard, translatorBudget, {
+    privateSseReadDeadline: codexPermissions?.privateSseReadDeadline,
+    stallTimeoutMs: resolveStallTimeoutMs(config.stallTimeoutSec, { localUpstream: nativeExchange.localUpstream }),
+    signal: AbortSignal.any([upstream.signal, options.abortSignal ?? req.signal]), onProtectionFailure: notePrivateFailure,
+  }) : body;
   const canonicalBufferedJson = clientRequestedStream !== true
-    && isCanonicalOpenAiForwardProvider(route.provider);
+    && isCanonicalOpenAiForwardProvider(route.provider)
+    && codexPermissions?.normalizeRequestParameters !== false;
+  let inboundDebugPersisted = false;
+  const persistInboundDebug = (): void => {
+    if (inboundDebugPersisted || !inboundDebugObserver) return;
+    inboundDebugPersisted = true;
+    let host = "";
+    let pathname = "";
+    try { const url = new URL(nativeExchange.request.url); host = url.host; pathname = url.pathname; }
+    catch { pathname = "invalid-url"; }
+    persistInboundResponsesDebugSummary({
+      observer: inboundDebugObserver,
+      host,
+      pathname,
+      model: route.modelId,
+      stage: "upstream-inbound",
+      threadIdTag: nativeExchange.request.threadIdTag,
+      httpStatus: upstreamResponse.status,
+    });
+  };
+
+  let host = "";
+  let pathname = "";
+  try {
+    const url = new URL(nativeExchange.request.url);
+    host = url.host;
+    pathname = url.pathname;
+  } catch {
+    pathname = "invalid-url";
+  }
+  const inboundDebugContext = { host, pathname, httpStatus: upstreamResponse.status };
+    const downstreamObserver = isDebugEnabled()
+      ? createInboundResponsesDebugObserver({ stage: "downstream-after-rewrite" })
+      : undefined;
+    let downstreamPersisted = false;
+    const persistDownstreamOnce = (): void => {
+      if (downstreamPersisted || !downstreamObserver || !inboundDebugContext) return;
+      downstreamPersisted = true;
+      persistInboundResponsesDebugSummary({
+        observer: downstreamObserver,
+        host: inboundDebugContext.host,
+        pathname: inboundDebugContext.pathname,
+        model: route.modelId,
+        stage: "downstream-after-rewrite",
+        threadIdTag: nativeExchange.request.threadIdTag,
+        httpStatus: inboundDebugContext.httpStatus,
+      });
+    };
+    const observeClientBoundSse = (body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> => {
+      if (!downstreamObserver) return body;
+      const inspector = createSseInspector({
+        onParsedPayload: payload => downstreamObserver.notePayload(payload),
+      });
+      const reader = body.getReader();
+      let settled = false;
+      const settle = (): void => {
+        if (settled) return;
+        settled = true;
+        try { inspector.finish(); } catch { /* diagnostics must not alter delivery */ }
+        inspector.dispose();
+        persistDownstreamOnce();
+      };
+      return carryPacedStream(body, new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              settle();
+              controller.close();
+              return;
+            }
+            if (value) inspector.feed(value);
+            controller.enqueue(value);
+          } catch (error) {
+            settle();
+            controller.error(error);
+          }
+        },
+        cancel(reason) {
+          settle();
+          return reader.cancel(reason);
+        },
+      }, pacedQueuingStrategy(body)));
+    };
+
   const originalContentType = upstreamResponse.headers.get("content-type");
   if (isUsageDebugEnabled() && originalContentType) logCtx.usageDebugContentType = originalContentType;
   if (responseEffects.plaintextV2AgentMessageToolNames.size > 0
@@ -516,7 +661,10 @@ export async function deliverPassthroughResponse(
       knownModels: [...routeKnownModels(logCtx), ...providerKnownModels(route.provider)],
       provider: logCtx.provider,
     };
-    const headers = sanitizePassthroughHeaders(upstreamResponse.headers, passthroughHeaderOptions);
+    const sanitizedHeaders = sanitizePassthroughHeaders(upstreamResponse.headers, passthroughHeaderOptions);
+    let headers: Headers;
+    try { headers = privateGuard ? privateGuard.protectHeaders(sanitizedHeaders) : sanitizedHeaders; }
+    catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) { void upstreamResponse.body?.cancel(error).catch(() => {}); return privateFailure(error); } throw error; }
     if (!upstreamResponse.ok) noteUpstreamRequestId(logCtx, headers);
     const resolvedModel = headers.get("openai-model") ?? undefined;
     if (resolvedModel) {
@@ -532,6 +680,8 @@ export async function deliverPassthroughResponse(
         && !!upstreamResponse.body
         && !passthroughCt
         && (parsed.stream || canonicalBufferedJson));
+    nativeExchange.isEventStream = !!isEventStream;
+    const inferResponsesMessagePhases = codexPermissions?.backfillResponseFields !== false && routeUsesResponsesMessagePhaseInference(route.provider, route.modelId);
     const recordTerminalOutcome = codexForwardTerminalOutcomeRecorder(
       config,
       admissionState.authCtx,
@@ -641,17 +791,31 @@ export async function deliverPassthroughResponse(
     // through sanitizePassthroughHeaders) so a redirect to a dead host can never
     // masquerade as a pre-connection failure after the credential was seen.
     // The numeric outcome above already classified it neutral — no streak.
-    if (isNonReplayableResponse(upstreamResponse) && !isReplayRefusalResponse(upstreamResponse) && !wasPermanentAccountRefusal(upstreamResponse)) {
+    const localFailure = codexLocalFailure(upstreamResponse);
+    if (!upstreamResponse.ok && localFailure && decideCodexLocalError(codexPermissions, localFailure).kind === "gateway") {
+      try { return new Response(privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal, privateErrorReadOptions)
+        : relayWithAbort(upstreamResponse.body, upstream), { status: upstreamResponse.status, statusText: upstreamResponse.statusText, headers }); }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
+    }
+    if (isNonReplayableResponse(upstreamResponse) && !isReplayRefusalResponse(upstreamResponse) && !wasPermanentAccountRefusal(upstreamResponse) && codexPermissions?.redactUpstreamErrors !== false) {
       return await sanitizeNonReplayableUpstreamError(upstreamResponse, upstream.signal);
     }
     if (upstreamResponse.status >= 300 && upstreamResponse.status < 400) {
-      return new Response(upstreamResponse.body, {
+      let body: BodyInit | null;
+      try { body = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal, privateErrorReadOptions) : upstreamResponse.body; }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
+      return new Response(body, {
         status: upstreamResponse.status,
         statusText: upstreamResponse.statusText,
-        headers: sanitizePassthroughHeaders(upstreamResponse.headers, passthroughHeaderOptions),
+        headers,
       });
     }
     if (!upstreamResponse.ok) {
+      if (codexPermissions?.redactUpstreamErrors === false && !(upstreamResponse.status === 413 && codexPermissions.synthesizeTerminalFailure)) {
+        try { return new Response(privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal, privateErrorReadOptions)
+          : relayWithAbort(upstreamResponse.body, upstream), { status: upstreamResponse.status, statusText: upstreamResponse.statusText, headers }); }
+        catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
+      }
       if (options.comboAttempt) {
         // No pre-read guard here: `consumeComboFailure` -> `readBoundedResponseBody` reads
         // `response.body` itself and already threads the abort signal through its own read,
@@ -662,19 +826,30 @@ export async function deliverPassthroughResponse(
         // Only the plan-refusal cause is carried to this leg's row (#8352); a throwaway holder
         // keeps the other diagnostics this path has never recorded off it.
         const comboCause: Pick<typeof logCtx, "causeHint"> = {};
-        const failure = await consumeComboFailure(upstreamResponse, options.abortSignal, undefined, comboCause);
+        // Protect the same bounded read before classification; no extra body access.
+        let failure: Awaited<ReturnType<typeof consumeComboFailure>>;
+        try { failure = await consumeComboFailure(upstreamResponse, options.abortSignal, undefined, comboCause, false, privateGuard ? (text, safe) => {
+          if (!safe) throw new CodexPrivateCredentialProtectionError("private-body-unreadable");
+          return passthroughCt?.includes("json") ? privateGuard.protectJson(text, true).text : privateGuard.mask(text);
+        } : undefined, privateGuard ? headers : undefined, privateGuard ? codexPrivateErrorBodyReadDeadlines(privateErrorReadOptions) : undefined); }
+        catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
         if (comboCause.causeHint) logCtx.causeHint = comboCause.causeHint;
         options.onConsumedComboFailure?.(failure);
         return failure.response;
       }
       // The bounded reader owns the original body, deadline, abort settlement, and lock.
       // Unsafe partial data falls back to #452's non-empty status-only JSON.
-      const errorText = await readDisplaySafeErrorText(upstreamResponse, upstream.signal, "");
+      let errorText: string;
+      try { errorText = privateGuard ? await readCodexPrivateErrorText(upstreamResponse, privateGuard, upstream.signal, privateErrorReadOptions)
+        : await readDisplaySafeErrorText(upstreamResponse, upstream.signal, ""); }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
       if (upstreamResponse.status === 413) {
-        if (options.clientModelLabel) projectLocalModelRefusalLog(logCtx, options.clientModelLabel);
-        return clientRequestedStream
-          ? streamingContextOverflowResponse(clientFacingModelText(options.clientModelLabel), translatorBudget)
-          : jsonContextOverflowResponse();
+        if (codexPermissions?.synthesizeTerminalFailure !== false) {
+          if (options.clientModelLabel) projectLocalModelRefusalLog(logCtx, options.clientModelLabel);
+          return clientRequestedStream
+            ? streamingContextOverflowResponse(clientFacingModelText(options.clientModelLabel), translatorBudget)
+            : jsonContextOverflowResponse();
+        }
       }
       const policyRefusal = rewriteUpstreamPolicyRefusal({
         status: upstreamResponse.status,
@@ -694,6 +869,8 @@ export async function deliverPassthroughResponse(
         // Provenance, not inference: `errorText` is empty when the bounded read finds nothing
         // display-safe, and an empty body is exactly what the retryable-429 default fires on.
         replayRefusal: isReplayRefusalResponse(upstreamResponse),
+        authoritativeOrigin: codexPermissions !== undefined,
+        renderQuotaAsClientError: rendersArkQuotaAsClientError(route.providerName),
       })));
     }
 
@@ -703,7 +880,10 @@ export async function deliverPassthroughResponse(
       // contracts and would truncate it. Keep the bounded upstream as the sole reader.
       options.nativeControl.relayActive = true;
       commitReasoningReplayServingRoute(nativeExchange.request.headers);
-      const body = trackStreamLifetime(upstreamResponse.body, upstream, undefined, options.turnAdmissionLease);
+      let protectedBody: ReadableStream<Uint8Array>;
+      try { protectedBody = await protectSse(upstreamResponse.body); }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
+      const body = trackStreamLifetime(protectedBody, upstream, undefined, options.turnAdmissionLease);
       return new Response(body, { status: upstreamResponse.status, headers });
     }
 
@@ -729,6 +909,7 @@ export async function deliverPassthroughResponse(
         commitReasoningReplayServingRoute(nativeExchange.request.headers);
       }
       const terminalRepairPolicy = route.staticPolicy.model.responsesTerminalRepair;
+      const useTerminalRepair = !!terminalRepairPolicy && codexPermissions?.synthesizeTerminalFailure !== false;
       // #3761: opt-in hosted-web-search bridge. Codex always declares the hosted web_search tool,
       // and this branch relays that declaration on the assumption the destination executes it.
       // A KEY-auth gateway that does not (Ollama Cloud GLM) answers with a function_call named
@@ -762,15 +943,33 @@ export async function deliverPassthroughResponse(
       // Repair must observe the raw first leg before the bridge suppresses an intercepted search
       // lifecycle. Otherwise a provider that leaves that complete call open never arms repair's
       // grace timer, so the bridge cannot execute the search or begin its continuation.
-      let passthroughSseBody = terminalRepairPolicy
+      const rawInboundSseTap = () => {
+        if (!inboundDebugObserver) return undefined;
+        const inspector = createSseInspector({ onParsedPayload: payload => inboundDebugObserver.notePayload(payload) });
+        return {
+          onChunk: (chunk: Uint8Array) => inspector.feed(chunk),
+          onFinish: () => inspector.finish(),
+          onDispose: () => inspector.dispose(),
+        };
+      };
+      nativeExchange.inboundDebugUsesRawTerminalRepairTap = !!inboundDebugObserver
+        && (useTerminalRepair || webSearchBridgePlan !== undefined);
+      let protectedBody = nativeSseBody;
+      try {
+        if (privateGuard) protectedBody = await protectSse(nativeSseBody);
+      }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
+      let passthroughSseBody = terminalRepairPolicy && useTerminalRepair
         ? relayResponsesSseWithTerminalRepair(
-          nativeSseBody,
+          protectedBody,
           upstream,
           terminalRepairPolicy,
           translatorBudget,
-          options.responsesTerminalRepairScheduler, logCtx,
+          options.responsesTerminalRepairScheduler,
+          logCtx,
+          rawInboundSseTap(),
         )
-        : nativeSseBody;
+        : protectedBody;
       passthroughSseBody = webSearchBridgePlan
         ? createPassthroughWebSearchBridgeStream({
           plan: webSearchBridgePlan,
@@ -810,14 +1009,16 @@ export async function deliverPassthroughResponse(
             const guardedContinuation = continuationStallMs > 0
               ? guardResponseBodyInactivity(continuation, upstream.signal, continuationStallMs, { explicitBudget: true }).response
               : continuation;
-            if (!terminalRepairPolicy) return guardedContinuation;
+            if (!terminalRepairPolicy || !useTerminalRepair) return guardedContinuation;
             return new Response(
               relayResponsesSseWithTerminalRepair(
                 guardedContinuation.body!,
                 upstream,
                 terminalRepairPolicy,
                 translatorBudget,
-                options.responsesTerminalRepairScheduler, logCtx,
+                options.responsesTerminalRepairScheduler,
+                logCtx,
+                rawInboundSseTap(),
               ),
               guardedContinuation,
             );
@@ -844,6 +1045,7 @@ export async function deliverPassthroughResponse(
           // terminal path; after an executed search, the outcome recorder has already settled it.
           onFinalize: () => releaseCodexAuthContextProbeLease(openAiSidecar?.authContext),
           signal: upstream.signal,
+          onRawPayload: useTerminalRepair ? undefined : payload => inboundDebugObserver?.notePayload(payload),
         })
         : passthroughSseBody;
       const repairConfig = route.provider.responsesItemIdRepair;
@@ -853,7 +1055,9 @@ export async function deliverPassthroughResponse(
       // explicit Grok compatibility marker enables strict client compatibility rewrites.
       // The provider's broader snapshot/lifecycle repair remains opt-in.
       const grokClientCompatibilityEnabled = logCtx.surface === "grok";
-      const snapshotRepairEnabled = hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair);
+      const snapshotRepairEnabled = codexPermissions?.backfillResponseFields !== false && route.provider.responsesSnapshotRepair !== false
+        && (hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair)
+          || usesVolcengineAgentPlanResponses(route.provider));
       const githubCopilotRepairEnabled = route.providerName === "github-copilot";
       const responseModelRewrite = parsed._responseModelId !== undefined
         && parsed._responseModelId !== parsed.modelId
@@ -862,19 +1066,19 @@ export async function deliverPassthroughResponse(
       // Compose opt-in payload rewrites into one parse/stringify pass (image-gen restore first).
       const payloadRewrites = [
         rewriteResponsesIncompleteReasonJson,
-        createImageGenCallRestoreRewrite(imageGenCallAliases),
+        codexPermissions?.repairResponseToolCalls === false ? undefined : createImageGenCallRestoreRewrite(imageGenCallAliases),
         // #3217: a call whose namespace repeats its own name is unroutable in codex-rs.
-        createSelfNamedToolCallNamespaceScrubRewrite(selfNamedNamespaceScrubAuthorization),
-        responseEffects.routedMuseToolNameAliases.size > 0
+        codexPermissions?.repairResponseToolCalls === false ? undefined : createSelfNamedToolCallNamespaceScrubRewrite(selfNamedNamespaceScrubAuthorization),
+        codexPermissions?.repairResponseToolCalls !== false && responseEffects.routedMuseToolNameAliases.size > 0
           ? createMuseToolNameRestoreRewrite(responseEffects.routedMuseToolNameAliases)
           : undefined,
-        responseEffects.routedNamespaceToolAliases.size > 0
+        codexPermissions?.repairResponseToolCalls !== false && responseEffects.routedNamespaceToolAliases.size > 0
           ? createRoutedNamespaceCallRestoreRewrite(responseEffects.routedNamespaceToolAliases)
           : undefined,
-        authorizedBareNamespaceToolAliases.size > 0
+        codexPermissions?.repairResponseToolCalls !== false && authorizedBareNamespaceToolAliases.size > 0
           ? createRoutedNamespaceCallRestoreRewrite(authorizedBareNamespaceToolAliases)
           : undefined,
-        hasResponsesItemIdRepair(repairConfig)
+        codexPermissions?.backfillResponseFields !== false && hasResponsesItemIdRepair(repairConfig)
           ? createResponsesItemIdPayloadRewrite(repairConfig!, translatorBudget)
           : undefined,
         responseModelRewrite,
@@ -883,20 +1087,6 @@ export async function deliverPassthroughResponse(
       // injection at the block level, after payload rewrites. Defaults come
       // from the finalized OUTBOUND body — the normalized internal tool shapes
       // are not the Responses wire shapes the snapshot must mirror.
-      // Only validated client blocks may publish plaintext continuation state.
-      // Raw inspection precedes rewriting on eager relays, so it cannot own this write.
-      const plaintextInspector = !canonicalBufferedJson
-        && !grokUpstreamEchoEnabled
-        && responseEffects.plaintextV2AgentMessageToolNames.size > 0
-        ? createSseInspector({ onCompletedResponse: rememberPassthroughResponseChecked })
-        : undefined;
-      const plaintextEncoder = plaintextInspector ? new TextEncoder() : undefined;
-      const rememberPlaintextBlock = plaintextInspector
-        ? Object.assign((block: string): readonly string[] => {
-          plaintextInspector.feed(plaintextEncoder!.encode(`${block}\n\n`));
-          return [block];
-        }, { dispose: () => plaintextInspector.dispose() })
-        : undefined;
       const maskCredential = createOutboundCredentialMask(nativeExchange.request.headers);
       // Copy a boundary synthesizes from upstream evidence, and the row's copy, also refuse any value
       // this request sent, decided from its own headers.
@@ -906,18 +1096,21 @@ export async function deliverPassthroughResponse(
       const forwardedEvidenceRedaction = createForwardedEvidenceRedaction(nativeExchange.request.headers, maskCredential);
       const requiredStreamEvidence = { replayUnsafe: !!webSearchBridgePlan };
       const normalizeRequiredToolItem = (item: unknown) => {
-        item = restoreImageGenCalls(item, imageGenCallAliases).value;
-        item = scrubSelfNamedToolCallNamespace(item, selfNamedNamespaceScrubAuthorization).value;
-        item = restoreMuseToolNames(item, responseEffects.routedMuseToolNameAliases).value;
-        item = restoreRoutedNamespaceCalls(item, responseEffects.routedNamespaceToolAliases).value;
-        item = restoreRoutedNamespaceCalls(item, authorizedBareNamespaceToolAliases).value;
+        if (codexPermissions?.repairResponseToolCalls !== false) {
+          item = restoreImageGenCalls(item, imageGenCallAliases).value;
+          item = scrubSelfNamedToolCallNamespace(item, selfNamedNamespaceScrubAuthorization).value;
+          item = restoreMuseToolNames(item, responseEffects.routedMuseToolNameAliases).value;
+          item = restoreRoutedNamespaceCalls(item, responseEffects.routedNamespaceToolAliases).value;
+          item = restoreRoutedNamespaceCalls(item, authorizedBareNamespaceToolAliases).value;
+        }
         return normalizeDefaultNamespaceInItem(item, declaredWireToolNames, declaredBareWireToolNames).value;
       };
       const requiredStreamGuard = options.comboAttempt && clientRequestedStream === true
         && (options.inboundWire === undefined || options.inboundWire === "responses")
         && route.provider.adapter === "openai-responses" && !isNonReplayableResponse(upstreamResponse)
         ? createComboRequiredToolStreamGuard(parsed._rawBody, providerExecutedCallTypes,
-          requiredStreamEvidence, normalizeRequiredToolItem, nativeExchange.request)
+          requiredStreamEvidence, normalizeRequiredToolItem, nativeExchange.request,
+          { allowResponseDone: codexPermissions?.synthesizeTerminalFailure === false })
         : undefined;
       // The factory creates independent raw/client state with one tool identity resolver.
       const requiredStreamInspector = requiredStreamGuard;
@@ -925,7 +1118,17 @@ export async function deliverPassthroughResponse(
         payloadRewrites.length > 0
           ? payloadRewriteAsBlockRewrite(composeSsePayloadRewrites(...payloadRewrites))
           : undefined,
-        routedCustomToolNames.size > 0 || routedCustomToolRepairNames.size > 0
+        inferResponsesMessagePhases
+          ? createResponsesMessagePhaseBlockRewrite(translatorBudget)
+          : undefined,
+        codexPermissions?.repairResponseToolCalls !== false && nestedExecRepairPlan && nestedExecRepairCoordinator
+          ? createNestedExecCallRepairBlockRewrite(
+            nestedExecRepairPlan,
+            nestedExecRepairCoordinator,
+            translatorBudget,
+          )
+          : undefined,
+        codexPermissions?.repairResponseToolCalls !== false && (routedCustomToolNames.size > 0 || routedCustomToolRepairNames.size > 0)
           ? createRoutedCustomToolRestoreBlockRewrite(
             routedCustomToolNames,
             translatorBudget,
@@ -933,7 +1136,7 @@ export async function deliverPassthroughResponse(
             declaredWireToolNames,
           )
           : undefined,
-        routedToolSearchNames.size > 0
+        codexPermissions?.repairResponseToolCalls !== false && routedToolSearchNames.size > 0
           ? createRoutedToolSearchRestoreBlockRewrite(routedToolSearchNames, translatorBudget)
           : undefined,
         githubCopilotRepairEnabled
@@ -963,16 +1166,17 @@ export async function deliverPassthroughResponse(
         snapshotRepairEnabled
           ? createResponsesSnapshotBlockRewrite(nativeExchange.outboundRequestBody, translatorBudget)
           : undefined,
-        route.provider.messagePhaseInference === true
+        // Model-specific inference takes precedence so the message is buffered only once.
+        route.provider.messagePhaseInference === true && !inferResponsesMessagePhases
           ? createResponsesPhaseInferenceBlockRewrite(translatorBudget)
           : undefined,
-        responseEffects.plaintextV2AgentMessageToolNames.size > 0
+        codexPermissions?.repairResponseToolCalls !== false && responseEffects.plaintextV2AgentMessageToolNames.size > 0
           ? payloadRewriteAsBlockRewrite(createPlaintextV2AgentMessageCallRestoreRewrite(
             responseEffects.plaintextV2AgentMessageToolNames, responseEffects.plaintextV2AgentMessageAliasedToolNames,
           ))
           : undefined,
-        createResponsesFieldBackfillBlockRewrite(),
-        functionRepairSchemas.size > 0
+        codexPermissions?.backfillResponseFields === false ? undefined : createResponsesFieldBackfillBlockRewrite(),
+        codexPermissions?.repairResponseToolCalls !== false && functionRepairSchemas.size > 0
           ? createResponsesFunctionToolRepairBlockRewrite(functionRepairSchemas, translatorBudget)
           : undefined,
         // Last: every rewrite above can still rename or reshape a call item, so the guard must
@@ -989,6 +1193,7 @@ export async function deliverPassthroughResponse(
             recoverableBareCustomWireToolNames,
             { refuseUndeclared: nativeExchange.undeclaredToolGuardActive,
               onRefusal: message => rememberProxyErrorMessage(logCtx, message, { status: 502, type: "upstream_error", code: UNDECLARED_TOOL_CALL_ERROR_CODE }) },
+            nestedExecRepairCoordinator ? () => nestedExecRepairCoordinator.reject() : undefined,
           )
           : undefined,
         grokUpstreamEchoEnabled
@@ -1000,18 +1205,29 @@ export async function deliverPassthroughResponse(
           )
           : undefined,
         requiredStreamGuard?.blockRewrite,
-        createTerminalErrorRedactionBlockRewrite(nativeExchange.request.headers, maskCredential),
-        rememberPlaintextBlock,
-        // Display-only projection must follow every continuation-cache observer.
-        (!canonicalBufferedJson || !options.comboAttempt) && isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)
-          ? createHostedImageDisplayRewrite()
-          : undefined,
-        // Last, so it sees the response the client receives; never on the canonical JSON fold.
-        estimateUsage && !canonicalBufferedJson
-          ? payloadRewriteAsBlockRewrite(createEstimatedUsagePayloadRewrite(inputEstimate, route.modelId))
+        codexPermissions?.redactUpstreamErrors === false ? undefined : createTerminalErrorRedactionBlockRewrite(nativeExchange.request.headers, maskCredential),
+        nestedExecRepairCoordinator
+          ? createNestedExecClientOutcomeBlockRewrite(nestedExecRepairCoordinator)
           : undefined,
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
-      if (estimateUsage && !canonicalBufferedJson) headers.set(ESTIMATED_USAGE_HEADER, "when-missing");
+      // Publish validated continuation items after wire repairs and before image display projection.
+      const clientCacheInspector = !canonicalBufferedJson && !grokUpstreamEchoEnabled
+        && (responseEffects.plaintextV2AgentMessageToolNames.size > 0 || !!codexPermissions && !!rememberPassthroughResponse && blockRewrites.length > 0)
+        ? createSseInspector({ allowResponseDone: codexPermissions?.synthesizeTerminalFailure === false,
+          onTerminal: nativeExchange.notePlaintextClientTerminal,
+          onCompletedResponse: rememberPassthroughResponseChecked }) : undefined;
+      if (clientCacheInspector) {
+        const encoder = new TextEncoder();
+        blockRewrites.push(Object.assign((block: string): readonly string[] => {
+          clientCacheInspector.feed(encoder.encode(`${block}\n\n`)); return [block];
+        }, { dispose: () => clientCacheInspector.dispose() }));
+      }
+      if (codexPermissions?.normalizeHostedImages !== false && (!canonicalBufferedJson || !options.comboAttempt)
+        && isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) blockRewrites.push(createHostedImageDisplayRewrite());
+      if (estimateUsage && !canonicalBufferedJson) {
+        blockRewrites.push(payloadRewriteAsBlockRewrite(createEstimatedUsagePayloadRewrite(inputEstimate, route.modelId)));
+        headers.set(ESTIMATED_USAGE_HEADER, "when-missing");
+      }
       const clientBlockRewrite = blockRewrites.length > 0
         ? composeSseBlockRewrites(...blockRewrites)
         : undefined;
@@ -1024,10 +1240,18 @@ export async function deliverPassthroughResponse(
           config.stallTimeoutSec,
           { localUpstream: nativeExchange.localUpstream },
         ), BUFFERED_RESPONSES_TOTAL_TIMEOUT_MS, bufferedResetSelectionStartedAt(nativeExchange.upstreamResponse) ?? Date.now());
+        let bufferedStateDisposed = false;
+        const disposeBufferedState = (): void => {
+          if (bufferedStateDisposed) return;
+          bufferedStateDisposed = true;
+          nestedExecInspection?.dispose();
+          nestedExecRepairCoordinator?.dispose();
+        };
         const failBufferedTurn = (
           message: string,
           failure?: BufferedResponsesSseFailure,
         ): Response => {
+          disposeBufferedState();
           upstream.abort(new Error(message));
           const upstreamError = failure?.upstreamError;
           const upstreamRefusalCode = failure?.upstreamRefusalCode;
@@ -1097,6 +1321,7 @@ export async function deliverPassthroughResponse(
           if (raw.kind === "aborted" || signal.aborted) {
             responseEffects.responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
+            disposeBufferedState();
             return clientCancelledResponse();
           }
           const message = raw.kind === "oversized"
@@ -1132,6 +1357,7 @@ export async function deliverPassthroughResponse(
           if (client.kind === "aborted" || signal.aborted) {
             responseEffects.responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
+            disposeBufferedState();
             return clientCancelledResponse();
           }
           const message = client.kind === "oversized"
@@ -1148,6 +1374,7 @@ export async function deliverPassthroughResponse(
         const cancelAfterValidation = (): Response => {
           responseEffects.responseCompletionCancelled = true;
           options.onNativePassthroughCancel?.();
+          disposeBufferedState();
           return clientCancelledResponse();
         };
         if (signal.aborted) return cancelAfterValidation();
@@ -1166,7 +1393,8 @@ export async function deliverPassthroughResponse(
         }
         if (signal.aborted) return cancelAfterValidation();
         let clientJson = JSON.stringify(client.terminal.response);
-        if (options.comboAttempt && isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) {
+        if (codexPermissions?.normalizeHostedImages !== false && options.comboAttempt
+          && isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) {
           const display = createHostedImageDisplayRewrite();
           try { clientJson = display.json(clientJson); }
           catch (error) {
@@ -1205,6 +1433,7 @@ export async function deliverPassthroughResponse(
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
         });
+        let effectInspectionFinished = false;
         try {
           // The deferred effects pass must not turn a bounded 32 MiB transcript into one long
           // event-loop monopoly. Keep decoder input small and yield between MiB groups; the
@@ -1219,14 +1448,25 @@ export async function deliverPassthroughResponse(
           }
           if (signal.aborted) return cancelAfterValidation();
           effectInspector.finish();
+          effectInspectionFinished = true;
         } finally {
           effectInspector.dispose();
+          if (!effectInspectionFinished) disposeBufferedState();
         }
         if (signal.aborted) return cancelAfterValidation();
-        commitReasoningReplayServingRoute(nativeExchange.request.headers);
-        rawBytes = undefined;
-        if (client.terminal.status === "completed") {
-          rememberPassthroughResponseChecked(client.terminal.response);
+        try {
+          commitReasoningReplayServingRoute(nativeExchange.request.headers);
+          rawBytes = undefined;
+          if (client.terminal.status === "completed") {
+            rememberPassthroughResponseChecked(client.terminal.response);
+            nestedExecRepairCoordinator?.markClientCommitted();
+          }
+          if (downstreamObserver) {
+            downstreamObserver.noteJsonResponse(client.terminal.response);
+            persistDownstreamOnce();
+          }
+        } finally {
+          disposeBufferedState();
         }
 
         const jsonHeaders = sanitizePassthroughHeaders(headers, passthroughHeaderOptions);
@@ -1257,9 +1497,10 @@ export async function deliverPassthroughResponse(
       // branch retained bytes without a bound. Force the existing bounded,
       // single-reader relay before tee; HTTP fallback responses stay unmarked.
       const forceCodexWsEagerRelay = isCodexWsUpstreamResponse(upstreamResponse);
+      const phaseBarrierRequiresEagerRelay = inferResponsesMessagePhases;
       const inlineEagerRewrite = needsClientRewrite
-        && (forceCodexWsEagerRelay || win32EagerRewrite || eagerPath?.useEagerRelay === true);
-      if (forceCodexWsEagerRelay || eagerPath?.useEagerRelay || win32EagerRewrite) {
+        && (forceCodexWsEagerRelay || win32EagerRewrite || eagerPath?.useEagerRelay === true || phaseBarrierRequiresEagerRelay);
+      if (forceCodexWsEagerRelay || eagerPath?.useEagerRelay || win32EagerRewrite || phaseBarrierRequiresEagerRelay) {
         const turnAc = new AbortController();
         linkAbortSignal(upstream, turnAc.signal);
         registerTurn(turnAc, options.turnAdmissionLease);
@@ -1283,31 +1524,40 @@ export async function deliverPassthroughResponse(
           }
           : undefined;
         const inspector = (requiredStreamInspector?.inspectorFactory ?? createSseInspector)({
+          allowResponseDone: codexPermissions?.synthesizeTerminalFailure === false,
           onTerminal: reportNativeTerminal,
           logCtx,
-          onCompletedResponse: rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
+          onCompletedResponse: !clientCacheInspector && rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
           onParsedPayload: noteInspectedPayload,
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
         });
+        const clientInspector = downstreamObserver
+          ? createSseInspector({ onParsedPayload: payload => downstreamObserver.notePayload(payload) })
+          : undefined;
         const eagerBody = relaySseEagerBounded(passthroughSseBody, turnAc, {
           inspectChunk: chunk => inspector.feed(chunk),
           finishInspection: () => inspector.finish(),
-          disposeInspection: () => inspector.dispose(),
+          disposeInspection: () => {
+            inspector.dispose();
+            persistInboundDebug();
+            nestedExecInspection?.dispose();
+          },
+          ...(clientInspector ? { onClientChunk: (chunk: Uint8Array) => clientInspector.feed(chunk) } : {}),
           // Stream lifetime follows the protocol terminal even when this request
           // has no outcome callback configured (reported() would stay false).
           sawTerminal: () => inspector.terminalSeen(),
           ...(clientBlockRewrite
             ? { rewriteBlocks: clientBlockRewrite }
             : {}),
-          onSynthetic: (kind, reason) => {
+          onSynthetic: (kind, reason, httpStatusOverride) => {
             if (!reportNativeTerminal) return;
             if (kind === "incomplete") {
               logCtx.terminalSource = "synthetic";
               reportNativeTerminal("incomplete");
             } else if (reason === "upstream_error") {
               logCtx.terminalSource = "synthetic";
-              reportNativeTerminal("failed", logCtx.terminalHttpStatus ?? 502);
+              reportNativeTerminal("failed", httpStatusOverride ?? logCtx.terminalHttpStatus ?? 502);
             } else {
               logCtx.transportPhase = "mid_stream";
               logCtx.terminalSource = "synthetic";
@@ -1319,8 +1569,16 @@ export async function deliverPassthroughResponse(
             responseEffects.responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
           },
-          onDone: () => unregisterTurn(turnAc),
+          onDone: () => {
+            try { clientInspector?.finish(); } catch { /* Diagnostics must not interrupt delivery. */ }
+            clientInspector?.dispose();
+            persistDownstreamOnce();
+            persistInboundDebug();
+            nestedExecInspection?.dispose();
+            unregisterTurn(turnAc);
+          },
         }, {
+          synthesizeTerminalFailure: codexPermissions?.synthesizeTerminalFailure,
           clientGoneSignal: options.abortSignal,
           terminalBoundary: codexSafetyBufferingOptions,
           maskCredential: synthesizedCopyMask,
@@ -1351,7 +1609,8 @@ export async function deliverPassthroughResponse(
       linkAbortSignal(upstream, turnAc.signal);
       registerTurn(turnAc, options.turnAdmissionLease);
       const inspectionConsumerOptions = {
-        ...(requiredStreamInspector ? { inspectorFactory: requiredStreamInspector.inspectorFactory } : {}),
+        inspectorFactory: (handlers: Parameters<typeof createSseInspector>[0]) =>
+          (requiredStreamInspector?.inspectorFactory ?? createSseInspector)({ ...handlers, allowResponseDone: codexPermissions?.synthesizeTerminalFailure === false }),
         // Request abort can reject the fetch body before the response cancel hook runs.
         clientGoneSignal,
         drainBounds: { ms: 15_000, bytes: 32 * 1024 * 1024 },
@@ -1385,13 +1644,17 @@ export async function deliverPassthroughResponse(
           inspectBody,
           reportNativeTerminal,
           turnAc.signal,
-          () => unregisterTurn(turnAc),
+          () => {
+            persistInboundDebug();
+            nestedExecInspection?.dispose();
+            unregisterTurn(turnAc);
+          },
           logCtx,
           () => {
             responseEffects.responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
           },
-          rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
+          !clientCacheInspector && rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -1400,8 +1663,12 @@ export async function deliverPassthroughResponse(
           inspectBody,
           logCtx,
           turnAc.signal,
-          () => unregisterTurn(turnAc),
-          rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
+          () => {
+            persistInboundDebug();
+            nestedExecInspection?.dispose();
+            unregisterTurn(turnAc);
+          },
+          !clientCacheInspector && rememberPassthroughResponse && !grokUpstreamEchoEnabled && responseEffects.plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -1413,16 +1680,21 @@ export async function deliverPassthroughResponse(
       const rewrittenBody = clientBlockRewrite !== undefined
         ? relaySseWithBlockRewrite(nativeBody, clientBlockRewrite, translatorBudget)
         : nativeBody;
-      const clientBody = relaySseWithFailedTail(
-        rewrittenBody,
-        upstream,
-        reason => {
+      const clientBody = observeClientBoundSse(codexPermissions?.synthesizeTerminalFailure === false
+        ? relayUnmodifiedCodexSse(rewrittenBody, upstream, createSseInspector({ allowResponseDone: true }), reason => {
           responseEffects.responseCompletionCancelled = true;
           clientGone.abort(reason);
-        },
-        { upstreamError: logCtx.upstreamError, terminalBoundary: codexSafetyBufferingOptions, maskCredential: synthesizedCopyMask, redactForwardedEvidence: forwardedEvidenceRedaction,
-          onSyntheticTail: (payload, verdict) => noteRelaySyntheticTail(logCtx, payload, verdict) },
-      );
+        })
+        : relaySseWithFailedTail(
+          rewrittenBody,
+          upstream,
+          reason => {
+            responseEffects.responseCompletionCancelled = true;
+            clientGone.abort(reason);
+          },
+          { upstreamError: logCtx.upstreamError, terminalBoundary: codexSafetyBufferingOptions, maskCredential: synthesizedCopyMask, redactForwardedEvidence: forwardedEvidenceRedaction,
+            onSyntheticTail: (payload, verdict) => noteRelaySyntheticTail(logCtx, payload, verdict) },
+        ));
       return markNativePassthroughSseResponse(new Response(clientBody, {
         status: upstreamResponse.status,
         headers,
@@ -1437,45 +1709,65 @@ export async function deliverPassthroughResponse(
       // Oversize and stall deadlines both fail closed; a partial body is never parsed.
       const bounded = await readBoundedResponseBody(upstreamResponse, UPSTREAM_JSON_BODY_READ_OPTIONS);
       if (bounded.oversized) {
+        inboundDebugObserver?.noteJsonResponse({});
+        persistInboundDebug();
         return formatErrorResponse(502, "upstream_error", "upstream JSON response exceeded the safe body limit");
       }
       if (bounded.truncated) {
+        inboundDebugObserver?.noteJsonResponse({});
+        persistInboundDebug();
         return formatErrorResponse(502, "upstream_error", "upstream JSON response stalled before completing");
       }
-      const text = bounded.text;
+      let text = bounded.text;
+      try { if (privateGuard) text = privateGuard.protectJson(text).text; }
+      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
+      try { inboundDebugObserver?.noteJsonResponse(JSON.parse(text)); } catch { inboundDebugObserver?.noteJsonResponse({}); }
+      persistInboundDebug();
       inspectResponseLogJson(logCtx, text);
       let plaintextV2RestoreFailed = false;
+      const nestedUpstreamJson = codexPermissions?.repairResponseToolCalls !== false && nestedExecRepairPlan
+        ? repairNestedExecCallsInJson(text, nestedExecRepairPlan)
+        : text;
       let clientJson = (() => {
-        const restoredNamespace = restoreRoutedNamespaceCallsInJson(
+        const restoredNamespace = codexPermissions?.repairResponseToolCalls === false ? nestedUpstreamJson : restoreRoutedNamespaceCallsInJson(
           scrubSelfNamedToolCallNamespaceInJson(
             restoreMuseToolNamesInJson(
-              restoreImageGenCallsInJson(text, imageGenCallAliases),
+              restoreImageGenCallsInJson(nestedUpstreamJson, imageGenCallAliases),
               responseEffects.routedMuseToolNameAliases,
             ),
             selfNamedNamespaceScrubAuthorization,
           ),
           responseEffects.routedNamespaceToolAliases,
         );
-        const restoredAuthorizedBareNamespace = restoreRoutedNamespaceCallsInJson(
+        const restoredAuthorizedBareNamespace = codexPermissions?.repairResponseToolCalls === false ? restoredNamespace : restoreRoutedNamespaceCallsInJson(
           restoredNamespace,
           authorizedBareNamespaceToolAliases,
         );
-        const restored = restoreRoutedCustomCallsInJson(
+        const restored = codexPermissions?.repairResponseToolCalls === false ? restoredAuthorizedBareNamespace : restoreRoutedCustomCallsInJson(
           restoredAuthorizedBareNamespace,
           routedCustomToolNames,
           routedCustomToolRepairNames,
           declaredWireToolNames,
         );
-        const restoredToolSearch = restoreRoutedToolSearchCallsInJson(
+        const restoredToolSearch = codexPermissions?.repairResponseToolCalls === false ? restored : restoreRoutedToolSearchCallsInJson(
           restored,
           routedToolSearchNames,
         );
-        const normalizedJson = normalizeFunctionCompletionJson(restoredToolSearch);
-        const plaintextRestore = restorePlaintextV2AgentMessageCallsInJsonResult(
+        const phaseRepaired = inferResponsesMessagePhases
+          ? rewriteResponsesMessagePhasesInJsonString(restoredToolSearch)
+          : restoredToolSearch;
+        const normalizedJson = normalizeFunctionCompletionJson(phaseRepaired);
+        const plaintextRestore = codexPermissions?.repairResponseToolCalls === false ? { value: normalizedJson, overflowed: false } : restorePlaintextV2AgentMessageCallsInJsonResult(
           normalizedJson, responseEffects.plaintextV2AgentMessageToolNames, responseEffects.plaintextV2AgentMessageAliasedToolNames,
         );
         plaintextV2RestoreFailed = plaintextRestore.overflowed;
-        const repaired = plaintextRestore.value;
+        const snapshotRepaired = (codexPermissions?.backfillResponseFields !== false && route.provider.responsesSnapshotRepair !== false
+          && (hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair)
+            || usesVolcengineAgentPlanResponses(route.provider)))
+          ? repairResponsesSnapshotJson(plaintextRestore.value, nativeExchange.outboundRequestBody)
+          : plaintextRestore.value;
+        const fields = codexPermissions?.backfillResponseFields === false ? snapshotRepaired : backfillResponsesFieldsJson(snapshotRepaired);
+        const repaired = codexPermissions?.repairResponseToolCalls === false ? fields : repairFunctionCallsInJson(fields, functionRepairSchemas);
         const modelRewritten = parsed._responseModelId !== undefined && parsed._responseModelId !== parsed.modelId
           ? rewriteResponsesModelJson(repaired, parsed._responseModelId)
           : repaired;
@@ -1522,11 +1814,10 @@ export async function deliverPassthroughResponse(
       if (requiredFailure) return requiredFailure;
       commitReasoningReplayServingRoute(nativeExchange.request.headers);
       try {
-        rememberPassthroughResponseChecked(
-          JSON.parse(grokUpstreamEchoEnabled ? clientJson : text) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
-        );
+        const clientVisible = JSON.parse(clientJson) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown };
+        rememberPassthroughResponseChecked(clientVisible);
       } catch { /* non-JSON despite content-type; recording is best-effort */ }
-      if (isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) {
+      if (codexPermissions?.normalizeHostedImages !== false && isLocalCodexImageClient(req.headers, options.admission?.kind, options.inboundWire)) {
         const imageDisplay = createHostedImageDisplayRewrite();
         try {
           clientJson = imageDisplay.json(clientJson);
@@ -1546,6 +1837,9 @@ export async function deliverPassthroughResponse(
           logCtx.usageEstimatedForClient = true;
         }
       }
+      nestedExecRepairCoordinator?.markClientCommitted();
+      nestedExecInspection?.dispose();
+      nestedExecRepairCoordinator?.dispose();
       // #875: the transport-neutral reliability policy forced a bounded JSON
       // upstream for a client that asked for SSE. Reframe the completed JSON
       // as the canonical terminal SSE sequence (created → output_item.done →
@@ -1566,7 +1860,7 @@ export async function deliverPassthroughResponse(
           // the SSE item-id rewrite. Apply the same client-facing normalization
           // here or this policy would silently disable id repair for the very
           // providers that need it (raw record already happened above).
-          if (hasResponsesItemIdRepair(route.provider.responsesItemIdRepair)) {
+          if (codexPermissions?.backfillResponseFields !== false && hasResponsesItemIdRepair(route.provider.responsesItemIdRepair)) {
             candidate = repairResponsesJsonItemIds(candidate, route.provider.responsesItemIdRepair!, translatorBudget);
           }
           completed = candidate;
@@ -1576,7 +1870,7 @@ export async function deliverPassthroughResponse(
         if (completed) {
           let stream: ReadableStream<Uint8Array>;
           try {
-            stream = responsesJsonToSseStream(completed);
+            stream = codexRawJsonSse(completed, codexPermissions) ?? responsesJsonToSseStream(completed);
           } catch (error) {
             if (error instanceof RangeError) {
               return formatErrorResponse(
@@ -1590,7 +1884,7 @@ export async function deliverPassthroughResponse(
           const sseHeaders = sanitizePassthroughHeaders(headers, passthroughHeaderOptions);
           sseHeaders.set("content-type", "text/event-stream");
           sseHeaders.set("cache-control", "no-store");
-          return new Response(stream, {
+          return new Response(observeClientBoundSse(stream), {
             status: upstreamResponse.status,
             statusText: upstreamResponse.statusText,
             headers: sseHeaders,
@@ -1601,6 +1895,7 @@ export async function deliverPassthroughResponse(
       // other relay-free path — normalize ids so both bounded-JSON paths agree.
       const outboundJson = options.inboundTransport === "websocket"
         && route.staticPolicy.model.responsesUpstreamStreaming === false
+        && codexPermissions?.backfillResponseFields !== false
         && hasResponsesItemIdRepair(route.provider.responsesItemIdRepair)
         ? (() => {
           try {
@@ -1614,6 +1909,11 @@ export async function deliverPassthroughResponse(
           }
         })()
         : clientJson;
+      if (downstreamObserver) {
+        try { downstreamObserver.noteJsonResponse(JSON.parse(outboundJson)); }
+        catch { downstreamObserver.noteJsonResponse({}); }
+        persistDownstreamOnce();
+      }
       return new Response(outboundJson, {
         status: upstreamResponse.status,
         statusText: upstreamResponse.statusText,
@@ -1624,8 +1924,15 @@ export async function deliverPassthroughResponse(
       try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already closed */ }
       return formatErrorResponse(502, "upstream_error", "plaintext V2 agent-message response used an unsupported content type");
     }
+    if (privateGuard && upstreamResponse.body) {
+      const error = new CodexPrivateCredentialProtectionError("private-body-unreadable");
+      void upstreamResponse.body.cancel(error).catch(() => {});
+      return privateFailure(error);
+    }
     // An unclassified passthrough body is relayed directly and has no bounded completion observer;
     // use the same non-error-status success boundary as SSE instead of retaining per-stream state.
+    nestedExecInspection?.dispose();
+    nestedExecRepairCoordinator?.dispose();
     commitReasoningReplayServingRoute(nativeExchange.request.headers);
     const body = relayWithAbort(upstreamResponse.body, upstream);
     const turnAc = new AbortController();

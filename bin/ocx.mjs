@@ -62,6 +62,7 @@ import {
 import { PNPM_READ_CWD, withPnpmCommandCwd, pnpmReadEnvironment } from "../src/update/pnpm-read-policy.mjs";
 import { checkRegistryPackageIntegrity } from "../src/update/registry-integrity.mjs";
 import { hasPendingTeardownIn } from "../src/config/pending-teardown-names.mjs";
+import { forkUpdateDecision } from "../src/fork/version-policy.mjs";
 import {
   npmCachePreflightFailureMessage,
   resolveNpmCachePath,
@@ -351,9 +352,20 @@ async function runPackageManagerSelfUpdate(manager, child) {
   const latest = child?.version ?? (latestResult.status === 0 && typeof latestResult.stdout === "string" ? latestResult.stdout.trim() : "");
 
   console.log(`opencodex v${current} (installed via ${manager}, tag ${tag})`);
-  if (latest && latest === current) {
+  const forkDecision = typeof current === "string" && current.includes("-ben.")
+    ? forkUpdateDecision(latest || null, current, tag)
+    : latest && latest === current ? "same" : "proceed";
+  if (forkDecision === "same") {
     console.log(`Already on the latest ${tag} version (v${latest}).`);
     process.exit(0);
+  }
+  if (forkDecision === "unresolved") {
+    console.error("opencodex: could not resolve the registry version for this fork build; aborting before stopping the proxy.");
+    process.exit(1);
+  }
+  if (forkDecision === "older") {
+    console.error(`opencodex: registry target v${latest} is older than this fork build; refusing to downgrade this fork build.`);
+    process.exit(1);
   }
 
   const integrity = checkRegistryPackageIntegrity(PKG, latest || null, args => {

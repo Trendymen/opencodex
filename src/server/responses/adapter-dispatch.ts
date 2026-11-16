@@ -6,8 +6,11 @@ import { projectLocalModelRefusalLog } from "../request-log-failure-detail";
 import { markProxyError, carryProxyError, isProxyError } from "../../lib/client-error-body";
 import { codexAdapterBuildRefusal } from "./passthrough-build-error";
 import { createAutoPauseRefreshErrorMapper, recoverAutoPausedAccount } from "./account-auto-pause-recovery";
+import type { AdapterDispatchInputs } from "../responses-adapter-dispatch-types";
 import { wasAccountAutoPaused, wasPermanentAccountRefusal } from "../../oauth/account-auto-pause";
 import { bindAnthropicRejectionResponse } from "../../adapters/anthropic-rejection-memo";
+import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
+import { codexPassthroughProviderFetch } from "../../fork/codex-passthrough-fetch";
 import { deferPhysicalSendReporter } from "./deferred-send-reporter";
 import { usesApiKeyAccount } from "../../providers/label";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
@@ -20,10 +23,7 @@ import { isNonReplayableResponse, isSameTargetRetryHold } from "../../lib/upstre
 import { sanitizeNonReplayableUpstreamError } from "./non-replayable-error";
 import { isLocalUpstream } from "../../lib/local-upstream";
 import { resolveConnectTimeoutMs, resolveStallTimeoutMs } from "../../stall-timeout";
-import type { ResponsesRequestContext, ResponsesAdmissionState } from "./core-options";
 import type { PreparedResponsesRequest } from "./request-prepare";
-import type { ResponsesTransport } from "./request-transport";
-import type { ResponsesEffects } from "./response-effects";
 import type { ResponsesSendBudget } from "./request-send-budget";
 import { linkAbortSignal } from "./core-lifetime";
 import type { AdapterRequest } from "../../adapters/base";
@@ -42,7 +42,7 @@ import { redactSecretString } from "../../lib/redact";
 import { rewriteUpstreamPolicyRefusal } from "./policy-refusal";
 import { carryPolicyCandidateRefusal } from "./policy-request-scope";
 import { withProviderRequestSlot } from "../../providers/request-pacing";
-import { providerFetch, fetchWithHeaderTimeout, safeHostLabel } from "./fetch-helpers";
+import { fetchWithHeaderTimeout, safeHostLabel } from "./fetch-helpers";
 import { isAnthropicBillingKeyPool, rotateAnthropicBillingKeyOnResponse } from "../../providers/anthropic-billing-recovery";
 import {
   transientRetryPolicyFor,
@@ -128,75 +128,12 @@ import { AdmissionModelDeniedError, admissionModelDeniedResponse, projectAdmissi
 import { rejectAnthropicPerMessageEffort } from "../../adapters/anthropic/per-message-effort";
 /** One responsibility of the Responses request pipeline; state owners are explicit. */
 export async function prepareAdapterExchange(
-  requestContext: Pick<ResponsesRequestContext, "options" | "config" | "logCtx" | "req">,
-  admissionState: ResponsesAdmissionState,
-  requestState: Pick<
-    PreparedResponsesRequest,
-    | "parsed"
-    | "toolBridgeMaps"
-    | "translatorBudget" | "completedToolBlocks"
-    | "selectedForwardHeaders"
-    | "route"
-    | "inboundWire"
-    | "clientRequestedStream"
-    | "subagentQuotaFailureModel"
-    | "subagentFallbackAccountId"
-  >,
-  transportState: Pick<
-    ResponsesTransport,
-    | "activeAdapter"
-    | "adapter"
-    | "sameTargetRequest"
-    | "sameTargetParsed"
-    | "sameTargetToken"
-    | "transportToken"
-    | "oauthDispatch"
-    | "recoverAutoPausedSelection"
-    | "imageTierBias"
-    | "oauth401ReplayAttempted"
-    | "isOAuth401ReplayProvider"
-    | "sentOAuthSnapshot"
-    | "refreshResolvedOAuthSelection"
-    | "replayOAuthCredentialSnapshot"
-    | "invalidateSameTargetRequest"
-    | "resolveSelectionAdapter"
-    | "resolveCopilotSelection"
-    | "copilotRefusalResponse"
-    | "anthropicInstance"
-    | "currentAnthropicRouteDecision"
-    | "anthropicRouteDecision"
-    | "anthropicPoolAccountId"
-    | "anthropicPoolFailovers"
-    | "anthropicSessionKey"
-    | "commitResolvedOAuthSelection"
-    | "genericFailoverAccountId"
-    | "genericFailovers"
-    | "genericFailoverLimit" | "anthropicFailoverLimit"
-    | "applyFailoverSnapshot"
-    | "noteRoutedAttemptSend" | "attemptSendDeferred" | "deferPhysicalAttribution"
-  >,
-  responseEffects: Pick<ResponsesEffects, "cancelResponseCompletion" | "notifyResponseComplete" | "refreshRequestToolAliases">,
-  sendBudgetState: Pick<
-    ResponsesSendBudget,
-    | "adapterSendBudget"
-    | "adapterDispatchBudget"
-    | "noteAdapterPhysicalSend"
-    | "noteAdapterRecoveryWithheld"
-    | "remainingTransientSendBudget"
-    | "adapterSendBudget"
-    | "transientSendReporter"
-    | "recoverySendAllowance"
-    | "recoveryClassFor"
-    | "sendBudgetExhausted"
-    | "reserveCredentialHop"
-    | "pendingHopPermit"
-    | "workflowRootId"
-    | "claimAmbiguousResend"
-    | "sendsUsed"
-    | "targetSendsUsed"
-    | "initialSendAllowance"
-    | "noteInitialDispatch"
-  >,
+  requestContext: AdapterDispatchInputs["requestContext"],
+  admissionState: AdapterDispatchInputs["admissionState"],
+  requestState: AdapterDispatchInputs["requestState"] & Pick<PreparedResponsesRequest, "completedToolBlocks">,
+  transportState: AdapterDispatchInputs["transportState"],
+  responseEffects: AdapterDispatchInputs["responseEffects"],
+  sendBudgetState: AdapterDispatchInputs["sendBudgetState"],
 ) {
   const { options, config, logCtx, req } = requestContext;
   const {
@@ -421,7 +358,8 @@ export async function prepareAdapterExchange(
           onPhysicalSend: send => { antigravityDenial.beforeSend(); noteAdapterPhysicalSend(inputTokenEstimate, send); },
           onRecoveryWithheld: noteAdapterRecoveryWithheld,
           stream: parsed.stream,
-          executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+          executor: codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
             pacingSlotAcquired: true,
             pacingSlot,
             dispatchOverride: oauthDispatch(builtInitialRequest),
@@ -498,7 +436,8 @@ export async function prepareAdapterExchange(
             headers: builtInitialRequest.headers,
             body: builtInitialRequest.body,
           }, recovery), upstream.signal, sendConnectMs(), parsed.stream,
-            providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+            codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
               dispatchOverride: oauthDispatch(builtInitialRequest),
               providerName: route.providerName,
               modelId: route.modelId,
@@ -526,6 +465,7 @@ export async function prepareAdapterExchange(
           label: safeHostLabel(builtInitialRequest.url), destination: errorDestinationLabel(builtInitialRequest.url),
           claimAmbiguousResend: claimPreHeaderResend,
           offlineWait: options.comboAttempt ? undefined : createProviderOfflineResendWait(route.providerName, route.provider, builtInitialRequest.url, config.offlineResendWaitSec),
+          codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
           ...(sendBudgetState.workflowRootId || sendBudgetState.adapterSendBudget?.spendEnforced || options.comboDispatchPermit || transientPolicy || resetPolicy || compactPrepaid || options.comboAttempt
             || anthropicInstance || billingPoolRequest || autoPauseEnabled
             ? {
@@ -640,7 +580,7 @@ export async function prepareAdapterExchange(
       onDispatch?: () => void,
       preserveFailureResponse?: Response,
     ): Promise<Response | { failed: Response }> => {
-      let replacementAdmitted = false, dispatchConfirmed = false;
+      let replacementAdmitted = false, dispatchConfirmed = false, physicalAdmissionRefused = false;
       // Only budgets without a physical observer need this legacy workflow report.
       let fastDowngradeWorkflowCharged = false;
       const chargeFastDowngradeWorkflowSend = (): void => {
@@ -727,7 +667,8 @@ export async function prepareAdapterExchange(
                 },
                 onRecoveryWithheld: noteAdapterRecoveryWithheld,
                 stream: parsed.stream,
-                executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                executor: codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                   pacingSlotAcquired: true,
                   pacingSlot,
                   dispatchOverride: oauthDispatch(retryRequest),
@@ -795,10 +736,14 @@ export async function prepareAdapterExchange(
                   applyUpstreamRecoveryInit({
                     method: retryRequest.method, headers: retryRequest.headers, body: retryRequest.body,
                   }, recoveryKind), upstream.signal, sendConnectMs(), parsed.stream,
-                  providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                  codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
+                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                     dispatchOverride: oauthDispatch(retryRequest),
                     onPhysicalDispatch: deferredRefetch ? () => {
-                      if (!deferredRefetch.beforeDispatch()) throw new SendBudgetExhaustedError(errorDestinationLabel(retryRequest.url));
+                      if (!deferredRefetch.beforeDispatch()) {
+                        physicalAdmissionRefused = true;
+                        throw new SendBudgetExhaustedError(errorDestinationLabel(retryRequest.url));
+                      }
                       confirmDispatch();
                     } : undefined,
                     providerName: route.providerName,
@@ -811,6 +756,7 @@ export async function prepareAdapterExchange(
                 abortSignal: upstream.signal,
                 label: safeHostLabel(retryRequest.url), destination: errorDestinationLabel(retryRequest.url),
                 claimAmbiguousResend: claimPreHeaderResend,
+          codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                 ...(refetchAllowance
                   ? {
                     attempts: refetchAllowance.attempts,
@@ -851,7 +797,8 @@ export async function prepareAdapterExchange(
           releaseCodexAuthContextProbeLease(admissionState.authCtx);
           return { failed: codexRefusal };
         }
-        if (preserveFailureResponse && (recovery !== "reasoning-effort-downgrade" || err instanceof SendBudgetExhaustedError) && !replacementAdmitted && !options.abortSignal?.aborted)
+        if (preserveFailureResponse && (recovery !== "reasoning-effort-downgrade" || err instanceof SendBudgetExhaustedError) && !replacementAdmitted && !options.abortSignal?.aborted
+          && !(physicalAdmissionRefused && err instanceof SendBudgetExhaustedError && wasAccountAutoPaused(preserveFailureResponse)))
           return { failed: preserveFailureResponse };
         cleanupUpstreamAbort();
         upstream.abort();
@@ -928,10 +875,10 @@ export async function prepareAdapterExchange(
         });
       if (modelRotation) { upstreamResponse = modelRotation; continue recovery; }
       if (wasAccountAutoPaused(upstreamResponse) && route.provider.authMode !== "forward") {
-        const recovered = await recoverAutoPausedAccount({ requestKey: transportState, reserve: reserveCredentialHop,
+        const recovered = await recoverAutoPausedAccount({ requestKey: transportState, response: upstreamResponse, signal: upstream.signal, reserve: reserveCredentialHop,
           remaining: transientSendCapFor(transientRetryPolicyFor(route.provider)?.attempts, sendBudgetState.targetSendsUsed),
           mapRefreshError: createAutoPauseRefreshErrorMapper(upstreamResponse, upstream, cleanupUpstreamAbort, copilotRefusalResponse, () => (options.abortSignal ?? req.signal).aborted, clientCancelledResponse),
-          refresh: () => transportState.recoverAutoPausedSelection(parsed), refetch: () => rebuildAndRefetch("oauth-account-429"), setPermit: permit => { sendBudgetState.pendingHopPermit = permit; } });
+          refresh: () => transportState.recoverAutoPausedSelection(parsed), refetch: failure => rebuildAndRefetch("oauth-account-429", undefined, failure), setPermit: permit => { sendBudgetState.pendingHopPermit = permit; } });
         if (!recovered) break;
         if ("failed" in recovered) return recovered.failed;
         upstreamResponse = recovered; continue recovery;
