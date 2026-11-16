@@ -43,7 +43,7 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 
 ## 诊断与维护
 
-- 日志表格保持独立滚动，状态读屏辅助文字不再撑出页面空白。入口：[日志页面](gui/src/pages/Logs.tsx)。生产构建已在浏览器检查桌面与窄屏的滚动边界和末行可达性，尚无持久回归测试。
+- `install:local` 在构建后、打包前给主界面与 classic 的产物 CSS 添加日志表格定位规则，避免状态读屏辅助文字撑出页面空白；暂存安装和最终安装均检查补丁。入口：[本地安装脚本](scripts/install-local.ts)。日志页源码保持官方定位方式，单独构建 GUI 不包含补丁。临时探针覆盖幂等与暂存拒绝路径，实际产物已在 Chrome 检查桌面、窄屏和末行可达性；尚无持久专项回归或真实全局安装验收。
 - 可选 `forkModelApiListener` 默认关闭。回环主服务可保留独立管理端口并在 `0.0.0.0:10100` 提供原生模型数据面；非回环主服务必须使用 `10100`，不再创建辅助入口。辅助入口拒绝管理、GUI、session、配对、health/readiness 与 Remote Workspace；凭据、scope、用量和能力开关沿用原生规则。保存拓扑只影响下次启动，CLI 用同进程证明显示真实绑定和待重启状态；无证明显示未验证。配置与边界见 [Fork configuration](docs-site/src/content/docs/reference/configuration/fork-extensions.md#model-api-listener)。实现：[topology](src/fork/model-api-listener-config.ts)、[listener](src/fork/model-api-listener.ts)、[status](src/fork/model-api-listener-status.ts)。本地检查不代表已部署或外部设备连通。
 - 辅助 `10100` 入口支持按 API key 配置模型转换及 effort 上限，响应中的协议模型身份还原为客户端请求值，原服务记录实际处理结果。Messages 在应用上限后沿用官方映射，将 `minimal` / `ultra` 表达为 `low` / `max`；`none` 关闭 thinking 并省略 effort，仍启用的 thinking token 预算保持。主服务后续路由或 effort 设置可能覆盖转换；配置与边界见 [per-key model conversion](docs-site/src/content/docs/reference/configuration/fork-extensions.md#per-key-model-conversion)；实现入口为 [conversion](src/fork/model-conversion.ts)。隔离验证不代表已部署至运行服务。
 - 文件读取投影已移除的 OpenCode Free 配置时，主动读取使用同一份原始字节尝试保留恢复副本，再执行 Fork listener 拓扑校验；passive 诊断不创建副本。无效的显式拓扑仍被拒绝，有效拓扑在修复后保留。入口：[配置](src/config.ts)、[诊断](src/config/diagnostics.ts)。
