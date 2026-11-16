@@ -25,6 +25,8 @@ The auxiliary listener can apply model conversion and an effort ceiling per API 
 
 Encrypted task recovery adds strict backend-envelope handling, one bounded native replay after exhausted transient-5xx retries, and a ciphertext-free notice when an admitted parent `MESSAGE` times out. Unreadable ciphertext is terminal; it is not forwarded to ordinary third-party routes or stored in continuation state. Recovery remains opt-in.
 
+The logs table scrolls within its own area, and status text for screen readers no longer adds blank space to the page.
+
 The Fork provides disk diagnostics, independent text-sample controls, and offline staging for `install:local`. Once the package transaction succeeds, a later failure does not automatically roll back the package; a service or readiness failure does not automatically restore the Volta registration. `ben.N` versions compare the upstream core first and the Fork revision second; a stable release of the same core does not overwrite the Fork. Published tags remain immutable.
 
 Development and release candidates use `dev`. A published build is identified by its immutable Fork tag and formal GitHub Release. Release validation uses the upstream workflow's complete `workflow_dispatch` run on the exact `dev` commit; it does not depend on a `main` push run.
