@@ -647,6 +647,7 @@ jobs:
           # residue. Matches the convention already used by the other workflows.
           persist-credentials: false
           ref: ${{ needs.changes.outputs.checkout_ref }}
+          fetch-depth: 64
           # tests/ci-workflows/release-version-line.test.ts compares package.json against the
           # newest release tag. actions/checkout fetches no tags by default, so
           # without this the check reads an empty tag set and passes on anything -
@@ -663,7 +664,7 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: test-runner # See the Bun roles contract above test.
-
+      - { name: Prepare verified Fork official base, env: { OCX_OFFICIAL_RELEASE_API_TOKEN: "${{ github.token }}" }, run: bun scripts/prepare-fork-official-base.ts }
       # The GUI install is NOT optional here, however unrelated it looks to a
       # test shard. Several files under tests/ import JSX-bearing modules from
       # gui/src (ProviderRail and friends), and React is declared only in
@@ -849,7 +850,9 @@ jobs:
         run: bun run skill:surface:check
 
       - name: Test release evidence, history and docs deployment
-        run: node --test .github/scripts/release-dispatch-guard.test.cjs .github/scripts/release-evidence.test.cjs .github/scripts/release-history.test.cjs .github/scripts/release-resume.test.cjs .github/workflows/deploy-docs.test.cjs
+        run: |
+          node .github/scripts/fork-prepare-release-history.cjs
+          node --test .github/scripts/release-dispatch-guard.test.cjs .github/scripts/release-evidence.test.cjs .github/scripts/release-history.test.cjs .github/scripts/release-resume.test.cjs .github/workflows/deploy-docs.test.cjs
 
       - name: Check release helper syntax
         run: bun build scripts/release.ts --target=bun --outdir=.tmp/ci-release-script-check
@@ -924,7 +927,7 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: test-runner # See the Bun roles contract above test.
-
+      - { name: Prepare verified Fork official base, env: { OCX_OFFICIAL_RELEASE_API_TOKEN: "${{ github.token }}" }, run: bun scripts/prepare-fork-official-base.ts }
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile
@@ -997,7 +1000,7 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: test-runner # See the Bun roles contract above test.
-
+      - { name: Prepare verified Fork official base, env: { OCX_OFFICIAL_RELEASE_API_TOKEN: "${{ github.token }}" }, run: bun scripts/prepare-fork-official-base.ts }
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile
@@ -1159,7 +1162,7 @@ jobs:
         uses: ./.github/actions/setup-project-bun
         with:
           role: test-runner # See the Bun roles contract above test.
-
+      - { name: Prepare verified Fork official base, env: { OCX_OFFICIAL_RELEASE_API_TOKEN: "${{ github.token }}" }, run: bun scripts/prepare-fork-official-base.ts }
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile
