@@ -16,6 +16,8 @@ import { canConfigureResponsesReasoningReplay } from "../responses-reasoning-rep
 import { isCatalogProviderId } from "../provider-icons";
 import { isVertexProvider, providerSupportsLiveModelDiscovery, type WorkspaceItem } from "./catalog";
 import type { ProviderUpdatePatch } from "../components/provider-workspace/types";
+import { codexPassthroughDelta } from "../components/provider-workspace/codex-passthrough-draft";
+import { mergeCodexPassthroughPatch, type CodexPassthroughConfig } from "../../../src/fork/codex-passthrough-contract";
 
 export type ProviderSettingsPacingRule = {
   requestsPerMinute?: number;
@@ -43,6 +45,9 @@ export interface ProviderSettingsDraft {
   liveModels: boolean;
   subscriptionRetries: string;
   cursorHttpVersion: "http2" | "http1.1";
+  codexPassthrough: CodexPassthroughConfig | undefined;
+  codexPassthroughObserved: CodexPassthroughConfig | undefined;
+  codexPassthroughForceAllOff: boolean;
   pacingEnabled: boolean;
   keyPacing: ProviderSettingsKeyPacing;
   pacingRpm: string;
@@ -173,6 +178,9 @@ export function providerSettingsDraftFromItem(item: WorkspaceItem): ProviderSett
     liveModels: liveModelDiscoverySupported ? item.liveModels !== false : false,
     subscriptionRetries: subscriptionRetries(item),
     cursorHttpVersion: effectiveCursorHttpVersion(item.upstreamHttpVersion),
+    codexPassthrough: item.codexPassthrough,
+    codexPassthroughObserved: item.codexPassthrough,
+    codexPassthroughForceAllOff: false,
     pacingEnabled: item.requestPacing?.enabled === true,
     keyPacing: {
       ...(item.requestPacing?.keySelection !== undefined ? { keySelection: item.requestPacing.keySelection } : {}),
@@ -378,6 +386,8 @@ export function providerSettingsDeltaPatch(
   }
   const pacingDirty = pacingSignature(draftRequestPacing(draft)) !== pacingSignature(draftRequestPacing(baseline));
   if (pacingDirty) patch.requestPacing = draftRequestPacing(draft);
+  const codexPatch = codexPassthroughDelta(baseline.codexPassthrough, draft.codexPassthrough, draft.codexPassthroughForceAllOff);
+  if (codexPatch) patch.codexPassthrough = codexPatch;
   const fieldsDirty = Object.keys(patch).some(key => key !== "requestPacing");
   return { patch, fieldsDirty, pacingDirty };
 }
@@ -407,6 +417,9 @@ export function rebaseProviderSettingsDraft(
     liveModels: pick("liveModels"),
     subscriptionRetries: pick("subscriptionRetries"),
     cursorHttpVersion: pick("cursorHttpVersion"),
+    codexPassthrough: latest.codexPassthrough,
+    codexPassthroughObserved: latest.codexPassthroughObserved,
+    codexPassthroughForceAllOff: draft.codexPassthroughForceAllOff,
     pacingEnabled: pick("pacingEnabled"),
     keyPacing: pick("keyPacing"),
     pacingRpm: pick("pacingRpm"),
@@ -415,8 +428,11 @@ export function rebaseProviderSettingsDraft(
     pacingModels: pick("pacingModels"),
   };
   const pacing = mergeProviderPacing(oldBaseline, draft, draftRequestPacing(latest));
+  const codexPatch = codexPassthroughDelta(oldBaseline.codexPassthrough, draft.codexPassthrough, draft.codexPassthroughForceAllOff);
+  const codex = mergeCodexPassthroughPatch(latest.codexPassthrough, codexPatch);
   return {
     ...rebased,
+    codexPassthrough: codex.ok ? codex.value : draft.codexPassthrough,
     pacingEnabled: pacing.enabled === true,
     keyPacing: {
       ...(pacing.keySelection !== undefined ? { keySelection: pacing.keySelection } : {}),
