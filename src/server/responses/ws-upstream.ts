@@ -175,9 +175,10 @@ export async function codexWsUpstreamFetch(
   caller?: string,
   recoverPhysicalSend?: (send: () => Promise<void>, estimatedInputTokens: number) => Promise<boolean>,
   providerName?: string,
+  permissions?: import("../../fork/codex-passthrough-contract").CodexPassthroughPermissions,
 ): Promise<Response> {
-  const prepared = prepareCodexWsRequest(url, init);
-  if (!prepared) return sseFallback(url, prepareCodexHttpInit(url, init));
+  const prepared = prepareCodexWsRequest(url, init, permissions);
+  if (!prepared) return sseFallback(url, prepareCodexHttpInit(url, init, permissions));
   init = prepared.httpInit;
   if ((url !== CODEX_RESPONSES_HTTP_URL && url !== OPENAI_API_RESPONSES_URL)
     || !bunSupportsBoundedCodexWsRelay(runtime)) {
@@ -268,7 +269,7 @@ export async function codexWsUpstreamFetch(
   }
   return codexWsExchange({
     session, url, init, prepared: outboundPrepared, incrementalPlan, sseFallback, onQuota, beforeDispatch,
-    nativeControl: control,
+    nativeControl: control, permissions,
     // The exchange reports the frame that actually leaves: the delta for an incremental send,
     // the full create for its cache-miss recovery (#8453 replay guard).
     beforeContinuation, onPhysicalDispatch, onContinuationDispatch,

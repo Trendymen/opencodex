@@ -1,20 +1,31 @@
-import type { OcxProviderConfig } from "../types";
 import { openaiResponsesUrl } from "../adapters/openai-responses-url";
 import { isCanonicalOpenAiForwardProvider, normalizedBaseUrl } from "./openai-forward-destination";
+import { isOpenAiGptFamilyModel } from "./openai-model-identity";
 
 export { CODEX_FORWARD_BASE_URL, isCanonicalOpenAiForwardProvider } from "./openai-forward-destination";
+
+export interface OpenAiDestinationShape {
+  readonly adapter?: string;
+  readonly authMode?: string;
+  readonly baseUrl?: string;
+  readonly responsesPath?: string;
+}
 
 export const OPENAI_CODEX_PROVIDER_ID = "openai";
 export const LEGACY_OPENAI_MULTI_PROVIDER_ID = "openai-multi";
 export const OPENAI_API_PROVIDER_ID = "openai-apikey";
 export const LEGACY_CHATGPT_PROVIDER_ID = "chatgpt";
 
+export function normalizedOpenAiBaseUrl(value: string | undefined): string | undefined {
+  return typeof value === "string" ? normalizedBaseUrl(value) : undefined;
+}
+
 /**
  * Response evidence is separate from Fast capability and request serialization. Preserve the
  * known Codex exception (#2558); other destinations may declare their response contract without
  * a gateway-name or URL heuristic. Absence retains the authoritative legacy default.
  */
-export function responseTierAuthorityForProvider(provider: OcxProviderConfig): boolean | undefined {
+export function responseTierAuthorityForProvider<T extends OpenAiDestinationShape & { readonly responseTierAuthoritative?: boolean }>(provider: T): boolean | undefined {
   return isCanonicalOpenAiForwardProvider(provider) ? false : provider.responseTierAuthoritative;
 }
 
@@ -31,21 +42,43 @@ const OPENAI_API_RESPONSES_URL = `${OPENAI_API_BASE_URL}/responses`;
  * `baseUrl: "https://api.openai.com"` with `responsesPath: "/other"` official even though that
  * request never reaches the official Responses endpoint.
  */
-function resolvedResponsesEndpoint(provider: OcxProviderConfig): string | undefined {
+function resolvedResponsesEndpoint(provider: OpenAiDestinationShape): string | undefined {
+  if (typeof provider.baseUrl !== "string") return undefined;
   try {
     const raw = provider.responsesPath === undefined
       ? openaiResponsesUrl(provider.baseUrl)
       : `${provider.baseUrl.replace(/\/$/, "")}${provider.responsesPath}`;
-    return normalizedBaseUrl(raw);
+    return normalizedOpenAiBaseUrl(raw);
   } catch {
     return undefined;
   }
 }
 
-function isOfficialOpenAiResponsesDestination(provider: OcxProviderConfig): boolean {
+function isOfficialOpenAiResponsesDestination(provider: OpenAiDestinationShape): boolean {
   // Exact normalized URL keeps lookalike/suffix hosts out of this set: `api.openai.com.evil.test`
   // resolves to its own origin, never to the official one.
   return resolvedResponsesEndpoint(provider) === OPENAI_API_RESPONSES_URL;
+}
+
+export function isOfficialOpenAiApiBaseUrl(baseUrl: string | undefined): boolean {
+  return normalizedOpenAiBaseUrl(baseUrl) === OPENAI_API_BASE_URL;
+}
+
+export function isRawOfficialOpenAiApiBaseUrl(baseUrl: string | undefined): boolean {
+  return typeof baseUrl === "string"
+    && baseUrl.replace(/\/+$/, "") === OPENAI_API_BASE_URL;
+}
+
+export function isOpenAiOrChatGptHost(baseUrl: string | undefined): boolean {
+  try {
+    const hostname = new URL(baseUrl ?? "").hostname.toLowerCase();
+    return hostname === "openai.com"
+      || hostname.endsWith(".openai.com")
+      || hostname === "chatgpt.com"
+      || hostname.endsWith(".chatgpt.com");
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -54,9 +87,9 @@ function isOfficialOpenAiResponsesDestination(provider: OcxProviderConfig): bool
  * merely speaks the Responses wire cannot without an explicit capability opt-in (#422).
  * This is a protocol claim, not OpenAI identity or permission to forward caller credentials.
  */
-export function supportsNativeResponsesCompactEndpoint(
+export function supportsNativeResponsesCompactEndpoint<T extends OpenAiDestinationShape & { readonly supportsNativeCompactEndpoint?: boolean }>(
   providerName: string,
-  provider: OcxProviderConfig,
+  provider: T,
 ): boolean {
   if (isCanonicalOpenAiForwardProvider(provider)) return true;
   // Generic OAuth selection/refresh belongs to the routed Responses path, not this direct transport.
@@ -64,11 +97,11 @@ export function supportsNativeResponsesCompactEndpoint(
     && provider.authMode !== "oauth") return true;
   return providerName === OPENAI_API_PROVIDER_ID
     && provider.adapter === "openai-responses"
-    && normalizedBaseUrl(provider.baseUrl) === OPENAI_API_BASE_URL;
+    && isOfficialOpenAiApiBaseUrl(provider.baseUrl);
 }
 
 /** Native v2 is independent of the v1 endpoint and ciphertext replay capabilities. */
-export function supportsNativeResponsesCompactionTrigger(provider: OcxProviderConfig): boolean {
+export function supportsNativeResponsesCompactionTrigger<T extends OpenAiDestinationShape & { readonly supportsNativeCompactionTrigger?: boolean }>(provider: T): boolean {
   return isCanonicalOpenAiForwardProvider(provider)
     || (provider.adapter === "openai-responses" && provider.supportsNativeCompactionTrigger === true);
 }
@@ -81,7 +114,7 @@ export function supportsNativeResponsesCompactionTrigger(provider: OcxProviderCo
  * receive the caller's credentials (see the forward-header gate in the Responses adapter), so
  * forward auth says nothing about which backend is on the other end.
  */
-export function isOpenAiOperatedResponsesDestination(provider: OcxProviderConfig): boolean {
+export function isOpenAiOperatedResponsesDestination<T extends OpenAiDestinationShape>(provider: T): boolean {
   if (isCanonicalOpenAiForwardProvider(provider)) return true;
   return provider.adapter === "openai-responses"
     && isOfficialOpenAiResponsesDestination(provider);
@@ -98,7 +131,16 @@ export function isOpenAiOperatedResponsesDestination(provider: OcxProviderConfig
  * Keyed by destination rather than provider id: a blob's issuer is the URL that produced it, not the
  * local config key a replay travels under.
  */
-export function destinationDecodesNativeCompactionBlob(provider: OcxProviderConfig): boolean {
+export function destinationDecodesNativeCompactionBlob<T extends OpenAiDestinationShape & { readonly decodesNativeCompactionBlobs?: boolean }>(provider: T): boolean {
   return isOpenAiOperatedResponsesDestination(provider)
     || provider.decodesNativeCompactionBlobs === true;
+}
+
+export function isThirdPartyNonGptResponsesRoute<T extends OpenAiDestinationShape>(
+  provider: T,
+  resolvedModelId: string,
+): boolean {
+  return provider.adapter === "openai-responses"
+    && !isOpenAiOperatedResponsesDestination(provider)
+    && !isOpenAiGptFamilyModel(resolvedModelId);
 }

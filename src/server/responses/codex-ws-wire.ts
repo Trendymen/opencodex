@@ -10,6 +10,7 @@ import { isRateLimitOrQuotaFailureMessage, recognizedUpstreamError } from "../..
 import type { RequestFailureCause, RequestFailureStage } from "../../lib/request-failure-model";
 import { packageVersion } from "../../lib/package-version";
 import { registerProviderResponseProvenance } from "../../providers/request-pacing";
+import { decideCodexLocalError, codexLocalGatewayResponse, markCodexLocalFailure } from "../../fork/codex-passthrough-local-errors";
 // If the 101 never arrives (network black hole), give SSE a chance well before
 // the caller's connect timeout (default 200s) would fire.
 export const UPGRADE_DEADLINE_MS = 10_000;
@@ -395,14 +396,21 @@ export function codexWsOcxVersion(): string {
  * content-free stage detail in the message and the metadata snapshot in the headers, the
  * same way a refused create does, so quota captured during the prelude is not lost.
  */
-export function codexWsPreResponseFailure(status: 502 | 504, message: string, prelude: Headers): Response {
+export function codexWsPreResponseFailure(status: 502 | 504, message: string, prelude: Headers, permissions?: CodexPassthroughPermissions): Response {
+  const failure = { kind: "transport", reason: status === 504 ? "timeout" : "connection" } as const;
+  const decision = decideCodexLocalError(permissions, failure);
+  if (decision.kind === "gateway") {
+    const response = codexLocalGatewayResponse(decision, failure);
+    for (const [name, value] of prelude) if (!response.headers.has(name)) response.headers.set(name, value);
+    markResponseNonReplayable(response); return response;
+  }
   const headers = new Headers(prelude);
   headers.set("content-type", "application/json");
   headers.set("cache-control", "no-store");
   const code = status === 504 ? UPSTREAM_NO_RESPONSE_CODE : UPSTREAM_CLOSED_BEFORE_RESPONSE_CODE;
   const response = new Response(JSON.stringify({ error: { type: "upstream_error", code, message } }), { status, headers });
   markResponseNonReplayable(response);
-  return response;
+  return markCodexLocalFailure(response, failure);
 }
 
 const CLOSED_BEFORE_TERMINAL = "codex websocket closed before a Responses terminal event";
@@ -546,6 +554,8 @@ export type ResponsesWsRelayEvent = {
   type: string;
   text: string;
   payload: Record<string, unknown>;
+  terminalType?: string;
+  observationPayload?: Record<string, unknown>;
 };
 
 /**
@@ -558,6 +568,7 @@ export type ResponsesWsRelayEvent = {
 export function normalizeResponsesWsRelayEvent(
   text: string,
   observe?: (payload: Record<string, unknown>) => void,
+  permissions?: CodexPassthroughPermissions,
 ): ResponsesWsRelayEvent | null {
   let payload: unknown;
   try {
@@ -579,19 +590,15 @@ export function normalizeResponsesWsRelayEvent(
   const status = response && typeof response === "object" && !Array.isArray(response)
     ? (response as Record<string, unknown>).status
     : undefined;
-  const type = status === "completed"
-    ? "response.completed"
-    : status === "failed"
-      ? "response.failed"
-      : status === "incomplete" || status === "cancelled"
-        ? "response.incomplete"
-        : "response.failed";
+  const type = `response.${codexDoneTerminalStatus(record)}`;
   const normalizedRecord: Record<string, unknown> = { ...record, type };
   if (type === "response.failed" && status !== "failed") {
     normalizedRecord.response = response && typeof response === "object" && !Array.isArray(response)
       ? { ...(response as Record<string, unknown>), status: "failed" }
       : { status: "failed" };
   }
+  if (permissions?.synthesizeTerminalFailure === false) return { type: record.type, text: /[\r\n]/.test(text) ? JSON.stringify(record) : text,
+    payload: record, terminalType: type, observationPayload: normalizedRecord };
   return { type, text: JSON.stringify(normalizedRecord), payload: normalizedRecord };
 }
 
@@ -643,3 +650,5 @@ export function codexWsCreateFrameExceedsLimit(
   if (frameText.length * 3 < limitBytes) return false;
   return Buffer.byteLength(frameText, "utf8") >= limitBytes;
 }
+import type { CodexPassthroughPermissions } from "../../fork/codex-passthrough-contract";
+import { codexDoneTerminalStatus } from "../../fork/codex-passthrough-response";

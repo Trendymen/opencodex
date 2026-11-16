@@ -1,5 +1,7 @@
 import type { OcxProviderConfig } from "./provider";
 import type { CodexAccount, CodexAccountLoginConfig } from "./accounts";
+import type { OcxAgentTaskRecoveryConfig } from "./agent-task-recovery";
+import type { ForkModelApiListenerConfig } from "../fork/model-api-listener-config";
 import type { AnthropicAccountPoolConfig, OcxAccountPoolRotationStrategy } from "./anthropic-account-pool";
 import type { AnthropicInstanceId } from "../providers/anthropic-instance-id";
 import type { OcxFallbackConfig } from "./fallback";
@@ -538,6 +540,7 @@ export interface OcxConfig extends OcxLinkHomeConfig, CodexAccountLoginConfig {
   /** Experimental macOS app-server stdout shim; absent or false disables it. */
   chatgptDesktop?: { appServerShim?: boolean };
   port: number;
+  forkModelApiListener?: ForkModelApiListenerConfig;
   /** Runtime topology role. Absence preserves the historical standalone behavior. */
   runtimeRole?: OcxRuntimeRole;
   /** Hub-only public management metadata. Presence is inert outside the hub role. */
@@ -979,21 +982,7 @@ export interface OcxConfig extends OcxLinkHomeConfig, CodexAccountLoginConfig {
   /** Experimental plaintext delivery for native v2 collaboration messages; disabled unless true. */
   plaintextV2AgentMessages?: boolean;
   /** Experimental, default-off ChatGPT recovery for encrypted V2 routed tasks. */
-  agentTaskRecovery?: {
-    enabled?: boolean;
-    /** ChatGPT model used by the recovery request. Default: gpt-5.6-sol. */
-    model?: string;
-    /** Recovery request timeout in milliseconds. Default: 45000. */
-    timeoutMs?: number;
-    /** Maximum in-memory ciphertext-to-assignment entries. Default: 200. */
-    cacheEntries?: number;
-    /**
-     * Extra recovery sends when ChatGPT rejects with a transient 5xx or the transport
-     * fails, sharing the same credential, deadline, and cache flight (#3661).
-     * Default: 0 (single attempt); maximum: 2.
-     */
-    retries?: number;
-  };
+  agentTaskRecovery?: OcxAgentTaskRecoveryConfig;
   /**
    * Quota-reset detection and notification. Absent means off: no detection, no timer, no sink.
    *

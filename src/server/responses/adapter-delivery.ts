@@ -14,8 +14,14 @@ import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "..
 import type { OcxProviderContinuationState, AdapterEvent, OcxUsage } from "../../types";
 import { rememberResponseState } from "../../responses/state";
 import { trackStreamLifetime } from "../lifecycle";
+import { relaySseWithBlockRewrite } from "../sse-payload-rewrite";
 import { awaitThoughtSignatureDurability } from "../../responses/thought-signature-replay";
 import { adapterResponseReachedServingTerminal } from "./core-replay";
+import {
+  createReasoningSummaryChannelBlockRewrite,
+  rewriteReasoningSummaryInJson,
+  shouldProjectContentChannelReasoning,
+} from "../responses-reasoning-summary-rewrite";
 import {
   readResponseBodyWithInactivity,
   readResponseStreamWithInactivity,
@@ -29,10 +35,12 @@ import { readDisplaySafeErrorText, normalizeUpstreamErrorText } from "./core-err
 import { sanitizeNonReplayableUpstreamError } from "./non-replayable-error";
 import { isNonReplayableResponse } from "../../lib/upstream-retry";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
+import { isXaiResponsesDestination } from "../../providers/xai-transport";
 import { currentTurnToolBridgeMaps, guardEmptyToolCatalogEvents, guardEmptyToolCatalogStream } from "../../lib/empty-tool-catalog";
 import { guardCompactionSummary } from "../../responses/compaction-summary";
 import { settleAnthropicPerMessageEffort } from "../../adapters/anthropic/per-message-effort";
 import { adapterResponseSpendObserver } from "./request-spend";
+import { createNestedExecAdapterEventRepair } from "../responses-nested-exec-call-repair";
 
 /** One responsibility of the Responses request pipeline; state owners are explicit. */
 export async function deliverAdapterResponse(
@@ -149,7 +157,16 @@ export async function deliverAdapterResponse(
     // A re-asked leg was dispatched, so a delivered leg without a credit reading leaves the credits incomplete (#8452).
     transportState.bindKeyUsageFromBridge(mergeUsage(terminalGuardHiddenUsage, usage, terminalGuardHiddenUsage !== undefined));
   };
+  const projectReasoningSummary = () => !(transportState.activeAdapter.name === "openai-chat"
+    && isXaiResponsesDestination(route.provider))
+    && shouldProjectContentChannelReasoning(parsed._rawBody, route.provider, route.modelId);
 
+  const { repairSource: repairAdapterEventSource, repairBatch: repairAdapterEventBatch } = createNestedExecAdapterEventRepair({
+    rawBody: parsed._rawBody,
+    replayPrefixLength: parsed._replayPrefixLen ?? 0,
+    isPassthrough: false,
+    translatorBudget,
+  });
 
   if (parsed.stream) {
     const clientEncoder = clientToolCatalog?.bareCustomToolNames.has("exec") ? undefined
@@ -224,7 +241,7 @@ export async function deliverAdapterResponse(
           preserveRetryError: preserveEmptyCompletionRetryError,
         })
       : advisorStream;
-    const catalogGuardedEventStream = guardEmptyToolCatalogStream(completionGuardedEventStream, clientToolCatalog, translatorBudget);
+    const catalogGuardedEventStream = guardEmptyToolCatalogStream(repairAdapterEventSource(completionGuardedEventStream), clientToolCatalog, translatorBudget);
     const guardedEventStream = routedCompaction && transportState.activeAdapter.name === "anthropic"
       ? guardCompactionSummary(catalogGuardedEventStream, translatorBudget) : catalogGuardedEventStream;
     const { toolNsMap, declaredToolNames, toolParameterSchemas, freeformToolNames, bareCustomToolNames, toolSearchToolNames } = deliveryToolBridgeMaps;
@@ -278,7 +295,7 @@ export async function deliverAdapterResponse(
         bindUsage: bindDeliveredUsage,
       });
     }
-    const sseStream = bridgeToResponsesSSE(
+    let sseStream = bridgeToResponsesSSE(
       guardedEventStream, parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
       () => { cancelResponseCompletion(); upstream.abort(); }, 2_000,
       {
@@ -309,6 +326,13 @@ export async function deliverAdapterResponse(
         onCompletedResponse,
       },
     );
+    if (projectReasoningSummary()) {
+      sseStream = relaySseWithBlockRewrite(
+        sseStream,
+        createReasoningSummaryChannelBlockRewrite({ translatorBudget }),
+        translatorBudget,
+      );
+    }
     const bridgeTurnAc = new AbortController();
     const trackedSse = trackStreamLifetime(sseStream, bridgeTurnAc, cleanupUpstreamAbort, options.turnAdmissionLease);
     return new Response(trackedSse, {
@@ -397,6 +421,7 @@ export async function deliverAdapterResponse(
     } finally {
       cleanupUpstreamAbort();
     }
+    events = await repairAdapterEventBatch(events);
     const { toolNsMap, declaredToolNames, toolParameterSchemas, freeformToolNames, bareCustomToolNames, toolSearchToolNames } = deliveryToolBridgeMaps;
     let providerState: OcxProviderContinuationState | undefined;
     events = guardEmptyToolCatalogEvents(events, clientToolCatalog, translatorBudget);
@@ -443,7 +468,10 @@ export async function deliverAdapterResponse(
     notifyResponseComplete(json);
     const lastError = events.findLast(event => event.type === "error");
     const status = json.status === "failed" && lastError && isContinuationBodyStall(lastError) ? 504 : 200;
-    return new Response(JSON.stringify(json), { status, headers: { "Content-Type": "application/json" } });
+    const responseJson = projectReasoningSummary()
+      ? rewriteReasoningSummaryInJson(json)
+      : json;
+    return new Response(JSON.stringify(responseJson), { status, headers: { "Content-Type": "application/json" } });
   }
 
   return formatErrorResponse(400, "invalid_request_error", "Non-streaming not supported by this adapter");

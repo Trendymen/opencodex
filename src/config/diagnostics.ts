@@ -19,8 +19,13 @@ import { mainAccountHardLockFallbackError } from "./schema/main-account-hard-loc
 import { fallbackPolicyError } from "./schema/fallback-policy";
 import { subscriptionReserveConfigError } from "./schema/subscription-reserve";
 import type { OcxConfig } from "../types";
+import { assertForkModelApiRawConfig, assertForkModelApiLoadPreserved, ForkModelApiConfigurationError } from "../fork/model-api-listener-config";
 import { anthropicAccountPoolConfigError, anthropicOAuthInstanceConfigError, anthropicSidecarConfigError } from "./schema/anthropic-account-pool";
-import { configReasoningPinsConfigError } from "./provider-validation";
+import { configCodexPassthroughCandidateError, configReasoningPinsConfigError } from "./provider-validation";
+import { customModelsCandidateError, salvageCustomModelsForLoad } from "./custom-models";
+import { hasOwnProvider, isValidProviderName } from "./provider-name";
+import { knownStaticModelIdsForProvider } from "../providers/known-model-ids";
+import { encodedModelIdCollides } from "../providers/slug-codec";
 import { loopbackCompanionAllowed } from "../codex/loopback-target";
 import { UPSTREAM_HOST_CIRCUIT_MAX_THRESHOLD } from "../codex/upstream-host-health";
 import { MAX_APP_OWNED_MEMORY_BUDGET_MB, MIN_APP_OWNED_MEMORY_BUDGET_MB } from "../lib/app-owned-memory";
@@ -33,6 +38,7 @@ import { sanitizeOpenCodeOverridesForLoad } from "./opencode-wire-upgrade";
 import {
   sanitizeReasoningPinsForLoad,
   sanitizeAgyAcpForLoad,
+  sanitizeCodexPassthroughForLoad,
   sanitizeRetryOn429ForLoad,
   sanitizeCapabilityDeclarationsForLoad,
   sanitizeModelCostsForLoad,
@@ -136,7 +142,78 @@ function configPlaceholderWarnings(config: OcxConfig): string[] {
   return warnings;
 }
 
-function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown, repairs: readonly string[]): ConfigDiagnostics {
+const customModelLoadWarnings = new WeakMap<object, string>();
+
+export function sanitizeCustomModelsForLoad(parsed: unknown): void {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+  const root = parsed as Record<string, unknown>;
+  if (!Object.hasOwn(root, "customModels")) return;
+  const result = salvageCustomModelsForLoad(root.customModels);
+  if (result.value === undefined) delete root.customModels;
+  else root.customModels = result.value;
+  if (result.changed) {
+    customModelLoadWarnings.set(root, `customModels normalized: dropped ${result.droppedRows} row(s), changed ${result.changedFields} row(s)`);
+  }
+}
+
+export function customModelLoadWarning(parsed: unknown): string | null {
+  return parsed && typeof parsed === "object" ? customModelLoadWarnings.get(parsed) ?? null : null;
+}
+
+export function warnDegradedCustomModels(parsed: unknown): void {
+  const warning = customModelLoadWarning(parsed);
+  if (warning) console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
+}
+
+function customModelsConfigError(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const root = value as Record<string, unknown>;
+  return Object.hasOwn(root, "customModels") ? customModelsCandidateError(root.customModels) : null;
+}
+
+function customModelsSemanticError(config: OcxConfig): string | null {
+  for (let index = 0; index < (config.customModels?.length ?? 0); index += 1) {
+    const row = config.customModels![index]!;
+    const providerName = row.provider;
+    const modelId = row.modelId;
+    if (!isValidProviderName(providerName)) {
+      return `customModels.${index}.provider: invalid provider name`;
+    }
+    if (!hasOwnProvider(config.providers, providerName)) {
+      return `customModels.${index}.provider: provider is not configured`;
+    }
+    const provider = config.providers[providerName]!;
+    if (provider.models !== undefined
+      && (!Array.isArray(provider.models)
+        || provider.models.some(id => typeof id !== "string" || id.length === 0 || id !== id.trim()))) {
+      return `providers.${providerName}.models: must contain only non-empty trimmed strings`;
+    }
+    if (provider.defaultModel !== undefined
+      && (typeof provider.defaultModel !== "string"
+        || provider.defaultModel.length === 0
+        || provider.defaultModel !== provider.defaultModel.trim())) {
+      return `providers.${providerName}.defaultModel: must be a non-empty trimmed string`;
+    }
+    if (encodedModelIdCollides(modelId, knownStaticModelIdsForProvider(providerName, provider))) {
+      return `customModels.${index}.modelId: ambiguous encoded model id`;
+    }
+  }
+  return null;
+}
+
+export function configAgentMessageFormatError(value: unknown): string | null {
+  const providers = rawConfigRecord(rawConfigRecord(value)?.providers);
+  if (!providers) return null;
+  for (const [name, provider] of Object.entries(providers)) {
+    const format = rawConfigRecord(provider)?.agentMessageFormat;
+    if (format !== undefined && format !== "preserve" && format !== "user_message") {
+      return `schema_invalid: providers.${redactSecretString(name)}.agentMessageFormat: must be preserve or user_message`;
+    }
+  }
+  return null;
+}
+
+function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown, extraWarnings: readonly string[] = []): ConfigDiagnostics {
   // Unsafe hand-edited optional values are disabled in memory instead of rejecting
   // the entire config, which would hide unrelated providers/accounts. The next
   // ordinary save persists the normalized absence.
@@ -144,7 +221,8 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown, repai
   const rawForce = rawSubagentModelForce(rawParsed);
   const rawEffort = rawClaudeSubagentEffort(rawParsed);
   const normalized = normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, rawParsed), rawParsed);
-  const warnings = [...repairs, ...configPlaceholderWarnings(normalized)];
+  assertForkModelApiLoadPreserved(rawParsed, normalized);
+  const warnings = [...extraWarnings, ...configPlaceholderWarnings(normalized)];
   const codexAuthWarning = malformedCodexAuthMethodWarning(rawParsed);
   if (codexAuthWarning) warnings.push(codexAuthWarning);
   if (rawForce !== undefined && !isSubagentModelEntry(rawForce)) warnings.push("claudeCode.subagentModelForce ignored: expected a safe roster-style model id");
@@ -200,6 +278,8 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown, repai
   }
   const plaintextWarning = malformedPlaintextV2AgentMessagesWarning(rawParsed);
   if (plaintextWarning) warnings.push(plaintextWarning);
+  const customModelsWarning = customModelLoadWarning(rawParsed);
+  if (customModelsWarning) warnings.push(customModelsWarning);
   if (syncDisabledReason) {
     warnings.push(`syncCodexSubagentDefaults ignored: ${syncDisabledReason}`);
   }
@@ -774,6 +854,12 @@ export function telemetryConfigError(value: unknown): string | null {
 }
 
 export function validateConfigCandidate(value: unknown): { ok: true; config: OcxConfig } | { ok: false; error: string } {
+  try {
+    assertForkModelApiRawConfig(value);
+  } catch (error) {
+    if (error instanceof ForkModelApiConfigurationError) return { ok: false, error: error.message };
+    throw error;
+  }
   const chatgptDesktop = rawConfigRecord(value)?.chatgptDesktop;
   if (chatgptDesktop !== undefined && !chatgptDesktopSchema.safeParse(chatgptDesktop).success) {
     return { ok: false, error: "schema_invalid: chatgptDesktop: requires an optional boolean appServerShim and no other fields" };
@@ -796,7 +882,8 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
   }
   const anthropicError = anthropicOAuthInstanceConfigError(value) ?? anthropicAccountPoolConfigError(value) ?? anthropicSidecarConfigError(value);
   if (anthropicError) return { ok: false, error: anthropicError };
-  const boundaryError = blockedModelRedirectsError(value)
+  const boundaryError = configCodexPassthroughCandidateError(value)
+    ?? blockedModelRedirectsError(value)
     // OCX-11: the read schema degrades a malformed fallback leaf to absent, which would silently
     // drop a refusal on the next whole-config save; the write boundary rejects it instead.
     ?? fallbackPolicyError(value)
@@ -806,6 +893,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
     ?? routedCatalogDefaultsConfigError(value)
     ?? mainAccountHardLockFallbackError(value)
     ?? compactionRecoveryConfigError(value) ?? desktopCompatibilityConfigError(value) ?? configReasoningPinsConfigError(value)
+    ?? configAgentMessageFormatError(value)
     ?? blankHostnameError(value)
     ?? (rawSubagentModelForce(value) !== undefined && !isSubagentModelEntry(rawSubagentModelForce(value)) ? "schema_invalid: claudeCode.subagentModelForce: expected a safe roster-style model id" : null)
     ?? claudeSubagentEffortError(value)
@@ -844,11 +932,20 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
     ?? metricsExportConfigError(value)
     ?? serviceHealthRecoveryConfigError(value)
     ?? telemetryConfigError(value)
-    ?? skillsConfigError(value);
+    ?? skillsConfigError(value)
+    ?? customModelsConfigError(value);
   if (boundaryError) return { ok: false, error: boundaryError };
   const result = configSchema.safeParse(value);
   if (result.success) {
     const config = normalizeApiKeyIds(result.data as OcxConfig);
+    const semanticError = customModelsSemanticError(config);
+    if (semanticError) return { ok: false, error: semanticError };
+    const rawCustomModels = value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>).customModels
+      : undefined;
+    const customModels = salvageCustomModelsForLoad(rawCustomModels).value;
+    if (customModels === undefined) delete config.customModels;
+    else config.customModels = customModels;
     return { ok: true, config };
   }
   return { ok: false, error: schemaDiagnosticsError(result.error) };
@@ -867,7 +964,9 @@ function configDiagnosticsFromText(raw: string, file?: { path: string; bytes: Ui
     };
     const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
     projectRemovedOpenCodeFreeSnapshot(parsed, file);
+    assertForkModelApiRawConfig(parsed);
     sanitizeOpenCodeOverridesForLoad(parsed);
+    const codexWarnings = sanitizeCodexPassthroughForLoad(parsed);
     sanitizeReasoningPinsForLoad(parsed, warn);
     // Same degradation as loadConfig: a hand-edited invalid retryOn429 must not trip the
     // schema and send the caller a default-config fallback (the config command could then
@@ -882,16 +981,17 @@ function configDiagnosticsFromText(raw: string, file?: { path: string; bytes: Ui
       (warn ?? console.warn)(message);
     });
     sanitizeCapabilityDeclarationsForLoad(parsed, warn);
+    sanitizeCustomModelsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
-      return validFileConfigDiagnostics(normalizeApiKeyIds(result.data as OcxConfig), parsed, repairs);
+      return validFileConfigDiagnostics(normalizeApiKeyIds(result.data as OcxConfig), parsed, [...repairs, ...codexWarnings]);
     }
 
     const merged = mergeConfigDefaults(parsed);
     sanitizeAgyAcpForLoad(merged, reportAgyRepair);
     const retryResult = configSchema.safeParse(merged);
     if (retryResult.success) {
-      return validFileConfigDiagnostics(normalizeApiKeyIds(retryResult.data as OcxConfig), parsed, repairs);
+      return validFileConfigDiagnostics(normalizeApiKeyIds(retryResult.data as OcxConfig), parsed, [...repairs, ...codexWarnings]);
     }
 
     // #1785: one invalid routing profile must not make diagnostics report the built-in
@@ -906,23 +1006,25 @@ function configDiagnosticsFromText(raw: string, file?: { path: string; bytes: Ui
     // that ignores the error and writes it back preserves what the operator configured.
     const salvaged = salvageConfigCandidate(merged, retryResult.error);
     if (salvaged) {
-      const config = normalizeApiKeyIds(salvaged.parsed);
-      const warnings = [...repairs, ...degradedListenerWarnings(parsed, config)];
-      const chatgptDesktopIssue = chatgptDesktopConfigIssue(parsed);
-      if (chatgptDesktopIssue) warnings.push(`${chatgptDesktopIssue}; the whole chatgptDesktop block is ignored, so the ChatGPT desktop integration reads as off`);
+      // validFileConfigDiagnostics already folds in degradedListenerWarnings and the
+      // chatgptDesktop block warning; appending the official calls again would duplicate them.
+      const diagnostics = validFileConfigDiagnostics(normalizeApiKeyIds(salvaged.parsed), parsed, [...repairs, ...codexWarnings]);
       return {
-        config,
+        ...diagnostics,
         source: "fallback",
         error: schemaDiagnosticsError(result.error),
-        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
 
+    assertForkModelApiLoadPreserved(parsed, undefined);
     return {
       config: getDefaultConfig(), source: "fallback", error: schemaDiagnosticsError(result.error),
-      ...(repairs.length > 0 ? { warnings: repairs } : {}),
+      ...(repairs.length > 0 || codexWarnings.length > 0 ? { warnings: [...repairs, ...codexWarnings] } : {}),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof ForkModelApiConfigurationError) {
+      return { config: getDefaultConfig(), source: "fallback", error: `schema_invalid: ${error.message}` };
+    }
     return { config: getDefaultConfig(), source: "fallback", error: "invalid_json" };
   }
 }

@@ -215,6 +215,7 @@ const RECOVERY_KIND_CAUSE = {
   // The retried status set mixes 503, which declined, with 500, which may already have run the
   // turn. One kind cannot say both, so it says the weaker thing.
   "transient-5xx": "upstream-fault",
+  "agent-task-recovery": "ciphertext-refusal",
   "connection-reset": "transport-ambiguous",
   // The send it replaced failed DNS resolution, so those bytes provably never left (#7958).
   "offline-resend": "transport-unsent",
