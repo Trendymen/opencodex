@@ -4,10 +4,10 @@ import { card, cardHint, cardTitle, quietButton } from "../components/v2-logs/cl
 import type { DebugSettings } from "./debug-shared";
 import { isDebugFlagEnabled } from "./debug-shared";
 
-const FLAGS = ["debug", "usage", "injection", "claude"] as const;
+const FLAGS = ["debug", "providerText", "usage", "injection", "claude"] as const;
 
 /*
- * The four debug switches as one settings card: what the tab is for in one line, then a
+ * The debug switches as one settings card: what the tab is for in one line, then a
  * switch row per stream. Turning a stream on is what fills the live tail below.
  */
 export function DebugSettingsPanel({
@@ -18,7 +18,7 @@ export function DebugSettingsPanel({
 }: {
   debug: DebugSettings;
   debugBusy: boolean;
-  onSetFlag: (flag: "debug" | "usage" | "injection" | "claude", enabled: boolean) => void;
+  onSetFlag: (flag: "debug" | "providerText" | "usage" | "injection" | "claude", enabled: boolean) => void;
   onReset: () => void;
 }) {
   const { t } = useI18n();

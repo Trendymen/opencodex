@@ -1,10 +1,11 @@
 export interface DebugSettings {
   enabled: boolean;
+  providerText: boolean;
   usage: boolean;
   injection: boolean;
   claude: boolean;
-  runtimeOverride: Partial<Record<"debug" | "usage" | "injection" | "claude", boolean>>;
-  env: Record<"debug" | "usage" | "injection" | "claude", boolean>;
+  runtimeOverride: Partial<Record<"debug" | "providerText" | "usage" | "injection" | "claude", boolean>>;
+  env: Record<"debug" | "providerText" | "usage" | "injection" | "claude", boolean>;
 }
 
 export interface DebugLogEntry {
@@ -49,5 +50,9 @@ export function isStreamEnabled(debug: DebugSettings | null, stream: LogStream):
 }
 
 export function isDebugFlagEnabled(debug: DebugSettings, flag: keyof DebugSettings["env"]): boolean {
-  return flag === "debug" ? debug.enabled : flag === "usage" ? debug.usage : flag === "injection" ? debug.injection : debug.claude;
+  return flag === "debug" ? debug.enabled
+    : flag === "providerText" ? debug.providerText
+      : flag === "usage" ? debug.usage
+        : flag === "injection" ? debug.injection
+          : debug.claude;
 }
