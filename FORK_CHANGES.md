@@ -43,6 +43,7 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 
 ## 诊断与维护
 
+- 日志表格保持独立滚动，状态读屏辅助文字不再撑出页面空白。入口：[日志页面](gui/src/pages/Logs.tsx)。生产构建已在浏览器检查桌面与窄屏的滚动边界和末行可达性，尚无持久回归测试。
 - 可选 `forkModelApiListener` 默认关闭。回环主服务可保留独立管理端口并在 `0.0.0.0:10100` 提供原生模型数据面；非回环主服务必须使用 `10100`，不再创建辅助入口。辅助入口拒绝管理、GUI、session、配对、health/readiness 与 Remote Workspace；凭据、scope、用量和能力开关沿用原生规则。保存拓扑只影响下次启动，CLI 用同进程证明显示真实绑定和待重启状态；无证明显示未验证。配置与边界见 [Fork configuration](docs-site/src/content/docs/reference/configuration/fork-extensions.md#model-api-listener)。实现：[topology](src/fork/model-api-listener-config.ts)、[listener](src/fork/model-api-listener.ts)、[status](src/fork/model-api-listener-status.ts)。本地检查不代表已部署或外部设备连通。
 - 辅助 `10100` 入口支持按 API key 配置模型转换及 effort 上限，响应中的协议模型身份还原为客户端请求值，原服务记录实际处理结果。Messages 在应用上限后沿用官方映射，将 `minimal` / `ultra` 表达为 `low` / `max`；`none` 关闭 thinking 并省略 effort，仍启用的 thinking token 预算保持。主服务后续路由或 effort 设置可能覆盖转换；配置与边界见 [per-key model conversion](docs-site/src/content/docs/reference/configuration/fork-extensions.md#per-key-model-conversion)；实现入口为 [conversion](src/fork/model-conversion.ts)。隔离验证不代表已部署至运行服务。
 - 文件读取投影已移除的 OpenCode Free 配置时，主动读取使用同一份原始字节尝试保留恢复副本，再执行 Fork listener 拓扑校验；passive 诊断不创建副本。无效的显式拓扑仍被拒绝，有效拓扑在修复后保留。入口：[配置](src/config.ts)、[诊断](src/config/diagnostics.ts)。
@@ -72,7 +73,7 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 - 官方 [生命周期重放标记](src/lib/upstream-retry.ts)、same-target retry hold、模型计划拒绝与本地账号冷却身份通过 Fork 的预算和账号 lease 两层包装保留，并继续携带实际订阅许可和本地失败身份；EOF、reader error 与取消仍释放资源。官方 `x-should-retry: false` 的原响应直返、JEV committed stream 失败解 pin 及 SSE 分片扫描优化分别保留；Fork 的日志字段和 EOF flush 继续有效。
 - 官方 Chat 空 assistant 配对、[Kimi 原生端点清理](src/adapters/openai-responses/empty-assistant.ts) 和 [V1 协作面识别](src/server/responses/code-mode-collab-surface.ts) 继续采用上游实现。Ark 的端点与空白处理、Console Go 重复输出合并、出站工具提示和 nested exec 调用修复仍有不同消费者，不能用上述分类覆盖替代。
 - 裸上游错误采用官方 [recognizedUpstreamError](src/lib/errors.ts) 分类：未知 vendor type/code 归一化为 `upstream_error` / `upstream_server_error`。Messages/count 错误采用官方固定文案并保留受支持的状态与类型，模型 API 辅助入口复用同一合同。日志沿用官方闭集投影，不持久化任意 `upstreamError`；[本地保护分类](src/usage/error-detail.ts)保留八个 private 错误码、原始上游状态及本地归因。真实 `response.failed` 的业务终态保持保真；关闭相应许可的原生 Responses 与官方 Messages 错误合同分别维护。
-- 已上游化的通用消息转换、Fernet multipart recovery、direct MCP 归一化、custom tool item type 及分别配置的 Bun runtime/test-runner 角色继续采用官方实现。删除剩余补丁须证明代码与测试等价；旧 allowlist、Spark 专属规则、动态 Fork runner 和滚动 CSS 补丁不恢复。
+- 已上游化的通用消息转换、Fernet multipart recovery、direct MCP 归一化、custom tool item type 及分别配置的 Bun runtime/test-runner 角色继续采用官方实现。删除剩余补丁须证明代码与测试等价；旧 allowlist、Spark 专属规则、动态 Fork runner 和旧全局滚动 CSS 补丁不恢复。
 - Provider/App 端到端、真实 backend ciphertext、Windows 全局替换与服务恢复仍有验收缺口。官方测试、文档构建和审查不替代这些验收。
 - `opencode-go` 的 Provider 级 reasoning 保留尚未逐模型验证；DeepSeek 400 与清空正文的因果关系未做 live 复现。原生 reasoning 合成事件未统一重分配 `sequence_number`。
 - annotation 输出兜底不按本轮注解数量启用，跨行 code span 不处理；native 直通仅在许可允许时改写入站说明，客户端渲染仍需实机核对。
