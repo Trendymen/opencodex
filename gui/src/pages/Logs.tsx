@@ -878,7 +878,7 @@ export default function Logs({ apiBase }: { apiBase: string }) {
         </div>
       ) : (
         <div className={panelBody}>
-        <div ref={scrollContainerRef} className="logs-table-wrap relative max-h-[calc(100dvh-300px)] overflow-auto [overflow-anchor:none]">
+        <div ref={scrollContainerRef} className="logs-table-wrap max-h-[calc(100dvh-300px)] overflow-auto [overflow-anchor:none]">
           <table
             className={cn(
               "logs-table ui-v2 w-full min-w-[1020px] table-fixed border-collapse text-[13px] font-normal text-fg",

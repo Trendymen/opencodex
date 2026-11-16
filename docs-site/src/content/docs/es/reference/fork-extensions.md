@@ -29,7 +29,7 @@ El listener auxiliar puede aplicar una conversión de modelo y un límite de eff
 
 La recuperación de tareas cifradas añade el tratamiento estricto de envolturas del backend, una repetición nativa acotada tras agotar los reintentos por errores 5xx transitorios y un aviso sin texto cifrado cuando agota el tiempo de espera un `MESSAGE` principal admitido. El texto cifrado ilegible es terminal: no se reenvía a rutas ordinarias de terceros ni se guarda en el estado de continuación. La recuperación sigue requiriendo activación explícita.
 
-La tabla de registros mantiene su desplazamiento independiente y el texto de estado para lectores de pantalla ya no añade espacio en blanco a la página.
+`install:local` modifica el CSS compilado de la GUI antes de empaquetarlo para mantener el texto de estado de los lectores de pantalla dentro del área de desplazamiento de la tabla de registros. El código fuente de la GUI se conserva; una compilación de la GUI por separado no incluye este parche.
 
 El Fork ofrece diagnósticos en disco, controles independientes para muestras de texto y preparación sin conexión con `install:local`. Una vez que la transacción del paquete termina correctamente, un fallo posterior no revierte automáticamente el paquete; un fallo del servicio o de disponibilidad no restaura automáticamente el registro de Volta. Las versiones `ben.N` comparan primero la versión principal del proyecto original y después la revisión del Fork; una versión estable de la misma versión principal no sobrescribe el Fork. Los tags publicados son inmutables.
 
