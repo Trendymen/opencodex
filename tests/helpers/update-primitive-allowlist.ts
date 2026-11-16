@@ -63,6 +63,9 @@ const basePrimitiveAllowlist: readonly (readonly [string, string])[] = [
   ["src/update/transactional-install.mjs:removeOwnedStage:rm = deps.rm", "injected private-stage removal forwarded only to ownedArtifactRm"],
   ["src/update/transactional-install.mjs:bootRestoreProbe:rename = deps.rename", "injected boot-recovery rename forwarded only to guardedRenameSync"],
   ["src/update/transactional-install.mjs:npmUpdateTransaction:rename = deps.rename", "injected package rename forwarded only to guardedRenameSync"],
+  ["bin/ocx.mjs:runPackageManagerSelfUpdate:forkUpdateDecision(latest || null, current, tag)", "compare the resolved target with the installed Fork version before mutation"],
+  ["src/update/index.ts:runUpdateWithSession:forkUpdateDecision(latest, current, tag)", "compare the resolved target with the installed Fork version before mutation"],
+  ["src/update/notify.ts:isNewer:forkBaseVersion(current)", "derive the upstream version for a notification comparison"],
   [
     "bin/ocx.mjs:readNodeUpdateHome:probeUpdateServiceHome(probeSpawnSync, bun.path, [\"--no-env-file\", join(dirname(launcherPath), \"..\", \"src\", \"update\", \"service-home-probe-entry.ts\")], { env })",
     "bounded probe or ordinary launcher; no update control"
