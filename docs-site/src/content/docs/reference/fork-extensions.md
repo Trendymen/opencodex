@@ -25,7 +25,7 @@ The auxiliary listener can apply model conversion and an effort ceiling per API 
 
 Encrypted task recovery adds strict backend-envelope handling, one bounded native replay after exhausted transient-5xx retries, and a ciphertext-free notice when an admitted parent `MESSAGE` times out. Unreadable ciphertext is terminal; it is not forwarded to ordinary third-party routes or stored in continuation state. Recovery remains opt-in.
 
-The logs table scrolls within its own area, and status text for screen readers no longer adds blank space to the page.
+`install:local` patches the built GUI CSS so status text for screen readers stays within the logs table's scroll area. The patch is applied before packaging; the GUI source remains unchanged. A plain GUI build does not include this patch.
 
 The Fork provides disk diagnostics, independent text-sample controls, and offline staging for `install:local`. Once the package transaction succeeds, a later failure does not automatically roll back the package; a service or readiness failure does not automatically restore the Volta registration. `ben.N` versions compare the upstream core first and the Fork revision second; a stable release of the same core does not overwrite the Fork. Published tags remain immutable.
 

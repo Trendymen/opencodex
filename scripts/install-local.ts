@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -36,6 +36,9 @@ const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)))
 const GUI_FONT_STACK = '--font-ui:"OpenAI Sans", "Noto Sans SC", "Microsoft YaHei UI"';
 const GUI_FONT_DECLARATION = /--font-ui:(?:"OpenAI Sans"[^;}]*|"Geist Variable",\s*"Wanted Sans Variable",\s*-apple-system,\s*BlinkMacSystemFont,\s*"Segoe UI",\s*system-ui,\s*sans-serif(?=[;}]))/g;
 const ANY_GUI_FONT_DECLARATION = /--font-ui:[^;}]*/g;
+const GUI_LOGS_SCROLL_RULE = ".logs-table-wrap{position:relative}";
+const GUI_LOGS_SCROLL_PATCH = `\n/* install-local: logs scroll */\n${GUI_LOGS_SCROLL_RULE}\n`;
+const GUI_LOGS_TABLE_RULE = /(?:^|[{}])\s*\.logs-table-wrap\s*\{/;
 
 export function patchBuiltGuiFontStack(
   assetsDir = join(root, "gui", "dist", "assets"),
@@ -86,6 +89,53 @@ export function assertGuiFontStack(assetsDir: string, label = "gui/dist/assets")
     }
   }
   if (declarations === 0) throw new Error(`${label} contains no --font-ui declaration`);
+}
+
+function guiLogsScrollTargets(assetsDir: string, label: string): { path: string; css: string }[] {
+  if (!existsSync(assetsDir)) throw new Error(`${label} not found`);
+  const assetsStat = lstatSync(assetsDir);
+  if (!assetsStat.isDirectory() || assetsStat.isSymbolicLink()) {
+    throw new Error(`${label} must be a regular directory`);
+  }
+  const targets: { path: string; css: string }[] = [];
+  for (const entry of readdirSync(assetsDir, { withFileTypes: true })) {
+    if (!entry.name.endsWith(".css")) continue;
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw new Error(`${label} contains a non-regular CSS entry`);
+    }
+    const path = join(assetsDir, entry.name);
+    const css = readFileSync(path, "utf8");
+    if (GUI_LOGS_TABLE_RULE.test(css.split(GUI_LOGS_SCROLL_PATCH).join(""))) targets.push({ path, css });
+  }
+  if (targets.length === 0) throw new Error(`${label} contains no .logs-table-wrap declaration`);
+  return targets;
+}
+
+export function patchBuiltGuiLogsScroll(
+  assetsDir = join(root, "gui", "dist", "assets"),
+  label = "built gui/dist/assets",
+): void {
+  const targets = guiLogsScrollTargets(assetsDir, label);
+  for (const { css } of targets) {
+    if (css.includes(GUI_LOGS_SCROLL_PATCH) && (!css.endsWith(GUI_LOGS_SCROLL_PATCH)
+      || css.indexOf(GUI_LOGS_SCROLL_PATCH) !== css.lastIndexOf(GUI_LOGS_SCROLL_PATCH))) {
+      throw new Error(`${label} contains a misplaced logs table scroll patch`);
+    }
+  }
+  for (const { path, css } of targets) {
+    if (!css.trimEnd().endsWith(GUI_LOGS_SCROLL_RULE)) appendFileSync(path, GUI_LOGS_SCROLL_PATCH, "utf8");
+  }
+  assertGuiLogsScroll(assetsDir, label);
+}
+
+export function assertGuiLogsScroll(assetsDir: string, label = "gui/dist/assets"): void {
+  for (const { css } of guiLogsScrollTargets(assetsDir, label)) {
+    if (!css.trimEnd().endsWith(GUI_LOGS_SCROLL_RULE)
+      || (css.includes(GUI_LOGS_SCROLL_PATCH) && (!css.endsWith(GUI_LOGS_SCROLL_PATCH)
+        || css.indexOf(GUI_LOGS_SCROLL_PATCH) !== css.lastIndexOf(GUI_LOGS_SCROLL_PATCH)))) {
+      throw new Error(`${label} is missing the logs table scroll patch at the end of a target CSS file`);
+    }
+  }
 }
 
 export function localInstallRestartArgs(serviceWasInstalled: boolean): string[] {
@@ -907,6 +957,8 @@ function verifyLocalPackageTree(packageDir: string, name: string, version: strin
   const cli = validated && validatedPackageCli(validated.root);
   if (!validated || !cli) throw new Error("package identity or CLI entrypoint is invalid");
   assertGuiFontStack(join(validated.root, "gui", "dist", "assets"), "installed gui/dist/assets");
+  assertGuiLogsScroll(join(validated.root, "gui", "dist", "assets"), "installed gui/dist/assets");
+  assertGuiLogsScroll(join(validated.root, "gui", "dist", "classic", "assets"), "installed gui/dist/classic/assets");
   return { root: validated.root, cli };
 }
 
@@ -1043,7 +1095,11 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
     build: () => run(["bun", "run", "build:gui"]),
     patch: () => {
       console.log("==> Patching built GUI font stack...");
-      return patchBuiltGuiFontStack();
+      const fontPatch = patchBuiltGuiFontStack();
+      console.log("==> Patching built GUI logs table scroll...");
+      patchBuiltGuiLogsScroll();
+      patchBuiltGuiLogsScroll(join(root, "gui", "dist", "classic", "assets"), "built gui/dist/classic/assets");
+      return fontPatch;
     },
     prepare: expectedManifestBytes => {
       console.log("==> Packing immutable local snapshot...");
@@ -1112,7 +1168,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         if (versionResult.status !== 0 || versionResult.stdout.trim() !== `opencodex ${version}`) {
           throw new Error("installed CLI version did not match the package transaction target");
         }
-        console.log("    installed GUI font stack verified");
+        console.log("    installed GUI font stack and logs table scroll patch verified");
         localInstallAfterReplace(serviceWasInstalled, restart);
       },
       restart: () => {
