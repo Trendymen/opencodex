@@ -1,0 +1,275 @@
+---
+title: Fork configuration
+description: Provider, recovery, custom-model and diagnostic controls added by the Trendymen Fork.
+---
+
+These settings supplement upstream configuration. Compatibility behavior is described in [Fork extensions](/reference/fork-extensions/).
+
+## Model API listener
+
+`forkModelApiListener` accepts only `{ "enabled": boolean }` and defaults to `{ "enabled": false }`. Omission or `false` retains the existing primary service. The listener uses the same process, providers and native data-plane policy as that service.
+
+For a separate LAN API, keep the primary service on loopback at a port other than `10100`. For example:
+
+```json
+{
+  "hostname": "127.0.0.1",
+  "port": 10101,
+  "forkModelApiListener": { "enabled": true }
+}
+```
+
+This auxiliary mode serves the existing dashboard and management API at `http://127.0.0.1:10101` and binds the model API to `0.0.0.0:10100`. Other loopback management ports are valid when they do not conflict with another configured listener. Configure a native data-plane API key or token before enabling it; an admin token alone does not authorize model requests.
+
+When the primary service already binds a non-loopback address, enabling this option requires its port to be `10100`:
+
+```json
+{
+  "hostname": "0.0.0.0",
+  "port": 10100,
+  "forkModelApiListener": { "enabled": true }
+}
+```
+
+This primary mode creates no extra listener. Port `10100` retains the primary service's native management, health/readiness, routing and authentication behavior; the auxiliary restrictions below do not apply to it.
+
+The auxiliary listener accepts the complete native data plane after compatibility-path normalization to `/v1/`: model discovery, Responses, Chat Completions, Messages, token counting, images, audio and supported WebSocket/SSE routes. Availability still follows each native route's provider support and feature settings. There is no separate model or endpoint allowlist. Requests and responses retain native handling unless [per-key model conversion](#per-key-model-conversion) applies. The `/v1/link-management` prefix is rejected.
+
+The auxiliary endpoint returns JSON `404` for the dashboard, management API, session issuance, pairing, health/readiness and Remote Workspace. This also applies to local callers, admin credentials, existing GUI sessions and forged `Host` values. Pair clients and manage accounts through the primary management service. Model credentials retain their native scope, usage, Direct, upstream-credential and audio-credential rules. Credential changes retain native HTTP and WebSocket behavior; this option adds no per-frame revocation mechanism.
+
+Saving a topology change affects the next start. It neither moves an active socket nor changes ports automatically; an invalid topology or occupied required port fails instead of selecting another port. Restart the proxy after saving. `ocx status` shows the primary management URL and model-listener state. `ocx status --json` adds `forkModelApiListener` without changing `schemaVersion: 1`: `enabled` is the desired setting, while `active`, `hostname` and `port` come from the running process. `restartRequired` compares the started topology with the saved topology. With no verified same-process response, `active` and `restartRequired` are `null` and `inactiveReason` is `unverified`; a stopped service reports `active: false` and `not-running`. A disabled running listener reports `disabled`; primary mode reports `primary-non-loopback` because it needs no auxiliary listener. The state contains no credentials.
+
+When a file contains the retired OpenCode Free provider, an active file read attempts a recovery copy of the original bytes while removing the retired entries from the loaded view. Passive diagnostics create no copy. A valid enabled listener topology is retained; an invalid explicit topology is rejected rather than silently disabled.
+
+Installation, a restarted user service, external-device connectivity and paid-provider access require separate acceptance.
+
+## Per-key model conversion
+
+Add `modelConversion` to an existing entry in `apiKeys` to enable conversion for that key on the auxiliary `10100` listener. Omitting the field or setting `enabled` to `false` disables it. The key's normal authentication and scope checks still apply; no GUI controls are added.
+
+```json
+{
+  "apiKeys": [
+    {
+      "id": "existing-key-id",
+      "name": "default",
+      "key": "existing-key-secret",
+      "modelConversion": {
+        "enabled": true,
+        "rules": [
+          { "match": "gpt-*", "exclude": ["*luna*"], "model": "gpt-6.1-terra", "maxEffort": "medium" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+This is a partial configuration example: retain the existing key credentials and other settings. When `enabled` is `true`, omitting `rules` uses the rule shown above; `rules: []` converts nothing. Rules are checked in order and the first match wins. `match` and each optional `exclude` use case-sensitive, full-model glob patterns (`*` and `?`); recognized provider or account prefixes are separated before matching. Each rule requires a destination `model` and a valid `maxEffort`. Invalid policy structure fails startup instead of silently disabling conversion.
+
+Responses, Responses compact, Chat Completions, Messages, Messages token counting and Responses WebSocket requests are covered. Images, audio and other routes keep native handling. A matching request uses the destination model, and its selected effort is capped at the configured limit; a missing effort is set to that limit. Before the request reaches the primary handler, Messages maps `minimal` to `low` and `ultra` to `max`; `none` disables thinking and omits the effort field. The conversion leaves an enabled thinking token budget unchanged; later translation may change it. WebSocket continuations retain an omitted existing setting. The client sees its requested model in protocol model fields and supported model headers; optional diagnostic metadata that cannot be safely projected may be removed. Usage and logs follow the primary handler's processing, including the model actually used and token counts.
+
+The policy is read at startup and remains fixed for that process and its WebSocket connections. Restart the process to apply a changed rule. It applies only to the auxiliary listener, not direct requests to the primary service. An active nonempty policy with primary `10100` topology fails startup; use the auxiliary topology above. A key without a policy keeps native behavior.
+
+The primary handler may subsequently override the converted model or effort through fixed efforts, memory or compaction routing, model redirects, or subagent fallback. The listener forwards these requests without rejecting them for that possibility; the actual model and effort may therefore differ from the conversion rule. Changes to those settings can also affect in-flight requests.
+
+For converted requests, error messages use a fixed description to avoid exposing the actual model. HTTP status, supported error classifications and recognized retry information are retained; unknown classifications or parameters may become a generic value or `null`.
+
+Keys with conversion enabled share a bounded conversion budget. The listener must read a request before it can tell whether a model matches, so even an excluded model may briefly wait or receive a capacity error; its model and effort are not changed by the rule. Keys without conversion do not use this budget.
+
+## Provider settings
+
+| Field | Fork behavior |
+| --- | --- |
+| `agentMessageFormat` | `preserve` retains native messages; `user_message` converts complete readable text/media at third-party Responses destinations, including third-party GPT models. OpenAI-operated destinations always preserve native format. Unset keeps destination-specific defaults; ciphertext, unknown parts and empty content are not partially converted. |
+| `inferResponsesMessagePhaseModels` | Exact model IDs opted into native Responses phase inference. Official destinations and GPT/OpenAI model families are excluded. Opening announcements that claim `final_answer` are demoted to `commentary`; final item/terminal evidence determines the final phase. Failed or incomplete turns do not gain a synthetic final phase. |
+| `defaultMaxOutputTokens`, `modelMaxOutputTokens` | Existing output defaults also fill omitted `max_output_tokens` on key-auth Responses. Model settings win over provider defaults; caller values win over both. Forward authentication receives no injected value. |
+
+With a valid window and more than 512 estimated tokens remaining, the injected budget is `max(512, min(configured, remaining - headroom))`, with 256–4,096 tokens of headroom. Without that window or with no more than 512 remaining tokens, the configured value is retained so the upstream can reject overflow explicitly.
+
+`agentMessageFormat` and `inferResponsesMessagePhaseModels` use config or the management API. An omitted POST field retains the latest value; PATCH `null` clears it. `agentMessageFormat` POST `null` is rejected. Explicit format conversion preserves identities and the original request/replay objects.
+
+With `agentMessageFormat` unset, forward authentication keeps native `agent_message` items under the upstream default. An explicit `user_message` setting can still convert readable content at third-party destinations.
+
+`inferResponsesMessagePhaseModels` also covers ordinary JSON responses for its listed third-party models. When its conditions match, model-scoped inference takes precedence so two buffering rewrites cannot consume the same EOF tail. Other routes retain upstream's provider-level `messagePhaseInference` option for SSE and JSON reconstructed from SSE.
+
+The `opencode-go` preset defaults `preserveResponsesReasoningContent` to `true` only when absent; explicit `false` wins. The refusal sample motivating it came from DeepSeek. Other Responses models on that provider have not all been validated with retained replay.
+
+## GPT subscription processing
+
+`providers.<name>.codexPassthrough` controls 23 compatibility operations. Every permission defaults to `true`, including `normalizeEncryptedContent`. An omitted object, `{}`, and all 23 values set to `true` retain the previous behavior. A permission does not enable an otherwise disabled feature: request pacing, task recovery, reset retries, upstream WebSocket transport and skills still require their existing settings and conditions.
+
+The permissions apply only when the final destination uses `openai-responses`, `authMode: "forward"`, and the normalized base URL `https://chatgpt.com/backend-api/codex`, with native Responses ingress over HTTP, SSE or WebSocket. This includes Direct main login and Pool main/added accounts. Provider renaming and model-level adapter selection do not change that test. Key authentication, third-party GPT providers, other models on other destinations, and Chat Completions or Anthropic ingress retain their existing behavior. Each fallback destination is checked separately.
+
+In the dashboard, open the provider's settings and expand **Official GPT subscription processing**. The four groups below support enabling or disabling individual permissions and disabling all permissions. Saving affects the next request or WebSocket turn; an in-progress turn and its fallback attempts retain their captured permissions. Account credential revocation keeps its existing behavior.
+
+The paths in these tables are relative to `codexPassthrough`. All defaults are `true`.
+
+### Request
+
+| Field | Operation permitted when enabled |
+| --- | --- |
+| `normalizeRequestParameters` | Existing official-backend parameter cleanup, defaults and forced streaming where previously required, plus automatic hosted-search history projection when no hosted-search tool is declared. The provider's explicit `projectResponsesLiteHostedSearchHistory` opt-in remains independent. |
+| `expandRequestHistory` | Expand saved continuation history for `previous_response_id`. |
+| `normalizeEncryptedContent` | Decode OCX1 envelopes and normalize native compaction ciphertext under the existing identity-change conditions. Disabling this skips that normalization; task-recovery failure handling remains separate. |
+| `snapshotSkillsCatalog` | Apply the skills-catalog snapshot when the existing skills settings require it. |
+| `rewriteAnnotationInstructions` | Rewrite recognized Codex annotation instructions to request bare directives. |
+| `bridgeLiteMetadata` | Map a valid Lite header when building a canonical upstream WebSocket frame; the explicit HTTP header takes precedence over same-name metadata. HTTP request metadata and other fields stay unchanged. |
+
+### Response
+
+| Field | Operation permitted when enabled |
+| --- | --- |
+| `backfillResponseFields` | Fill missing response item IDs, message status and text annotations. |
+| `repairResponseToolCalls` | Apply existing authorized tool-call repairs, with the original tool-map conditions. |
+| `redactUpstreamErrors` | Apply general upstream-error redaction and normalization. Injected private credentials remain protected when this is off. |
+| `privateSseReadDeadline` | Keep the fixed 5-second deadline for the first protected SSE output and incomplete blocks. When disabled, use `stallTimeoutSec` for stream inactivity and preserve cancellation, memory budgets and private-credential masking. |
+| `upstreamWsSilenceDeadline` | Keep the 90-second silence deadline while waiting for the first upstream WebSocket response. Frames and pongs reset it. When disabled, retain the connection deadline, pings, cancellation and transport budgets. |
+| `privateErrorBodyReadDeadline` | Keep the fixed 5-second total, first-byte and inactivity deadlines for HTTP error bodies protected with private credentials. When disabled, remove the fixed total deadline and use `stallTimeoutSec` for first-byte and inactivity waits; cancellation, the 64 KiB limit and credential masking remain active. |
+| `synthesizeTerminalFailure` | Apply existing synthetic terminal-failure handling when no usable terminal event arrives. |
+| `normalizeHostedImages` | Convert supported hosted-image results for the client and clean their display paths from subsequent input. |
+
+For a native Responses streaming combo attempt, `synthesizeTerminalFailure: false` still subjects a real `response.done` with `response.status: "completed"` and an output array to the upstream required-tool contract. The check leaves a valid block unchanged. With `repairResponseToolCalls: false`, it cannot count a repaired name the client did not receive as fulfillment. A missing required call can be retried only before commitment and when replay is safe; observed hosted-tool effects prevent replay.
+
+When the resolved `maxInboundBodyBytes` exceeds 256 MiB, the shared `maxConcurrentInboundBodyBytes` admission budget applies. For a normally read body, its reservation is updated for decompressed and serialized size before a Fork request-text lease is transferred. The retained JSON text has a separate translator-budget lease. The admission reservation lasts through response EOF, error or settled cancellation; the text lease is released with its request source on completion, error, cancellation or abort. See [inbound body admission](/reference/inbound-body-admission/) for the upstream limits and scope.
+
+A Remote Link turn can arrive with an already parsed body. The proxy first applies the upstream serialized-size limit and budget observation. Only when a Fork source is required and not already retained does it serialize and retain one additional JSON text copy. The translator budget observes its size; the text and its observation are released with the source. Deeply nested valid JSON can overflow the recursive `JSON.stringify` call and return an invalid-JSON error. The Link WebSocket release gate remains closed; this defect must be fixed before opening it. Actual Remote Link memory use remains unverified, and this path does not establish upstream's no-second-copy objective.
+
+### Headers
+
+| Field | Operation permitted when enabled |
+| --- | --- |
+| `synthesizeRoutingHint` | Generate `x-codex-routing-hint` from the final request body. |
+| `synthesizeSessionId` | Generate a missing `session_id`. |
+| `addResponseRequestId` | Add OCX's `x-opencodex-request-id` response header. |
+| `addResponseBrowserHeaders` | Add OCX's browser CORS/exposed-header fields. Disabling this can prevent cross-origin browser clients from reading responses. |
+
+Disabling header synthesis does not delete explicit caller or provider headers. Authentication, selected-account identity, required HTTP/WebSocket framing and existing transport/security checks still apply.
+
+With `synthesizeRoutingHint: false`, a provider-configured routing hint takes precedence over the caller's hint. With synthesis enabled, the existing body-derived hint can replace either value.
+
+### Local error policies
+
+| Field | Behavior when disabled |
+| --- | --- |
+| `localErrorPolicies.resetReplayRefusal` | Do not emit the optional Codex replay-refusal explanation or its `x-should-retry: false` header. An ambiguous send still cannot be replayed; a required gateway failure remains 502 or 504. |
+| `localErrorPolicies.requestPacingAdmission` | Bypass optional local request-pacing admission for this attempt. |
+| `localErrorPolicies.inputAdmissionPrecheck` | Bypass the optional local input-size estimate precheck. Hard limits still apply. |
+| `localErrorPolicies.accountSoftPrecheck` | Bypass ordinary cached quota/cooldown prechecks. Explicit pause, account locks, reauthentication, credit/reserve policies and other protected account decisions remain active. |
+| `localErrorPolicies.transportErrorMapping` | Use a plain 502 `Bad Gateway` or 504 `Gateway Timeout` for local transport failures instead of the optional Codex error explanation. |
+
+These settings do not suppress real upstream errors, including OpenAI 429 responses, or task-recovery conversion/decryption failures. Shared send budgets, authentication and identity checks remain enforced. Disabling a refusal or error mapping does not add proxy retries. Without the replay-refusal hint, the Codex client may retry under its own budget; if the upstream already processed the request, that can repeat work or consume more quota.
+
+### Saving and clearing overrides
+
+The configuration file and full JSON configuration accept boolean leaves. To restore a default there, remove the field. For example, this provider fragment disables annotation rewriting and the local soft quota precheck while leaving the other permissions at their defaults:
+
+```json
+{
+  "codexPassthrough": {
+    "rewriteAnnotationInstructions": false,
+    "localErrorPolicies": {
+      "accountSoftPrecheck": false
+    }
+  }
+}
+```
+
+`PATCH /api/providers?name=<name>` merges only the supplied leaves under `codexPassthrough`. PATCH `null` removes an override: a leaf restores that leaf's default, `localErrorPolicies: null` clears that group, and `codexPassthrough: null` clears the whole object. GET returns stored overrides without materializing defaults. Do not use `null` in the configuration file or treat clearing as disabling.
+
+To disable all permissions, use the dashboard action or set all 23 leaves to `false`:
+
+```json
+{
+  "codexPassthrough": {
+    "normalizeRequestParameters": false,
+    "expandRequestHistory": false,
+    "normalizeEncryptedContent": false,
+    "snapshotSkillsCatalog": false,
+    "rewriteAnnotationInstructions": false,
+    "bridgeLiteMetadata": false,
+    "backfillResponseFields": false,
+    "repairResponseToolCalls": false,
+    "redactUpstreamErrors": false,
+    "privateSseReadDeadline": false,
+    "upstreamWsSilenceDeadline": false,
+    "privateErrorBodyReadDeadline": false,
+    "synthesizeTerminalFailure": false,
+    "normalizeHostedImages": false,
+    "synthesizeRoutingHint": false,
+    "synthesizeSessionId": false,
+    "addResponseRequestId": false,
+    "addResponseBrowserHeaders": false,
+    "localErrorPolicies": {
+      "resetReplayRefusal": false,
+      "requestPacingAdmission": false,
+      "inputAdmissionPrecheck": false,
+      "accountSoftPrecheck": false,
+      "transportErrorMapping": false
+    }
+  }
+}
+```
+
+With all permissions off, request JSON values, field presence, unknown fields and array order are preserved, subject to explicit model/Fast routing, selected-account authentication, required transport rules and the independent provider `projectResponsesLiteHostedSearchHistory` opt-in. Leave that opt-in disabled to preserve hosted-search history unchanged. JSON can be serialized again. Responses are not guaranteed to be byte-identical when framing or private-credential protection is required. Client WebSocket error frames retain the complete upstream error body in `response` when error rewriting is disabled.
+
+Private credentials actually injected by OCX remain protected before delivery, including Pool/stored-main credentials and sensitive configured header values. If safe delivery of a successful response or SSE stream cannot be established, the proxy returns `upstream_error_protection_failed` before committing the response, or aborts an already committed stream. It does not invent a successful terminal event.
+
+For a protected HTTP error, the proxy reads at most 64 KiB with strict UTF-8 decoding. A complete valid body marked as JSON is masked string by string; other text is masked as a whole. Invalid JSON marked as JSON is retained unchanged only when it contains no backslash and masking finds no private value; otherwise the body is discarded. Oversized bodies and decoding failures are also discarded. When the body is discarded, Direct keeps the upstream status: by default the upstream formatter returns status-only JSON; with `redactUpstreamErrors: false`, it returns an empty body. Combo keeps the status and classifies without the discarded body. Existing deadlines and cancellation still apply.
+
+For a successful response with a body that is neither SSE nor JSON, the proxy cancels the upstream body and returns this protection error before delivery when a private value needs protection. Bodyless responses and responses with no private value to protect retain their existing delivery behavior. A value already held by the caller does not create this restriction.
+
+To remove only the fixed 5-second SSE deadline, set `codexPassthrough.privateSseReadDeadline` to `false` or clear **Private SSE fixed 5-second deadline** in the provider's response settings. This does not change the bounded HTTP error-body deadline or allow unsafe output. A longer wait can delay a failure; `stallTimeoutSec` and request cancellation still limit inactive streams.
+
+The other two deadlines are independent response settings. Set `upstreamWsSilenceDeadline` to `false` to remove the additional 90-second upstream WebSocket silence limit. Set `privateErrorBodyReadDeadline` to `false` to remove the fixed 5-second private HTTP error-body limit. The latter uses the normal `stallTimeoutSec` setting, whose default is 300 seconds; an explicit `0` disables that inactivity limit. Neither permission changes reset retries, 401 refresh/replay, account rotation or `agentTaskRecovery`. The existing `codexMainAccountHardLock` setting controls the main-account quota lock separately.
+
+Logs record private-protection failures with a `private-*` local error code and retain the original response-header status in `upstreamHttpStatus`, including per-attempt rows and persisted usage. The dashboard shows that status separately and labels the protection message as a local reason. For example, upstream HTTP 200 followed by a local deadline failure is recorded separately from the final 502. Historical rows without this field cannot recover the original status.
+
+## Custom models and context caps
+
+Custom-model types, CRUD and catalog rows already exist upstream. The Fork adds strict writes, per-row salvage, stable-ID concurrent merging and a known-field public projection. Unknown opaque fields remain internal. A custom row replacing a discovered row retains its discovered `pricingStatus`.
+
+`customModels[].codexToolMode` supports `code_mode_only`, `shell`, or inheritance. Create omission inherits; update omission retains the stored value; update `null` clears it. The CLI uses `--tool-mode code_mode_only|shell|inherit`; this supplements the existing catalog consumer of the field.
+
+Failed saves to `PUT /api/provider-context-caps` restore that route's live context-cap fields and pending deletions without refreshing the catalog. This guarantee does not extend to every configuration field.
+
+If `POST /api/providers` fails before publication, it restores the previous provider entry and, for `setDefault: true`, the previous default. A `ConfigWritePublishedError` retains the already-published provider and default so they remain consistent with disk.
+
+## Encrypted task recovery
+
+Recovery remains disabled by default and uses an additional authenticated ChatGPT request when enabled. This example enables recovery with the Fork's strict backend defaults:
+
+```json
+{
+  "agentTaskRecovery": {
+    "enabled": true,
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "timeoutMs": 120000,
+    "maxRetries": 2,
+    "retries": 0
+  }
+}
+```
+
+For admitted strict backend `NEW_TASK` and strict child-to-parent `MESSAGE` envelopes, `timeoutMs` bounds each attempt (default 120000 ms), first-byte/inactivity stalls are capped at 45 seconds, and `maxRetries` allows up to two additional timeout attempts. Other supported encrypted tasks use one shared deadline (default 45000 ms, or the configured `timeoutMs`) and do not use `maxRetries`. `retries` covers transient HTTP/transport failures within the active deadline; cancellation and `invalid_encrypted_content` stop both paths.
+
+Native transient-5xx recovery only admits a strict `NEW_TASK`, then replays the same selected target once using the shared send budget. Admitted encrypted parent `MESSAGE` timeouts can produce a ciphertext-free resend notice; it does not claim that the message was read. Strict ciphertext and recovered bodies are excluded from continuation storage.
+
+## Diagnostics and local installation
+
+Provider diagnostics are structural by default. Text artifacts require both provider debug and `provider-text`, available through CLI, API and dashboard:
+
+```bash
+ocx debug provider on
+ocx debug provider-text on
+ocx debug provider-text off
+```
+
+Journals and referenced artifacts share 4 MiB groups under UTC date/hour directories. The two roots retain at most seven days and 20 GiB of managed data; cleanup removes the oldest journal before its artifacts. Unsafe or unreadable unrelated entries remain outside that managed bound. Samples are redacted and limited per string/turn. Stop the proxy before manually removing both `provider-debug` and `provider-debug-artifacts`; removing artifacts alone breaks retained references.
+
+`bun run install:local` is an explicitly requested local maintenance action. It checks the upstream stage arguments, preserves the unique stage `--prefix`, installs a prepared tarball offline, and checks package identity, font stack and CLI before reporting stage success. A stage check failure leaves the old live package in place and attempts to clean the stage; if cleanup fails, the stage is retained and reported. The package transaction completes after the upstream swap and post-swap verification, with upstream rollback on applicable transaction failures. It then checks live identity and fonts, synchronizes and verifies Volta, checks the launcher and CLI, and handles service, debug and readiness as applicable. Volta metadata synchronization retains its own internal compensation when that synchronization fails. For a transaction failure with restart requested, the previous runtime can be restarted only when `recoveryUnsafe` is not `true` and one of these conditions holds: the phase is `stage`, `verify`, `authorize` or `swap-backup`; or `rolledBack: true` is reported. Other transaction failures do not trigger an automatic restart. A failure after the package transaction succeeds does not automatically restore the old package; a service or readiness failure does not automatically restore the Volta registration. Inspect the actual package, Volta and service state. On macOS it enables `OCX_DEBUG=1` and `OCX_PROVIDER_TEXT_DEBUG=1`; `--no-restart` writes service configuration to the on-disk plist without reloading the service. The font-stack patch remains, and the old scrolling CSS patch is retired.
+
+The shared installation transaction retains upstream synchronous `mayReplacePackage` authorization after stage verification and before each live-to-backup rename retry. It has no deferred commit or rollback handle after success. The Fork's former directory-identity, pending-transaction ownership and marker-writing protections are removed; the upstream transaction does not provide equivalent guarantees for them.
+
+Before startup recovery or a new transaction, a read-only `lstat` checks the old `.ocx-transaction.json` entry. Any existing entry or inspection error other than `ENOENT` makes startup recovery return `failed` and makes a new transaction return `pending-existing` with `recoveryUnsafe: true`. The check does not read, write or delete that marker or probe a PID. The launcher only warns on startup recovery failure and continues starting. Old pending transactions are not automatically recovered or deleted; inspect the transaction, package and backup state manually before taking action. A marker created after the check can still race with the operation.

@@ -1,0 +1,275 @@
+---
+title: Fork 配置
+description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配置补充。
+---
+
+本页补充上游配置。兼容行为见 [Fork 扩展](/zh-cn/reference/fork-extensions/)。
+
+## 模型 API 入口
+
+`forkModelApiListener` 只接受 `{ "enabled": boolean }`，默认 `{ "enabled": false }`。省略或设为 `false` 时保留现有主服务。入口与主服务共用进程、Provider 和原生数据面策略。
+
+需要独立局域网 API 时，主服务保持回环地址并使用 `10100` 以外的端口，例如：
+
+```json
+{
+  "hostname": "127.0.0.1",
+  "port": 10101,
+  "forkModelApiListener": { "enabled": true }
+}
+```
+
+此 auxiliary 模式在 `http://127.0.0.1:10101` 提供现有控制台和管理 API，并把模型 API 绑定到 `0.0.0.0:10100`。其他回环管理端口也有效，但不能与其他配置的 listener 冲突。开启前须配置原生数据面 API Key 或 token；仅有 admin token 不能授权模型请求。
+
+主服务已经绑定非回环地址时，启用该选项要求主端口为 `10100`：
+
+```json
+{
+  "hostname": "0.0.0.0",
+  "port": 10100,
+  "forkModelApiListener": { "enabled": true }
+}
+```
+
+此 primary 模式不创建额外 listener。`10100` 保留主服务原生的管理、health/readiness、路由和鉴权行为；下述辅助入口限制不适用于它。
+
+辅助入口接受兼容路径归一化到 `/v1/` 后的全部原生数据面：模型发现、Responses、Chat Completions、Messages、token 计数、images、audio，以及受支持的 WebSocket/SSE 路由。具体可用性仍取决于原生路由的 Provider 支持和功能配置。不另设模型或端点白名单；除[按 key 转换模型](#按-key-转换模型)适用的情况外，请求与响应沿用原生处理。`/v1/link-management` 前缀被拒绝。
+
+辅助入口对控制台、管理 API、session 签发、配对、health/readiness 和 Remote Workspace 返回 JSON `404`。本机调用、admin 凭据、已有 GUI session 和伪造 `Host` 也不能访问。客户端配对和账号管理应使用主管理服务。模型凭据继续遵守原生 scope、用量、Direct、上游凭据和音频凭据规则；凭据变更沿用原生 HTTP/WebSocket 行为，该选项不增加逐帧撤销机制。
+
+保存拓扑只影响下次启动，不移动当前 socket，也不自动改号；拓扑非法或必需端口被占用时直接失败。保存后重启代理。`ocx status` 显示主管理 URL 和模型 listener 状态。`ocx status --json` 新增 `forkModelApiListener`，保持 `schemaVersion: 1`：`enabled` 表示期望配置，`active`、`hostname` 和 `port` 来自运行中的进程，`restartRequired` 比较启动拓扑与保存拓扑。缺少已验证的同进程响应时，`active` 和 `restartRequired` 为 `null`，`inactiveReason` 为 `unverified`；服务未运行时报告 `active: false` 和 `not-running`。运行中关闭的入口报告 `disabled`；primary 模式报告 `primary-non-loopback`，表示无需辅助 listener。状态不含凭据。
+
+配置文件包含已移除的 OpenCode Free provider 时，主动文件读取会尝试备份原始字节，并从加载视图中移除退休条目；passive 诊断不创建副本。有效的已启用 listener 拓扑会保留；显式配置的非法拓扑会被拒绝，不会静默关闭。
+
+安装、用户服务重启、外部设备连通和付费 Provider 接入仍需分别验收。
+
+## 按 key 转换模型
+
+在已有 `apiKeys` 条目中增加 `modelConversion`，即可在辅助 `10100` 入口为该 key 启用转换。省略此字段或将 `enabled` 设为 `false` 时关闭。原有认证和 scope 检查继续生效；此功能没有 GUI 设置。
+
+```json
+{
+  "apiKeys": [
+    {
+      "id": "existing-key-id",
+      "name": "default",
+      "key": "existing-key-secret",
+      "modelConversion": {
+        "enabled": true,
+        "rules": [
+          { "match": "gpt-*", "exclude": ["*luna*"], "model": "gpt-6.1-terra", "maxEffort": "medium" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+这只是配置片段：保留已有 key 凭据和其他设置。`enabled` 为 `true` 且省略 `rules` 时使用上面的默认规则；`rules: []` 不转换。规则按顺序检查，第一条命中即生效。`match` 和可选的 `exclude` 使用区分大小写、匹配完整模型名的 glob（`*` 和 `?`）；可识别的 Provider 或账号前缀会先分离。每条规则都必须提供目标 `model` 和有效的 `maxEffort`。策略结构无效时启动失败，不会静默关闭转换。
+
+转换覆盖 Responses、Responses compact、Chat Completions、Messages、Messages token 计数和 Responses WebSocket。Images、audio 和其他路由沿用原生处理。命中请求使用目标模型，effort 按配置上限限制；未指定 effort 时设为上限。请求交给主处理器前，Messages 将 `minimal` 映射为 `low`、`ultra` 映射为 `max`；`none` 禁用 thinking 并省略 effort 字段。转换时不改变仍启用的 thinking token 预算，后续转译可能改变该预算。WebSocket 续接省略已有设置时保持继承。客户端在协议模型字段和受支持的模型头中看到原请求模型；无法安全投影的可选诊断 metadata 可能被移除。用量和日志按主处理器的处理结果记录，包括实际使用的模型和 token 数。
+
+策略在启动时读取，并在进程及其 WebSocket 连接内保持不变。修改规则后需要重启进程。策略只作用于辅助入口，直接请求主服务不应用转换。primary `10100` 拓扑存在启用的非空策略时启动失败，请使用上面的辅助入口拓扑。未配置策略的 key 沿用原生行为。
+
+主处理器可能通过固定 effort、记忆或压缩路由、模型重定向或子代理回退，覆盖转换后的模型或 effort。入口不会因这些设置可能生效而拒绝请求；实际使用的模型和 effort 因此可能与转换规则不同。修改这些设置也可能影响正在处理的请求。
+
+转换请求的错误消息使用固定说明，避免暴露实际模型。HTTP 状态、受支持的错误分类及可识别的重试信息会保留；未知分类或参数可能变为通用值或 `null`。
+
+启用转换的 key 共享有界转换预算。入口要先读取请求才能判断模型是否命中，因此排除的模型也可能短暂等待或收到容量错误；规则不会修改其模型和 effort。没有启用转换的 key 不使用此预算。
+
+## Provider 配置
+
+| 字段 | Fork 行为 |
+| --- | --- |
+| `agentMessageFormat` | `preserve` 保留原生消息；`user_message` 转换第三方 Responses 的完整可读文本/媒体，包含第三方 GPT 模型。官方目的地始终保留原生格式。省略时沿用目的地默认策略；密文、未知 part、空内容不做部分转换。 |
+| `inferResponsesMessagePhaseModels` | 显式启用原生 phase 推断的精确模型 ID，排除官方目的地和 GPT/OpenAI 族。宣布阶段自称 `final_answer` 先降为 `commentary`，最终 item/terminal 证据决定相位；failed/incomplete 不补合成 final phase。 |
+| `defaultMaxOutputTokens`、`modelMaxOutputTokens` | 既有输出默认值扩展到 key-auth Responses 缺失的 `max_output_tokens`。模型级优先于 Provider 级，客户端显式值优先于两者；forward 不注入。 |
+
+有有效窗口且估算剩余 token 超过 512 时，补写预算为 `max(512, min(configured, remaining - headroom))`，余量为 256–4,096 token；无有效窗口或剩余 token 不超过 512 时保留配置值，让上游明确拒绝超窗。
+
+`agentMessageFormat` 和 `inferResponsesMessagePhaseModels` 通过配置或管理 API 使用。POST 省略保留最新值，PATCH `null` 清除；`agentMessageFormat` 的 POST `null` 拒绝。显式格式转换保留身份及原请求/重放对象。
+
+未设置 `agentMessageFormat` 时，forward 鉴权沿用上游默认并保留原生 `agent_message`。第三方目的地显式设置 `user_message` 时，仍可转换可读内容。
+
+`inferResponsesMessagePhaseModels` 也覆盖名单内第三方模型的普通 JSON 响应。满足其条件时，按模型启用的推断优先，避免两套缓冲改写吞掉同一个 EOF 尾项。其他路由继续使用官方 Provider 级 `messagePhaseInference`，作用于 SSE 及由 SSE 重建的 JSON。
+
+`opencode-go` 预设仅在缺失时补 `preserveResponsesReasoningContent: true`，显式 `false` 优先。推动该默认值的拒绝样本来自 DeepSeek，同 Provider 其他 Responses 模型尚未全部验证保留回放。
+
+## GPT 官方订阅处理
+
+`providers.<name>.codexPassthrough` 控制 23 项兼容处理。每项许可默认都是 `true`，包括 `normalizeEncryptedContent`。省略整个对象、写 `{}` 或把 23 项全部设为 `true`，均沿用之前的行为。许可不会强行启用原本关闭的功能：请求节流、任务恢复、reset 重试、上游 WebSocket 和 skills 仍受各自原配置及条件控制。
+
+开关只在最终目的地满足以下条件时生效：使用 `openai-responses`、`authMode: "forward"`，规范化后的 base URL 为 `https://chatgpt.com/backend-api/codex`，且入站为原生 Responses HTTP、SSE 或 WebSocket。范围包含 Direct 主登录，以及 Pool 主登录和新增池账号。Provider 改名、模型级 adapter 选择都按最终结果判断。key 认证、第三方 GPT、其他目的地的模型，以及 Chat Completions 或 Anthropic 入站沿用既有行为；fallback 的每个目的地分别判断。
+
+在仪表盘打开对应 Provider 的设置，展开 **GPT 官方订阅处理**。下列四组支持逐项开启或关闭，以及全部关闭。保存后从下一个请求或 WebSocket turn 生效；进行中的 turn 及其 fallback 尝试使用已捕获的许可。账号凭据撤销仍按既有规则生效。
+
+下表字段均相对于 `codexPassthrough`，默认值全部为 `true`。
+
+### 请求
+
+| 字段 | 开启后允许的处理 |
+| --- | --- |
+| `normalizeRequestParameters` | 既有官方后端参数清理、默认值和原条件下的强制流式请求，以及未声明 hosted-search 工具时的自动历史投影。Provider 显式开启的 `projectResponsesLiteHostedSearchHistory` 保持独立。 |
+| `expandRequestHistory` | 为 `previous_response_id` 展开已保存的续接历史。 |
+| `normalizeEncryptedContent` | 解封装 OCX1，并按既有身份切换条件规范化 native compaction 密文。关闭时跳过该规范化；任务恢复失败处理单独保留。 |
+| `snapshotSkillsCatalog` | 在既有 skills 配置要求时应用技能目录快照。 |
+| `rewriteAnnotationInstructions` | 改写已识别的 Codex 注解说明，要求输出裸 directive。 |
+| `bridgeLiteMetadata` | 构造 canonical 上游 WebSocket 帧时映射有效的 Lite header，显式 HTTP header 优先同名 metadata。HTTP 请求 metadata 和其他字段保持原样。 |
+
+### 响应
+
+| 字段 | 开启后允许的处理 |
+| --- | --- |
+| `backfillResponseFields` | 补充缺失的 response item ID、message status 和文本 annotations。 |
+| `repairResponseToolCalls` | 按原工具映射条件执行既有、已授权的工具调用修复。 |
+| `redactUpstreamErrors` | 通用上游错误脱敏及规范化；关闭后仍保护实际注入的私有凭据。 |
+| `privateSseReadDeadline` | 保留首段受保护 SSE 输出及不完整块的固定 5 秒期限。关闭后使用 `stallTimeoutSec` 控制流式停滞，保留取消、内存预算及私有凭据遮盖。 |
+| `upstreamWsSilenceDeadline` | 等待上游 WebSocket 首次响应时，保留 90 秒静默期限，收到帧或 pong 会重置计时。关闭后保留连接期限、ping、取消和传输预算。 |
+| `privateErrorBodyReadDeadline` | 为使用私有凭据保护的 HTTP 错误正文保留固定 5 秒总期限、首字节及停滞期限。关闭后取消固定总期限，首字节和停滞等待使用 `stallTimeoutSec`；取消、64 KiB 上限和凭据遮盖继续生效。 |
+| `synthesizeTerminalFailure` | 没有可用终态事件时，执行既有合成失败终态处理。 |
+| `normalizeHostedImages` | 为受支持客户端转换 hosted-image 返回，并清理后续输入中的显示路径。 |
+
+原生 Responses 流式 Combo 尝试中，即使 `synthesizeTerminalFailure: false`，真实 `response.done` 的 `response.status: "completed"` 且包含 output 数组时仍须遵守官方必选工具合同。检查不会改动有效 block。`repairResponseToolCalls: false` 时，检查器不能把客户端未收到的修复后名称当作履约。缺少必选调用仅可在提交前且重放安全时重试；观察到 hosted 工具效果时禁止重放。
+
+生效的 `maxInboundBodyBytes` 大于 256 MiB 时，共享的 `maxConcurrentInboundBodyBytes` 准入预算生效。普通读取的 body 会在转移 Fork 请求文本 lease 前，根据解压及序列化大小更新 reservation。保留的 JSON 文本使用独立的 translator-budget lease。准入 reservation 持有到响应 EOF、错误或取消完成；文本 lease 在请求来源完成、错误、取消或 abort 时释放。官方限制与适用范围见[入站正文准入](/zh-cn/reference/inbound-body-admission/)。
+
+Remote Link turn 可以携带已解析的 body。代理先按官方序列化大小限制和预算观察处理；仅在需要 Fork source 且尚未持有时，才额外序列化并保留一份 JSON 文本。translator budget 观察其大小，文本及其观察量随来源释放。深层合法 JSON 会使递归 `JSON.stringify` 栈溢出并返回无效 JSON 错误。Link WebSocket 发布门仍关闭，开门前须修复该缺陷。真实 Remote Link 内存使用仍未验收，该路径未达到官方无第二副本的目标。
+
+### 请求与返回头
+
+| 字段 | 开启后允许的处理 |
+| --- | --- |
+| `synthesizeRoutingHint` | 按最终请求正文生成 `x-codex-routing-hint`。 |
+| `synthesizeSessionId` | 生成缺失的 `session_id`。 |
+| `addResponseRequestId` | 添加 OCX 的 `x-opencodex-request-id` 返回头。 |
+| `addResponseBrowserHeaders` | 添加 OCX 的浏览器 CORS/可见头字段；关闭后，跨域浏览器客户端可能无法读取响应。 |
+
+关闭头字段生成不会删除调用方或 Provider 的显式头。认证、选中账号身份、必要 HTTP/WebSocket framing 和既有传输及安全检查继续生效。
+
+`synthesizeRoutingHint: false` 时，Provider 静态配置的 routing hint 优先于调用方的值。开启合成时，既有逻辑按最终正文生成的 hint 可以覆盖这两种值。
+
+### 本地错误策略
+
+| 字段 | 关闭后的行为 |
+| --- | --- |
+| `localErrorPolicies.resetReplayRefusal` | 不生成可选的 Codex 拒绝重放说明及其 `x-should-retry: false` 头。发送结果不明确时仍不可重放；必要网关错误仍为 502 或 504。 |
+| `localErrorPolicies.requestPacingAdmission` | 本次尝试跳过可选的本地请求节流准入。 |
+| `localErrorPolicies.inputAdmissionPrecheck` | 跳过可选的本地输入大小估算预检；硬限制仍有效。 |
+| `localErrorPolicies.accountSoftPrecheck` | 跳过普通缓存额度/冷却预检；显式暂停、账号锁定、重新认证、credit/reserve 政策及其他受保护的账号决策继续生效。 |
+| `localErrorPolicies.transportErrorMapping` | 本地传输失败返回纯文本 502 `Bad Gateway` 或 504 `Gateway Timeout`，不添加可选的 Codex 错误说明。 |
+
+这些设置不会隐藏真实上游错误（包括 OpenAI 429），也不会关闭任务恢复的转换/解密失败错误。共享发送预算、认证和身份检查继续执行。关闭拒绝说明或错误映射不会增加代理重试。没有拒绝重放提示时，Codex 客户端可能按自己的预算重试；若上游已经处理过请求，可能重复执行或额外消耗额度。
+
+### 保存与清除覆盖值
+
+配置文件和完整 JSON 配置只接受布尔叶子值；恢复默认时删除对应字段。以下 Provider 片段关闭注解说明改写及本地软额度预检，其余许可沿用默认值：
+
+```json
+{
+  "codexPassthrough": {
+    "rewriteAnnotationInstructions": false,
+    "localErrorPolicies": {
+      "accountSoftPrecheck": false
+    }
+  }
+}
+```
+
+`PATCH /api/providers?name=<name>` 只合并 `codexPassthrough` 中实际提供的叶子字段。PATCH 的 `null` 用于清除覆盖值：叶子为 `null` 恢复该项默认，`localErrorPolicies: null` 清除整组，`codexPassthrough: null` 清除整个对象。GET 只返回已存储覆盖值，不补写默认字段。配置文件中不要写 `null`；清除不等于关闭。
+
+全部关闭时使用面板操作，或明确把 23 项都设为 `false`：
+
+```json
+{
+  "codexPassthrough": {
+    "normalizeRequestParameters": false,
+    "expandRequestHistory": false,
+    "normalizeEncryptedContent": false,
+    "snapshotSkillsCatalog": false,
+    "rewriteAnnotationInstructions": false,
+    "bridgeLiteMetadata": false,
+    "backfillResponseFields": false,
+    "repairResponseToolCalls": false,
+    "redactUpstreamErrors": false,
+    "privateSseReadDeadline": false,
+    "upstreamWsSilenceDeadline": false,
+    "privateErrorBodyReadDeadline": false,
+    "synthesizeTerminalFailure": false,
+    "normalizeHostedImages": false,
+    "synthesizeRoutingHint": false,
+    "synthesizeSessionId": false,
+    "addResponseRequestId": false,
+    "addResponseBrowserHeaders": false,
+    "localErrorPolicies": {
+      "resetReplayRefusal": false,
+      "requestPacingAdmission": false,
+      "inputAdmissionPrecheck": false,
+      "accountSoftPrecheck": false,
+      "transportErrorMapping": false
+    }
+  }
+}
+```
+
+全部关闭时，保留请求 JSON 值、字段是否存在、未知字段和数组顺序；显式模型/Fast 路由、选中账号认证、必要传输规则及 Provider 独立开启的 `projectResponsesLiteHostedSearchHistory` 仍生效。需要原样保留 hosted-search 历史时，也须关闭这个独立选项。JSON 可以重新序列化。需要 framing 或私有凭据保护时，不保证响应字节完全一致。关闭错误改写时，客户端 WebSocket 错误帧在 `response` 中保留完整上游错误体。
+
+OCX 实际注入的私有凭据始终在交付前受保护，包含 Pool/已存主登录凭据及敏感配置头值。成功响应或 SSE 流无法确认安全交付时，在响应提交前返回 `upstream_error_protection_failed`，已提交的流则中止，不伪造成功终态。
+
+受保护的 HTTP 错误正文最多读取 64 KiB，并严格解码 UTF-8。标为 JSON 的完整合法正文逐字符串遮盖，其他文本整体遮盖。标为 JSON 的非法正文只有在不含反斜杠且完整文本遮盖未命中私有值时才原样保留，否则舍弃正文；超限或解码失败也会舍弃正文。正文被舍弃时，Direct 保留上游状态：默认由官方格式化器返回仅含状态信息的 JSON；`redactUpstreamErrors: false` 时返回空体。Combo 保留状态并在正文被舍弃时按状态分类。原有期限和取消规则继续生效。
+
+成功响应的正文格式既非 SSE 也非 JSON 时，只要有私有值需要保护，代理就会在交付前取消上游正文并返回上述保护错误。无正文或没有私有值需要保护时，沿用原有交付行为；caller 已持有的值不会触发这项限制。
+
+只取消固定 5 秒 SSE 期限时，把 `codexPassthrough.privateSseReadDeadline` 设为 `false`，或在 Provider 的响应设置中关闭“私有 SSE 固定 5 秒期限”。这不改变 HTTP 错误体的有界读取期限，也不允许输出未遮盖的凭据。等待更久可能延迟暴露失败；`stallTimeoutSec` 和请求取消仍限制停滞的流。
+
+另外两个期限在响应设置中独立控制。把 `upstreamWsSilenceDeadline` 设为 `false`，取消上游 WebSocket 额外的 90 秒静默期限；把 `privateErrorBodyReadDeadline` 设为 `false`，取消私有 HTTP 错误正文的固定 5 秒期限。后者使用正常的 `stallTimeoutSec`：默认 300 秒，显式 `0` 关闭该停滞限制。两个开关都不改变断流重发、401 刷新后重发、账号轮换或 `agentTaskRecovery`。主账号额度硬锁仍由已有的 `codexMainAccountHardLock` 单独控制。
+
+私有保护失败在日志中使用 `private-*` 本地错误码，并在 `upstreamHttpStatus` 保留原始响应头状态，包含每次尝试和持久化用量记录。面板单独显示该状态，把保护失败文案标为“本地原因”。例如，上游 HTTP 200 后触发本地等待期限，会与最终 502 分开记录。没有此字段的历史记录无法恢复原始状态。
+
+## 自定义模型与上下文上限
+
+customModels 类型、CRUD 和 catalog 行已是官方能力。Fork 增加严格写入、逐行 salvage、按 stable-ID 并发合并和已知字段公开投影，未知 opaque 字段仅内部保存。custom row 替换发现行时保留其 `pricingStatus`。
+
+`customModels[].codexToolMode` 支持 `code_mode_only`、`shell` 或继承：创建省略为继承，更新省略保留存储值，更新 `null` 清除。CLI 使用 `--tool-mode code_mode_only|shell|inherit`，补齐既有 catalog 字段的管理入口。
+
+`PUT /api/provider-context-caps` 保存失败恢复该路由的 live 上限字段与 pending deletions，不刷新 catalog；这不保证所有配置字段都具备回滚。
+
+`POST /api/providers` 在尚未发布便失败时，恢复原 Provider 条目；`setDefault: true` 同时恢复原默认值。`ConfigWritePublishedError` 保留已经发布的 Provider 和默认值，使其与磁盘一致。
+
+## 加密子任务恢复
+
+恢复默认关闭，启用后使用额外的认证 ChatGPT 请求。以下示例开启恢复，其余字段使用 Fork 严格后端任务的默认值：
+
+```json
+{
+  "agentTaskRecovery": {
+    "enabled": true,
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "timeoutMs": 120000,
+    "maxRetries": 2,
+    "retries": 0
+  }
+}
+```
+
+已准入的 strict backend `NEW_TASK` 与严格子→父 `MESSAGE` 中，`timeoutMs` 限制每次尝试（默认 120000 毫秒），首字节/空闲等待上限为 45 秒，`maxRetries` 最多允许两次超时重试。其他受支持的加密任务使用一个共享期限（默认 45000 毫秒，或显式配置的 `timeoutMs`），不使用 `maxRetries`。`retries` 在当前期限内处理短暂 HTTP/传输失败；取消与 `invalid_encrypted_content` 会停止两类重试。
+
+原生 transient 5xx 恢复只准入 strict `NEW_TASK`，按共享发送预算对已选择的同一目标重放一次。已准入父任务加密 `MESSAGE` 的超时可生成无密文重发通知，不声称正文已读；strict 密文和恢复 body 不写 continuation storage。
+
+## 诊断与本地安装
+
+普通 Provider debug 只记录结构；文本工件同时要求 provider debug 和独立 `provider-text`，CLI、API、仪表盘共用开关：
+
+```bash
+ocx debug provider on
+ocx debug provider-text on
+ocx debug provider-text off
+```
+
+主日志与引用工件在 UTC 日期/小时目录下共用 4 MiB 分组，两个根目录的可管理数据最多保留七天和 20 GiB。清理先删最旧主日志，再删工件；unsafe/不可读旁路条目不计入该预算。样本脱敏并限制单字符串/每轮额度。手动删除前先停代理，再一起删除 `provider-debug` 和 `provider-debug-artifacts`，只删工件会损坏保留引用。
+
+`bun run install:local` 是须明确请求的本机维护操作：核对官方 stage 参数并保留唯一 stage 的 `--prefix`，将准备好的 tarball 离线安装，并在 stage 成功前校验包身份、字体栈和 CLI。stage 校验失败会保留旧 live 包并尝试清理 stage；清理失败时保留并记录。官方 swap 与交换后校验成功后包事务结束，适用的事务内失败仍由官方回滚处理。随后校验 live 身份和字体、同步并验证 Volta、检查 launcher 和 CLI，再按条件处理服务、debug 和 readiness。Volta 元数据同步自身失败时仍执行内部补偿。事务失败且要求重启时，只有 `recoveryUnsafe` 不为 `true`，且阶段为 `stage`、`verify`、`authorize`、`swap-backup` 之一或报告 `rolledBack: true`，才可尝试恢复原运行状态；其他事务失败不自动重启。包事务成功后的失败不会自动恢复旧包；服务或 readiness 失败不会自动恢复 Volta 登记，须核查包、Volta 和服务的实际状态。macOS 补写 `OCX_DEBUG=1` / `OCX_PROVIDER_TEXT_DEBUG=1`；`--no-restart` 的服务配置只写磁盘 plist，不 reload 服务。字体栈补丁保留，旧滚动 CSS 补丁已退役。
+
+共享安装事务保留官方 `mayReplacePackage` 同步授权：stage 校验后和每次 live→backup rename 重试前均须授权。成功后不提供延迟提交或 rollback 句柄。Fork 原有目录身份、pending 事务所有权和 marker 写入保护已撤回；官方事务不等价覆盖这些保证。
+
+启动恢复和新事务开始前，只读 `lstat` 检查旧 `.ocx-transaction.json` 目录项。已有任意条目或非 `ENOENT` 检查错误时，启动恢复返回 `failed`，新事务返回 `pending-existing` 及 `recoveryUnsafe: true`；检查不读取、写入或删除该 marker，也不探测 PID。启动器对恢复失败只发警告并继续启动。旧 pending 不自动恢复或删除，处理前须人工核查事务、包与备份；检查后新建 marker 仍可能发生竞态。
