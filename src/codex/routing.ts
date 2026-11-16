@@ -8,7 +8,8 @@ import { handOffThreadAffinityGeneration } from "./routing/thread-affinity";
 import { codexAccountLogLabel } from "./account-label";
 import { isCodexAccountPaused } from "./account-pause";
 import { clearCodexAccountPin, pinnedCodexAccountId, codexAccountPriorityFailbackEnabled, CODEX_PRIORITY_FAILBACK_REFRESH_MS } from "./account-priority";
-import { isCodexAccountUsable, type CodexAccountUsabilityOptions } from "./account-usability";
+import { isCodexAccountUsable } from "./account-usability";
+import type { CodexAccountSelectionOptions } from "./routing/selection";
 import { markAccountNeedsReauth } from "./account-runtime-state";
 import { codexAccountPinDrainReason } from "./routing/pin-drain";
 import { POOL_KEY_CODEX, notePoolRotationFailure } from "./pool-rotation";
@@ -103,6 +104,7 @@ import {
   applyFailureFailover,
   applyQuotaAutoSwitch,
   codexAccountBlockReason,
+  codexAccountHasNonQuotaHealthBlock,
   getEligiblePoolAccounts,
   getPoolAccountPlanForSelection,
   hasCodexQuotaHeadroom,
@@ -230,7 +232,7 @@ registerCodexRefreshGenerationHandoff(handOffThreadAffinityGeneration);
 function hasConfiguredPoolAccount(
   config: OcxConfig,
   accountId: string,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): boolean {
   if (accountId === MAIN_CODEX_ACCOUNT_ID) {
     return isCodexAccountUsable(config, accountId, selectionOptions);
@@ -299,15 +301,15 @@ function isTransientOnlyAffinityBlock(
   entry: ThreadAffinityEntry,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): boolean {
   if (!isThreadAffinityGenerationLive(entry)) return false;
-  if (hasUnrecoveredCodexQuotaRefusal(entry.accountId, quotaScope)) return false;
+  if (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true && hasUnrecoveredCodexQuotaRefusal(entry.accountId, quotaScope)) return false;
   if (isCodexAccountPaused(config, entry.accountId)) return false;
   if (isCodexAccountRotationExcluded(config, entry.accountId, now, selectionOptions)) return false;
   if (!isCodexAccountUsable(config, entry.accountId, selectionOptions)) return false;
-  if (getCodexQuotaHealthSnapshot(entry.accountId, quotaScope, now) !== null) return false;
-  if (isCodexQuotaAvoided(entry.accountId, quotaScope, now)) return false;
+  if (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true && getCodexQuotaHealthSnapshot(entry.accountId, quotaScope, now) !== null) return false;
+  if (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true && isCodexQuotaAvoided(entry.accountId, quotaScope, now)) return false;
   return shouldFailover(config, entry.accountId, now)
     || isCodexAccountSoftAvoided(entry.accountId, now)
     || isCodexPoolRefreshCooling(entry.accountId, now);
@@ -341,7 +343,7 @@ function transientDetourAccount(
   entry: ThreadAffinityEntry,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   mode: "commit" | "peek" = "commit",
 ): string | null {
   const held = entry.transientDetourAccountId;
@@ -349,7 +351,7 @@ function transientDetourAccount(
     held !== undefined
     && held !== entry.accountId
     && isCodexAccountSelectable(config, held, now, quotaScope, selectionOptions)
-    && !hasUnrecoveredCodexQuotaRefusal(held, quotaScope)
+    && (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true || !hasUnrecoveredCodexQuotaRefusal(held, quotaScope))
     && !shouldFailover(config, held, now)
     && !isCodexAccountSoftAvoided(held, now)
   ) {
@@ -384,7 +386,7 @@ function lineageServingAccountId(
   config: OcxConfig,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   modelId?: string,
 ): string | null {
   const entry = (modelId !== undefined
@@ -399,7 +401,7 @@ function lineageServingAccountId(
     ? entry.transientDetourAccountId
     : entry.accountId;
   return isCodexAccountSelectable(config, serving, now, quotaScope, selectionOptions)
-      && !hasUnrecoveredCodexQuotaRefusal(serving, quotaScope)
+      && (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true || !hasUnrecoveredCodexQuotaRefusal(serving, quotaScope))
       && !shouldFailover(config, serving, now)
       && !isCodexAccountSoftAvoided(serving, now)
     ? serving
@@ -417,7 +419,7 @@ function pickLineageServingAccount(
   lineage: CodexThreadLineage,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   modelId?: string,
 ): { accountId: string; reason: CodexAffinityReason } | null {
   // Cohort keying (#4780) makes a tree share one key, so for a same-session family the parent's
@@ -483,7 +485,7 @@ export function reconcileCodexActiveAfterExclusion(
 function releaseDrainedCodexAccountPin(
   config: OcxConfig,
   selectionOptions?: Pick<
-    CodexAccountUsabilityOptions,
+    CodexAccountSelectionOptions,
     "nativeMainSelectionOnly" | "isMainAccountTokenLive"
   >,
   now: number = Date.now(),
@@ -514,7 +516,7 @@ function pickAffinityPriorityFailback(
   accountId: string,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   if (!codexAccountPriorityFailbackEnabled(config, accountId)
     || accountPoolStrategyForScope(config, quotaScope) !== "quota") return null;
@@ -523,7 +525,7 @@ function pickAffinityPriorityFailback(
   // Check every member before the lowest-usage picker sees it.
   const candidates = getEligiblePoolAccounts(config, undefined, now, quotaScope, selectionOptions).filter(id => {
     if (!hasCodexQuotaHeadroom(config, id, selectionOptions, now)
-      || hasUnrecoveredCodexQuotaRefusal(id, quotaScope)
+      || selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true && hasUnrecoveredCodexQuotaRefusal(id, quotaScope)
       || shouldFailover(config, id, now)) return false;
     const quota = getAccountQuota(id);
     const plan = getPoolAccountPlanForSelection(config, id, selectionOptions);
@@ -545,7 +547,7 @@ function previewReusableAffinityAccount(
   config: OcxConfig,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   if (
     !entry
@@ -556,7 +558,7 @@ function previewReusableAffinityAccount(
   if (
     !isThreadAffinityGenerationLive(entry)
     || !isCodexAccountSelectable(config, entry.accountId, now, quotaScope, selectionOptions)
-    || hasUnrecoveredCodexQuotaRefusal(entry.accountId, quotaScope)
+    || selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true && hasUnrecoveredCodexQuotaRefusal(entry.accountId, quotaScope)
     || shouldFailover(config, entry.accountId, now)
   ) {
     // Preview must reach the same answer as resolve, including the transient detour, or the
@@ -612,7 +614,7 @@ function resetFirstAffinityReplacement(
   config: OcxConfig,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   const threshold = getEffectiveCodexAutoSwitchThreshold(config, entry.accountId);
   if (threshold <= 0) return null;
@@ -663,7 +665,7 @@ function pickCacheSafeQuotaReplacement(
   boundUsage: number,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   const candidates = getEligiblePoolAccounts(
     config,
@@ -692,7 +694,7 @@ function reevaluateAffinityQuota(
   config: OcxConfig,
   now: number,
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
 ): string | null {
   const strategy = accountPoolStrategyForScope(config, quotaScope);
   if (strategy === "reset-first") {
@@ -746,7 +748,7 @@ export function previewCodexAccountForRequest(
   config: OcxConfig,
   now = Date.now(),
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   modelId?: string,
   lineage?: CodexThreadLineage,
 ): string | null {
@@ -822,7 +824,7 @@ export function previewCodexAccountForRequest(
     else if (
       hasConfiguredPoolAccount(config, active, selectionOptions)
       && !isCodexAccountPaused(config, active)
-      && !isCodexAccountRotationExcluded(config, active, now, selectionOptions)
+      && !isCodexAccountRotationExcluded(config, active, now, selectionOptions) && (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true || !codexAccountHasNonQuotaHealthBlock(config, active, now))
     ) return active;
     else return null;
   }
@@ -843,14 +845,14 @@ export function previewCodexAccountForRequest(
     const best = pickLowestUsageCodexAccount(config, active, now, quotaScope, selectionOptions);
     if (best) active = best;
   }
-  // Same correction resolve applies, for the same reason: preview must name the account the
-  // request will actually use, or subagent fallback scores a model against the wrong one.
+  // Preview and resolve must use the same model eligibility for subagent fallback.
   active = preferModelEntitledAccount(config, active, now, quotaScope, selectionOptions);
   if (!isCodexAccountUsable(config, active, selectionOptions)) {
     return hasConfiguredPoolAccount(config, active, selectionOptions) ? active : null;
   }
   if (isCodexAccountPaused(config, active)) return null;
-  if (getCodexQuotaHealthSnapshot(active, quotaScope, now)) {
+  if (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true && codexAccountHasNonQuotaHealthBlock(config, active, now)) return null;
+  if (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true && getCodexQuotaHealthSnapshot(active, quotaScope, now)) {
     return hasConfiguredPoolAccount(config, active, selectionOptions) ? active : null;
   }
   return active;
@@ -861,7 +863,7 @@ export function resolveCodexAccountForThreadDetailed(
   config: OcxConfig,
   now = Date.now(),
   quotaScope?: CodexQuotaScope,
-  selectionOptions?: CodexAccountUsabilityOptions,
+  selectionOptions?: CodexAccountSelectionOptions,
   modelId?: string,
   lineage?: CodexThreadLineage,
 ): CodexThreadResolution {
@@ -869,7 +871,7 @@ export function resolveCodexAccountForThreadDetailed(
   // the operator's shared active/pin choice or the task's ordinary-model affinity.
   const modelScopedSelection = selectionOptions?.modelEligibleAccountIds !== undefined;
   let preserveExistingModelScopedAffinity = false;
-  const sharedSelectionOptions: CodexAccountUsabilityOptions | undefined = modelScopedSelection
+  const sharedSelectionOptions: CodexAccountSelectionOptions | undefined = modelScopedSelection || selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true
     ? sharedStateSelectionOptions(selectionOptions) ?? {}
     : selectionOptions;
   // Retiring a spent manual pin is independent of affinity: an existing thread
@@ -905,7 +907,7 @@ export function resolveCodexAccountForThreadDetailed(
       const detourReusable = !isThreadAffinityExpired(detourEntry, now)
         && isThreadAffinityGenerationLive(detourEntry)
         && isCodexAccountSelectable(config, detourEntry.accountId, now, quotaScope, selectionOptions)
-        && !hasUnrecoveredCodexQuotaRefusal(detourEntry.accountId, quotaScope)
+        && (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true || !hasUnrecoveredCodexQuotaRefusal(detourEntry.accountId, quotaScope))
         && !shouldFailover(config, detourEntry.accountId, now);
       if (detourReusable) {
         detourEntry.lastUsedAt = now;
@@ -965,12 +967,11 @@ export function resolveCodexAccountForThreadDetailed(
     const generationLive = isThreadAffinityGenerationLive(entry);
     const selectableForSharedState = generationLive
       && isCodexAccountSelectable(config, entry.accountId, now, quotaScope, sharedSelectionOptions);
-    const selectableForRequest = selectableForSharedState
+    const selectableForRequest = (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true ? generationLive : selectableForSharedState)
       && isCodexAccountSelectable(config, entry.accountId, now, quotaScope, selectionOptions);
     const failoverReady = shouldFailover(config, entry.accountId, now);
-    // A quota refusal outranks every affinity preference, including `pool.cacheAffinity`:
-    // the account has already told this thread it cannot serve it.
-    const quotaRefused = hasUnrecoveredCodexQuotaRefusal(entry.accountId, quotaScope);
+    // A permitted quota precheck outranks affinity preferences.
+    const quotaRefused = selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true && hasUnrecoveredCodexQuotaRefusal(entry.accountId, quotaScope);
     const healthyForSharedAffinity = selectableForSharedState
       && hasCodexSharedStateQuotaHeadroom(config, entry.accountId, quotaScope, sharedSelectionOptions, now)
       && !quotaRefused
@@ -1042,7 +1043,7 @@ export function resolveCodexAccountForThreadDetailed(
         && expiredDetour !== undefined
         && expiredDetour !== entry.accountId
         && isCodexAccountSelectable(config, expiredDetour, now, quotaScope, selectionOptions)
-        && !hasUnrecoveredCodexQuotaRefusal(expiredDetour, quotaScope)
+        && (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true || !hasUnrecoveredCodexQuotaRefusal(expiredDetour, quotaScope))
         && !shouldFailover(config, expiredDetour, now)
         && !isCodexAccountSoftAvoided(expiredDetour, now)
       ) {
@@ -1201,6 +1202,7 @@ export function resolveCodexAccountForThreadDetailed(
       hasConfiguredPoolAccount(config, active, selectionOptions)
       && !isCodexAccountPaused(config, active)
       && !isCodexAccountRotationExcluded(config, active, now, selectionOptions)
+      && (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true || !codexAccountHasNonQuotaHealthBlock(config, active, now))
     ) {
       return { status: "selected", accountId: active, affinity: affinityAfterRelease(threadId, releaseReason) };
     } else {
@@ -1253,7 +1255,8 @@ export function resolveCodexAccountForThreadDetailed(
       : { status: "none", affinity: affinityOnNoAccount(threadId, releaseReason) };
   }
   if (isCodexAccountPaused(config, active)) return { status: "none", affinity: affinityOnNoAccount(threadId, releaseReason) };
-  if (getCodexQuotaHealthSnapshot(active, quotaScope, now)) {
+  if (selectionOptions?.skipOrdinaryCachedQuotaPrecheck === true && codexAccountHasNonQuotaHealthBlock(config, active, now)) return { status: "none", affinity: affinityOnNoAccount(threadId, releaseReason) };
+  if (selectionOptions?.skipOrdinaryCachedQuotaPrecheck !== true && getCodexQuotaHealthSnapshot(active, quotaScope, now)) {
     return hasConfiguredPoolAccount(config, active, selectionOptions)
       ? { status: "selected", accountId: active, affinity: affinityAfterRelease(threadId, releaseReason) }
       : { status: "none", affinity: affinityOnNoAccount(threadId, releaseReason) };

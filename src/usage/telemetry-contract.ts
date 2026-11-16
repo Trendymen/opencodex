@@ -27,6 +27,7 @@ export const ACCOUNT_LOG_LABEL_RE = /^(?:main|[po][a-f0-9]{6}|k[a-f0-9]{32})$/;
  */
 export const ATTEMPT_RECOVERY_KIND_ROSTER = Object.freeze([
   "transient-5xx",
+  "agent-task-recovery",
   "connection-reset",
   "offline-resend",
   "oauth-401",

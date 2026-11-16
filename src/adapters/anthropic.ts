@@ -29,6 +29,7 @@ import { normalizeAnthropicImages } from "./anthropic-image-normalize";
 import { normalizeAnthropicOutputSchema } from "./anthropic-output-schema";
 import { normalizeAnthropicInputSchema } from "./anthropic-input-schema";
 import { identifyRoutedModel } from "./identity";
+import { appendRoutedProgressContract, hasRoutedProgressContract, neutralizeRoutedChannelInstructions } from "../fork/routed-progress-contract";
 import { redactSecretString } from "../lib/redact";
 import { CLAUDE_CODE_HEADERS, claudeCodeSessionId } from "./client-fingerprint";
 import { CLAUDE_CLI_SDK_PACKAGE_VERSION, CLAUDE_CLI_USER_AGENT } from "../providers/claude-cli-identity";
@@ -869,6 +870,14 @@ function messagesToAnthropicFormat(
     ? [...proxySystemPrompt.map(({ suffix }) => suffix.trimStart()), ...toolGuidance]
       .map(text => identifyRoutedModel(text, parsed.modelId)).filter(Boolean)
     : normalized;
+  if (toolCatalogNudge) {
+    for (let i = 0; i < callerSystem.length; i++) callerSystem[i] = neutralizeRoutedChannelInstructions(callerSystem[i]);
+    for (let i = 0; i < system.length; i++) system[i] = neutralizeRoutedChannelInstructions(system[i]);
+    if (![...callerSystem, ...system].some(hasRoutedProgressContract)) {
+      const last = system.length - 1;
+      system[last] = appendRoutedProgressContract(system[last]);
+    }
+  }
   const messages: unknown[] = [];
 
   for (let i = 0; i < parsed.context.messages.length; i++) {

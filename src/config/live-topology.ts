@@ -1,7 +1,7 @@
 import type { OcxConfig } from "../types";
 
 export const LIVE_TOPOLOGY_KEYS = new Set([
-  "hostname", "port", "runtimeRole", "hub", "client", "unauthenticatedLoopbackListener", "codexAuthMethod",
+  "hostname", "port", "runtimeRole", "hub", "client", "unauthenticatedLoopbackListener", "codexAuthMethod", "forkModelApiListener",
 ]);
 const baselines = new WeakMap<OcxConfig, Record<string, unknown>>();
 

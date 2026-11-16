@@ -48,8 +48,9 @@ type NpmUpdateOptions = {
 };
 type NpmUpdateResult = {
   ok: boolean;
-  phase: "stage" | "verify" | "authorize" | "swap-backup" | "swap-live" | "post-verify" | "double-fault" | "done";
+  phase: "pending-existing" | "stage" | "verify" | "authorize" | "swap-backup" | "swap-live" | "post-verify" | "double-fault" | "done";
   error?: string;
+  recoveryUnsafe?: boolean;
   rolledBack?: boolean;
   backup?: string;
 };
