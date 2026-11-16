@@ -52,6 +52,7 @@ import {
   isKnownCacheTelemetryProvenance,
   isKnownInboundProtocol,
   isKnownTerminalSource,
+  isUpstreamHttpStatus,
   isKnownTransportPhase,
   isKnownUsageSurface,
   isCodexUsageAccountLogLabel,
@@ -128,6 +129,7 @@ export function cacheDiagnosticsObserving(): boolean {
 }
 
 export interface RequestLogContext extends UpstreamErrorDiagnostics, LinkRequestLogCarrier, RequestBodyLogContext, CommittedComboLogFields {
+  upstreamHttpStatus?: number;
   model: string;
   provider: string;
   client?: UsageClient;
@@ -337,6 +339,7 @@ export function rebindCacheDiagnosticBody(
 }
 
 export interface RequestLogEntry extends UpstreamErrorDiagnostics, LinkRequestLogCarrier, RequestBodyEntryField {
+  upstreamHttpStatus?: number;
   requestId: string;
   client?: UsageClient;
   /** The logical request this row belongs to (#4546); absent on rows written without a budget. */
@@ -564,6 +567,7 @@ export function requestLogEntryFromPersistedUsage(entry: PersistedUsageEntry): R
     ...(entry.tierOutcome ? { tierOutcome: entry.tierOutcome } : {}),
     ...modelIdentityLogFields(entry),
     status: entry.status,
+    ...(isUpstreamHttpStatus(entry.upstreamHttpStatus) ? { upstreamHttpStatus: entry.upstreamHttpStatus } : {}),
     durationMs: entry.durationMs,
     // Closed code, condition, failure detail and quota reset; legacy upstream text is read once and dropped.
     ...errorDetailFor(entry),
@@ -777,6 +781,7 @@ export function addRequestLog(entry: RequestLogEntry) {
       ...(entry.responseServiceTier ? { responseServiceTier: entry.responseServiceTier } : {}),
       ...(entry.tierOutcome ? { tierOutcome: entry.tierOutcome } : {}),
       status: entry.status,
+      ...(isUpstreamHttpStatus(entry.upstreamHttpStatus) ? { upstreamHttpStatus: entry.upstreamHttpStatus } : {}),
       durationMs: entry.durationMs,
       ...(entry.firstOutputMs !== undefined ? { firstOutputMs: entry.firstOutputMs } : {}),
       ...(entry.genStartMs !== undefined ? { genStartMs: entry.genStartMs } : {}),
@@ -1528,6 +1533,7 @@ function writeFinalRequestLog(
       : logCtx.errorCode ?? bareVerdictRowErrorCode(logCtx) ?? requestLogErrorCode(attemptStatus, logCtx.upstreamError, logCtx.terminalErrorCode, false);
     if (attemptErrorCode) logCtx.activeAttempt.errorCode = attemptErrorCode;
     else delete logCtx.activeAttempt.errorCode;
+    if (isUpstreamHttpStatus(logCtx.upstreamHttpStatus)) logCtx.activeAttempt.upstreamHttpStatus = logCtx.upstreamHttpStatus;
   }
   // Derived and stamped in a sibling module, before the attempt snapshot below. Every input is
   // a closed value; the open error strings are deliberately not among them.
@@ -1669,6 +1675,7 @@ function writeFinalRequestLog(
       : {}),
     ...modelIdentityLogFields(logCtx),
     status: effectiveStatus,
+    ...(isUpstreamHttpStatus(logCtx.upstreamHttpStatus) ? { upstreamHttpStatus: logCtx.upstreamHttpStatus } : {}),
     durationMs,
     ...(logCtx.firstOutputMs !== undefined ? { firstOutputMs: logCtx.firstOutputMs } : {}),
     ...generationWindowFields(logCtx, start),
@@ -1890,6 +1897,8 @@ export function noteProviderAttemptSend(
     sealRequestAttemptIdentity(attempt, logCtx.provider, attempt.adapter, next);
     recordAttemptCredentialSource(attempt, providerName, provider, attempt.adapter);
   }
+  delete logCtx.upstreamHttpStatus;
+  if (attempt) delete attempt.upstreamHttpStatus;
   noteAttemptSend(attempt, inputTokenEstimate, recovery);
   if (attempt && keyUsageOwners.has(attempt)) {
     keyWireUsageBaselines.set(attempt, cloneKeyUsage(attempt.usage));

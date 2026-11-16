@@ -6,6 +6,7 @@ import {
 } from "./apply-patch-envelope";
 import { compileCodeModeHelperInput, resolveCodeModeHelperName } from "./code-mode-helper-compat";
 import { collectResponsesToolGroups } from "./tool-groups";
+import { functionCallOutputText } from "../fork/custom-tool-output";
 
 const ROUTED_CUSTOM_TOOL_PASSTHROUGH = new Set(["apply_patch"]);
 const BUILTIN_FUNCTIONS_NAMESPACE = "functions";
@@ -228,7 +229,7 @@ function rewriteForUpstream(
     && typeof value.call_id === "string"
     && callIds.has(value.call_id)
   ) {
-    return { ...value, type: "function_call_output" };
+    return { ...value, type: "function_call_output", output: functionCallOutputText(value.output) };
   }
 
   let changed = false;

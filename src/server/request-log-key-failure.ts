@@ -11,7 +11,10 @@ export async function recordKeyAttemptFailure(logCtx: RequestLogContext, respons
   const keyAttempt = attempt && !sealedCredentialRefusals.has(attempt) && KEY_ACCOUNT_LOG_LABEL_RE.test(attempt.accountLogLabel ?? "") ? attempt : undefined;
   if (!keyAttempt && !includeUnattributed) return;
   const ordinal = keyAttempt?.ordinal;
-  if (keyAttempt) keyAttempt.status = response.status;
+  if (keyAttempt) {
+    keyAttempt.status = response.status;
+    keyAttempt.upstreamHttpStatus = response.status;
+  }
   const cancelOriginal = (): void => { try { void response.body?.cancel().catch(() => {}); } catch { /* closed */ } };
   signal?.addEventListener("abort", cancelOriginal, { once: true });
   try {

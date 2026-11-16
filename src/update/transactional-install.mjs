@@ -882,10 +882,22 @@ function recoveryMarkerPath(scopeDir) {
   return join(scopeDir, ".ocx-recovery.json");
 }
 
+function legacyTransactionMarkerPresent(scopeDir) {
+  try {
+    lstatSync(join(scopeDir, ".ocx-transaction.json"));
+    return true;
+  } catch (error) {
+    return error?.code !== "ENOENT";
+  }
+}
+
 /** Startup probe: restore a backup when the live tree is broken (D4 power-loss rows). */
 export function bootRestoreProbe(packageDir, deps = {}) {
   const rename = deps.rename;
   const scopeDir = dirname(packageDir);
+  if (legacyTransactionMarkerPresent(scopeDir)) {
+    return { action: "failed", error: "legacy transaction marker exists or cannot be inspected; manual recovery required" };
+  }
   let backups = [];
   try {
     backups = readdirSync(scopeDir).filter(name => name.startsWith(".ocx-backup-")).sort();
@@ -930,6 +942,9 @@ function* npmUpdateTransaction({
 }) {
   const rename = deps.rename;
   const scopeDir = dirname(packageDir);
+  if (legacyTransactionMarkerPresent(scopeDir)) {
+    return { ok: false, phase: "pending-existing", recoveryUnsafe: true, error: "legacy transaction marker exists or cannot be inspected; manual recovery required" };
+  }
   // Leftovers from earlier attempts are only reported; fresh unique stages step around them. This never fails.
   try { sweepUpdateLeftovers({ packageDir, pkgName, log, deps }); } catch { /* report-only */ }
   let stageRoot;

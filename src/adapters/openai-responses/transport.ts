@@ -4,6 +4,7 @@ import {
   FORWARD_HEADERS,
   CODEX_ATTESTATION_HEADER,
   CODEX_RESPONSES_LITE_HEADER,
+  CODEX_ROUTING_HINT_HEADER,
   isolateCodexPoolAccountHeaders,
 } from "../../codex/forward-transport-headers";
 import { CODEX_FORWARD_BASE_URL, isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers-destination";
@@ -61,6 +62,7 @@ export function buildResponsesTransport(provider: OcxProviderConfig, incoming: P
       for (const name of FORWARD_HEADERS) {
         const value = incoming.headers.get(name);
         if (value === null) continue;
+        if (name === CODEX_ROUTING_HINT_HEADER && Object.keys(headers).some(existing => existing.toLowerCase() === name)) continue;
         if (name === CODEX_RESPONSES_LITE_HEADER) {
           for (const existing of Object.keys(headers)) {
             if (existing.toLowerCase() === name) delete headers[existing];

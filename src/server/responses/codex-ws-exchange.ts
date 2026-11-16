@@ -20,6 +20,7 @@ import { UPGRADE_DEADLINE_MS, CODEX_WS_LIVENESS_PING_INTERVAL_MS, CODEX_WS_RESPO
 
 interface ExchangeOptions {
   incrementalPlan?: IncrementalPlan;
+  permissions?: import("../../fork/codex-passthrough-contract").CodexPassthroughPermissions;
   nativeControl?: NativeResponseControl;
   beforeContinuation?: () => Promise<void>;
   session: CodexWsSession;
@@ -362,7 +363,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
         try { controller?.close(); } catch { /* unused stream already closed */ }
         session.dispose();
         const message = error instanceof Error ? error.message : String(error);
-        const failureResponse = codexWsPreResponseFailure(status, message, prelude);
+        const failureResponse = codexWsPreResponseFailure(status, message, prelude, options.permissions);
         const stage = failureStage();
         markCodexWsStage(failureResponse, stageRecord(stage.requestBytes));
         // #4191: a socket that died under the send is the one settle the dispatch may replace,
@@ -391,7 +392,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
     /** (Re)start the silence bound; every inbound frame or pong is proof of life. */
     const armSilence = () => {
       clearTimeout(silenceTimer);
-      if (responseCommitted || terminal) return;
+      if (responseCommitted || terminal || options.permissions?.upstreamWsSilenceDeadline === false) return;
       silenceTimer = setTimeout(
         () => failStream(`codex websocket response prelude timed out${codexWsFailureDetail(failureStage())}`, 504),
         CODEX_WS_RESPONSE_PRELUDE_TIMEOUT_MS,
@@ -643,12 +644,14 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
       let replayUnsafe = false;
       const normalized = normalizeResponsesWsRelayEvent(text, (refusalEligible || incrementalPlan?.delta) && sent && !responseCommitted
         ? payload => { replayUnsafe = responsesFrameIsReplayUnsafe(payload); }
-        : undefined);
+        : undefined, options.permissions);
       if (!normalized) {
         if (replayUnsafe) commitResponse();
         return;
       }
       const { type } = normalized;
+      const terminalType = normalized.terminalType ?? type;
+      const observedPayload = normalized.observationPayload ?? normalized.payload;
       let relayText = normalized.text;
       let controlFrame = false;
       if (metadata) {
@@ -682,8 +685,8 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
       } else {
         firstResponseAt ??= Date.now();
         try {
-          if (nativeControl) steeringEnded = nativeControl.observe(normalized.payload);
-          else correlation?.accept(normalized.payload);
+          if (nativeControl) steeringEnded = nativeControl.observe(observedPayload);
+          else correlation?.accept(observedPayload);
         } catch (error) { failStream(error); return; }
         if (replayUnsafe) commitResponse();
         // An authoritative refusal before any response activity means the synthesized ID was
@@ -780,8 +783,8 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
         else deferredCommit = true;
         // Record the terminal the upstream sent as soon as it is accepted, before the relay-size and
         // queue checks below: a body failure that follows is still an exchange that received it.
-        if (!nativeControl && isCodexWsTerminalEvent(type)) {
-          terminalEvent = type;
+        if (!nativeControl && isCodexWsTerminalEvent(terminalType)) {
+          terminalEvent = terminalType;
           terminalErrorStatus = type === "error" ? (codexWsWrapperStatus(normalized.payload) ?? null) : null;
         }
       }
@@ -808,8 +811,8 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
         return;
       }
       if (!controlFrame) relayedEvents += 1;
-      if (nativeControl ? steeringEnded : (type === "response.completed" || type === "response.failed" || type === "response.incomplete" || type === "error")) {
-        const completedId = correlation?.completed(normalized.payload) ?? null;
+      if (nativeControl ? steeringEnded : isCodexWsTerminalEvent(terminalType)) {
+        const completedId = correlation?.completed(observedPayload) ?? null;
         terminal = true;
         cleanup();
         try { controller.close(); } catch { /* already closed */ }
@@ -820,8 +823,8 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
         if (committedResponse) {
           markCodexWsStage(committedResponse, stageRecord(null));
         }
-        if (completedId && incrementalPlan && type === "response.completed") {
-          completeIncrementalFrame(incrementalPlan, (normalized.payload as { response?: unknown }).response);
+        if (completedId && incrementalPlan && terminalType === "response.completed") {
+          completeIncrementalFrame(incrementalPlan, (observedPayload as { response?: unknown }).response);
         }
         session.release(completedId);
         if (refusalStatus !== undefined && refusalHeaders && refusalPrelude && !responseCommitted) {

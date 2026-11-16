@@ -2,6 +2,8 @@ import { markProxyError } from "../../lib/client-error-body";
 import { applyClaudeBridgePoolSession } from "../claude-bridge-pool-session";
 import type { OcxProviderConfig, OcxConfig } from "../../types";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
+import { routedCodexPassthroughPermissions } from "../../fork/codex-passthrough-routing";
+import { codexAccountSoftPrecheckOptions } from "../../fork/codex-passthrough-local-errors";
 import type { CodexAuthContext } from "../../codex/auth-context";
 import type { RouteResult } from "../../router";
 import { routeConcreteModel } from "../../router";
@@ -51,10 +53,16 @@ import { copyResponsesClientMetadata } from "../../adapters/openai-responses/tra
 import { AgentAssertionUnsupportedError, agentAssertionUnsupportedResponse, authorizationCredential, carryAgentAssertionForCallerBearer, hasAgentAssertionAuthorization } from "../../lib/authorization-scheme";
 
 /** Normalize caller aliases only on native egress; preserve ingress and fallback identity. */
-export function withClaudeNativeSession(headers: Headers, provider: OcxProviderConfig, sessionId?: string): Headers {
+export function withClaudeNativeSession(headers: Headers, provider: OcxProviderConfig, sessionId?: string,
+  permissions?: import("../../fork/codex-passthrough-contract").CodexPassthroughPermissions, synthesized = false): Headers {
   // Empty values count as absent, matching materializeCodexUpstreamAuth, so first attempts and
   // retries rebuilt from caller headers pick the same identity.
-  if (!isCanonicalOpenAiForwardProvider(provider) || headers.get("session_id")) return headers;
+  if (!isCanonicalOpenAiForwardProvider(provider)) return headers;
+  if (permissions?.synthesizeSessionId === false) {
+    if (!synthesized) return headers;
+    const forwarded = new Headers(headers); forwarded.delete("session_id"); return forwarded;
+  }
+  if (headers.get("session_id")) return headers;
   const alias = ["session-id", "thread-id"].find(name => headers.get(name));
   const nativeSession = alias ? safeCallerSessionId(headers.get(alias)) : sessionId;
   // A non-empty invalid alias suppresses weaker metadata identity.
@@ -307,6 +315,7 @@ export async function resolveResponsesCodexAuth(
       // Only selection sees the Claude bridge pool identity; materialization below keeps the
       // uncompleted headers, so the wire matches the original request.
       authCtx = await resolveCodexAuthContext(applyClaudeBridgePoolSession(authInputHeaders, route, options), config, route.codexAccountMode, {
+        ...codexAccountSoftPrecheckOptions(routedCodexPassthroughPermissions(options.codexPassthroughTurn, route, options.inboundWire ?? "responses")),
         admission: options.admission,
         codexAuthPolicy: options.codexAuthPolicy,
         accountId: route.codexAccountId,

@@ -1,4 +1,5 @@
 import { carryProxyError } from "../lib/client-error-body";
+import { carryCodexPassthroughResponse } from "../fork/codex-passthrough-turn";
 import type { ResponsesTerminalStatus } from "../bridge";
 import {
   cyberPolicyErrorType,
@@ -525,11 +526,13 @@ export function relaySseWithFailedTail(
   upstream: AbortController,
   onClientGone?: (reason?: unknown) => void,
   opts?: { upstreamError?: string; terminalBoundary?: CodexSafetyBufferingFilterOptions; maskCredential?: (text: string) => string;
+    synthesizeTerminalFailure?: boolean;
     /** See {@link SseTerminalOutputBoundaryOptions.redactForwardedEvidence}. */
     redactForwardedEvidence?: (block: string) => string;
     /** Receives the exact payload of every synthesized bare-verdict tail, so a client-stream log can tell it from upstream. */
     onSyntheticTail?: (payload: string, verdict?: BareUpstreamError) => void },
 ): ReadableStream<Uint8Array> {
+  if (opts?.synthesizeTerminalFailure === false) return relayUnmodifiedCodexSse(body, upstream, createSseInspector({ allowResponseDone: true }), onClientGone);
   const reader = body.getReader();
   const encoder = new TextEncoder();
   const terminalBoundary = createSseTerminalOutputBoundary({ ...opts?.terminalBoundary, maskCredential: opts?.maskCredential, redactForwardedEvidence: opts?.redactForwardedEvidence });
@@ -539,6 +542,7 @@ export function relaySseWithFailedTail(
     value: Uint8Array,
   ): "terminal" | "output" | "buffered" => {
     const outbound = terminalBoundary.feed(value);
+    if (closed) return "terminal";
     if (outbound.byteLength > 0) controller.enqueue(outbound);
     if (!terminalBoundary.terminalSeen()) return outbound.byteLength > 0 ? "output" : "buffered";
 
@@ -566,6 +570,7 @@ export function relaySseWithFailedTail(
       try {
         for (;;) {
           const { done, value } = await reader.read();
+          if (closed) return;
           if (done) {
             const tail = terminalBoundary.finish();
             if (tail.byteLength > 0) controller.enqueue(tail);
@@ -576,7 +581,7 @@ export function relaySseWithFailedTail(
               // protocol terminal arrived. Make that state explicit so Codex
               // does not treat HTTP 200 + bare EOF as a retryable disconnect.
               const upstreamError = terminalBoundary.upstreamError() ?? opts?.upstreamError;
-              controller.enqueue(upstreamError === undefined
+              const failedTail = upstreamError === undefined
                 ? adapterEofIncompleteFrame(encoder)
                 : upstreamErrorTailFrame(
                   encoder,
@@ -587,10 +592,13 @@ export function relaySseWithFailedTail(
                   terminalBoundary.upstreamErrorCode(),
                   terminalBoundary.upstreamVerdict(),
                   opts?.onSyntheticTail,
-                ));
+                );
+              if (closed) return;
+              controller.enqueue(failedTail);
               controller.enqueue(doneFrame(encoder));
             }
             terminalBoundary.dispose();
+            closed = true;
             controller.close();
             return;
           }
@@ -598,12 +606,22 @@ export function relaySseWithFailedTail(
           if (result !== "buffered") return;
         }
       } catch (err) {
+        if (closed) return;
+        if (err instanceof CodexPrivateCredentialProtectionError) { terminalBoundary.dispose(); controller.error(err); upstream.abort(err); void reader.cancel(err).catch(() => {}); return; }
         let partial: Uint8Array = EMPTY_BYTES;
         let tailTerminal = false;
         try {
           partial = terminalBoundary.finish();
           tailTerminal = terminalBoundary.terminalSeen();
-        } catch {
+        } catch (finishError) {
+          if (closed) return;
+          if (finishError instanceof CodexPrivateCredentialProtectionError) {
+            terminalBoundary.dispose();
+            try { controller.error(finishError); } catch { /* client already torn down */ }
+            upstream.abort(finishError);
+            void reader.cancel(finishError).catch(() => {});
+            return;
+          }
           // A near-cap ambiguous delimiter tail may itself overflow at EOF.
           // Preserve the original read/framing failure and continue emitting
           // the bounded failed tail instead of letting cleanup throw again.
@@ -618,9 +636,11 @@ export function relaySseWithFailedTail(
             // Leading blank line terminates a partial SSE block so the failed frame parses cleanly.
             const refusalCode = terminalBoundary.upstreamRefusalCode();
             const refusalMessage = terminalBoundary.upstreamError();
-            controller.enqueue((refusalCode !== undefined || terminalBoundary.recognizedBareError()) && refusalMessage !== undefined
+            const failedTail = (refusalCode !== undefined || terminalBoundary.recognizedBareError()) && refusalMessage !== undefined
               ? refusalFailedTailFrame(encoder, refusalMessage, refusalCode, opts?.maskCredential, terminalBoundary.upstreamErrorType(), terminalBoundary.upstreamErrorCode(), terminalBoundary.upstreamVerdict(), opts?.onSyntheticTail)
-              : failedTailFrame(encoder, err, opts?.maskCredential));
+              : failedTailFrame(encoder, err, opts?.maskCredential);
+            if (closed) return;
+            controller.enqueue(failedTail);
           }
           controller.close();
         } catch { /* client already torn down */ }
@@ -628,6 +648,7 @@ export function relaySseWithFailedTail(
       }
     },
     cancel(reason) {
+      closed = true;
       terminalBoundary.dispose();
       if (onClientGone) onClientGone(reason);
       else upstream.abort(reason);
@@ -868,11 +889,12 @@ export function terminalStatusFromParsed(parsed: unknown, typedBareSeen = false)
  * envelope ends the turn only when it is the winning verdict, exactly as the client boundary,
  * the request row and the account inspector decide it.
  */
-export function createTerminalStatusTracker(): (parsed: unknown) => ResponsesTerminalStatus | null {
+export function createTerminalStatusTracker(allowResponseDone = false): (parsed: unknown) => ResponsesTerminalStatus | null {
   let evidence: BareUpstreamEvidence | undefined;
   return parsed => {
     evidence = reduceBareUpstreamEvidence(evidence, parsed);
-    return terminalStatusFromParsed(parsed, evidence?.typed === true);
+    return (allowResponseDone ? codexDoneTerminalStatus(parsed) : null)
+      ?? terminalStatusFromParsed(parsed, evidence?.typed === true);
   };
 }
 
@@ -1013,11 +1035,11 @@ export function responseWithDeferredRequestLog(
       // Logging re-wraps the response, and an in-process verdict does not survive a re-wrap on
       // its own. A replay refusal that lost it here would read to a later quota recorder or
       // Retry-After synthesizer as a 429 some upstream produced.
-      return carryReplayRefusal(response, carryProxyError(response, new Response(body, {
+      return carryCodexPassthroughResponse(response, carryReplayRefusal(response, carryProxyError(response, new Response(body, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
-      })));
+      }))));
     }
     if (isUsageDebugEnabled() && logCtx.usageDebugBodyKind === undefined) {
       logCtx.usageDebugBodyKind = response.body ? "other" : "none";
@@ -1045,11 +1067,11 @@ export function responseWithDeferredRequestLog(
     logCtx,
     () => recordFirstOutput(logCtx, start),
   );
-  return new Response(body, {
+  return carryCodexPassthroughResponse(response, new Response(body, {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers,
-  });
+  }));
 }
 
 export function markNativePassthroughSseResponse(response: Response): Response {
@@ -1169,6 +1191,7 @@ export type SseInspector = {
 };
 
 export type SseInspectorHandlers = {
+  allowResponseDone?: boolean;
   onTerminal?: (status: ResponsesTerminalStatus, httpStatusOverride?: number) => void;
   logCtx?: RequestLogContext;
   /** Client-side reinspection leaves usage to the native raw-body observer. */
@@ -1247,7 +1270,7 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
   let sawTerminal = false;
   // A later completion after a provider verdict cannot become continuation state.
   let completionBlocked = false;
-  const classifyTerminal = createTerminalStatusTracker();
+  const classifyTerminal = createTerminalStatusTracker(handlers.allowResponseDone);
   let disposed = false;
   let delimiterTail: Uint8Array = EMPTY_BYTES;
   let pendingLineFeed = false;
@@ -1933,3 +1956,5 @@ export function sanitizePassthroughHeaders(upstream: Headers, options?: Passthro
   });
   return out;
 }
+import { codexDoneTerminalStatus, relayUnmodifiedCodexSse } from "../fork/codex-passthrough-response";
+import { CodexPrivateCredentialProtectionError } from "../fork/codex-passthrough-secrets";

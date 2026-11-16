@@ -74,7 +74,7 @@ import {
   previousResponseReplayFailure,
   previousResponseProviderState,
 } from "../../responses/state";
-import { hasUnreadableEncryptedAgentTask } from "./encrypted-payload";
+import { hasStrictBackendEncryptedAgentTask, hasUnreadableEncryptedAgentTask } from "./encrypted-payload";
 import { eagerCodexToolCatalogSurface, warnEagerCodexToolCatalog } from "./codex-tool-catalog";
 import { clampComboCallerEffort, comboCapabilityGate } from "../../combos/request-capability";
 import { comboAdvertisesEffortUnion } from "../../combos/capability-policy";
@@ -151,6 +151,8 @@ import {
 import { mandatoryResponsesReasoningReplayUnavailable } from "./core-replay";
 import { isReplayRefusalResponse, settleOperatorReplacement, UPSTREAM_RESET_REPLAY_REFUSED_CODE } from "../../lib/upstream-retry";
 import { attributeFinalRequest } from "../request-log-failure-attribution";
+import { carryCodexPassthroughResponse, codexPassthroughResponsePermissions, codexPassthroughRequestSource } from "../../fork/codex-passthrough-turn";
+import { bindCodexRequestHistory, linkCodexRequestReplay } from "../../fork/codex-passthrough-source";
 import { createComboProtocolLanes, dispatchNativeComboChild } from "./core-combo-native";
 import { createJevModelInvoker } from "./jev-model-invoke";
 import { comboRequestedEffortLabel } from "./combo-requested-effort";
@@ -472,6 +474,7 @@ export async function executeComboResponses(
   const strictReplay = options.plaintextV2Decision ?? isPlaintextV2AgentMessagesEnabled(config);
   const { replayOwnerKey, replayConnectionScope } = selectResponseReplayOwner(strictReplay, replayPrincipal.clientPrincipalId, inboundOwnThreadId, options);
   const body = expandPreviousResponseInput(rawBody, strictReplay ? inboundOwnThreadId : inboundClientThreadId, replayOwnerKey);
+  bindCodexRequestHistory(codexPassthroughRequestSource(options.codexPassthroughTurn), body);
   const replayFailure = previousResponseReplayFailure(body);
   if (replayFailure?.reason === "scope_mismatch") {
     console.warn("[opencodex] refusing continuation because the client task scope does not match replay state");
@@ -562,6 +565,7 @@ export async function executeComboResponses(
       });
     }
     carryProxyErrorContext(childLog, logCtx);
+    delete logCtx.upstreamHttpStatus;
     Object.assign(logCtx, childLog, {
       client: logCtx.client,
       requestedModel: responseModel,
@@ -583,6 +587,9 @@ export async function executeComboResponses(
 
   const unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
     (body as { input?: unknown } | undefined)?.input,
+  ) || (
+    agentTaskRecoveryConfig(config) !== null
+    && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input)
   );
   const canDecryptUnreadableAgentTask = (target: (typeof combo.targets)[number]): boolean => {
     const provider = config.providers[target.provider];
@@ -1347,6 +1354,7 @@ export async function executeComboResponses(
       body: JSON.stringify(childBody),
     });
     linkRequestSessionLane(req, childRequest);
+    linkCodexRequestReplay(codexPassthroughRequestSource(options.codexPassthroughTurn), childRequest, childInput);
     let resolvedAuth: CodexAuthContext | undefined;
     let terminalRecorder: ((status: ResponsesTerminalStatus, httpStatusOverride?: number) => void) | undefined;
     const started = Date.now();
@@ -1449,6 +1457,10 @@ export async function executeComboResponses(
           logCtx.usageWireParsed = childLog.usageWireParsed;
         }
         if (isPausedTurn(childLog)) rememberPausedTurn(logCtx);
+        if (childLog.errorCode !== undefined) logCtx.errorCode = childLog.errorCode;
+        if (childLog.causeHint !== undefined) logCtx.causeHint = childLog.causeHint;
+        if (childLog.terminalSource !== undefined) logCtx.terminalSource = childLog.terminalSource;
+        if (childLog.upstreamHttpStatus !== undefined) logCtx.upstreamHttpStatus = childLog.upstreamHttpStatus;
         // A committed stream that ends failed is a target failure too; incomplete is an answer.
         if (status === "failed") jevPin?.forget();
         else settleServingSuccess();
@@ -1576,10 +1588,10 @@ export async function executeComboResponses(
       if (preflight.kind === "failed") {
         callbackGate.discard();
         terminalRecorder?.("failed", preflight.response.status);
-        response = preflight.response;
+        response = carryCodexPassthroughResponse(response, preflight.response);
         preflightModelRefusal = preflight.codexModelRefusal;
       } else {
-        response = preflight.response;
+        response = carryCodexPassthroughResponse(response, preflight.response);
         if (nativePassthrough) markNativePassthroughSseResponse(response);
         if (eagerRelay) markEagerRelaySseResponse(response);
       }
@@ -1604,6 +1616,7 @@ export async function executeComboResponses(
       // A hosted web-search stream settles only when the loop reports a completed response.
       if (!isNativePassthroughSseResponse(response) && !hostedWebSearchStream) settleServingSuccess();
       carryProxyErrorContext(childLog, logCtx);
+      delete logCtx.upstreamHttpStatus;
       Object.assign(logCtx, childLog, {
         client: logCtx.client,
         requestedModel: responseModel,
@@ -1708,7 +1721,7 @@ export async function executeComboResponses(
     // client would resend becomes the refusal, and anything else reaches the client as it is.
     const spentReplacement = !failure.nonReplayable && comboSendScope?.ambiguousResendSpent === true;
     if (spentReplacement) {
-      const settled = settleOperatorReplacement(failure.response);
+      const settled = settleOperatorReplacement(failure.response, codexPassthroughResponsePermissions(failure.response));
       if (settled !== failure.response) {
         adoptFailedChildLog(childLog);
         return settled;
