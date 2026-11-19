@@ -954,7 +954,7 @@ export async function deliverPassthroughResponse(
       };
       nativeExchange.inboundDebugUsesRawTerminalRepairTap = !!inboundDebugObserver
         && (useTerminalRepair || webSearchBridgePlan !== undefined);
-      let protectedBody = nativeSseBody;
+      let protectedBody: ReadableStream<Uint8Array> = nativeSseBody;
       try {
         if (privateGuard) protectedBody = await protectSse(nativeSseBody);
       }

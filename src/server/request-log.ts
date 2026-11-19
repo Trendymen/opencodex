@@ -37,7 +37,7 @@ import type { AdapterTierMetadata } from "../providers/fastwire";
 import { UPSTREAM_RESET_REPLAY_REFUSED_CODE } from "../lib/upstream-retry";
 import { redactSecretString, sanitizeLogMetadataString } from "../lib/redact";
 import type { UpstreamCondition } from "../lib/upstream-condition";
-import { boundedServiceTier, errorDetailFor, projectErrorDetail } from "../usage/error-detail";
+import { boundedServiceTier, errorDetailFor, isUpstreamHttpStatus, projectErrorDetail } from "../usage/error-detail";
 import { incompleteReasonDetail, upstreamErrorIsLocal, type FailureDetail } from "./request-log-failure-detail";
 import {
   appendUsageEntry,
@@ -50,7 +50,6 @@ import {
   isKnownCacheTelemetryProvenance,
   isKnownInboundProtocol,
   isKnownTerminalSource,
-  isUpstreamHttpStatus,
   isKnownTransportPhase,
   isKnownUsageSurface,
   isCodexUsageAccountLogLabel,
