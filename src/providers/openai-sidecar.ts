@@ -1,11 +1,15 @@
 import { resolveProviderApiKey } from "./key-store";
 import { isProviderApiKeyPaused, ProviderApiKeyPausedError } from "./api-key-pause";
 import { createOpenAiSidecarCreditGuard } from "./openai-sidecar-credit";
+import { MAIN_CODEX_ACCOUNT_ID } from "../codex/account-id";
 import {
+  CodexAuthContextError,
+  CodexMainProfileDrainingError,
   CodexPoolAuthenticationError,
   headersForCodexAuthContext,
   hasCallerCodexBearer,
   isCodexAuthContextUsable,
+  materializeCodexUpstreamAuthAsync,
   resolveCodexAuthContext,
   releaseCodexAuthContextProbeLease,
   type CodexAccountSelectionAdmission,
@@ -14,6 +18,9 @@ import {
 } from "../codex/auth-context";
 import { recordCodexUpstreamOutcome, type CodexUpstreamOutcome } from "../codex/routing";
 import { codexFailureWindowOutcomeMeta } from "../codex/routing/failure-window";
+import { MainAccountTokenRefreshError, MainAuthJsonChangedDuringRefreshError } from "../codex/main-account";
+import { waitForMainAccountPolicyBinding } from "../codex/main-account-policy-wait";
+import { NativeProfileError } from "../codex/native-profile-types";
 import { inspectChatGptDomainClaim } from "../oauth/chatgpt";
 import { ForwardAdmissionCredentialError, validateForwardAdmissionCredential, type DataPlaneAdmission } from "../server/auth-cors";
 import type { CodexAccountMode, OcxConfig, OcxProviderConfig } from "../types";
@@ -167,6 +174,7 @@ export async function resolveFirstUsableOpenAiSidecar(
   options: {
     exactAccount?: ExactOpenAiSidecarAccount;
     admission?: Pick<DataPlaneAdmission, "source">;
+    substituteMainForAdmissionBearer?: boolean;
     codexAuthPolicy?: CodexAuthPolicyConfig;
     beginCodexAccountSelection?: () => CodexAccountSelectionAdmission | undefined;
     signal?: AbortSignal;
@@ -235,6 +243,33 @@ export async function resolveFirstUsableOpenAiSidecar(
       };
     }
     if (candidate.accountMode === "direct") {
+      if (options.substituteMainForAdmissionBearer && options.admission?.source === "bearer" && !callerBearerMayBeForwarded) {
+        if (!await waitForMainAccountPolicyBinding({ signal: options.signal })) throw new CodexMainProfileDrainingError();
+        const authContext = await resolveCodexAuthContext(incomingHeaders, config, "direct", {
+          admission: options.admission,
+          codexAuthPolicy: policy,
+          substituteMainCredentialForDirect: true,
+          beginCodexAccountSelection: options.beginCodexAccountSelection,
+          signal: options.signal,
+        });
+        let headers: Headers;
+        try {
+          headers = await materializeCodexUpstreamAuthAsync(incomingHeaders, authContext, {
+            admission: options.admission,
+            config: policy,
+            substituteMainCredential: true,
+            signal: options.signal,
+          });
+        } catch (error) {
+          if (error instanceof MainAccountTokenRefreshError || error instanceof MainAuthJsonChangedDuringRefreshError
+            || (error instanceof NativeProfileError && error.retryable)) {
+            throw new CodexAuthContextError(MAIN_CODEX_ACCOUNT_ID, error);
+          }
+          throw error;
+        }
+        validateForwardAdmissionCredential(headers, config);
+        return { ...candidate, authContext, headers };
+      }
       if (!callerBearerMayBeForwarded || !hasCallerCodexBearer(incomingHeaders)) continue;
       const headers = directSidecarHeaders(incomingHeaders, policy, options.admission);
       if (!headers) continue;

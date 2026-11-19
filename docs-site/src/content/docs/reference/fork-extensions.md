@@ -16,6 +16,7 @@ This appendix describes the Trendymen Fork's additions to upstream. The other re
 - Annotation instructions use bare chip directives. Output repair preserves code blocks, but it is not gated by this turn's annotation count and does not handle multiline code spans; native forwarding receives the input rewrite only when its permission allows it.
 - With the corresponding processing permissions enabled, SSE flush and terminal handling preserve usable upstream errors and one final `[DONE]`. Canonical forwarding bridges the Lite header only when building an upstream WebSocket frame, with an explicit HTTP value taking precedence over same-name metadata. HTTP request metadata stays unchanged.
 - Ark quota errors retain the provider's message and reset time while preventing automatic retry. BigModel Codex discovery accepts `models[].slug`.
+- Standalone Codex web search accepts OCX Bearer keys and uses the configured search backend or ChatGPT account. In Direct mode, standalone images can use the signed-in main account when no existing image backend is available to the key. To join a call created by the client, send the OCX key in `x-opencodex-api-key`, the original ChatGPT account's Bearer token in `Authorization`, and the matching account ID in `chatgpt-account-id`.
 
 ## Recovery and maintenance
 

@@ -15,12 +15,14 @@ import { isolateCodexPoolClientMetadata, mergeCodexSelectedHeaders } from "../co
  * error bodies into the model-visible failure, so upstream errors must stay legible.
  */
 import { formatErrorResponse } from "../bridge";
+import { MAIN_CODEX_ACCOUNT_ID } from "../codex/account-id";
 import {
   CodexAccountCooldownError,
   codexMainProfileDrainingResponse,
   cooldownErrorResponse,
   CodexAuthContextError,
   CodexMainProfileDrainingError,
+  CodexMainSubstitutionUnavailableError,
   CodexModelAvailabilityError,
   CodexPoolAuthenticationError,
   CodexThreadAffinityExpiredError,
@@ -31,7 +33,7 @@ import { readBoundedResponseBytes, type BoundedBytesResult } from "../lib/bounde
 import { sidecarEnter } from "../lib/sidecar-tracker";
 import { isNonReplayableResponse } from "../lib/upstream-retry";
 import type { OcxConfig } from "../types";
-import { resolveFirstUsableOpenAiSidecar, selectImagesProvider } from "../providers/openai-sidecar";
+import { resolveFirstUsableOpenAiSidecar, selectImagesProvider, type OpenAiImagesProviderSelection } from "../providers/openai-sidecar";
 import { isProviderApiKeyPaused, ProviderApiKeyPausedError } from "../providers/api-key-pause";
 import { resolveCurrentProviderApiKeyTransport } from "../providers/api-key-selection";
 import { recordDistributedKeyFailure, selectProactiveApiKeyTransport } from "../providers/key-failover";
@@ -58,7 +60,7 @@ import { findXaiProvider, resolveXaiImageAuthToken } from "../images/plan";
 import { callXaiImages, XAI_DEFAULT_IMAGE_MODEL, XAI_MAX_EDIT_IMAGES } from "../images/xai-client";
 import type { AdmissionLease } from "../lib/admission";
 import { codexAccountSelectionForTurn } from "./lifecycle";
-import { codexModelAvailabilityErrorResponse } from "./responses/codex-auth-error";
+import { codexModelAvailabilityErrorResponse, nativeMainRefreshFailureResponse } from "./responses/codex-auth-error";
 
 export type ImagesEndpoint = "generations" | "edits";
 
@@ -253,6 +255,7 @@ async function tryCcaImageGeneration(
   signal: AbortSignal,
   endpoint: ImagesEndpoint,
   admission: DataPlaneAdmission | undefined,
+  allowDirectFallback = false,
 ): Promise<Response | undefined> {
   if (endpoint !== "generations") return undefined;
   const provider = config.providers?.["google-antigravity"];
@@ -265,7 +268,7 @@ async function tryCcaImageGeneration(
     providerName: "google-antigravity",
     modelId: CCA_IMAGE_MODEL,
   });
-  if (denial) return denial;
+  if (denial) return allowDirectFallback ? undefined : denial;
 
   const prompt = (body as { prompt?: unknown })?.prompt;
   if (typeof prompt !== "string" || !prompt.trim()) {
@@ -276,6 +279,7 @@ async function tryCcaImageGeneration(
   if (nRaw !== undefined && nRaw !== null) {
     const n = typeof nRaw === "number" ? nRaw : Number(nRaw);
     if (!Number.isInteger(n) || n !== 1) {
+      if (allowDirectFallback && typeof nRaw === "number" && Number.isInteger(nRaw) && nRaw > 1) return undefined;
       return formatErrorResponse(400, "invalid_request_error", "CCA image generation supports n=1 only");
     }
   }
@@ -307,11 +311,13 @@ async function tryCcaImageGeneration(
       return formatErrorResponse(504, "upstream_error", "CCA image generation timed out during authentication");
     }
     if (err instanceof OAuthAccountPausedError) {
+      if (allowDirectFallback) return undefined;
       return formatErrorResponse(403, "permission_error", err.message);
     }
     // Missing/revoked credential → 401 (re-login required); transient refresh/network → 502.
     const errName = err instanceof Error ? err.name : "";
     if (errName === "OAuthLoginRequiredError") {
+      if (allowDirectFallback) return undefined;
       return formatErrorResponse(401, "invalid_request_error", "Google Antigravity login required: run 'ocx login google-antigravity'");
     }
     return formatErrorResponse(502, "upstream_error", "CCA image generation failed: OAuth token refresh failed");
@@ -319,6 +325,7 @@ async function tryCcaImageGeneration(
   const project = getOAuthCredentialProjectId("google-antigravity");
   if (!project) {
     linkedSignal.cleanup();
+    if (allowDirectFallback) return undefined;
     return formatErrorResponse(
       400,
       "invalid_request_error",
@@ -715,10 +722,20 @@ export async function handleImages(
   if (candidates.error && (config.images?.provider !== undefined || !candidates.paused)) {
     return formatErrorResponse(candidates.paused ? 403 : 400, candidates.paused ? "permission_error" : "invalid_request_error", candidates.error);
   }
+  return relayImages(req, config, endpoint, logCtx, body, candidates, turnAdmissionLease, admission);
+}
+
+async function relayImages(
+  req: Request,
+  config: OcxConfig,
+  endpoint: ImagesEndpoint,
+  logCtx: RequestLogContext,
+  body: unknown,
+  candidates: OpenAiImagesProviderSelection,
+  turnAdmissionLease: AdmissionLease | undefined,
+  admission: DataPlaneAdmission | undefined,
+): Promise<Response> {
   const explicitKeyedProvider = config.images?.provider !== undefined && candidates.keyed !== undefined;
-  // Admission bearer is valid proxy auth (requireApiAuth already passed) but must never be
-  // forwarded as OpenAI ChatGPT credentials. Pool replaces it with a stored credential;
-  // Direct would consume the caller bearer, so only Direct becomes ineligible.
   let callerBearerMayBeForwarded = true;
   if (!explicitKeyedProvider) {
     try { validateForwardAdmissionCredential(req.headers, config); }
@@ -736,9 +753,16 @@ export async function handleImages(
   // is checked against each forward destination BEFORE any stored credential is
   // resolved, refreshed or leased, so a forbidden destination spends nothing.
   const relaySelector = requestedImageSelector(body);
+  const directAdmissionBearer = !callerBearerMayBeForwarded && admission?.source === "bearer"
+    && candidates.forwardCandidates[0]?.accountMode === "direct";
+  const substituteMainForAdmissionBearer = directAdmissionBearer
+    && (!candidates.keyed || !!admissionScopeDenial(config, admission, relaySelector, {
+      providerName: candidates.keyed.providerName,
+      modelId: relaySelector,
+    }));
   let forwardScopeDenial: Response | undefined;
   const eligibleForwardCandidates = candidates.forwardCandidates.filter(candidate => {
-    if (!callerBearerMayBeForwarded && candidate.accountMode === "direct") return false;
+    if (!callerBearerMayBeForwarded && !substituteMainForAdmissionBearer && candidate.accountMode === "direct") return false;
     const denial = admissionScopeDenial(config, admission, relaySelector, {
       providerName: candidate.providerName,
       modelId: relaySelector,
@@ -748,22 +772,25 @@ export async function handleImages(
   });
   const canUseOpenAiForward = eligibleForwardCandidates.length > 0;
 
-  if (!canUseOpenAiForward && !candidates.keyed) {
-    const ccaResponse = await tryCcaImageGeneration(body, config, logCtx, req.signal, endpoint, admission);
+  if ((!canUseOpenAiForward && !candidates.keyed) || substituteMainForAdmissionBearer) {
+    const ccaResponse = await tryCcaImageGeneration(body, config, logCtx, req.signal, endpoint, admission,
+      substituteMainForAdmissionBearer && canUseOpenAiForward);
     if (ccaResponse) return ccaResponse;
-    if (forwardScopeDenial) return forwardScopeDenial;
-    if (candidates.paused) {
-      return formatErrorResponse(403, "permission_error", candidates.error ?? new ProviderApiKeyPausedError().message);
+    if (!canUseOpenAiForward && !candidates.keyed) {
+      if (forwardScopeDenial) return forwardScopeDenial;
+      if (candidates.paused) {
+        return formatErrorResponse(403, "permission_error", candidates.error ?? new ProviderApiKeyPausedError().message);
+      }
+      // 400, not 5xx: codex retries every 5xx up to 5 total attempts, and this is a permanent
+      // configuration state that must surface on the first attempt.
+      return formatErrorResponse(
+        400,
+        "invalid_request_error",
+        "Built-in image generation needs an OpenAI upstream (ChatGPT login or an OpenAI API-key provider) "
+        + "or a logged-in Google Antigravity (Cloud Code Assist) provider, "
+        + "but none is configured in opencodex. Add a provider or disable the tool with `codex features disable image_generation`.",
+      );
     }
-    // 400, not 5xx: codex retries every 5xx up to 5 total attempts, and this is a permanent
-    // configuration state that must surface on the first attempt.
-    return formatErrorResponse(
-      400,
-      "invalid_request_error",
-      "Built-in image generation needs an OpenAI upstream (ChatGPT login or an OpenAI API-key provider) "
-      + "or a logged-in Google Antigravity (Cloud Code Assist) provider, "
-      + "but none is configured in opencodex. Add a provider or disable the tool with `codex features disable image_generation`.",
-    );
   }
 
   // Resolve forward auth first; failures are captured, not returned, so a configured keyed
@@ -774,10 +801,16 @@ export async function handleImages(
   if (canUseOpenAiForward) {
     try {
       forward = await resolveFirstUsableOpenAiSidecar(eligibleForwardCandidates, req.headers, config, {
+        admission,
+        substituteMainForAdmissionBearer,
         beginCodexAccountSelection: codexAccountSelectionForTurn(turnAdmissionLease),
+        signal: req.signal,
       });
       if (forward) logCtx.provider = formatCodexProviderForLog(forward.providerName, codexLogAccountId(forward.authContext), config);
     } catch (err) {
+      if (req.signal.aborted) {
+        return formatErrorResponse(499, "client_closed_request", "image request canceled by client");
+      }
       if (err instanceof CodexInstallationIdUnavailableError) {
         forwardAuthError = formatErrorResponse(503, "server_busy", err.message);
       } else if (err instanceof CodexAccountCooldownError) {
@@ -787,13 +820,19 @@ export async function handleImages(
       } else if (err instanceof CodexThreadAffinityExpiredError) {
         forwardAuthError = formatErrorResponse(409, "invalid_request_error", "Codex thread account affinity expired; start a new session");
       } else if (err instanceof CodexAuthContextError) {
-        console.error("[images] Pool credential failed; reauthentication required");
-        forwardAuthError = formatErrorResponse(401, "authentication_error", "Selected Codex account needs reauthentication");
+        if (substituteMainForAdmissionBearer && err.accountId === MAIN_CODEX_ACCOUNT_ID) {
+          forwardAuthError = nativeMainRefreshFailureResponse(err.cause);
+        } else {
+          console.error("[images] Pool credential failed; reauthentication required");
+          forwardAuthError = formatErrorResponse(401, "authentication_error", "Selected Codex account needs reauthentication");
+        }
+      } else if (err instanceof CodexMainSubstitutionUnavailableError) {
+        forwardAuthError = nativeMainRefreshFailureResponse(err);
       } else if (err instanceof CodexModelAvailabilityError) {
         forwardAuthError = codexModelAvailabilityErrorResponse(err);
       } else if (err instanceof CodexPoolAuthenticationError) {
         forwardAuthError = formatErrorResponse(401, "authentication_error", err.message);
-      } else if (err instanceof TypeError) {
+      } else if (err instanceof TypeError || err instanceof ForwardAdmissionCredentialError) {
         // The sidecar releases any acquired probe lease if credential materialization fails.
         return formatErrorResponse(500, "internal_error", "image generation request failed forward credential validation");
       } else {
@@ -834,8 +873,10 @@ export async function handleImages(
   } else if (forwardAuthError) {
     // Before surfacing the OpenAI auth failure, try CCA — the user may have a
     // valid Google Antigravity login even though their OpenAI pool is broken.
-    const ccaResponse = await tryCcaImageGeneration(body, config, logCtx, req.signal, endpoint, admission);
-    if (ccaResponse) return ccaResponse;
+    if (!substituteMainForAdmissionBearer) {
+      const ccaResponse = await tryCcaImageGeneration(body, config, logCtx, req.signal, endpoint, admission);
+      if (ccaResponse) return ccaResponse;
+    }
     // No CCA either: a configured OpenAI pool mode owns its authentication failure.
     // Do not hide a broken/expired pool behind separately billed API-key image generation.
     return forwardAuthError;
@@ -871,6 +912,11 @@ export async function handleImages(
       }
     } catch (error) {
       if (error instanceof ProviderApiKeyPausedError) {
+        if (directAdmissionBearer) {
+          return relayImages(req, config, endpoint, logCtx, body, {
+            forwardCandidates: candidates.forwardCandidates, paused: true, error: error.message,
+          }, turnAdmissionLease, admission);
+        }
         if (config.images?.provider === undefined) {
           const ccaResponse = await tryCcaImageGeneration(body, config, logCtx, req.signal, endpoint, admission);
           if (ccaResponse) return ccaResponse;

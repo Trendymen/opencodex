@@ -5,8 +5,9 @@ import { isolateCodexPoolClientMetadata } from "../codex/forward-transport-heade
 import { CodexInstallationIdUnavailableError } from "../codex/installation-id";
 import { cancelBodyOnAbort, clearableDeadline } from "../lib/abort";
 import type { AdmissionLease } from "../lib/admission";
-import { captureExplicitOpenAiCallerAuth } from "../providers/openai-sidecar";
+import { captureExplicitOpenAiCallerAuth, listOpenAiForwardSidecarCandidates, resolveCallerOwnedOpenAiSidecar } from "../providers/openai-sidecar";
 import type { OcxConfig } from "../types";
+import { admissionScopeDenial } from "./admission-model-scope";
 import type { AudioClient } from "./audio-client";
 import { finishAudioUpstream, type AudioSocketTarget } from "./audio-dictation";
 import { LIVE_AUDIO_MODEL, resolveAudioUpstream, type AudioUpstream } from "./audio-upstream";
@@ -17,16 +18,17 @@ import {
   readBodyCapped,
   type LiveSidebandTarget,
 } from "./live";
-import { LIVE_CALL_TTL_MS, LiveCallBindings, upstreamLiveCallId } from "./live-call-bindings";
+import { EXTERNAL_CALL_PREFIX, LIVE_CALL_TTL_MS, LiveCallBindings, upstreamLiveCallId } from "./live-call-bindings";
 import type { RequestLogContext } from "./request-log";
+import { mapCodexAuthContextErrorToResponse } from "./responses/codex-auth-error";
 
-function protocolHeaders(client: AudioClient, relay: AudioUpstream, frameless: boolean): Headers {
+function protocolHeaders(client: AudioClient, selected: HeadersInit, frameless: boolean): Headers {
   const headers = new Headers();
   for (const name of LIVE_CLIENT_PROTOCOL_HEADERS) {
     const value = client.headers.get(name);
     if (value) headers.set(name, value);
   }
-  for (const [name, value] of Object.entries(relay.headers)) headers.set(name, value);
+  for (const [name, value] of new Headers(selected)) headers.set(name, value);
   if (frameless && !headers.has("openai-alpha")) headers.set("openai-alpha", "quicksilver=v2");
   return headers;
 }
@@ -89,7 +91,7 @@ export async function handleExternalLive(
     relay = resolved;
     session = isolateCodexPoolClientMetadata(session, relay.authContext?.kind === "pool"
       ? relay.authContext.chatgptAccountId : undefined) as typeof session;
-    const headers = protocolHeaders(options.client, relay, frameless);
+    const headers = protocolHeaders(options.client, relay.headers, frameless);
     let body: BodyInit;
     if (relay.keyed) {
       const form = new FormData();
@@ -152,7 +154,32 @@ export async function resolveExternalLiveSocket(
   options: { lease: AdmissionLease; bindings: LiveCallBindings; signal?: AbortSignal },
 ): Promise<AudioSocketTarget | Response> {
   const binding = "callId" in target ? options.bindings.get(target.callId, client.owner) : undefined;
-  if ("callId" in target && !binding) return formatErrorResponse(404, "not_found", "Live call is unavailable for this key");
+  if ("callId" in target && !binding) {
+    const unavailable = () => formatErrorResponse(404, "not_found", "Live call is unavailable for this key");
+    if (target.callId.startsWith(EXTERNAL_CALL_PREFIX) || !captureExplicitOpenAiCallerAuth(client.headers, config)) return unavailable();
+    const candidates = listOpenAiForwardSidecarCandidates(config);
+    const candidate = candidates[0];
+    if (!candidate) return unavailable();
+    const denial = admissionScopeDenial(config, client.admission, undefined, { providerName: candidate.providerName, modelId: undefined });
+    if (denial) return denial;
+    try {
+      const caller = resolveCallerOwnedOpenAiSidecar(candidates, client.headers, config, { admission: client.admission });
+      if (!caller) return unavailable();
+      log.provider = caller.providerName;
+      log.model = LIVE_AUDIO_MODEL;
+      return {
+        authContext: caller.authContext,
+        headers: Object.fromEntries(protocolHeaders(client, caller.headers, target.style === "frameless-path")),
+        upstreamWsUrl: buildLiveSidebandUpstreamWsUrl(target),
+        maxSessionMs: LIVE_CALL_TTL_MS,
+        finish: () => {},
+      };
+    } catch (error) {
+      const refusal = mapCodexAuthContextErrorToResponse(error, { now: Date.now() });
+      if (refusal) return refusal;
+      throw error;
+    }
+  }
   if (binding?.callerOwned && !captureExplicitOpenAiCallerAuth(client.headers, config)) {
     return formatErrorResponse(401, "authentication_error", "Live call requires its original caller account");
   }
@@ -184,7 +211,7 @@ export async function resolveExternalLiveSocket(
     }
     return {
       authContext: relay.authContext,
-      headers: Object.fromEntries(protocolHeaders(client, relay, frameless)),
+      headers: Object.fromEntries(protocolHeaders(client, relay.headers, frameless)),
       upstreamWsUrl: buildLiveSidebandUpstreamWsUrl(upstreamTarget, binding ? binding.sidebandBaseUrl : config.experimentalRealtimeWsBaseUrl),
       maxSessionMs: LIVE_CALL_TTL_MS,
       finish: finishAudioUpstream(relay),

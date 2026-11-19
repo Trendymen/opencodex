@@ -11,6 +11,7 @@
 
 ## 请求与工具边界
 
+- `/v1/alpha/search` 和独立图片接口识别有效 OCX Bearer，包括主动带 key 的回环请求。上游鉴权由当前配置的账号或凭据完成，key 的模型和 Provider 限制仍生效。Direct 在读取主账号凭据前，沿用主账号策略绑定的等待期限。Direct 图片优先使用符合 key 权限的已有图片后端。默认图片 key 池在发送前暂停时，可改用已登录主账号。客户端创建的语音通话可经官方 Realtime 地址加入，`x-opencodex-api-key` 携带 OCX key，`Authorization` 携带原 ChatGPT 账号的 Bearer，`chatgpt-account-id` 须与 Bearer 中的账号声明一致。代理发出的语音别名继续绑定创建者 key。
 - GPT 家族和官方目的地分开判断。官方 Responses 保持原生消息/schema；`src/server/responses/codex-ws-request.ts` 只在构造 canonical 上游 WebSocket 帧时按对应许可映射有效的 Lite header，显式 HTTP 值优先同名 metadata。HTTP 请求体不预先合成 WS metadata，其他字段保持原样。
 - `agentMessageFormat`、GLM/Kimi lowering 和 `encrypted` 注解清理在出站副本上运行，保持原 input、工具授权和重放状态。未设置 `agentMessageFormat` 的 forward 鉴权在前后两次处理均保留原生 agent message；第三方显式 `user_message` 仍可转换可读内容。可信直接 key-auth relay 的注解例外不扩大到 combo。
 - `src/adapters/openai-responses/tool-output-recovery.ts` 将孤儿工具输出转为用户消息时，同时保留官方 item provenance 与 Fork 的合法具名来源标签；缺失或非法来源使用官方 unknown 标记。历史工具声明继续按官方当前轮目录判断。
