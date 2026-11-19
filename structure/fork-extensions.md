@@ -64,6 +64,8 @@
 
 ## 配置与诊断边界
 
+- `src/config/custom-models.ts` 允许仅填写 Provider 和模型的旧配置参与官方路由校验。加载时为缺省 ID 的行补稳定管理 ID，显式 ID 仍按管理规则验证和去重。
+
 - `src/fork/model-api-listener-config.ts` 定义可选的 `forkModelApiListener: { enabled: boolean }`，省略或 `false` 保持原主入口。开启时，回环主入口端口必须与 `10100` 不同，resolver 返回 `0.0.0.0:10100` 的 auxiliary 拓扑；非回环主入口必须使用 `10100`，resolver 返回 primary 拓扑。默认地址及 `localhost` / `localhost.` 按原生绑定规则归一化，CLI 的有效主端口优先于配置端口；合同模块只计算和校验，不绑定 socket。
 - `src/config.ts` 在 schema 和修复前严格检查该字段及拓扑，正常、repair、salvage 返回前核对显式开启及主拓扑保留；无法保留时抛出 `ForkModelApiConfigurationError`，不退回关闭状态。未开启时继续使用原有 fallback。`src/config/diagnostics.ts` 的诊断读取在降级前使用同一检查，并对正常、repair、salvage 的结果核对保留；typed 错误返回固定的 schema 诊断，使无关配置编辑不能绕过原始拓扑拒绝。candidate 写入和 `src/config/persist-unlocked.ts` 的统一保存边界也使用同一检查，显式非法端口不会被当作省略值。`src/config/live-topology.ts` 将该字段纳入活动拓扑基线，guarded save 只保存下次启动的 desired 值，保留运行中 config 的旧拓扑。
 - 读取文件投影已移除的 OpenCode Free 配置时，`src/config.ts` 与 `src/config/diagnostics.ts` 在 Fork 原始拓扑校验前使用同一次读取的字节尝试保留恢复副本；passive 诊断不创建副本。
