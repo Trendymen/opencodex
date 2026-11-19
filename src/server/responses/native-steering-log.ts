@@ -1,15 +1,34 @@
 import { inspectResponseLogSsePayload, usageFromResponsesPayload, type RequestLogContext } from "../request-log";
+import { upstreamErrorIsLocal } from "../request-log-failure-detail";
+import { snapshotTerminalClassifierState } from "../request-log-terminal-status";
 import type { OcxUsage } from "../../types";
 import { MAX_NATIVE_STEERING_RESPONSES } from "./native-steering";
 
 /** Count every terminal once. Control frames may echo user input: never sample them. */
-export function createNativeSteeringLogObserver(logCtx: RequestLogContext, onFirstOutput?: () => void): (payload: string) => void {
+export function createNativeSteeringLogObserver(
+  logCtx: RequestLogContext,
+  onFirstOutput?: () => void,
+): (payload: string, rawTransition?: "terminal" | "successor") => void {
   let outputSeen = false;
   const usages = new Map<string, OcxUsage>();
-  return payload => {
+  const terminalFields = [
+    "observedTerminalStatus", "terminalHttpStatus", "terminalErrorCode", "terminalIncompleteReason",
+    "committedIncompleteReason", "upstreamError", "upstreamErrorCode", "upstreamErrorType", "failureDetail",
+  ] as const;
+  const context = logCtx as unknown as Record<string, unknown>;
+  let resetRawTerminal: (() => void) | undefined;
+  return (payload, rawTransition) => {
     let event: { type?: string; delta?: unknown; response?: { id?: string; usage?: unknown; incomplete_details?: { reason?: string } } };
     try { event = JSON.parse(payload); } catch { return; }
     if (event.type?.startsWith("response.steer.") || event.type?.startsWith("response.inject.")) return;
+    if (rawTransition === "successor") {
+      if (!upstreamErrorIsLocal(logCtx) && logCtx.terminalSource !== "synthetic" && logCtx.localTerminalReason === undefined) {
+        resetRawTerminal?.();
+      }
+      resetRawTerminal = undefined;
+    }
+    const before = rawTransition === "terminal" ? terminalFields.map(field => context[field]) : undefined;
+    const classifier = rawTransition === "terminal" ? snapshotTerminalClassifierState(logCtx) : undefined;
     if (!outputSeen && event.type?.endsWith(".delta") && typeof event.delta === "string" && event.delta.length) {
       outputSeen = true; onFirstOutput?.();
     }
@@ -17,6 +36,18 @@ export function createNativeSteeringLogObserver(logCtx: RequestLogContext, onFir
     // label an eventual successful successor as an upstream failure.
     if (!(event.type === "response.incomplete" && event.response?.incomplete_details?.reason === "steered")) {
       inspectResponseLogSsePayload(logCtx, payload);
+    }
+    if (before && classifier) {
+      const after = terminalFields.map(field => context[field]);
+      const resetClassifier = classifier();
+      resetRawTerminal = () => {
+        terminalFields.forEach((field, index) => {
+          if (Object.is(before[index], after[index]) || !Object.is(context[field], after[index])) return;
+          if (before[index] === undefined) delete context[field];
+          else context[field] = before[index];
+        });
+        resetClassifier();
+      };
     }
     const terminal = ["response.completed", "response.failed", "response.incomplete"].includes(event.type ?? "");
     if (terminal && typeof event.response?.id === "string") {

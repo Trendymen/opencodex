@@ -590,7 +590,8 @@ export function normalizeResponsesWsRelayEvent(
   const status = response && typeof response === "object" && !Array.isArray(response)
     ? (response as Record<string, unknown>).status
     : undefined;
-  const type = `response.${codexDoneTerminalStatus(record)}`;
+  const terminalType = `response.${codexDoneTerminalStatus(record)}`;
+  const type = status === "completed" ? "response.completed" : terminalType;
   const normalizedRecord: Record<string, unknown> = { ...record, type };
   if (type === "response.failed" && status !== "failed") {
     normalizedRecord.response = response && typeof response === "object" && !Array.isArray(response)
@@ -598,7 +599,7 @@ export function normalizeResponsesWsRelayEvent(
       : { status: "failed" };
   }
   if (permissions?.synthesizeTerminalFailure === false) return { type: record.type, text: /[\r\n]/.test(text) ? JSON.stringify(record) : text,
-    payload: record, terminalType: type, observationPayload: normalizedRecord };
+    payload: record, terminalType, observationPayload: type === terminalType ? normalizedRecord : { ...normalizedRecord, type: terminalType } };
   return { type, text: JSON.stringify(normalizedRecord), payload: normalizedRecord };
 }
 

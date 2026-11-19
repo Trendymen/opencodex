@@ -1,4 +1,5 @@
 import { completeIncrementalFrame, recordIncrementalDispatch, type IncrementalPlan } from "./codex-ws-incremental";
+import { responsesCompletionError } from "../../lib/errors";
 import { NativeSteeringError } from "./native-steering";
 import { NativeContinuationRefusalError } from "./native-continuation-refusal";
 import { mergeSteeringContinuation } from "./native-steering-settings";
@@ -685,8 +686,12 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
       } else {
         firstResponseAt ??= Date.now();
         try {
-          if (nativeControl) steeringEnded = nativeControl.observe(observedPayload);
-          else correlation?.accept(observedPayload);
+          if (nativeControl) {
+            const firstTerminalOnly = options.permissions?.synthesizeTerminalFailure === false;
+            const controlPayload = firstTerminalOnly && responsesCompletionError(observedPayload)
+              ? { ...observedPayload, type: "response.failed" } : observedPayload;
+            steeringEnded = nativeControl.observe(controlPayload, firstTerminalOnly);
+          } else correlation?.accept(observedPayload);
         } catch (error) { failStream(error); return; }
         if (replayUnsafe) commitResponse();
         // An authoritative refusal before any response activity means the synthesized ID was

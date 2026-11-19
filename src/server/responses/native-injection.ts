@@ -266,7 +266,7 @@ export class NativeInjectionChannel implements NativeResponseControl {
     this.idleTimer = setTimeout(() => this.fail(), ms); this.idleTimer.unref?.();
   }
   /** Validate ordered upstream events while allowing acknowledgements after a response terminal. */
-  observe(event: Frame): boolean {
+  observe(event: Frame, firstTerminalOnly = false): boolean {
     if ((event.stream_id ?? undefined) !== this.lane && !(event.type === "error" && event.stream_id == null)) throw new Error("Native injection lane mismatch.");
     const type = event.type;
     if (type === "error") { this.finished = true; return true; }
@@ -274,6 +274,12 @@ export class NativeInjectionChannel implements NativeResponseControl {
     else {
       if (typeof type === "string" && (type.startsWith("response.inject.") || type.startsWith("response.steer."))) throw new Error("Unsupported native injection control event.");
       const response = record(event.response) ? event.response : undefined;
+      if (firstTerminalOnly && this.terminal
+        && (type === "response.completed" || type === "response.failed" || type === "response.incomplete")) {
+        this.correlation?.accept({ ...event, stream_id: undefined });
+        if (!this.currentId || response?.id !== this.currentId) throw new Error("Native injection terminal identity mismatch.");
+        return this.finished;
+      }
       if (type === "response.created") {
         if (!injectionId(response?.id) || this.seen.has(response.id) || this.seen.size >= 128) throw new Error("Native injection response identity or chain limit violated.");
         if (this.currentId && (!this.continuationSent || !this.terminal || this.queue.length

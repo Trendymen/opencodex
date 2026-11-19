@@ -16,7 +16,7 @@ export interface NativeResponseControl {
   readonly attached: boolean;
   readonly ended: boolean;
   attach(send: (frame: Record<string, unknown>) => void, fail: (error: Error) => void): () => void;
-  observe(frame: Record<string, unknown>): boolean;
+  observe(frame: Record<string, unknown>, firstTerminalOnly?: boolean): boolean;
   steer(frame: Record<string, unknown>): void;
   inject?(frame: Record<string, unknown>): void;
   continue(frame: Record<string, unknown>): boolean;
