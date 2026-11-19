@@ -417,9 +417,9 @@ export function createWebsocketHandler(
             await sendResponseToWebSocket(ws, response, isCurrent, {
               // A native-control body is the upstream itself, with no relay tail behind it.
               untilEof: nativeControl?.relayActive === true, rawUpstream: nativeControl?.relayActive === true,
-              onSsePayload: payload => {
+              onSsePayload: (payload, logPayload) => {
                 ws.data.responsesActivity?.observePayload(payload, providerExecuted);
-                observeLog(payload);
+                if (logPayload !== null) observeLog(logPayload ?? payload);
               },
               onTerminal: status => {
                 terminalRecorder?.(status, logCtx.terminalHttpStatus);

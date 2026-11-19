@@ -1,7 +1,10 @@
 import { SENSITIVE_KEY_PATTERN } from "../lib/redact";
-import { readBoundedResponseBody, boundedBodyDecodeFailure, BOUNDED_BODY_MAX_BYTES, BOUNDED_BODY_TIMEOUT_MS, type BoundedBodyOptions } from "../lib/bounded-body";
+import { readBoundedResponseBody, readBoundedResponseBytes, boundedBodyDecodeFailure, BOUNDED_BODY_MAX_BYTES, BOUNDED_BODY_TIMEOUT_MS, type BoundedBodyOptions } from "../lib/bounded-body";
 import { TranslatorBudgetExceededError, type TranslatorBudget } from "../lib/translator-budget";
 import { guardResponseBodyInactivity } from "../lib/response-body-inactivity";
+import { isLocalUpstream } from "../lib/local-upstream";
+import { resolveStallTimeoutMs } from "../stall-timeout";
+import type { AdapterRequest } from "../adapters/base";
 import type { CodexAuthContext } from "../codex/auth-context";
 import { createOutboundCredentialMask } from "../server/responses/terminal-error-redaction";
 import { createSseBlockBuffer, sseDataPayload, replaceSseDataPayload, type SseBlockRewrite } from "../server/sse-payload-rewrite";
@@ -153,6 +156,40 @@ export function codexPrivateErrorBodyReadDeadlines(options: { privateErrorBodyRe
   const stallTimeoutMs = options.stallTimeoutMs ?? 300_000;
   const silence = stallTimeoutMs > 0 ? stallTimeoutMs : Infinity;
   return { totalTimeoutMs: Infinity, inactivityTimeoutMs: silence, firstByteTimeoutMs: silence };
+}
+
+async function readCodexPrivateRetryErrorBytes(response: Response, signal: AbortSignal | undefined,
+  stallTimeoutMs: number): Promise<Uint8Array<ArrayBuffer>> {
+  const { inactivityTimeoutMs } = codexPrivateErrorBodyReadDeadlines({ privateErrorBodyReadDeadline: false, stallTimeoutMs });
+  const guarded = guardResponseBodyInactivity(response, signal, inactivityTimeoutMs ?? 0);
+  try {
+    const result = await readBoundedResponseBytes(guarded.response, { signal, maxBytes: BOUNDED_BODY_MAX_BYTES });
+    return result.bytes;
+  } catch (error) {
+    if (guarded.timeoutError && error === guarded.timeoutError) throw new CodexPrivateCredentialProtectionError("private-body-timeout");
+    throw error;
+  } finally {
+    guarded.dispose();
+  }
+}
+
+export function codexPrivateRetryBodyReader(input: {
+  enabled: boolean;
+  request: Pick<AdapterRequest, "headers" | "url">;
+  callerHeaders: Headers;
+  configuredHeaders?: Record<string, string>;
+  stallTimeoutSec?: number;
+  authCtx: CodexAuthContext | undefined;
+  substituteMainCredential: boolean;
+  translatorBudget: TranslatorBudget;
+}): ((response: Response, signal?: AbortSignal) => Promise<Uint8Array<ArrayBuffer>>) | undefined {
+  if (!input.enabled || !createCodexPrivateCredentialGuard({
+    outboundHeaders: input.request.headers, callerHeaders: input.callerHeaders,
+    sources: codexPrivateCredentialSources(input.authCtx, input.substituteMainCredential, input.configuredHeaders),
+    configuredHeaders: input.configuredHeaders, translatorBudget: input.translatorBudget,
+  })) return undefined;
+  const stallTimeoutMs = resolveStallTimeoutMs(input.stallTimeoutSec, { localUpstream: isLocalUpstream(input.request.url) });
+  return (response, signal) => readCodexPrivateRetryErrorBytes(response, signal, stallTimeoutMs);
 }
 
 export async function readCodexPrivateErrorText(response: Response, guard: CodexPrivateCredentialGuard, signal?: AbortSignal,
