@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { canonicalizeReasoningEfforts, isDeclaredReasoningEffort } from "../reasoning-effort";
 import { routedSlug } from "../providers/slug-codec";
 import type { OcxCustomModel } from "../types";
@@ -46,8 +47,8 @@ function salvageStringList(
   return result.length > 0 ? result : undefined;
 }
 
-function salvageRow(record: Record<string, unknown>): OcxCustomModel | undefined {
-  const id = trimmed(record.id);
+function salvageRow(record: Record<string, unknown>, fallbackId?: string): OcxCustomModel | undefined {
+  const id = trimmed(record.id) ?? fallbackId;
   const provider = trimmed(record.provider);
   const modelId = trimmed(record.modelId);
   if (!id || !provider || !modelId) return undefined;
@@ -107,6 +108,12 @@ export function salvageCustomModelsForLoad(value: unknown): CustomModelSalvageRe
 
   const result: OcxCustomModel[] = [];
   const ids = new Set<string>();
+  const reservedIds = new Set(value.flatMap(entry => {
+    if (!isPlainRecord(entry)) return [];
+    const id = trimmed(entry.id);
+    return id ? [id] : [];
+  }));
+  const nextFallbackSuffix = new Map<string, number>();
   let droppedRows = 0;
   let changedFields = 0;
 
@@ -115,7 +122,19 @@ export function salvageCustomModelsForLoad(value: unknown): CustomModelSalvageRe
       droppedRows += 1;
       continue;
     }
-    const row = salvageRow(entry);
+    let fallbackId: string | undefined;
+    if (entry.id === undefined) {
+      const provider = trimmed(entry.provider);
+      const modelId = trimmed(entry.modelId);
+      if (provider && modelId) {
+        const base = `salvaged-${createHash("sha256").update(JSON.stringify([provider, modelId])).digest("hex")}`;
+        let suffix = nextFallbackSuffix.get(base) ?? 1;
+        fallbackId = suffix === 1 ? base : `${base}-${suffix}`;
+        while (reservedIds.has(fallbackId)) fallbackId = `${base}-${++suffix}`;
+        nextFallbackSuffix.set(base, suffix + 1);
+      }
+    }
+    const row = salvageRow(entry, fallbackId);
     if (!row) {
       droppedRows += 1;
       continue;
@@ -125,6 +144,7 @@ export function salvageCustomModelsForLoad(value: unknown): CustomModelSalvageRe
       continue;
     }
     ids.add(row.id);
+    reservedIds.add(row.id);
     if (!sameJson(entry, row)) changedFields += 1;
     result.push(row);
   }
@@ -151,6 +171,7 @@ export function customModelsCandidateError(value: unknown): string | null {
     const entry = value[index];
     if (!isPlainRecord(entry)) return invalid(String(index), "must be an object");
     for (const field of ["id", "provider", "modelId"] as const) {
+      if (field === "id" && entry.id === undefined) continue;
       if (typeof entry[field] !== "string" || entry[field].length === 0 || entry[field] !== entry[field].trim()) {
         return invalid(`${index}.${field}`, "must be a non-empty trimmed string");
       }
@@ -202,11 +223,11 @@ export function customModelsCandidateError(value: unknown): string | null {
       && (typeof entry.addedAt !== "string" || entry.addedAt.length === 0 || entry.addedAt !== entry.addedAt.trim())) {
       return invalid(`${index}.addedAt`, "must be a non-empty trimmed string");
     }
-    const id = entry.id as string;
+    const id = entry.id as string | undefined;
     const slug = routedSlug(entry.provider as string, entry.modelId as string);
-    if (ids.has(id)) return invalid(`${index}.id`, "duplicate id");
+    if (id !== undefined && ids.has(id)) return invalid(`${index}.id`, "duplicate id");
     if (slugs.has(slug)) return invalid(`${index}.modelId`, "duplicate routed identity");
-    ids.add(id);
+    if (id !== undefined) ids.add(id);
     slugs.add(slug);
   }
   return null;

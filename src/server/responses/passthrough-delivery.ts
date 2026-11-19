@@ -1776,7 +1776,7 @@ export async function deliverPassthroughResponse(
             || usesVolcengineAgentPlanResponses(route.provider)))
           ? repairResponsesSnapshotJson(plaintextRestore.value, nativeExchange.outboundRequestBody)
           : plaintextRestore.value;
-        const fields = codexPermissions?.backfillResponseFields === false ? snapshotRepaired : backfillResponsesFieldsJson(snapshotRepaired);
+        const fields = codexPermissions?.backfillResponseFields ? backfillResponsesFieldsJson(snapshotRepaired) : snapshotRepaired;
         const repaired = codexPermissions?.repairResponseToolCalls === false ? fields : repairFunctionCallsInJson(fields, functionRepairSchemas);
         const modelRewritten = parsed._responseModelId !== undefined && parsed._responseModelId !== parsed.modelId
           ? rewriteResponsesModelJson(repaired, parsed._responseModelId)
