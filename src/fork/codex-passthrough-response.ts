@@ -2,6 +2,7 @@ import type { SseInspector } from "../server/relay";
 import type { ResponsesTerminalStatus } from "../bridge";
 import type { CodexPassthroughPermissions } from "./codex-passthrough-contract";
 import { TRANSLATOR_MAX_SSE_EVENT_BYTES } from "../lib/translator-budget";
+import { responsesCompletionError } from "../lib/errors";
 
 export function codexRawJsonTerminal(response: Record<string, unknown>, permissions?: CodexPassthroughPermissions):
   { payload: Record<string, unknown>; status: ResponsesTerminalStatus } | undefined {
@@ -26,8 +27,20 @@ export function codexRawJsonSse(response: Record<string, unknown>, permissions?:
 export function codexDoneTerminalStatus(value: unknown): ResponsesTerminalStatus | null {
   const event = value && typeof value === "object" ? value as { type?: unknown; response?: { status?: unknown } } : undefined;
   if (event?.type !== "response.done") return null;
-  return event.response?.status === "completed" ? "completed"
-    : event.response?.status === "incomplete" || event.response?.status === "cancelled" ? "incomplete" : "failed";
+  if (event.response?.status === "completed") {
+    return responsesCompletionError({ ...event, type: "response.completed" }) ? "failed" : "completed";
+  }
+  return event.response?.status === "incomplete" || event.response?.status === "cancelled" ? "incomplete" : "failed";
+}
+
+export function codexDoneTerminalLogEvent(
+  value: unknown,
+  status = codexDoneTerminalStatus(value),
+): Record<string, unknown> | undefined {
+  if (status === null) return undefined;
+  const event = value as Record<string, unknown> & { response?: { status?: unknown } };
+  const type = event.response?.status === "completed" ? "completed" : status;
+  return { ...event, type: `response.${type}` };
 }
 
 export function relayUnmodifiedCodexSse(body: ReadableStream<Uint8Array>, upstream: AbortController,

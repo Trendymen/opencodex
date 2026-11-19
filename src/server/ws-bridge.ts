@@ -24,7 +24,7 @@ import { WORKFLOW_LOCAL_REFUSAL_HEADER } from "../lib/workflow-budget";
 import { NativeContinuationRefusalError } from "./responses/native-continuation-refusal";
 import type { UsageClient } from "../usage/client";
 import { LINK_WS_LIMITS, linkPumpTimer, linkPumpWaitObserver } from "./index/link-websocket-limits";
-import { codexDoneTerminalStatus, codexRawErrorBody, codexRawJsonTerminal } from "../fork/codex-passthrough-response";
+import { codexDoneTerminalLogEvent, codexDoneTerminalStatus, codexRawErrorBody, codexRawJsonTerminal } from "../fork/codex-passthrough-response";
 import { codexPassthroughResponsePermissions } from "../fork/codex-passthrough-turn";
 import { CodexPrivateCredentialProtectionError } from "../fork/codex-passthrough-secrets";
 import { codexLocalFailure, decideCodexLocalError } from "../fork/codex-passthrough-local-errors";
@@ -34,7 +34,7 @@ export { safeResponseHeaders } from "./safe-response-headers";
 
 const OPEN = 1;
 type ResponsesTerminalReporter = (status: ResponsesTerminalStatus) => void;
-type ResponsesPayloadObserver = (payload: string) => void;
+type ResponsesPayloadObserver = (payload: string, logPayload?: string | null) => void;
 
 export interface WsData {
   client?: UsageClient;
@@ -384,6 +384,7 @@ export async function pumpResponsesSseToWebSocket(
   const framer = new BoundedSseFrameBuffer();
   let terminalSeen = false;
   let lastTerminal: ResponsesTerminalStatus | undefined;
+  let rawDoneFailed = false;
 
   const handlePayload = (payload: string): boolean => {
     if (!isCurrent()) return true;
@@ -391,13 +392,16 @@ export async function pumpResponsesSseToWebSocket(
     let parsed: { type?: unknown } | undefined;
     try { parsed = JSON.parse(payload); } catch { /* protocol error below */ }
     const type = typeof parsed?.type === "string" ? parsed.type : null;
+    if (options.untilEof && type === "response.created") rawDoneFailed = false;
+    const codexStatus = options.synthesizeTerminalFailure === false ? codexDoneTerminalStatus(parsed) : null;
     const untypedBare = !type && isUntypedBareUpstreamError(parsed);
     // A relayed stream follows an untyped envelope with its own response.failed, so the envelope
     // waits for it. A raw upstream body has no such tail: the envelope stays the protocol error
     // it always was and is not recorded as a verdict the client never received.
     if (!(untypedBare && options.rawUpstream)) {
       try {
-        options.onSsePayload?.(payload);
+        const logEvent = codexDoneTerminalLogEvent(parsed, codexStatus);
+        options.onSsePayload?.(payload, rawDoneFailed ? null : logEvent ? JSON.stringify(logEvent) : undefined);
       } catch {
         /* payload observation must not affect WebSocket delivery */
       }
@@ -414,10 +418,13 @@ export async function pumpResponsesSseToWebSocket(
     if (terminalSeen) return true;
     sendTextFrame(ws, payload);
     if (options.untilEof && type === "response.created") lastTerminal = undefined;
-    const terminalStatus = type === "error" && options.untilEof ? "failed" : terminalStatusFromType(type, parsed)
-      ?? (options.synthesizeTerminalFailure === false ? codexDoneTerminalStatus(parsed) : null);
+    const terminalStatus = type === "error" && options.untilEof ? "failed" : terminalStatusFromType(type, parsed) ?? codexStatus;
     if (terminalStatus) {
-      if (options.untilEof) { lastTerminal = terminalStatus; return false; }
+      if (options.untilEof) {
+        if (!rawDoneFailed) lastTerminal = terminalStatus;
+        if (codexStatus === "failed") rawDoneFailed = true;
+        return false;
+      }
       reportTerminal(terminalStatus);
       terminalSeen = true;
       void reader.cancel().catch(() => {});
@@ -495,7 +502,8 @@ export function sendResponsesJsonAsEvents(
   const sendObservedFrame = (payload: Record<string, unknown>) => {
     const text = JSON.stringify(payload);
     try {
-      onPayload?.(text);
+      const logEvent = permissions?.synthesizeTerminalFailure === false ? codexDoneTerminalLogEvent(payload) : undefined;
+      onPayload?.(text, logEvent ? JSON.stringify(logEvent) : undefined);
     } catch {
       /* payload observation must not affect WebSocket delivery */
     }
@@ -580,7 +588,10 @@ async function sendResponsesJsonAsLinkEvents(
         sendJsonFrame(ws, buildWsErrorFrame(502, protocolError("synthesized response event exceeded " + MAX_CLIENT_SSE_FRAME_BYTES + " bytes")));
         return;
       }
-      try { onPayload?.(text); } catch { /* payload observation must not affect WebSocket delivery */ }
+      try {
+        const logEvent = permissions?.synthesizeTerminalFailure === false ? codexDoneTerminalLogEvent(frame) : undefined;
+        onPayload?.(text, logEvent ? JSON.stringify(logEvent) : undefined);
+      } catch { /* payload observation must not affect WebSocket delivery */ }
       sendTextFrame(ws, text);
     }
     onTerminal?.(finalStatus);
