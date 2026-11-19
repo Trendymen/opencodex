@@ -7,6 +7,7 @@ import { bindAdapterResponseSpend } from "./request-spend";
 import { markProxyError, isProxyError } from "../../lib/client-error-body";
 import { adapterBuildRefusal } from "./passthrough-build-error";
 import { createAutoPauseRefreshErrorMapper, recoverAutoPausedAccount } from "./account-auto-pause-recovery";
+import type { AdapterDispatchInputs } from "../responses-adapter-dispatch-types";
 import { wasAccountAutoPaused, wasPermanentAccountRefusal } from "../../oauth/account-auto-pause";
 import { effectiveAccountAutoPause } from "../../config/account-auto-pause-revisions";
 import { bindAnthropicRejectionResponse } from "../../adapters/anthropic-rejection-memo";
@@ -24,10 +25,7 @@ import { transientSendCapFor, type ResponsesSendBudget } from "./request-send-bu
 import { sanitizeNonReplayableUpstreamError } from "./non-replayable-error";
 import { isLocalUpstream } from "../../lib/local-upstream";
 import { providerConnectTimeoutMs, providerStallTimeoutSec, resolveConnectTimeoutMs, resolveStallTimeoutMs } from "../../stall-timeout";
-import { responsesTimeoutProvider, type ResponsesRequestContext, type ResponsesAdmissionState } from "./core-options";
-import type { PreparedResponsesRequest } from "./request-prepare";
-import type { ResponsesTransport } from "./request-transport";
-import type { ResponsesEffects } from "./response-effects";
+import { responsesTimeoutProvider } from "./core-options";
 import { linkAbortSignal } from "./core-lifetime";
 import type { AdapterRequest } from "../../adapters/base";
 import type { AdapterEvent } from "../../types";
@@ -131,78 +129,12 @@ import { AdmissionModelDeniedError, admissionModelDeniedResponse, projectAdmissi
 import { rejectAnthropicPerMessageEffort } from "../../adapters/anthropic/per-message-effort";
 /** One responsibility of the Responses request pipeline; state owners are explicit. */
 export async function prepareAdapterExchange(
-  requestContext: Pick<ResponsesRequestContext, "options" | "config" | "logCtx" | "req">,
-  admissionState: ResponsesAdmissionState,
-  requestState: Pick<
-    PreparedResponsesRequest,
-    | "parsed"
-    | "toolBridgeMaps"
-    | "translatorBudget" | "completedToolBlocks"
-    | "selectedForwardHeaders"
-    | "route"
-    | "inboundWire"
-    | "clientRequestedStream"
-    | "subagentQuotaFailureModel"
-    | "subagentFallbackAccountId"
-  >,
-  transportState: Pick<
-    ResponsesTransport,
-    | "activeAdapter"
-    | "adapter"
-    | "pinAnthropicImageRecovery"
-    | "sameTargetRequest"
-    | "sameTargetParsed"
-    | "sameTargetToken"
-    | "transportToken"
-    | "oauthDispatch"
-    | "recoverAutoPausedSelection"
-    | "imageTierBias"
-    | "oauth401ReplayAttempted"
-    | "isOAuth401ReplayProvider"
-    | "sentOAuthSnapshot"
-    | "refreshResolvedOAuthSelection"
-    | "replayOAuthCredentialSnapshot"
-    | "invalidateSameTargetRequest"
-    | "resolveSelectionAdapter"
-    | "resolveCopilotSelection"
-    | "copilotRefusalResponse"
-    | "anthropicInstance"
-    | "currentAnthropicRouteDecision"
-    | "anthropicRouteDecision"
-    | "anthropicPoolAccountId"
-    | "anthropicPoolFailovers"
-    | "anthropicSessionKey"
-    | "commitResolvedOAuthSelection"
-    | "genericFailoverAccountId"
-    | "genericFailovers"
-    | "genericFailoverLimit" | "anthropicFailoverLimit"
-    | "applyFailoverSnapshot"
-    | "noteRoutedAttemptSend" | "attemptSendDeferred" | "deferPhysicalAttribution" | "commitAdapterAttemptSend"
-    | "createCredentialReplayAttempt" | "credentialReplayHandoff"
-  >,
-  responseEffects: Pick<ResponsesEffects, "cancelResponseCompletion" | "notifyResponseComplete" | "refreshRequestToolAliases">,
-  sendBudgetState: Pick<
-    ResponsesSendBudget,
-    | "adapterSendBudget"
-    | "adapterDispatchBudget"
-    | "noteAdapterPhysicalSend"
-    | "noteAdapterRecoveryWithheld"
-    | "imageRecoverySendReporter"
-    | "remainingTransientSendBudget"
-    | "transientSendReporter"
-    | "recoverySendAllowance"
-    | "recoveryClassFor"
-    | "sendBudgetExhausted"
-    | "reserveCredentialHop"
-    | "pendingHopPermit"
-    | "workflowRootId"
-    | "claimAmbiguousResend"
-    | "sendsUsed"
-    | "targetSendsUsed"
-    | "compactHandoffSendCeiling"
-    | "initialSendAllowance"
-    | "noteInitialDispatch"
-  >,
+  requestContext: AdapterDispatchInputs["requestContext"],
+  admissionState: AdapterDispatchInputs["admissionState"],
+  requestState: AdapterDispatchInputs["requestState"],
+  transportState: AdapterDispatchInputs["transportState"],
+  responseEffects: AdapterDispatchInputs["responseEffects"],
+  sendBudgetState: AdapterDispatchInputs["sendBudgetState"],
 ) {
   const { options, config, logCtx, req } = requestContext;
   const {
