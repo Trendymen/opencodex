@@ -1629,9 +1629,18 @@ export async function prepareResponsesRequest(
   }
   const codexPermissions = resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire });
   admissionState.codexPassthroughPermissions = codexPermissions;
+  const recordContinuationRefusal = (code: string): void => {
+    logCtx.provider = route.providerName;
+    logCtx.model = route.modelId;
+    logCtx.errorCode = code;
+    if (recoveryAttempts) (logCtx.attempts ??= []).push(...recoveryAttempts);
+    if (logCtx.attempts?.some(attempt => attempt.sendCount > 0)) logCtx.terminalSource = "synthetic";
+    else markLocalRequestLogRefusal(logCtx, code);
+  };
   if (deferredReplayFailure) {
     if (codexPermissions?.expandRequestHistory !== false) {
       failLinkTurnExpansion(options.linkTurn, req, logCtx, linkExpansionBody, deferredReplayFailure.reason);
+      if (strictReplay || recoveryAttempts?.length) recordContinuationRefusal(deferredReplayFailure.code);
       return markProxyError(formatErrorResponse(400, deferredReplayFailure.code, "Continuation state is unavailable or corrupt; resend the full conversation without previous_response_id."));
     }
     if (!options.comboReplaySnapshot) observeLinkTurnExpansion(options.linkTurn, req, logCtx, linkExpansionBody, "unexpanded");
@@ -1678,30 +1687,26 @@ export async function prepareResponsesRequest(
       commitCanonicalEffects = prepared.commitPreparedEffects;
       hasUnexpandedPreviousResponse = codexPermissions.expandRequestHistory && !!parsed.previousResponseId && parsed._previousResponseInputExpanded !== true;
     } catch (error) {
-      if (error instanceof CodexContinuationUnavailableError) { markLinkTurnMissing(logCtx); return markProxyError(formatErrorResponse(400, "previous_response_not_found", error.message)); }
+      if (error instanceof CodexContinuationUnavailableError) {
+        markLinkTurnMissing(logCtx);
+        recordContinuationRefusal("previous_response_not_found");
+        return markProxyError(formatErrorResponse(400, "previous_response_not_found", error.message));
+      }
       if (error instanceof CodexRecoveredInputUnavailableError) return unreadableEncryptedAgentTaskResponse("input_changed");
       throw error;
     }
   }
-  // The canonical ChatGPT backend rejects previous_response_id, so a local replay miss leaves no
-  // safe way to recover the omitted history. Fail before dispatching the continuation itself
-  // instead of stripping the id and silently forwarding a context-free delta (#702).
-  // Codex recognizes previous_response_not_found on WebSocket errors and reconnects with its
-  // full input. A generic invalid_request_error instead terminates the task after cache expiry.
+  // ChatGPT rejects previous_response_id. Refuse a replay miss before dispatch so Codex can
+  // recognize previous_response_not_found and resend the full conversation (#702).
   if (
     hasUnexpandedPreviousResponse
     && isCanonicalOpenAiForwardProvider(route.provider)
   ) {
     markLinkTurnMissing(logCtx);
     const code = "previous_response_not_found";
-    logCtx.provider = route.providerName;
-    logCtx.model = route.modelId;
-    logCtx.errorCode = code;
     // A recovery send already finished on its own model and status. Keep it off activeAttempt,
     // which the log finalizer stamps with the continuation's terminal outcome.
-    if (recoveryAttempts) (logCtx.attempts ??= []).push(...recoveryAttempts);
-    if (logCtx.attempts?.some(attempt => attempt.sendCount > 0)) logCtx.terminalSource = "synthetic";
-    else markLocalRequestLogRefusal(logCtx, code);
+    recordContinuationRefusal(code);
     return markProxyError(formatErrorResponse(
       400,
       code,
@@ -1711,13 +1716,9 @@ export async function prepareResponsesRequest(
 
   if (hasUnexpandedPreviousResponse) {
     const continuationProvider = resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy);
-    // Can the DESTINATION see the history this process failed to restore? Only the native
-    // Responses passthrough can: it forwards previous_response_id to a backend that stored the
-    // chain. Every translated wire rebuilds the conversation from this request's input alone —
-    // including the three that look stateful, for the reasons recorded in
-    // responses/continuation-ownership.ts — so a replay miss there is not a degraded turn. It is
-    // the entire conversation deleted, with one user line left in its place and nothing in the
-    // response saying so. Refuse before auth or upstream I/O and let the client resend.
+    // Only a destination that owns the history can resolve the omitted prefix. Translated wires
+    // rebuild from this request alone (see responses/continuation-ownership.ts), so refuse before
+    // auth or upstream I/O when the destination cannot restore it.
     const continuationWire = resolvedAdapterWire(continuationProvider.adapter);
     const upstreamOwnsOmittedHistory = continuationWire === "openai-responses"
       // Stateless destinations cannot resolve the omitted prefix. Stateful destinations may,
