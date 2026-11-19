@@ -69,7 +69,7 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 - OpenGateway 精确目标的[工具结果投影](src/adapters/openai-responses/opengateway-input.ts)、单次空完成恢复、冷启动密文恢复和 DeepSeek 图片上传重检沿用官方合同。Fork 的 schema 持久化和结构诊断读取最终 `wireBody`；WS 发送计费保留官方一次 receipt，并继续传递所选 Codex 许可。Mistral 同目标暂停与本地失败、禁止重放标记分别保留，不因此禁止换 key。
 - CI 选择与聚合判定采用官方 review lanes、scope reduction、privacy gate、structure gate 和文档链接合同。
 - Responses 沿用官方离线等待后的单次重发、原生 SSE 静默时限、客户端用量估算和 Anthropic 每消息 effort。私有凭据保护复用官方静默计时器，首个安全 SSE 块之前的显式超时也进入官方失败处理。关闭 `privateErrorBodyReadDeadline` 后，pacing [重试保留正文](src/server/responses/passthrough-dispatch.ts) 也按当前目的地的停滞时限和 64 KiB 上限读取。保留的响应按实际产生它的请求处理。估算用量只用于客户端交付。
-- Codex WebSocket 增量上传沿用官方调用方隔离、已确认前缀和物理发送预算。关闭终态合成时，[原始 `response.done`](src/fork/codex-passthrough-response.ts) 保持原样，SSE 和 WebSocket 的内部结算按官方规则识别其中的有效错误，只有成功终态可以更新续接状态。恢复和切换账号只在实际发出请求后记入对应尝试。
+- Codex WebSocket 增量上传沿用官方调用方隔离、已确认前缀和物理发送预算。关闭终态合成时，[原始 `response.done`](src/fork/codex-passthrough-response.ts) 保留载荷，按官方规则识别其中的有效错误。同一响应的首个原样终态决定内部结算和续接状态，合法后继响应独立结算。开启合成时保留官方完成帧的错误判定。恢复和切换账号只在实际发出请求后记入对应尝试。
 - 转译 Combo compact 产出正文后，沿用官方缓冲期限与流式静默时限。后续静默时报告 `incomplete`。Fork 在首段正文前保留有界等待与取消，并在工具检查前修复当前请求声明的 nested exec 参数。
 - Provider 设置继续支持 Fork 的 Codex 透传许可，并保留官方订阅重试与模型发现。每 Provider 的超时覆盖用于官方转译入口，原生直通仍使用全局设置。
 - Antigravity Chat/Messages direct lane、main-account hard-lock 最早 retry 提示及 Qoder keypool 预算继续采用官方实现。启用 `repairResponseToolCalls` 时，工具修复沿用官方的 namespace 规范化与未声明调用拒绝条件；显式空目录仅在原工具守卫适用的入站和目的地执行 deny-all。订阅许可只适用于原生 Responses 的最终官方目的地，不扩大到第三方或转译入站；model-scope `model_not_allowed_for_key` 403 和硬预算始终保留。模型与服务商回退采用官方 [fallback policy](src/routing/fallback-policy.ts)，订阅许可不跳过回退授权。AgentAssertion 采用官方 [认证边界](src/lib/authorization-scheme.ts)，附加断言只随调用方原有 Bearer 发往官方 Direct，Pool 替换凭据不携带该断言。
