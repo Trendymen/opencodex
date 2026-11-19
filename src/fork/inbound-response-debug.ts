@@ -15,6 +15,8 @@ import { posix } from "node:path";
 import { debugProviderDiagnostic } from "../lib/debug";
 import { isDebugEnabled, isProviderTextDebugEnabled } from "../lib/debug-settings";
 import { redactSecretString } from "../lib/redact";
+import { carryPacedStream, pacedQueuingStrategy } from "../lib/paced-stream";
+import { createSseInspector } from "../server/relay";
 import {
   abandonProviderDebugCaptureGroup,
   beginProviderDebugCaptureGroup,
@@ -188,6 +190,45 @@ export interface InboundResponsesDebugObserverOptions {
   timelineLimit?: number;
   textSampleLimit?: number;
   stage?: InboundResponsesDebugStage;
+}
+
+export function observeClientBoundResponsesSse(
+  body: ReadableStream<Uint8Array>,
+  observer: ReturnType<typeof createInboundResponsesDebugObserver> | undefined,
+  persist: () => void,
+): ReadableStream<Uint8Array> {
+  if (!observer) return body;
+  const inspector = createSseInspector({ onParsedPayload: payload => observer.notePayload(payload) });
+  const reader = body.getReader();
+  let settled = false;
+  const settle = (): void => {
+    if (settled) return;
+    settled = true;
+    try { inspector.finish(); } catch { /* diagnostics must not alter delivery */ }
+    inspector.dispose();
+    persist();
+  };
+  return carryPacedStream(body, new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          settle();
+          controller.close();
+          return;
+        }
+        if (value) inspector.feed(value);
+        controller.enqueue(value);
+      } catch (error) {
+        settle();
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      settle();
+      return reader.cancel(reason);
+    },
+  }, pacedQueuingStrategy(body)));
 }
 
 export function createInboundResponsesDebugObserver(
