@@ -34,7 +34,11 @@ export { safeResponseHeaders } from "./safe-response-headers";
 
 const OPEN = 1;
 type ResponsesTerminalReporter = (status: ResponsesTerminalStatus) => void;
-type ResponsesPayloadObserver = (payload: string, logPayload?: string | null) => void;
+type ResponsesPayloadObserver = (
+  payload: string,
+  logPayload?: string | null,
+  observation?: { rawTransition?: "terminal" | "successor"; suppressActivity?: boolean },
+) => void;
 
 export interface WsData {
   client?: UsageClient;
@@ -384,7 +388,7 @@ export async function pumpResponsesSseToWebSocket(
   const framer = new BoundedSseFrameBuffer();
   let terminalSeen = false;
   let lastTerminal: ResponsesTerminalStatus | undefined;
-  let rawDoneFailed = false;
+  let rawDoneStatus: ResponsesTerminalStatus | undefined;
 
   const handlePayload = (payload: string): boolean => {
     if (!isCurrent()) return true;
@@ -392,8 +396,16 @@ export async function pumpResponsesSseToWebSocket(
     let parsed: { type?: unknown } | undefined;
     try { parsed = JSON.parse(payload); } catch { /* protocol error below */ }
     const type = typeof parsed?.type === "string" ? parsed.type : null;
-    if (options.untilEof && type === "response.created") rawDoneFailed = false;
     const codexStatus = options.synthesizeTerminalFailure === false ? codexDoneTerminalStatus(parsed) : null;
+    const rawEnded = options.untilEof && rawDoneStatus !== undefined
+      && (type === "response.created" || type === "error");
+    if (rawEnded) rawDoneStatus = undefined;
+    const terminalStatus = type === "error" && options.untilEof ? "failed" : terminalStatusFromType(type ?? "", parsed) ?? codexStatus;
+    const duplicateTerminal = rawDoneStatus !== undefined && terminalStatus !== null;
+    const rawTerminal = options.untilEof && options.synthesizeTerminalFailure === false
+      && type !== "error" && terminalStatus !== null;
+    const rawTransition = rawEnded ? "successor"
+      : rawDoneStatus === undefined && rawTerminal ? "terminal" : undefined;
     const untypedBare = !type && isUntypedBareUpstreamError(parsed);
     // A relayed stream follows an untyped envelope with its own response.failed, so the envelope
     // waits for it. A raw upstream body has no such tail: the envelope stays the protocol error
@@ -401,7 +413,8 @@ export async function pumpResponsesSseToWebSocket(
     if (!(untypedBare && options.rawUpstream)) {
       try {
         const logEvent = codexDoneTerminalLogEvent(parsed, codexStatus);
-        options.onSsePayload?.(payload, rawDoneFailed ? null : logEvent ? JSON.stringify(logEvent) : undefined);
+        options.onSsePayload?.(payload, duplicateTerminal ? null : logEvent ? JSON.stringify(logEvent) : undefined,
+          { rawTransition, suppressActivity: duplicateTerminal });
       } catch {
         /* payload observation must not affect WebSocket delivery */
       }
@@ -418,11 +431,10 @@ export async function pumpResponsesSseToWebSocket(
     if (terminalSeen) return true;
     sendTextFrame(ws, payload);
     if (options.untilEof && type === "response.created") lastTerminal = undefined;
-    const terminalStatus = type === "error" && options.untilEof ? "failed" : terminalStatusFromType(type, parsed) ?? codexStatus;
     if (terminalStatus) {
       if (options.untilEof) {
-        if (!rawDoneFailed) lastTerminal = terminalStatus;
-        if (codexStatus === "failed") rawDoneFailed = true;
+        if (rawDoneStatus === undefined) lastTerminal = terminalStatus;
+        if (rawDoneStatus === undefined && rawTerminal) rawDoneStatus = terminalStatus;
         return false;
       }
       reportTerminal(terminalStatus);

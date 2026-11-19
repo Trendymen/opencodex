@@ -333,7 +333,7 @@ export class NativeSteeringChannel {
   }
 
   /** Called on the ordered upstream wire, BEFORE the event is published to SSE. */
-  observe(event: Frame): boolean {
+  observe(event: Frame, firstTerminalOnly = false): boolean {
     this.assertTimely();
     const type = event.type;
     if (!(type === "error" && event.stream_id == null) && (event.stream_id ?? undefined) !== (this.lane ?? undefined)) throw new Error("native steering WebSocket lane mismatch");
@@ -393,6 +393,7 @@ export class NativeSteeringChannel {
       if (type === "response.completed" || type === "response.failed" || type === "response.incomplete") {
         if (!this.currentId || response?.id !== this.currentId) throw new Error("native steering terminal identity mismatch");
         const parent = this.parents.get(this.currentId)!;
+        if (firstTerminalOnly && parent.ended) return this.finished;
         parent.ended = true;
         parent.successorDeadline ??= performance.now() + NATIVE_STEERING_WAIT_MS;
         if (Array.isArray(response.output)) for (const item of response.output) this.advertise(item);

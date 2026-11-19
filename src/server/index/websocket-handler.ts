@@ -410,16 +410,19 @@ export function createWebsocketHandler(
             }
             // Remote Link holds release only for a turn every admission accepted (link-websocket.ts).
             if (response.ok) ws.data.responsesActivity?.notifyAccepted(frame.input);
-            const observeLog = nativeControl?.relayActive
+            const observeNativeLog = nativeControl?.relayActive
               ? createNativeSteeringLogObserver(logCtx, () => recordFirstOutput(logCtx, start))
-              : (payload: string) => inspectResponseLogSsePayload(logCtx, payload);
+              : undefined;
             const providerExecuted = responseToolOwnership(response);
             await sendResponseToWebSocket(ws, response, isCurrent, {
               // A native-control body is the upstream itself, with no relay tail behind it.
               untilEof: nativeControl?.relayActive === true, rawUpstream: nativeControl?.relayActive === true,
-              onSsePayload: (payload, logPayload) => {
-                ws.data.responsesActivity?.observePayload(payload, providerExecuted);
-                if (logPayload !== null) observeLog(logPayload ?? payload);
+              onSsePayload: (payload, logPayload, observation) => {
+                if (!observation?.suppressActivity) ws.data.responsesActivity?.observePayload(payload, providerExecuted);
+                if (logPayload !== null) {
+                  if (observeNativeLog) observeNativeLog(logPayload ?? payload, observation?.rawTransition);
+                  else inspectResponseLogSsePayload(logCtx, logPayload ?? payload);
+                }
               },
               onTerminal: status => {
                 terminalRecorder?.(status, logCtx.terminalHttpStatus);
