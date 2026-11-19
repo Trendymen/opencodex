@@ -1,6 +1,7 @@
 /** A response-body guard owns one reader, never the request-wide abort controller. */
 export interface ResponseBodyInactivityGuard {
   response: Response;
+  readonly timeoutError?: ResponseBodyInactivityError;
   /** Stop an abandoned parser without waiting for a broken source's cancel promise. */
   dispose: () => void;
 }
@@ -162,6 +163,7 @@ export function guardResponseBodyInactivity(
       statusText: response.statusText,
       headers: response.headers,
     }),
+    timeoutError: timeoutEnabled ? timeoutError : undefined,
     dispose: () => {
       if (!settle()) return;
       try { output.close(); } catch { /* parser already settled */ }

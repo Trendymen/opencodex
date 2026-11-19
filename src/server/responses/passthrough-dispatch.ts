@@ -9,6 +9,7 @@ import { physicalSendAccounting } from "./deferred-send-reporter";
 import { adoptCodexWsStage, capturePassthroughAffinity } from "./passthrough-observations";
 import { codexPassthroughStreamPolicy, resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { codexPassthroughProviderFetch as providerFetch } from "../../fork/codex-passthrough-fetch";
+import { codexPrivateRetryBodyReader } from "../../fork/codex-passthrough-secrets";
 import type { PassthroughDispatchInputs, PassthroughAdapterHandoff } from "../responses-passthrough-dispatch-types";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { requestPacingOverloadResponse } from "./pacing-overload";
@@ -708,7 +709,9 @@ export async function preparePassthroughExchange(
     const cleanupUpstreamAbort = linkAbortSignal(upstream, options.abortSignal ?? req.signal);
     const sendConnectMs = () => route.provider.authMode === "forward" ? resolveConnectTimeoutMs(config.connectTimeoutMs, { localUpstream: isLocalUpstream(request.url) }) : 0;
     const connectMs = resolveConnectTimeoutMs(config.connectTimeoutMs, { localUpstream: isLocalUpstream(route.provider.baseUrl) });
-    // Each leg re-reads the live provider policy and remaining physical sends.
+    const retryBodyReader = () => codexPrivateRetryBodyReader({
+      enabled: currentCodexPermissions()?.privateErrorBodyReadDeadline === false, request, callerHeaders: req.headers,
+      configuredHeaders: route.provider.headers, stallTimeoutSec: config.stallTimeoutSec, authCtx: admissionState.authCtx, substituteMainCredential, translatorBudget });
     const transientSendPolicy = () => transientRetryPolicyFor(route.provider);
     const { compactHandoffSendCeiling } = sendBudgetState;
     const reserveRetrySpend = () => sendBudgetState.adapterSendBudget?.spendEnforced === true
@@ -1010,7 +1013,7 @@ export async function preparePassthroughExchange(
         },
         { codexPassthroughPermissions: currentCodexPermissions(), abortSignal: upstream.signal, label: safeHostLabel(request.url), destination: errorDestinationLabel(request.url),
           attempts: sendBudgetState.initialSendAllowance(transientSendAttempts()),
-          reserveRetrySpend,
+          reserveRetrySpend, readRetryResponseBody: retryBodyReader(),
           onSendsConsumed: initialAccounting.report,
           claimAmbiguousResend: claimPreHeaderResend,
           // A combo fails over to another member instead of waiting once per target.
@@ -1092,7 +1095,7 @@ export async function preparePassthroughExchange(
           }), route.provider.authMode === "forward").then(adoptObservedResponse),
         { codexPassthroughPermissions: currentCodexPermissions(), abortSignal: upstream.signal, label: safeHostLabel(request.url), destination: errorDestinationLabel(request.url),
           attempts: remainingTransientSendBudget(transientSendAttempts()),
-          reserveRetrySpend, retryFrom, onSendsConsumed: accounting.report, claimAmbiguousResend: claimPreHeaderResend },
+          reserveRetrySpend, readRetryResponseBody: retryBodyReader(), retryFrom, onSendsConsumed: accounting.report, claimAmbiguousResend: claimPreHeaderResend },
       );
     };
     const rebuildAndRefetch = async (
@@ -1194,7 +1197,7 @@ export async function preparePassthroughExchange(
               .then(adoptObservedResponse);
           },
           { codexPassthroughPermissions: currentCodexPermissions(), abortSignal: upstream.signal, label: safeHostLabel(request.url), destination: errorDestinationLabel(request.url), attempts: allowance.attempts,
-            reserveRetrySpend, retryFrom: reserveRetrySpend() ? preserveFailureResponse : undefined, onSendsConsumed: recoveryAccounting.report,
+            reserveRetrySpend, readRetryResponseBody: retryBodyReader(), retryFrom: reserveRetrySpend() ? preserveFailureResponse : undefined, onSendsConsumed: recoveryAccounting.report,
             claimAmbiguousResend: oneShot || recovery === "empty-completion" ? undefined : claimPreHeaderResend },
         );
         if (oneShot) {
@@ -1243,7 +1246,7 @@ export async function preparePassthroughExchange(
         || remainingTransientSendBudget(transientSendAttempts()) > 0;
       // Seal only a refusal with a replay plan; an unaffordable replay keeps the 401 final.
       const commit = canReplay ? transportState.createCredentialReplayAttempt(upstreamResponse.status, "oauth-401") : undefined;
-      const retryFrom = canReplay && reserveRetrySpend() ? await retainPacedRetryResponse(upstreamResponse, upstream.signal) : undefined;
+      const retryFrom = canReplay && reserveRetrySpend() ? await retainPacedRetryResponse(upstreamResponse, upstream.signal, retryBodyReader()) : undefined;
       if (canReplay && !retryFrom) {
         try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed */ }
       }
@@ -1284,6 +1287,10 @@ export async function preparePassthroughExchange(
       const rejectedAuthCtx = admissionState.authCtx;
       const rejectedAccountLabel = logCtx.accountLogLabel;
       const rejectedProvider = route.provider;
+      const rejectedRequest = request;
+      const rejectedForwardHeaders = requestState.selectedForwardHeaders;
+      const rejectedEstimate = passthroughEstimate;
+      const rejectedUsageEstimate = logCtx.usageLogInputTokens;
       admissionState.authCtx = replay.authCtx;
       if (retryFrom) logCtx.accountLogLabel = codexAuthContextLogLabel(replay.authCtx, config);
       route.provider = replay.provider;
@@ -1330,6 +1337,12 @@ export async function preparePassthroughExchange(
         admissionState.authCtx = rejectedAuthCtx;
         logCtx.accountLogLabel = rejectedAccountLabel;
         route.provider = rejectedProvider;
+        request = rejectedRequest;
+        requestState.selectedForwardHeaders = rejectedForwardHeaders;
+        passthroughEstimate = rejectedEstimate;
+        logCtx.usageLogInputTokens = rejectedUsageEstimate;
+        refreshRequestToolAliases(request);
+        refreshUndeclaredToolGuard(request);
         releaseCodexAuthContextProbeLease(replay.authCtx);
         pool401OutcomeSettled = true;
         break passthroughRecovery;
@@ -1524,7 +1537,7 @@ export async function preparePassthroughExchange(
       rateLimitRetries += 1;
       // Release unread body + deliberate wait via the shared same-target helper.
       const retryAfterHeader = upstreamResponse.headers.get("retry-after");
-      const retryFrom = reserveRetrySpend() ? await retainPacedRetryResponse(upstreamResponse, upstream.signal) : undefined;
+      const retryFrom = reserveRetrySpend() ? await retainPacedRetryResponse(upstreamResponse, upstream.signal, retryBodyReader()) : undefined;
       try {
         for await (const _ of prepareSameTarget429Wait({
           body: retryFrom ? null : upstreamResponse.body,
@@ -1575,7 +1588,7 @@ export async function preparePassthroughExchange(
               .then(adoptObservedResponse);
           },
           { codexPassthroughPermissions: currentCodexPermissions(), abortSignal: upstream.signal, label: safeHostLabel(request.url), destination: errorDestinationLabel(request.url), attempts: remainingTransientSendBudget(transientSendAttempts()),
-            reserveRetrySpend, retryFrom, onSendsConsumed: failoverAccounting.report, claimAmbiguousResend: claimPreHeaderResend },
+            reserveRetrySpend, readRetryResponseBody: retryBodyReader(), retryFrom, onSendsConsumed: failoverAccounting.report, claimAmbiguousResend: claimPreHeaderResend },
         );
       } catch (err) {
         return transportFailureResponse(err);
@@ -1712,6 +1725,7 @@ export async function preparePassthroughExchange(
         guard: opaqueBlobRecoveryGuard,
         signal: upstream.signal,
         preserveResponse: reserveRetrySpend(),
+        readRetryResponseBody: retryBodyReader(),
       }, rebuildAndRefetch);
       if (opaqueBlobRecovery.kind === "failed") return opaqueBlobRecovery.response;
       if (opaqueBlobRecovery.kind === "recovered") {
@@ -1757,6 +1771,7 @@ export async function preparePassthroughExchange(
             guard: opaqueBlobRecoveryGuard,
             signal: upstream.signal,
             preserveResponse: reserveRetrySpend(),
+            readRetryResponseBody: retryBodyReader(),
           }, rebuildAndRefetch);
           if (streamedOpaqueRecovery.kind === "failed") return streamedOpaqueRecovery.response;
           if (streamedOpaqueRecovery.kind === "recovered") {
@@ -1811,7 +1826,7 @@ export async function preparePassthroughExchange(
       reasoningEffortDowngradeGuard.attempted = true;
       parsed.options.reasoning = downgrade.effort;
       parsed._rawBody = withRawBodyReasoningEffort(parsed._rawBody, downgrade.effort);
-      const refusal = reserveRetrySpend() ? await retainPacedRetryResponse(upstreamResponse, upstream.signal)
+      const refusal = reserveRetrySpend() ? await retainPacedRetryResponse(upstreamResponse, upstream.signal, retryBodyReader())
         : options.comboAttempt ? upstreamResponse : undefined;
       if (!refusal) try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
       const result = await rebuildAndRefetch("reasoning-effort-downgrade", refusal);

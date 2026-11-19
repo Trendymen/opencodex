@@ -1270,6 +1270,7 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
   let sawTerminal = false;
   // A later completion after a provider verdict cannot become continuation state.
   let completionBlocked = false;
+  let rawDoneObserved = false;
   const classifyTerminal = createTerminalStatusTracker(handlers.allowResponseDone);
   let disposed = false;
   let delimiterTail: Uint8Array = EMPTY_BYTES;
@@ -1419,9 +1420,12 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
         /* malformed SSE payloads remain best-effort/no-throw */
       }
     }
-    if (!reported && handlers.logCtx) {
+    const rawDoneEvent = handlers.allowResponseDone && asJsonRecord(parsed)?.type === "response.done";
+    if (!reported && !rawDoneObserved && handlers.logCtx) {
       const collectUsage = typeof handlers.collectUsage === "function" ? handlers.collectUsage() : handlers.collectUsage;
-      inspectResponseLogSsePayloadParsed(handlers.logCtx, payload, parsed, collectUsage);
+      const codexStatus = rawDoneEvent ? codexDoneTerminalStatus(parsed) : null;
+      const logEvent = codexDoneTerminalLogEvent(parsed, codexStatus) ?? parsed;
+      inspectResponseLogSsePayloadParsed(handlers.logCtx, payload, logEvent, collectUsage);
     }
     // Before any terminal handling: a consumer deciding on the whole turn must observe this
     // payload even when the terminal snapshot that follows no longer mentions it.
@@ -1531,6 +1535,11 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
     if (!sawTerminal && (policyTerminal || (parsedEvent?.type === "response.completed" && status === "failed"))) {
       completionBlocked = true;
     }
+    const allowCompletedResponse = !completionBlocked;
+    if (!sawTerminal && status && rawDoneEvent) {
+      completionBlocked = true;
+      rawDoneObserved = true;
+    }
     if (status) sawTerminal = true;
     try {
       if (!reported && handlers.onTerminal && status) {
@@ -1541,7 +1550,7 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
         }
         handlers.onTerminal(status, policyTerminal ? 400 : undefined);
       }
-      if (status === "completed" && !completionBlocked && reconstructedTerminalResponse && handlers.onCompletedResponse) {
+      if (status === "completed" && allowCompletedResponse && reconstructedTerminalResponse && handlers.onCompletedResponse) {
         handlers.onCompletedResponse(reconstructedTerminalResponse);
       }
       if (status && reconstructedTerminalResponse && handlers.onTerminalResponse) {
@@ -1956,5 +1965,5 @@ export function sanitizePassthroughHeaders(upstream: Headers, options?: Passthro
   });
   return out;
 }
-import { codexDoneTerminalStatus, relayUnmodifiedCodexSse } from "../fork/codex-passthrough-response";
+import { codexDoneTerminalLogEvent, codexDoneTerminalStatus, relayUnmodifiedCodexSse } from "../fork/codex-passthrough-response";
 import { CodexPrivateCredentialProtectionError } from "../fork/codex-passthrough-secrets";
