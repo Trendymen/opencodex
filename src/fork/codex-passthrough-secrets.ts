@@ -174,9 +174,9 @@ export async function readCodexPrivateErrorText(response: Response, guard: Codex
 }
 
 export async function protectCodexPrivateSse(body: ReadableStream<Uint8Array>, guard: CodexPrivateCredentialGuard,
-  budget: TranslatorBudget, options: { privateSseReadDeadline?: boolean; stallTimeoutMs?: number; signal?: AbortSignal;
+  budget: TranslatorBudget, options: { privateSseReadDeadline?: boolean; stallTimeoutMs?: number; signal?: AbortSignal; upstreamInactivityGuarded?: boolean;
     onProtectionFailure?: (error: CodexPrivateCredentialProtectionError) => void } = {}): Promise<ReadableStream<Uint8Array>> {
-  const inactivity = options.privateSseReadDeadline === false
+  const inactivity = options.privateSseReadDeadline === false && !options.upstreamInactivityGuarded
     ? guardResponseBodyInactivity(new Response(body), options.signal, options.stallTimeoutMs ?? 0) : undefined;
   const reader = (inactivity?.response.body ?? body).getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }); const encoder = new TextEncoder();
