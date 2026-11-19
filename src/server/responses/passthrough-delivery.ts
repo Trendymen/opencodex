@@ -169,7 +169,7 @@ import { relaySseEagerBounded } from "../relay-eager";
 import { readBoundedResponseBody } from "../../lib/bounded-body";
 import { idleDeadline } from "../../lib/abort";
 import { explicitStallTimeoutMs, resolveStallTimeoutMs } from "../../stall-timeout";
-import { guardResponseBodyInactivity, isResponseBodyInactivityGuarded } from "../../lib/response-body-inactivity";
+import { ExplicitBodyStallError, guardResponseBodyInactivity, isResponseBodyInactivityGuarded } from "../../lib/response-body-inactivity";
 import {
   createEstimatedUsagePayloadRewrite, ESTIMATED_USAGE_HEADER, estimatedUsageJson, estimatesMissingUsage,
 } from "./estimated-usage";
@@ -553,9 +553,10 @@ export async function deliverPassthroughResponse(
     nestedExecInspection?.dispose(); nestedExecRepairCoordinator?.dispose();
     const response = codexPrivateProtectionFailure(); markResponseNonReplayable(response); return response;
   };
-  const protectSse = async (body: ReadableStream<Uint8Array>) => privateGuard ? protectCodexPrivateSse(body, privateGuard, translatorBudget, {
+  const protectSse = async (body: ReadableStream<Uint8Array>, upstreamInactivityGuarded = false) => privateGuard ? protectCodexPrivateSse(body, privateGuard, translatorBudget, {
     privateSseReadDeadline: codexPermissions?.privateSseReadDeadline,
     stallTimeoutMs: resolveStallTimeoutMs(config.stallTimeoutSec, { localUpstream: nativeExchange.localUpstream }),
+    upstreamInactivityGuarded,
     signal: AbortSignal.any([upstream.signal, options.abortSignal ?? req.signal]), onProtectionFailure: notePrivateFailure,
   }) : body;
   const canonicalBufferedJson = clientRequestedStream !== true
@@ -963,9 +964,14 @@ export async function deliverPassthroughResponse(
         && (useTerminalRepair || webSearchBridgePlan !== undefined);
       let protectedBody: ReadableStream<Uint8Array> = nativeSseBody;
       try {
-        if (privateGuard) protectedBody = await protectSse(nativeSseBody);
+        if (privateGuard) protectedBody = await protectSse(nativeSseBody,
+          !canonicalBufferedJson && (nativeSseStallMs > 0 || isResponseBodyInactivityGuarded(upstreamResponse)));
       }
-      catch (error) { if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error); throw error; }
+      catch (error) {
+        if (error instanceof CodexPrivateCredentialProtectionError) return privateFailure(error);
+        if (!(error instanceof ExplicitBodyStallError) || canonicalBufferedJson) throw error;
+        protectedBody = new ReadableStream<Uint8Array>({ start(controller) { controller.error(error); } });
+      }
       let passthroughSseBody = terminalRepairPolicy && useTerminalRepair
         ? relayResponsesSseWithTerminalRepair(
           protectedBody,
