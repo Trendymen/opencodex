@@ -39,7 +39,7 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 | key-auth Responses 缺省补 `max_output_tokens`，模型级优先并按剩余上下文收紧；客户端显式值优先，forward 不注入。 | [passthrough](src/adapters/openai-responses/passthrough.ts) |
 | 官方 customModels 上补校验、salvage、并发合并、公开投影、tool-mode API/CLI round trip 和 pricingStatus 保留；Provider 注册、更新及 caps 保存失败恢复未发布 live 值。Provider 更新包含 `setDefault: true` 时的默认值回滚，发布后的错误保留与磁盘一致的值。 | [custom models](src/config/custom-models.ts)、[model routes](src/server/management/model-routes.ts)、[Provider](src/server/management/provider-routes.ts)、[caps](src/server/management/provider-context-cap-routes.ts) |
 | Ark 专用 quota 展示保留原文/reset，拒绝普通 overload；BigModel Codex `models[].slug` 动态发现。 | [Ark quota](src/fork/ark-quota-display.ts)、[discovery](src/providers/model-discovery.ts) |
-| Codex Provider table 写入 `supports_standalone_web_search = true`，配合客户端 standalone 功能；尚缺绑定实现的 App 验收。 | [config-toml.ts](src/codex/inject/config-toml.ts) |
+| Codex Provider table 写入 `supports_standalone_web_search = true`。独立搜索接受有效 OCX Bearer，由配置的 Pool、已登录的 Direct 主账号或独立搜索后端转发。Reserve 请求仍按原有凭据规则处理。独立图片保留符合 key 权限且可用的图片后端优先级，Direct 可用主账号补齐凭据。加入客户端创建的语音通话需另带该 ChatGPT 账号的凭据。脚本覆盖搜索转发，App 实测待补。 | [配置](src/codex/inject/config-toml.ts)、[搜索](src/server/search.ts)、[图片](src/server/images.ts)、[语音](src/server/audio-live.ts) |
 
 ## 诊断与维护
 
