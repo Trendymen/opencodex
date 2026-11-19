@@ -746,7 +746,7 @@ export async function prepareAdapterExchange(
                 onRecoveryWithheld: noteAdapterRecoveryWithheld,
                 stream: parsed.stream,
                 executor: codexPassthroughProviderFetch(route.provider, options.codexWsRuntimeIdentity, {
-                codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
+                  codexPassthroughPermissions: resolveCodexPassthroughAttempt(options.codexPassthroughTurn, { providerName: route.providerName, provider: route.provider, inboundWire: options.inboundWire ?? "responses" }),
                   pacingSlotAcquired: true,
                   pacingSlot,
                   dispatchOverride: oauthDispatch(retryRequest, parsed, "adapter", true),
