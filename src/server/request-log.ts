@@ -39,7 +39,7 @@ import { redactSecretString, sanitizeLogMetadataString } from "../lib/redact";
 export { registerCommittedTerminalCooldownHandler } from "./request-log-committed-terminal";
 import { reportCommittedTerminalCooldown, type CommittedComboLogFields } from "./request-log-committed-terminal";
 import type { UpstreamCondition } from "../lib/upstream-condition";
-import { boundedServiceTier, errorDetailFor, projectErrorDetail } from "../usage/error-detail";
+import { boundedServiceTier, errorDetailFor, isUpstreamHttpStatus, projectErrorDetail } from "../usage/error-detail";
 import { incompleteReasonDetail, upstreamErrorIsLocal, type FailureDetail } from "./request-log-failure-detail";
 import {
   appendUsageEntry,
@@ -52,7 +52,6 @@ import {
   isKnownCacheTelemetryProvenance,
   isKnownInboundProtocol,
   isKnownTerminalSource,
-  isUpstreamHttpStatus,
   isKnownTransportPhase,
   isKnownUsageSurface,
   isCodexUsageAccountLogLabel,
