@@ -20,13 +20,16 @@ import {
   cooldownErrorResponse,
   CodexAuthContextError,
   CodexMainProfileDrainingError,
+  CodexMainSubstitutionUnavailableError,
   CodexModelAvailabilityError,
   CodexPoolAuthenticationError,
   CodexThreadAffinityExpiredError,
 } from "../codex/auth-context";
 import { codexAccountNamespaceForModel } from "../codex/account-namespace-match";
 import { NATIVE_RESERVE_MODEL } from "../codex/catalog/native-models";
+import { MAIN_CODEX_ACCOUNT_ID } from "../codex/account-id";
 import { isCodexReserveRequestEligible } from "../codex/loopback-target";
+import { nativeMainStartupGateSnapshot } from "../codex/native-profile-startup";
 import type { DataPlaneAdmission } from "./auth-cors";
 import {
   admissionScopeDenial,
@@ -49,7 +52,7 @@ import type { RequestLogContext } from "./request-log";
 import { codexLogAccountId, decodeRequestErrorResponse } from "./responses";
 import type { AdmissionLease } from "../lib/admission";
 import { codexAccountSelectionForTurn } from "./lifecycle";
-import { codexModelAvailabilityErrorResponse } from "./responses/codex-auth-error";
+import { codexModelAvailabilityErrorResponse, nativeMainRefreshFailureResponse } from "./responses/codex-auth-error";
 
 /**
  * Default TOTAL deadline for one search relay. alpha/search is non-streaming JSON — response
@@ -97,23 +100,28 @@ export async function handleSearch(
     }
   }
 
-  try { validateForwardAdmissionCredential(req.headers, config); }
-  catch (err) {
+  const accountNamespace = typeof model === "string"
+    ? codexAccountNamespaceForModel(config.codexAccountNamespaces, model)
+    : undefined;
+  const requestedModel = accountNamespace && typeof model === "string" ? model.slice(accountNamespace.length + 1) : model;
+  try {
+    if (admission?.source !== "bearer" || requestedModel === NATIVE_RESERVE_MODEL) {
+      validateForwardAdmissionCredential(req.headers, config);
+    }
+  } catch (err) {
     if (err instanceof ForwardAdmissionCredentialError) return formatErrorResponse(401, "authentication_error", err.message);
     throw err;
   }
 
   let exactAccount: ExactOpenAiSidecarAccount | undefined;
   let relayBody = body;
-  const accountNamespace = typeof model === "string"
-    ? codexAccountNamespaceForModel(config.codexAccountNamespaces, model)
-    : undefined;
   if (accountNamespace && typeof model === "string") {
     try {
       const route = routeModel(config, model);
       if (!route.codexAccountId || route.codexAccountNamespace !== accountNamespace) {
         return formatErrorResponse(400, "invalid_request_error", "Invalid Codex account-qualified search model");
       }
+      if (route.modelId === NATIVE_RESERVE_MODEL) validateForwardAdmissionCredential(req.headers, config);
       // This branch resolves a model through the router and bills the account it
       // names, so a scoped key is held to the same destination rule it is held
       // to on the inference path.
@@ -126,6 +134,7 @@ export async function handleSearch(
       // account namespace is proxy routing syntax and must not cross the wire.
       relayBody = { ...(body as Record<string, unknown>), model: route.modelId };
     } catch (err) {
+      if (err instanceof ForwardAdmissionCredentialError) return formatErrorResponse(401, "authentication_error", err.message);
       return formatErrorResponse(
         400,
         "invalid_request_error",
@@ -143,12 +152,24 @@ export async function handleSearch(
     return handleAlphaSearchSidecarFallback(body, config, req.signal, logCtx, admission);
   }
 
+  const searchModel = typeof model === "string" && model.trim() ? model : undefined;
+  if (!accountNamespace) {
+    const denial = admissionScopeDenial(config, admission, searchModel, {
+      providerName: candidates[0]!.providerName,
+      modelId: searchModel,
+    });
+    if (denial) return denial;
+  }
+
+  const substituteMainForAdmissionBearer = admission?.source === "bearer" && candidates[0]?.accountMode === "direct" && !exactAccount;
   let upstream: Awaited<ReturnType<typeof resolveFirstUsableOpenAiSidecar>>;
   try {
     upstream = await resolveFirstUsableOpenAiSidecar(candidates, req.headers, config, {
       exactAccount,
       admission,
+      substituteMainForAdmissionBearer,
       beginCodexAccountSelection: codexAccountSelectionForTurn(turnAdmissionLease),
+      signal: req.signal,
     });
     if (!upstream) {
       return formatErrorResponse(
@@ -161,15 +182,27 @@ export async function handleSearch(
       ? `${upstream.providerName}-${accountNamespace}`
       : formatCodexProviderForLog(upstream.providerName, codexLogAccountId(upstream.authContext), config);
   } catch (err) {
+    if (req.signal.aborted) return formatErrorResponse(499, "client_closed_request", "search request canceled by client");
+    if (err instanceof CodexMainSubstitutionUnavailableError || err instanceof ForwardAdmissionCredentialError) {
+      return formatErrorResponse(401, "authentication_error", new ForwardAdmissionCredentialError().message);
+    }
     if (err instanceof CodexInstallationIdUnavailableError) return formatErrorResponse(503, "server_busy", err.message);
     if (err instanceof CodexAccountCooldownError) {
       return cooldownErrorResponse(err, Date.now(), accountNamespace);
     }
-    if (err instanceof CodexMainProfileDrainingError) return codexMainProfileDrainingResponse();
+    if (err instanceof CodexMainProfileDrainingError) {
+      const gate = nativeMainStartupGateSnapshot();
+      if (substituteMainForAdmissionBearer
+        && gate.status === "blocked" && (gate.reason === "foreign-ownership" || gate.reason === "ownership-unknown")) {
+        return formatErrorResponse(401, "authentication_error", new ForwardAdmissionCredentialError().message);
+      }
+      return codexMainProfileDrainingResponse();
+    }
     if (err instanceof CodexThreadAffinityExpiredError) {
       return formatErrorResponse(409, "invalid_request_error", "Codex thread account affinity expired; start a new session");
     }
     if (err instanceof CodexAuthContextError) {
+      if (substituteMainForAdmissionBearer && err.accountId === MAIN_CODEX_ACCOUNT_ID) return nativeMainRefreshFailureResponse(err.cause);
       const safeAccountLabel = accountNamespace
         ? `openai-${accountNamespace}`
         : formatCodexProviderForLog("openai", err.accountId, config);
@@ -182,11 +215,6 @@ export async function handleSearch(
   }
 
   if (!accountNamespace) {
-    // An unqualified search model is never routed: the caller's own string is
-    // relayed to whichever ChatGPT account this upstream resolved to, and that
-    // account is billed for it. The qualified branch above was already judged
-    // against the route it resolved, so it is not judged twice here.
-    const searchModel = typeof model === "string" && model.trim() ? model : undefined;
     const denial = admissionScopeDenial(config, admission, searchModel, {
       providerName: upstream.providerName,
       modelId: searchModel,
@@ -206,6 +234,7 @@ export async function handleSearch(
   const sidecarExit = sidecarEnter("search");
   let upstreamResponse: Response | undefined;
   try {
+    validateForwardAdmissionCredential(headers, config);
     upstream.beforeDispatch?.();
     upstreamResponse = await fetch(url, {
       method: "POST",
@@ -237,6 +266,10 @@ export async function handleSearch(
     if (contentType) relayHeaders["content-type"] = contentType;
     return new Response(observed.bytes, { status: upstreamResponse.status, headers: relayHeaders });
   } catch (err) {
+    if (err instanceof ForwardAdmissionCredentialError) {
+      upstream.releaseProbeLease?.();
+      return formatErrorResponse(401, "authentication_error", err.message);
+    }
     if (err instanceof CodexInstallationIdUnavailableError) {
       upstream.releaseProbeLease?.();
       return formatErrorResponse(503, "server_busy", err.message);

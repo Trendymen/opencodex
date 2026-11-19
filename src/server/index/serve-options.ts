@@ -157,6 +157,7 @@ import {
 } from "../live-call-bindings";
 import { clearableDeadline } from "../../lib/abort";
 import { handleSearch } from "../search";
+import { resolveLoopbackSidecarBearer } from "../../fork/codex-sidecar-admission";
 import { handleContextHistory } from "../context-history";
 import {
   codexCompatibleUrl,
@@ -1309,7 +1310,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         if (isDraining()) {
           return drainingResponse(req, policy);
         }
-        const admission = resolveApiAuth(req, policy);
+        const admission = resolveLoopbackSidecarBearer(req.headers, config, resolveApiAuth(req, policy));
         if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, policy);
         if (!isAllowedRequestOrigin(req, policy)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, policy);
@@ -1394,7 +1395,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         if (isDraining()) {
           return drainingResponse(req, policy);
         }
-        const admission = resolveApiAuth(req, policy);
+        const admission = resolveLoopbackSidecarBearer(req.headers, config, resolveApiAuth(req, policy));
         if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, policy);
         if (!isAllowedRequestOrigin(req, policy)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, policy);

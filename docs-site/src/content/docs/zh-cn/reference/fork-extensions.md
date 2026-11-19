@@ -16,6 +16,7 @@ description: 相对已 rebase 上游版本的兼容与维护差异。
 - 注解说明使用裸 chip 指令。输出修复保留代码块，但不按本轮注解数量启用，也不处理跨行 code span；native 直通仅在许可允许时改写入站说明。
 - 对应处理许可开启时，SSE flush 和终态处理保留有效上游错误与单枚 `[DONE]`。Canonical 转发只在构造上游 WebSocket 帧时桥接 Lite header，显式 HTTP 值优先同名 metadata。HTTP 请求 metadata 保持原样。
 - Ark quota 错误保留原消息和 reset，阻止自动重试。BigModel Codex 发现接受 `models[].slug`。
+- Codex 独立网页搜索接受 OCX Bearer key，使用配置的搜索后端或 ChatGPT 账号。当前 key 没有可用的其他图片后端时，Direct 模式的独立图片可使用已登录的主账号。加入客户端创建的语音通话时，用 `x-opencodex-api-key` 提交 OCX key，用 `Authorization` 提交原 ChatGPT 账号的 Bearer，并用 `chatgpt-account-id` 提交与之匹配的账号 ID。
 
 ## 恢复与维护
 
