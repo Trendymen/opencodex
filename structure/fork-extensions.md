@@ -51,7 +51,7 @@
 ## 响应与恢复边界
 
 - `src/types/agent-task-recovery.ts` 保存 `OcxConfig.agentTaskRecovery` 的原有七个可选字段及默认值说明；`src/types/config.ts` 通过 `import type` 引用，不增加运行时依赖或改变配置结构。
-- `src/server/responses-passthrough-dispatch-types.ts` 与 `src/server/responses-adapter-dispatch-types.ts` 分别保存对应 dispatch 的参数类型，母文件通过 `import type` 引用，发送预算、取消和恢复逻辑仍在母文件中。
+- `src/server/responses-passthrough-dispatch-types.ts` 保存原生直通 dispatch 的参数类型。转译 dispatch 沿用官方参数类型，发送预算、取消和恢复仍由各自的 dispatch 处理。
 - `src/server/responses/account-auto-pause-recovery.ts` 只在凭据跳转预算允许且已选中替补后，按现有有界错误读取保存失败响应、释放旧 body 的 pacing slot，再进入替补发送。没有跳转预算、没有替补或 body 被外部 reader 锁定时不读取原 body；重建失败保留原响应。已预留跳转但物理发送准入明确因预算拒绝时，沿用官方本地429；其他发送前失败仍保留原响应，请求取消沿用abort路径。
 - `src/server/responses-reasoning-summary-rewrite.ts` 仅用于客户端请求 summary 且路由满足条件的转译适配器响应；已有 summary 不重复投影。xAI 官方目的地的 `openai-chat` 响应保留原始 reasoning content，并在完成前流式交付，不做 summary 投影；流式、JSON 和已存重放形状一致。原生 Responses 沿用官方 content-channel 合同，在 SSE、JSON 和已存重放中保留 content，不再通过 Fork 投影为 summary。
 - `src/server/relay.ts` 和 `src/server/relay-eager.ts` 使用官方 `src/server/bare-upstream-error.ts` 的 typed/untyped 证据归并：typed 优先于 untyped，同类取后，真实终态与已确认的 policy terminal 按官方边界处理。Fork 不再增加 `cleanEof` / `pendingRead` 竞争读取重放；正常 EOF flush、私有凭据保护和 `synthesizeTerminalFailure: false` 时不合成失败终态仍受各自原条件约束。
