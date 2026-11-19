@@ -18,8 +18,6 @@ import type { AdapterExchange } from "./adapter-dispatch";
 import type { OcxParsedRequest, AdapterEvent, OcxUsage } from "../../types";
 import type { AttemptRecoveryKind } from "../../usage/log";
 import type { AdapterRequest } from "../../adapters/base";
-import {
-} from "../request-log";
 import { noteAttemptRecoveryWithheld } from "../request-log";
 import { withProviderRequestSlot } from "../../providers/request-pacing";
 import { fetchWithHeaderTimeout, safeHostLabel } from "./fetch-helpers";
