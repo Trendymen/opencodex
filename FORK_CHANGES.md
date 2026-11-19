@@ -68,7 +68,7 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 - 普通有效 Fernet 恢复保留官方单一 deadline、默认 45000 毫秒和原有 transient retries；Fork 的默认 120000 毫秒、45 秒 stall 与 `maxRetries` 只用于已准入 strict backend `NEW_TASK` 和严格子→父 `MESSAGE`，共享 flight 区分两类策略。
 - OpenGateway 精确目标的[工具结果投影](src/adapters/openai-responses/opengateway-input.ts)、单次空完成恢复、冷启动密文恢复和 DeepSeek 图片上传重检沿用官方合同。Fork 的 schema 持久化和结构诊断读取最终 `wireBody`；WS 发送计费保留官方一次 receipt，并继续传递所选 Codex 许可。Mistral 同目标暂停与本地失败、禁止重放标记分别保留，不因此禁止换 key。
 - CI 选择与聚合判定采用官方 review lanes、scope reduction、privacy gate、structure gate 和文档链接合同。
-- Responses 沿用官方离线等待后的单次重发、原生 SSE 静默时限、客户端用量估算和 Anthropic 每消息 effort。离线重发保留官方的发送原因；静默时限约束进入 Fork 凭据保护的流；估算用量只用于客户端交付。
+- Responses 沿用官方离线等待后的单次重发、原生 SSE 静默时限、客户端用量估算和 Anthropic 每消息 effort。私有凭据保护复用官方静默计时器，首个安全 SSE 块之前的显式超时也进入官方失败处理。估算用量只用于客户端交付。
 - Antigravity Chat/Messages direct lane、main-account hard-lock 最早 retry 提示及 Qoder keypool 预算继续采用官方实现。启用 `repairResponseToolCalls` 时，工具修复沿用官方的 namespace 规范化与未声明调用拒绝条件；显式空目录仅在原工具守卫适用的入站和目的地执行 deny-all。订阅许可只适用于原生 Responses 的最终官方目的地，不扩大到第三方或转译入站；model-scope `model_not_allowed_for_key` 403 和硬预算始终保留。模型与服务商回退采用官方 [fallback policy](src/routing/fallback-policy.ts)，订阅许可不跳过回退授权。AgentAssertion 采用官方 [认证边界](src/lib/authorization-scheme.ts)，附加断言只随调用方原有 Bearer 发往官方 Direct，Pool 替换凭据不携带该断言。
 - Claude picker 的上传拒绝与有界 linger 采用官方 [listener](src/claude/intercept/picker-listener.ts)。Fork 保留无 body 的 H1 400/503 同 socket 复用、其他上传/H2 sibling 和拒绝后重复 shutdown 的行为。
 - 官方 [生命周期重放标记](src/lib/upstream-retry.ts)、same-target retry hold、模型计划拒绝与本地账号冷却身份通过 Fork 的预算和账号 lease 两层包装保留，并继续携带实际订阅许可和本地失败身份；EOF、reader error 与取消仍释放资源。官方 `x-should-retry: false` 的原响应直返、JEV committed stream 失败解 pin 及 SSE 分片扫描优化分别保留；Fork 的日志字段和 EOF flush 继续有效。
