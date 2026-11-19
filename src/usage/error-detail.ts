@@ -43,6 +43,10 @@ export const LOG_ERROR_CODES: ReadonlySet<string> = new Set([
 
 const HTTP_CODE = /^http_[1-5][0-9]{2}$/;
 
+export function isUpstreamHttpStatus(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599;
+}
+
 function statusFallbackCode(status: number | undefined): string | undefined {
   if (status === undefined || !Number.isInteger(status) || status < 400) return undefined;
   if (status === 499) return "client_closed_request";

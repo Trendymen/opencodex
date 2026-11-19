@@ -31,7 +31,7 @@ import { requestBodyField, type RequestBodyFacts } from "./request-body";
 import { ACCOUNT_LOG_LABEL_RE, CODEX_ACCOUNT_LOG_LABEL_RE } from "../codex/account-label";
 import { claudeCompatibilityReason, normalizeClaudeFeatureCodes, type ClaudeFeatureCode } from "../claude/compatibility";
 import type { UpstreamCondition } from "../lib/upstream-condition";
-import { errorDetailFor, normalizeLogErrorCode } from "./error-detail";
+import { errorDetailFor, isUpstreamHttpStatus, normalizeLogErrorCode } from "./error-detail";
 import type { CodexWsStageRecord, CodexWsTerminalEvent } from "../server/responses/codex-ws-wire";
 import {
   ATTEMPT_RECOVERY_KIND_ROSTER,
@@ -505,10 +505,6 @@ const KNOWN_TERMINAL_SOURCES = new Set<NonNullable<PersistedUsageEntry["terminal
 
 export function isKnownTerminalSource(value: unknown): value is NonNullable<PersistedUsageEntry["terminalSource"]> {
   return typeof value === "string" && KNOWN_TERMINAL_SOURCES.has(value as NonNullable<PersistedUsageEntry["terminalSource"]>);
-}
-
-export function isUpstreamHttpStatus(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599;
 }
 
 /**
