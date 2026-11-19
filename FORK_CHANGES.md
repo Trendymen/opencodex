@@ -1,7 +1,7 @@
 # Trendymen Fork 差异
 
 记录当前代码相对 [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) 已 rebase 基线的剩余能力。
-基线：`v2.100.5`（`eec4fb74ad0f6455b78621441f04e5bc87c59fd2`）；包版本见 [package.json](package.json)。CLI 与桌面包的版本源通过[版本同步工具](scripts/release-version-sources.ts)统一更新；Fork Tag 固定对应的发布提交，正式发布状态以 Tag 和 Release 为准。
+当前基线为 `v2.100.6`（`6a4ae9d6e1f2312969d05b3fd61b801904eb06ab`）。包版本见 [package.json](package.json)，CLI 与桌面包的版本源由[版本同步工具](scripts/release-version-sources.ts)统一更新。正式发布状态以 Fork Tag 和对应的 Release 为准。
 
 官方文档保留上游原文。Fork 结构约束见 [structure/fork-extensions.md](structure/fork-extensions.md)，配置用法见 [Fork reference](docs-site/src/content/docs/reference/fork-extensions.md)，发布补充见 [FORK_MAINTAINERS.md](FORK_MAINTAINERS.md)。
 能力变化时原地更新本文；历史设计、执行步骤、冲突和验证流水从 Git 历史、任务材料及 Release Notes 查阅。
@@ -69,6 +69,9 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 - OpenGateway 精确目标的[工具结果投影](src/adapters/openai-responses/opengateway-input.ts)、单次空完成恢复、冷启动密文恢复和 DeepSeek 图片上传重检沿用官方合同。Fork 的 schema 持久化和结构诊断读取最终 `wireBody`；WS 发送计费保留官方一次 receipt，并继续传递所选 Codex 许可。Mistral 同目标暂停与本地失败、禁止重放标记分别保留，不因此禁止换 key。
 - CI 选择与聚合判定采用官方 review lanes、scope reduction、privacy gate、structure gate 和文档链接合同。
 - Responses 沿用官方离线等待后的单次重发、原生 SSE 静默时限、客户端用量估算和 Anthropic 每消息 effort。私有凭据保护复用官方静默计时器，首个安全 SSE 块之前的显式超时也进入官方失败处理。估算用量只用于客户端交付。
+- Codex WebSocket 增量上传沿用官方调用方隔离、已确认前缀和物理发送预算。关闭终态合成时，Fork 仍用真实的成功 `response.done` 更新该前缀。恢复和切换账号只在实际发出请求后记入对应尝试。
+- 转译 Combo compact 产出正文后，沿用官方缓冲期限与流式静默时限。后续静默时报告 `incomplete`。Fork 在首段正文前保留有界等待与取消，并在工具检查前修复当前请求声明的 nested exec 参数。
+- Provider 设置继续支持 Fork 的 Codex 透传许可，并保留官方订阅重试与模型发现。每 Provider 的超时覆盖用于官方转译入口，原生直通仍使用全局设置。
 - Antigravity Chat/Messages direct lane、main-account hard-lock 最早 retry 提示及 Qoder keypool 预算继续采用官方实现。启用 `repairResponseToolCalls` 时，工具修复沿用官方的 namespace 规范化与未声明调用拒绝条件；显式空目录仅在原工具守卫适用的入站和目的地执行 deny-all。订阅许可只适用于原生 Responses 的最终官方目的地，不扩大到第三方或转译入站；model-scope `model_not_allowed_for_key` 403 和硬预算始终保留。模型与服务商回退采用官方 [fallback policy](src/routing/fallback-policy.ts)，订阅许可不跳过回退授权。AgentAssertion 采用官方 [认证边界](src/lib/authorization-scheme.ts)，附加断言只随调用方原有 Bearer 发往官方 Direct，Pool 替换凭据不携带该断言。
 - Claude picker 的上传拒绝与有界 linger 采用官方 [listener](src/claude/intercept/picker-listener.ts)。Fork 保留无 body 的 H1 400/503 同 socket 复用、其他上传/H2 sibling 和拒绝后重复 shutdown 的行为。
 - 官方 [生命周期重放标记](src/lib/upstream-retry.ts)、same-target retry hold、模型计划拒绝与本地账号冷却身份通过 Fork 的预算和账号 lease 两层包装保留，并继续携带实际订阅许可和本地失败身份；EOF、reader error 与取消仍释放资源。官方 `x-should-retry: false` 的原响应直返、JEV committed stream 失败解 pin 及 SSE 分片扫描优化分别保留；Fork 的日志字段和 EOF flush 继续有效。
