@@ -58,6 +58,36 @@ const genuineTerminals = new WeakSet<TerminalStatusContext>();
 // so a later losing frame cannot leave the status from one frame beside the copy of another.
 const bareEvidence = new WeakMap<TerminalStatusContext, BareUpstreamEvidence>();
 
+/** Reset only the classifier state installed while inspecting a superseded native response. */
+export function snapshotTerminalClassifierState(logCtx: TerminalStatusContext): () => () => void {
+  const before = {
+    provisional: provisionalStatuses.get(logCtx),
+    genuine: genuineTerminals.has(logCtx),
+    bare: bareEvidence.get(logCtx),
+  };
+  return () => {
+    const after = {
+      provisional: provisionalStatuses.get(logCtx),
+      genuine: genuineTerminals.has(logCtx),
+      bare: bareEvidence.get(logCtx),
+    };
+    return () => {
+      if (provisionalStatuses.get(logCtx) === after.provisional) {
+        if (before.provisional === undefined) provisionalStatuses.delete(logCtx);
+        else provisionalStatuses.set(logCtx, before.provisional);
+      }
+      if (genuineTerminals.has(logCtx) === after.genuine) {
+        if (before.genuine) genuineTerminals.add(logCtx);
+        else genuineTerminals.delete(logCtx);
+      }
+      if (bareEvidence.get(logCtx) === after.bare) {
+        if (before.bare === undefined) bareEvidence.delete(logCtx);
+        else bareEvidence.set(logCtx, before.bare);
+      }
+    };
+  };
+}
+
 const UPSTREAM_DIAGNOSTIC_TOKEN = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 /**
