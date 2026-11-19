@@ -15,6 +15,7 @@ export async function preflightComboAdapterEvents(
   const upstream = source[Symbol.asyncIterator]();
   let guarding = true;
   let closed = false;
+  let compactionTextBuffered = false;
   const close = (): void => {
     if (closed) return;
     closed = true;
@@ -43,7 +44,9 @@ export async function preflightComboAdapterEvents(
           reject(reason);
         };
         const onAbort = (): void => fail(COMBO_PREFLIGHT_ABORTED);
-        const timer = stallTimeoutMs > 0
+        // Once compact has text, the official preflight releases it at its hold limit.
+        // The streaming watchdog then owns the incomplete terminal if the adapter stalls.
+        const timer = stallTimeoutMs > 0 && !compactionTextBuffered
           ? setTimeout(() => fail(COMBO_PREFLIGHT_STALLED), stallTimeoutMs)
           : undefined;
         signal?.addEventListener("abort", onAbort, { once: true });
@@ -55,6 +58,9 @@ export async function preflightComboAdapterEvents(
               if (settled) return;
               settled = true;
               cleanup();
+              if (options?.bufferCompaction && !result.done && result.value.type === "text_delta" && result.value.text) {
+                compactionTextBuffered = true;
+              }
               resolve(result);
             },
             error => {

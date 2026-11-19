@@ -37,7 +37,7 @@ import { isUsageDebugEnabled } from "../../usage/debug";
 import { isNonReplayableResponse, isReplayRefusalResponse, markResponseNonReplayable } from "../../lib/upstream-retry";
 import { sanitizeNonReplayableUpstreamError } from "./non-replayable-error";
 import { sliceChunks, teeWithBoundedInspection } from "../inspection-tee";
-import { carryPacedStream, markPacedStream, pacedQueuingStrategy } from "../../lib/paced-stream";
+import { markPacedStream } from "../../lib/paced-stream";
 import { LINK_PACED_SLICE_BYTES, linkTurnPacesReads } from "../link-turn";
 import {
   codexForwardTerminalOutcomeRecorder,
@@ -208,7 +208,7 @@ import {
   createNestedExecClientOutcomeBlockRewrite,
 } from "../responses-nested-exec-call-repair";
 import { repairNestedExecCallsInJson } from "../../responses/nested-exec-call-repair";
-import { createInboundResponsesDebugObserver, persistInboundResponsesDebugSummary } from "../../fork/inbound-response-debug";
+import { createInboundResponsesDebugObserver, observeClientBoundResponsesSse, persistInboundResponsesDebugSummary } from "../../fork/inbound-response-debug";
 import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { codexRawJsonSse, relayUnmodifiedCodexSse } from "../../fork/codex-passthrough-response";
 import { codexPrivateCredentialSources, createCodexPrivateCredentialGuard, readCodexPrivateErrorText,
@@ -607,42 +607,6 @@ export async function deliverPassthroughResponse(
         threadIdTag: nativeExchange.request.threadIdTag,
         httpStatus: inboundDebugContext.httpStatus,
       });
-    };
-    const observeClientBoundSse = (body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> => {
-      if (!downstreamObserver) return body;
-      const inspector = createSseInspector({
-        onParsedPayload: payload => downstreamObserver.notePayload(payload),
-      });
-      const reader = body.getReader();
-      let settled = false;
-      const settle = (): void => {
-        if (settled) return;
-        settled = true;
-        try { inspector.finish(); } catch { /* diagnostics must not alter delivery */ }
-        inspector.dispose();
-        persistDownstreamOnce();
-      };
-      return carryPacedStream(body, new ReadableStream<Uint8Array>({
-        async pull(controller) {
-          try {
-            const { done, value } = await reader.read();
-            if (done) {
-              settle();
-              controller.close();
-              return;
-            }
-            if (value) inspector.feed(value);
-            controller.enqueue(value);
-          } catch (error) {
-            settle();
-            controller.error(error);
-          }
-        },
-        cancel(reason) {
-          settle();
-          return reader.cancel(reason);
-        },
-      }, pacedQueuingStrategy(body)));
     };
 
   const originalContentType = upstreamResponse.headers.get("content-type");
@@ -1726,7 +1690,7 @@ export async function deliverPassthroughResponse(
       const rewrittenBody = clientBlockRewrite !== undefined
         ? relaySseWithBlockRewrite(nativeBody, clientBlockRewrite, translatorBudget)
         : nativeBody;
-      const clientBody = observeClientBoundSse(codexPermissions?.synthesizeTerminalFailure === false
+      const clientBody = observeClientBoundResponsesSse(codexPermissions?.synthesizeTerminalFailure === false
         ? relayUnmodifiedCodexSse(rewrittenBody, upstream, createSseInspector({ allowResponseDone: true }), reason => {
           responseEffects.responseCompletionCancelled = true;
           clientGone.abort(reason);
@@ -1740,7 +1704,7 @@ export async function deliverPassthroughResponse(
           },
           { upstreamError: logCtx.upstreamError, terminalBoundary: codexSafetyBufferingOptions, maskCredential: synthesizedCopyMask, redactForwardedEvidence: forwardedEvidenceRedaction,
             onSyntheticTail: (payload, verdict) => noteRelaySyntheticTail(logCtx, payload, verdict) },
-        ));
+        ), downstreamObserver, persistDownstreamOnce);
       return markNativePassthroughSseResponse(new Response(clientBody, {
         status: upstreamResponse.status,
         headers,
@@ -1936,7 +1900,7 @@ export async function deliverPassthroughResponse(
           const sseHeaders = new Headers(headers);
           sseHeaders.set("content-type", "text/event-stream");
           sseHeaders.set("cache-control", "no-store");
-          return new Response(observeClientBoundSse(stream), {
+          return new Response(observeClientBoundResponsesSse(stream, downstreamObserver, persistDownstreamOnce), {
             status: upstreamResponse.status,
             statusText: upstreamResponse.statusText,
             headers: sseHeaders,
