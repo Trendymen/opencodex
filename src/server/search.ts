@@ -13,7 +13,9 @@ import { isolateCodexPoolClientMetadata, mergeCodexSelectedHeaders } from "../co
  * paid backend than the one the operator named.
  */
 import { formatErrorResponse } from "../bridge";
+import { openaiChatCompletionsUrl } from "../adapters/openai-chat-url";
 import { openAiSidecarCreditRefusal } from "../providers/openai-sidecar-credit";
+import { isOpenAiOperatedResponsesDestination, normalizedOpenAiBaseUrl } from "../providers/openai-tiers-destination";
 import {
   CodexAccountCooldownError,
   codexMainProfileDrainingResponse,
@@ -64,9 +66,17 @@ import { codexModelAvailabilityErrorResponse, nativeMainRefreshFailureResponse }
 const SEARCH_UPSTREAM_TIMEOUT_MS = 200_000;
 export const SEARCH_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
 
-function isKnownDirectSearchRoute(config: OcxConfig, route: RouteResult): boolean {
+function isKnownThirdPartySearchRoute(config: OcxConfig, route: RouteResult): boolean {
   if (route.routeReason !== "explicit-provider-namespace" && route.routeReason !== "model-alias") return false;
   const { providerName, provider, modelId } = route;
+  const adapter = route.staticPolicy.model.adapter;
+  if (isOpenAiOperatedResponsesDestination({ ...provider, adapter })) return false;
+  if (adapter === "openai-chat") {
+    const endpoint = provider.chatCompletionsPath === undefined
+      ? openaiChatCompletionsUrl(provider.baseUrl)
+      : `${provider.baseUrl.replace(/\/$/, "")}${provider.chatCompletionsPath}`;
+    if (normalizedOpenAiBaseUrl(endpoint) === "https://api.openai.com/v1/chat/completions") return false;
+  }
   return provider.retainModels?.includes(modelId) === true
     || Object.hasOwn(provider.modelDisplayNames ?? {}, modelId)
     || provider.arkKimiResponsesModels?.includes(modelId) === true
@@ -174,7 +184,7 @@ export async function handleSearch(
       && SUPPORTED_NATIVE_OPENAI_SLUGS.has(helperModel)
       && !ACCOUNT_GATED_NATIVE_OPENAI_MODELS.has(helperModel)
       && requestedRoute && requestedRoute.providerName !== candidates[0]!.providerName
-      && isKnownDirectSearchRoute(config, requestedRoute)) {
+      && isKnownThirdPartySearchRoute(config, requestedRoute)) {
       const denial = admissionScopeDenial(config, admission, requestedSearchModel, requestedRoute);
       if (denial) return denial;
       searchModel = helperModel;
