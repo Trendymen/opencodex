@@ -9,7 +9,7 @@ description: 相对已 rebase 上游版本的兼容与维护差异。
 
 - Pool 账号身份改写将 turn metadata 中超出 U+00FF 的字符转为 JSON 转义后再写入 HTTP header，保留合法 Latin-1 字符和 JSON 值，避免中文或 emoji 导致本地请求头错误；关闭兼容处理时，账号身份隔离仍然生效。
 - 原生 GPT 官方订阅 Responses 请求提供 23 项 Provider 级处理许可，全部默认开启，覆盖请求/响应兼容、生成头和可选本地错误，包含 Direct 与 Pool 账号。各功能仍受原条件约束，其他目的地和转译入站沿用既有行为。逐项配置及保留的恢复、预算和凭据保护见 [GPT 官方订阅处理](/zh-cn/reference/configuration/fork-extensions/#gpt-官方订阅处理)。
-- Ark GLM/Kimi 和 BigModel GLM 的 Responses 路由降低不支持的工具 schema，并处理 assistant prefill 限制。普通第三方工具清理 ChatGPT 专用 `encrypted` 注解，保留同名属性和 literal。官方目的地和显式可信直接 relay 保留注解，combo 不继承直接路由例外。
+- Ark GLM/Kimi 和 BigModel GLM 的 Responses 路由降低不支持的工具 schema，并处理 assistant prefill 限制。已配置的 Kimi 路由保留当前会话与路由已登记的原生 reasoning 项，其他项有可读内容时在原位置转为带历史标记的普通 user message，没有可读内容时移除。该项来源登记在内存中，重启、过期或淘汰后旧项会再次转换；无 replay scope 的直接 adapter 输入不处理。普通第三方工具清理 ChatGPT 专用 `encrypted` 注解，保留同名属性和 literal。官方目的地和显式可信直接 relay 保留注解，combo 不继承直接路由例外。
 - OpenAI Chat、Google、Command Code、Anthropic、Kiro 和 Cursor 适配器在各自工具条件满足时为请求加入进度提示，部分路径还加入工具发现和补丁顺序提示。模型 catalog 和原生 Responses 不自动追加这些提示，模型是否输出可见进度不作保证。code-mode 结果回显和宿主提示沿用官方处理；代理不合成进度，不执行或自动重试补丁。
 - 当前声明允许的 nested `functions.exec` / `web__run` 及受支持的 `spawn_agent.fork_turns` 完成参数执行有界修复。官方 routed custom-tool 基础保持不变；Fork 将 custom tool output 转为字符串，并在 Console Go 严格目的地合并可安全匹配的重复 `call_id` 输出。工具声明仍决定授权范围。
 - 按模型启用的原生 Responses phase 推断包含普通 JSON 交付，并保留官方 Provider 级 SSE 选项。reasoning 摘要投影在客户端请求时用于符合条件的转译适配器响应。`openai-chat` 指向已识别的标准端口官方 xAI HTTPS 目的地时不做该投影，并在 SSE、JSON 和已存重放中保留原始 reasoning 内容。原生 Responses 在 SSE、JSON 和已存重放中保留 content-channel reasoning。
