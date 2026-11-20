@@ -158,6 +158,7 @@ export function bindRouteReasoningReplayScope(args: {
     parsed._reasoningReplayScope,
     replayIdentity,
   );
+  if (parsed._reasoningReplayScope) parsed._reasoningReplayScope.nativeReasoningOwner = owner;
   // Keep this sticky for the whole outbound request: a later auth/key rebind may compare equal
   // after the first mismatch, but it cannot make history minted by the prior route decodable.
   const identityChange = reasoningReplayServingIdentityChange(parsed._reasoningReplayScope);
