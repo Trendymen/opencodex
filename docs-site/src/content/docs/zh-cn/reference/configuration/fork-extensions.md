@@ -43,6 +43,10 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 安装、用户服务重启、外部设备连通和付费 Provider 接入仍需分别验收。
 
+## 独立网页搜索
+
+使用第三方模型进行 Codex 对话时，请选择带 Provider 前缀的已知模型或模型别名。启用 OpenAI 搜索后端，并在 `webSearchSidecar.model` 中选择无需账号专属权限的原生 ChatGPT 模型，例如 `gpt-6.2-sol`。OCX 将 `/v1/alpha/search` 转发给 ChatGPT 时会使用这个模型搜索，对话继续由第三方模型处理。受限 API key 需要同时允许这两条路由。
+
 ## 按 key 转换模型
 
 在已有 `apiKeys` 条目中增加 `modelConversion`，即可在辅助 `10100` 入口为该 key 启用转换。省略此字段或将 `enabled` 设为 `false` 时关闭。原有认证和 scope 检查继续生效；此功能没有 GUI 设置。
@@ -128,6 +132,8 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 | `privateErrorBodyReadDeadline` | 为使用私有凭据保护的 HTTP 错误正文保留固定 5 秒总期限、首字节及停滞期限。关闭后取消固定总期限，首字节和停滞等待使用 `stallTimeoutSec`；取消、64 KiB 上限和凭据遮盖继续生效。 |
 | `synthesizeTerminalFailure` | 没有可用终态事件时，执行既有合成失败终态处理。 |
 | `normalizeHostedImages` | 为受支持客户端转换 hosted-image 返回，并清理后续输入中的显示路径。 |
+
+关闭 `synthesizeTerminalFailure` 时，OpenCodex 为通过 HTTP SSE 接收标准 ChatGPT Responses 的 Codex 客户端保留一项例外。如果上游明确报过载，并且在发出输出、工具活动或有效终态前正常结束流，OpenCodex 会保留原始错误帧，再追加带 `server_is_overloaded` 和 `Retry-After` 的 `response.failed`。等待时间优先使用有效的上游建议，缺省为 1 秒。Codex 可据此显示过载原因并自动重试。
 
 原生 Responses 流式 Combo 尝试中，即使 `synthesizeTerminalFailure: false`，真实 `response.done` 的 `response.status: "completed"` 且包含 output 数组时仍须遵守官方必选工具合同。检查不会改动有效 block。`repairResponseToolCalls: false` 时，检查器不能把客户端未收到的修复后名称当作履约。缺少必选调用仅可在提交前且重放安全时重试；观察到 hosted 工具效果时禁止重放。
 
