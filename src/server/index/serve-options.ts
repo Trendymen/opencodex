@@ -109,6 +109,7 @@ import {
   markTrustedHubManagementRequest,
   jsonResponse,
   admissionFields,
+  isContextPrincipalCurrent,
   markLoopbackRelayRecoveryRequest,
   removeLoopbackRelayBearer,
   resolveApiAuth,
@@ -1463,8 +1464,14 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         };
         const sessionReq = withCallerSessionIdentity(withGrokSessionIdentity(req), admission);
         const modelReq = relayUsage?.stripBearer ? withLoopbackRelayBearerRemoved(sessionReq, config, admission) : sessionReq;
-        const replayPrincipal = relayUsage?.stripBearer
+        const capturedReplayPrincipal = relayUsage?.stripBearer
           ? resolveFilteredReplayPrincipal(sessionReq, config, admission, modelReq.headers) : undefined;
+        const replayPrincipal = capturedReplayPrincipal && {
+          get clientPrincipalId() {
+            const principal = capturedReplayPrincipal.clientPrincipalId;
+            return isContextPrincipalCurrent(principal, ctx.config) ? principal : undefined;
+          },
+        };
         if (relayUsage) markLoopbackRelayRecoveryRequest(modelReq);
         // Capture at authentication: runAdmittedHttpTurn can wait for body capacity first (#7859).
         const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
