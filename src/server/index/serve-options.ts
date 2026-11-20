@@ -616,7 +616,9 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             websocketLease,
             sessionLaneIdFromRequest(req.headers),
             classifyUsageClient(req.headers), replayPrincipal, replayScope,
-          ), ...(relayUsage ? { usageApiKeyId: relayUsage.apiKeyId } : {}), peerLocal: currentRequestIsLocal() },
+          ), ...(relayUsage?.contextPrincipalId ? {
+            usageApiKeyId: relayUsage.apiKeyId, usageApiKeyPrincipalId: relayUsage.contextPrincipalId,
+          } : {}), peerLocal: currentRequestIsLocal() },
         })) return undefined as unknown as Response;
         releaseConnectionReplayScope(replayScope);
         websocketLease.release();
@@ -1461,6 +1463,8 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         };
         const sessionReq = withCallerSessionIdentity(withGrokSessionIdentity(req), admission);
         const modelReq = relayUsage?.stripBearer ? withLoopbackRelayBearerRemoved(sessionReq, config, admission) : sessionReq;
+        const replayPrincipal = relayUsage?.stripBearer
+          ? resolveFilteredReplayPrincipal(sessionReq, config, admission, modelReq.headers) : undefined;
         if (relayUsage) markLoopbackRelayRecoveryRequest(modelReq);
         // Capture at authentication: runAdmittedHttpTurn can wait for body capacity first (#7859).
         const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
@@ -1471,6 +1475,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
               codexSessionIdSynthesized: !req.headers.has("session_id") && sessionReq.headers.has("session_id"),
               turnAdmissionLease,
               admission,
+              ...(replayPrincipal ? { replayPrincipal } : {}),
               advisorAdmissionPolicy,
               onRequestBodyRead: () => disableResponsesRequestTimeout(req, requestServer),
               abortSignal: req.signal,
