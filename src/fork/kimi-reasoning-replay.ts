@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isTranslatorBudgetExceededError } from "../lib/translator-budget";
 import { RETAINED_PREFIX, RETAINED_SUFFIX, reasoningTextOf } from "../responses/reasoning-retention";
 import { durableReplayDestinationIdentity } from "../responses/reasoning-replay-cache";
-import { currentRequestIsLocal } from "../lib/request-peer-scope";
+import { currentRequestIsPrimaryLoopback } from "../lib/request-peer-scope";
 import { connectionReplayScopeForThread, connectionReplayScopeOwnerKey, type ConnectionReplayScope } from "../responses/state/connection-scope";
 import type { HandleResponsesOptions } from "../server/responses/core-options";
 import type { OcxReasoningReplayScopeRef } from "../types";
@@ -42,7 +42,7 @@ export function bindKimiLocalReplayScope(
 ): void {
   if (!scope) return;
   localAuthorities.delete(scope);
-  if (hasPrincipal(scope) || options.admission?.kind !== "loopback" || !currentRequestIsLocal()) return;
+  if (hasPrincipal(scope) || options.admission?.kind !== "loopback" || !currentRequestIsPrimaryLoopback()) return;
   if (options.inboundTransport !== "websocket") {
     localAuthorities.set(scope, { kind: "http" });
     return;
