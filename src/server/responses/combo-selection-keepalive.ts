@@ -3,6 +3,7 @@ import type { HandleResponsesOptions } from "./core-options";
 import { hasResponseMediaType } from "../../lib/http-response-semantics";
 import { readDisplaySafeErrorText } from "./core-errors";
 import { isNativePassthroughSseResponse } from "../relay";
+import { codexOverloadSource, markCodexOverloadCommitted, type CodexOverloadSource } from "../../fork/codex-overload-provenance";
 
 /**
  * How long a streaming combo may spend choosing a child before the client gets a response head
@@ -129,6 +130,7 @@ export function selectComboWithKeepalive(
   let source: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let wake: (() => void) | undefined;
   let timer: unknown;
+  const overloadSelection: { source?: CodexOverloadSource } = {};
   const stopTimer = (): void => {
     if (timer !== undefined) clock.clearTimeout(timer);
     timer = undefined;
@@ -157,6 +159,8 @@ export function selectComboWithKeepalive(
       // response's process-owned marker before its first byte reaches that tap. The
       // native child's original inspector still publishes real usage through its callback.
       context.logCtx.clientSseUsageAlreadyInspected = isNativePassthroughSseResponse(response);
+      const overloadSource = codexOverloadSource(response);
+      if (overloadSource && "retryAfter" in overloadSource) overloadSelection.source = overloadSource;
       setSource(response.body);
       return;
     }
@@ -225,7 +229,7 @@ export function selectComboWithKeepalive(
       if (settled || signal.aborted) return;
       committed = true;
       scheduleKeepalive();
-      resolve(new Response(body, {
+      const committedResponse = new Response(body, {
         status: 200,
         headers: {
           "Content-Type": "text/event-stream",
@@ -233,7 +237,9 @@ export function selectComboWithKeepalive(
           Connection: "keep-alive",
           "X-Accel-Buffering": "no",
         },
-      }));
+      });
+      markCodexOverloadCommitted(committedResponse, overloadSelection);
+      resolve(committedResponse);
     }, COMBO_SELECTION_KEEPALIVE_THRESHOLD_MS);
     selection.then(response => {
       settled = true;
