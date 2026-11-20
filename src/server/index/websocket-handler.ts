@@ -76,6 +76,7 @@ import {
   resolveApiAuth,
   resolveResponsesApiAuth,
   isContextPrincipalCurrent,
+  resolveFilteredLoopbackBearer,
   type RequestPolicyView,
   withCors,
   withManagementCors,
@@ -337,7 +338,7 @@ export function createWebsocketHandler(
             provider: "unknown",
             ...(requestMetricsRecorder ? { requestMetricsRecorder } : {}),
             ...(wsAdmission ? admissionFields(wsAdmission) : {}),
-            ...(ws.data.usageApiKeyId && isContextPrincipalCurrent(ws.data.usageApiKeyPrincipalId, config)
+            ...(ws.data.usageApiKeyId && isContextPrincipalCurrent(ws.data.usageApiKeyPrincipalId, ctx.config)
               ? { apiKeyId: ws.data.usageApiKeyId } : {}),
             client: ws.data.client ?? "unknown",
             inboundProtocol: "responses",
@@ -380,8 +381,14 @@ export function createWebsocketHandler(
             ws.data.nativeControl = nativeControl;
             let terminalRecorder: ((status: ResponsesTerminalStatus, httpStatusOverride?: number) => void) | undefined;
             const retainedPrincipal = ws.data.replayPrincipal;
-            const replayPrincipal = retainedPrincipal && (isContextPrincipalCurrent(retainedPrincipal.clientPrincipalId, config)
-              ? retainedPrincipal : { clientPrincipalId: undefined });
+            const filteredBearer = ws.data.filteredBearer;
+            const replayPrincipal = filteredBearer || retainedPrincipal ? {
+              get clientPrincipalId() {
+                if (filteredBearer) return resolveFilteredLoopbackBearer(filteredBearer, ctx.config);
+                const principal = retainedPrincipal?.clientPrincipalId;
+                return isContextPrincipalCurrent(principal, ctx.config) ? principal : undefined;
+              },
+            } : undefined;
             // The connection scope is a live-socket capability, not a retained credential:
             // once closed or expired it stops backfilling the replay owner entirely.
             const retainedScope = ws.data.replayScope;
