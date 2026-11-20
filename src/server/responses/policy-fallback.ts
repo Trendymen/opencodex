@@ -20,7 +20,12 @@ import { fallbackTriggerForStatus, guardFallbackHop } from "../../routing/fallba
 import { captureAdmissionPolicy } from "../capture-admission-policy";
 import { captureHostedAdvisorSpendScope } from "./hosted-advisor-spend";
 import { upstreamCodeForComboFailure } from "../../bridge/errors";
-import { captureCodexPassthroughTurn, codexPassthroughSourceRequired, releaseCodexPassthroughTurnSource } from "../../fork/codex-passthrough-turn";
+import { captureCodexPassthroughTurn, codexPassthroughSourceRequired, releaseCodexPassthroughTurnSource, carryCodexPassthroughResponse } from "../../fork/codex-passthrough-turn";
+import { codexOverloadSource } from "../../fork/codex-overload-provenance";
+import { relayCodexOverloadRetry } from "../../fork/codex-overload-retry";
+import { isEagerRelaySseResponse, isNativePassthroughSseResponse, markEagerRelaySseResponse, markNativePassthroughSseResponse } from "../relay";
+import { hasResponseMediaType } from "../../lib/http-response-semantics";
+import { noteRelaySyntheticTail } from "../request-log-terminal-status";
 import { createTranslatorBudget } from "../../lib/translator-budget";
 import { finalizeAccountLease, finalizeOwnedTranslatorBudget } from "./core-lifetime";
 
@@ -375,7 +380,22 @@ export async function handleResponsesWithPolicyFallback(
   if (signal.aborted) release(); else signal.addEventListener("abort", release, { once: true });
   try {
     const response = await handleResponsesWithPolicyFallbackInner(req, config, logCtx, { ...options, codexPassthroughTurn: turn, translatorBudget: budget }, deps);
-    const final = options.translatorBudget ? response : finalizeOwnedTranslatorBudget(response, budget, signal);
+    const overloadSource = codexOverloadSource(response);
+    let clientResponse = response;
+    if (overloadSource && response.ok && response.body && hasResponseMediaType(response.headers, "text/event-stream")
+      && (logCtx.client === "codex_cli" || logCtx.client === "codex_desktop" || logCtx.client === "codex_ide")
+      && !signal.aborted) {
+      const headers = new Headers(response.headers);
+      headers.delete("content-length");
+      clientResponse = new Response(relayCodexOverloadRetry(response.body, overloadSource, signal,
+        payload => noteRelaySyntheticTail(logCtx, payload, undefined, true)), {
+        status: response.status, statusText: response.statusText, headers,
+      });
+      carryCodexPassthroughResponse(response, clientResponse);
+      if (isNativePassthroughSseResponse(response)) markNativePassthroughSseResponse(clientResponse);
+      if (isEagerRelaySseResponse(response)) markEagerRelaySseResponse(clientResponse);
+    }
+    const final = options.translatorBudget ? clientResponse : finalizeOwnedTranslatorBudget(clientResponse, budget, signal);
     return finalizeAccountLease(final, release, release);
   } catch (error) {
     release();

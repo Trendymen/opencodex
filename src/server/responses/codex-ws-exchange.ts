@@ -1,5 +1,6 @@
 import { completeIncrementalFrame, recordIncrementalDispatch, type IncrementalPlan } from "./codex-ws-incremental";
 import { responsesCompletionError } from "../../lib/errors";
+import { isStructuredCodexOverload, markCodexWebsocketSafety, safeCodexOverloadMetadata } from "../../fork/codex-overload-provenance";
 import { NativeSteeringError } from "./native-steering";
 import { NativeContinuationRefusalError } from "./native-continuation-refusal";
 import { mergeSteeringContinuation } from "./native-steering-settings";
@@ -181,6 +182,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
     // The resolved 200, retained so a later body failure can replace its
     // success-shaped stage record with the failure-shaped one (#4191).
     let committedResponse: Response | null = null;
+    const overloadSafety = options.permissions?.synthesizeTerminalFailure === false ? { unsafe: false } : undefined;
     // #6969: the pre-output refusal hold. While it is open, empty lifecycle frames are queued on the
     // not-yet-exposed stream without resolving it. Every settle other than an eligible refusal
     // commits first (deferredCommit), so the outcome is exactly what the exchange produced before.
@@ -277,6 +279,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
       const response = new Response(stream, { status: 200, headers: responseHeaders });
       metadata?.commit();
       markCodexWsResponse(response, Boolean(metadata && onQuota));
+      if (overloadSafety) markCodexWebsocketSafety(response, overloadSafety);
       if (nativeControl) markNativeControlResponse(response);
       markCodexWsStage(response, stageRecord(null));
       committedResponse = response;
@@ -338,6 +341,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
         restoredHeaders.set("content-type", "text/event-stream; charset=utf-8");
         const restored = new Response(stream, { status: 200, headers: restoredHeaders });
         markCodexWsResponse(restored, observed);
+        if (overloadSafety) markCodexWebsocketSafety(restored, overloadSafety);
         // The same record object, so the attempt that adopted it keeps reading one stage.
         markCodexWsStage(restored, stage);
         return restored;
@@ -629,7 +633,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
       upstreamFrames += 1;
       if (firstFrameAt === null) firstFrameAt = Date.now();
       const text = typeof event.data === "string" ? event.data : "";
-      if (!text) return;
+      if (!text) { if (overloadSafety) overloadSafety.unsafe = true; return; }
       // UTF-8 byte length is always at least the JS string length. Reject this
       // cheap lower bound before parsing so an obviously oversized frame does
       // not create another large object graph.
@@ -647,6 +651,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
         ? payload => { replayUnsafe = responsesFrameIsReplayUnsafe(payload); }
         : undefined, options.permissions);
       if (!normalized) {
+        if (overloadSafety) overloadSafety.unsafe = true;
         if (replayUnsafe) commitResponse();
         return;
       }
@@ -668,12 +673,18 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
           return;
         }
       }
+      if (overloadSafety && !overloadSafety.unsafe
+        && (responsesFrameIsReplayUnsafe(normalized.payload)
+          || (controlFrame ? !safeCodexOverloadMetadata(normalized.payload)
+            : type === "error" ? !isStructuredCodexOverload(normalized.payload)
+              : !isEmptyCodexWsLifecycleEvent(normalized.payload)))) overloadSafety.unsafe = true;
       const encodedText = relayText === text ? rawEncodedText : encoder.encode(relayText);
       if (encodedText.byteLength > MAX_CODEX_WS_FRAME_BYTES) {
         failStream("codex websocket frame exceeds the response size limit");
         return;
       }
       if (!controlFrame && !type.startsWith("response.") && type !== "error") {
+        if (overloadSafety) overloadSafety.unsafe = true;
         if (replayUnsafe) commitResponse();
         return;
       }

@@ -7,6 +7,7 @@ import { retainCodexRequestSource, materializeCodexRequestSource, bindCodexReque
 import type { DecodedJsonCapture } from "../server/request-decompress";
 import type { TranslatorBudget } from "../lib/translator-budget";
 import { carryCodexLocalFailure } from "./codex-passthrough-local-errors";
+import { carryCodexOverloadSource } from "./codex-overload-provenance";
 
 declare const turnBrand: unique symbol;
 export type CodexPassthroughTurn = { readonly [turnBrand]: true };
@@ -105,6 +106,7 @@ export function codexPassthroughResponsePermissions(response: Response): CodexPa
 }
 
 export function carryCodexPassthroughResponse(source: Response, target: Response): Response {
+  carryCodexOverloadSource(source, target);
   carryCodexLocalFailure(source, target);
   if (isNonReplayableResponse(source)) markResponseNonReplayable(target);
   if (isReplayRefusalResponse(source)) markReplayRefusalResponse(target);

@@ -194,17 +194,21 @@ export function noteUpstreamRequestId(logCtx: TerminalStatusContext, headers: He
  * (the WebSocket log) sees those tails beside upstream frames; only a registered text is the
  * relay's own, however closely a genuine upstream terminal resembles it. Each entry matches once.
  */
-const relaySyntheticTails = new WeakMap<TerminalStatusContext, Array<{ payload: string; verdict?: BareUpstreamError }>>();
+const relaySyntheticTails = new WeakMap<TerminalStatusContext, Array<{ payload: string; verdict?: BareUpstreamError; codexOverloadRetry?: boolean }>>();
 
 /**
  * The verdict travels with its tail: the relay withholds an untyped envelope from the client, so a
  * client-stream reader sees only the tail and records the verdict it renders.
  */
-export function noteRelaySyntheticTail(logCtx: TerminalStatusContext, payload: string, verdict?: BareUpstreamError): void {
+export function noteRelaySyntheticTail(logCtx: TerminalStatusContext, payload: string, verdict?: BareUpstreamError, codexOverloadRetry = false): void {
   const tails = relaySyntheticTails.get(logCtx) ?? [];
-  tails.push({ payload, verdict });
+  tails.push({ payload, verdict, codexOverloadRetry });
   if (tails.length > 4) tails.shift();
   relaySyntheticTails.set(logCtx, tails);
+}
+
+export function isCodexOverloadRetryTail(logCtx: TerminalStatusContext, payload: string): boolean {
+  return relaySyntheticTails.get(logCtx)?.some(tail => tail.codexOverloadRetry && tail.payload === payload) ?? false;
 }
 
 function consumeRelaySyntheticTail(logCtx: TerminalStatusContext, json: UpstreamErrorPayload): { verdict?: BareUpstreamError } | undefined {

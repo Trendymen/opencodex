@@ -44,6 +44,7 @@ import { recordClientWireRequestLog } from "./inference/client-wire-log";
 import { nativeResponseFingerprint } from "./responses/native-response-json";
 import { nativeResponseOutput } from "./responses/native-response-output";
 import { bareUpstreamError, guardBareCopy, isUntypedBareUpstreamError, MAX_BARE_ERROR_MESSAGE_CHARS, reduceBareUpstreamEvidence, type BareUpstreamError, type BareUpstreamEvidence } from "./bare-upstream-error";
+import { isCodexOverloadRetryTail } from "./request-log-terminal-status";
 
 const nativePassthroughSseResponses = new WeakSet<Response>();
 const eagerRelaySseResponses = new WeakSet<Response>();
@@ -1420,6 +1421,8 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
         /* malformed SSE payloads remain best-effort/no-throw */
       }
     }
+    const syntheticTail = handlers.logCtx && asJsonRecord(parsed)?.type === "response.failed"
+      && isCodexOverloadRetryTail(handlers.logCtx, payload);
     const rawDoneEvent = handlers.allowResponseDone && asJsonRecord(parsed)?.type === "response.done";
     if (!reported && !rawDoneObserved && handlers.logCtx) {
       const collectUsage = typeof handlers.collectUsage === "function" ? handlers.collectUsage() : handlers.collectUsage;
@@ -1546,7 +1549,7 @@ export function createSseInspector(handlers: SseInspectorHandlers): SseInspector
         reported = true;
         if (handlers.logCtx) {
           handlers.logCtx.transportPhase = "terminal_sse";
-          handlers.logCtx.terminalSource = "upstream";
+          handlers.logCtx.terminalSource = syntheticTail ? "synthetic" : "upstream";
         }
         handlers.onTerminal(status, policyTerminal ? 400 : undefined);
       }
