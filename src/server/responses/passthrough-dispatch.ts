@@ -151,7 +151,7 @@ import type { AttemptRecoveryKind } from "../../usage/log";
 import { resolveWireProtocolOverride } from "../adapter-resolve";
 import { refreshPoolForwardAuth, refreshNativeMainForwardAuth, withClaudeNativeSession } from "./core-auth";
 import { bindRouteReasoningReplayScope } from "./core-replay";
-import { createKimiPassthroughReplay } from "../../fork/kimi-passthrough-response";
+import { bindKimiLocalReplayRequest, createKimiPassthroughReplay } from "../../fork/kimi-passthrough-response";
 import type { OAuthAccessSnapshot } from "../../oauth";
 import { publicOAuthErrorPresentation, OAuthAccountPausedError, OAuthLoginRequiredError, OAuthTokenRefreshBusyError, publicOAuthAuthenticationErrorMessage } from "../../oauth";
 import { AnthropicAccountCooldownError } from "../../oauth/anthropic-routing";
@@ -314,7 +314,7 @@ export async function preparePassthroughExchange(
     const providerExecutedCallTypes = new Set<ProviderExecutedCallType>();
     let request: Awaited<ReturnType<typeof transportState.adapter.buildRequest>>;
     try {
-      request = await transportState.adapter.buildRequest(parsed, {
+      request = await transportState.adapter.buildRequest(bindKimiLocalReplayRequest(parsed, options, route), {
         headers: requestState.selectedForwardHeaders,
         providerName: route.providerName,
         translatorBudget,
@@ -1117,7 +1117,7 @@ export async function preparePassthroughExchange(
       }
       try {
         if (recovery !== "console-go-upload-retry") {
-          request = await retryAdapter.buildRequest(parsed, {
+          request = await retryAdapter.buildRequest(bindKimiLocalReplayRequest(parsed, options, route), {
             headers: requestState.selectedForwardHeaders,
           providerName: route.providerName,
             translatorBudget,

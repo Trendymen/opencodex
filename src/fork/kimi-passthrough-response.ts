@@ -1,9 +1,20 @@
 import type { PassthroughDispatchInputs } from "../server/responses-passthrough-dispatch-types";
 import type { NativeReplayGuard } from "../server/responses/native-replay-guard";
 import type { OcxReasoningReplayScopeRef } from "../types";
-import { containsRetainedKimiNativeReasoning, kimiReplayScopeForEndpoint, rememberKimiNativeReasoning } from "./kimi-reasoning-replay";
+import { bindKimiLocalReplayScope, containsRetainedKimiNativeReasoning, kimiReplayScopeForEndpoint, rememberKimiNativeReasoning } from "./kimi-reasoning-replay";
 
 type ReplayResponse = { id?: unknown; output?: unknown; status?: unknown };
+
+export function bindKimiLocalReplayRequest(
+  parsed: PassthroughDispatchInputs["requestState"]["parsed"],
+  options: PassthroughDispatchInputs["requestContext"]["options"],
+  route: PassthroughDispatchInputs["requestState"]["route"],
+) {
+  if (route.provider.authMode !== "forward" && route.provider.arkKimiResponsesModels?.includes(route.modelId)) {
+    bindKimiLocalReplayScope(parsed._reasoningReplayScope, options, parsed._codexOwnThreadId);
+  }
+  return parsed;
+}
 
 export function createKimiPassthroughReplay(
   guard: Pick<NativeReplayGuard, "sendHandler" | "record">,
