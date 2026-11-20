@@ -478,9 +478,12 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         modelId: parsed.modelId,
         threadId: incoming.headers.get("thread-id") ?? incoming.headers.get("thread_id"),
         url,
+        reasoningReplayScope: parsed._reasoningReplayScope,
       });
       outBody = glmKimiCompatibility.body;
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
+      const kimiReasoningProjected = provider.arkKimiResponsesModels?.includes(parsed.modelId) === true
+        && parsed._reasoningReplayScope?.current !== undefined;
       const stripNativeCompaction = parsed._stripNativeCompactionEncryptedContent === true
         || threadServingIdentityChanged;
       // Providers with the strict plaintext tool-continuation contract cannot consume any
@@ -504,8 +507,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
                   preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
                   translatorBudget,
                   dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
-                  stripEncryptedContent: threadServingIdentityChanged || requiresPlaintextReasoningReplay(provider),
-                  dropForeignItemId: parsed._dropForeignReasoningItemIds === true,
+                  stripEncryptedContent: requiresPlaintextReasoningReplay(provider)
+                    || (!kimiReasoningProjected && threadServingIdentityChanged),
+                  dropForeignItemId: !kimiReasoningProjected && parsed._dropForeignReasoningItemIds === true,
                   requirePlaintextReasoning: requiresPlaintextReasoningReplay(provider),
                   onPlaintextReasoningBlanked: () => notePlaintextReasoningDropped(provider),
                 },

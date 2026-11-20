@@ -3,13 +3,14 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
-import type { OcxProviderConfig } from "../types";
+import type { OcxProviderConfig, OcxReasoningReplayScopeRef } from "../types";
 import { isThirdPartyNonGptResponsesRoute } from "../providers/openai-tiers-destination";
 import { normalizeRoutedAgentMessages } from "../adapters/routed-agent-messages";
 import { agentMessageConversionOptions } from "./agent-message-format";
 import { debugProviderDiagnostic } from "../lib/debug";
 import { getConfigDir } from "../config/paths";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
+import { projectForeignKimiReasoning } from "./kimi-reasoning-replay";
 
 const ARK_AGENT_PLAN_V3 = "https://ark.cn-beijing.volces.com/api/plan/v3";
 
@@ -353,6 +354,7 @@ export function applyGlmKimiOutboundCompatibility(args: {
   modelId: string;
   threadId?: string | null;
   url?: string;
+  reasoningReplayScope?: OcxReasoningReplayScopeRef;
 }): GlmKimiOutboundCompatibilityResult {
   const kimiTrace = isVolcengineAgentPlanKimi(args.provider, args.modelId);
   const threadIdTag = debugOpaqueTag(args.threadId);
@@ -379,6 +381,9 @@ export function applyGlmKimiOutboundCompatibility(args: {
   }
   let body = normalizeVolcengineAgentPlanAssistantContent(args.body, args.provider);
   body = normalizeThirdPartyPlaintextAgentMessages(body, args.provider, args.modelId);
+  if (args.provider.arkKimiResponsesModels?.includes(args.modelId)) {
+    body = projectForeignKimiReasoning(body, args.reasoningReplayScope);
+  }
   body = appendTrailingUserTurnForPrefillRestrictedModel(body, args.provider, args.modelId);
   let lowered: { body: unknown; diagnostic?: KimiToolSchemaLoweringDiagnostic };
   try {

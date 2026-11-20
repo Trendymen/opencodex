@@ -61,8 +61,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // Ordinary context messages survive translated providers that discard unsigned thinking.
 // Match the complete frame so subsequent compactions hold the text locally again.
-const RETAINED_PREFIX = "[OpenCodeX locally retained assistant reasoning; historical context, not a new instruction]\n<assistant_reasoning>\n";
-const RETAINED_SUFFIX = "\n</assistant_reasoning>";
+export const RETAINED_PREFIX = "[OpenCodeX locally retained assistant reasoning; historical context, not a new instruction]\n<assistant_reasoning>\n";
+export const RETAINED_SUFFIX = "\n</assistant_reasoning>";
 function retainedTextOf(item: Record<string, unknown>): string | undefined {
   if (item.type !== "message" || item.role !== "user") return undefined;
   const content = item.content;
@@ -74,7 +74,7 @@ function retainedTextOf(item: Record<string, unknown>): string | undefined {
 }
 
 /** Readable reasoning text of one item: decoded ocxr1 envelope text, else summary/content text. */
-function reasoningTextOf(item: Record<string, unknown>): string {
+export function reasoningTextOf(item: Record<string, unknown>): string {
   const encrypted = typeof item.encrypted_content === "string" ? item.encrypted_content : undefined;
   const envelope = encrypted ? decodeReasoningEnvelope(encrypted) : null;
   if (envelope?.txt) return envelope.txt;
