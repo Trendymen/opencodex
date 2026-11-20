@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import { isTranslatorBudgetExceededError } from "../lib/translator-budget";
 import { RETAINED_PREFIX, RETAINED_SUFFIX, reasoningTextOf } from "../responses/reasoning-retention";
 import { durableReplayDestinationIdentity } from "../responses/reasoning-replay-cache";
+import { currentRequestIsLocal } from "../lib/request-peer-scope";
+import { connectionReplayScopeForThread, connectionReplayScopeOwnerKey, type ConnectionReplayScope } from "../responses/state/connection-scope";
+import type { HandleResponsesOptions } from "../server/responses/core-options";
 import type { OcxReasoningReplayScopeRef } from "../types";
 
 type Rec = Record<string, unknown>;
@@ -21,15 +24,48 @@ interface NativeItem {
 }
 
 const nativeReasoning = new Map<string, NativeScope>();
+type LocalAuthority = { kind: "http" } | { kind: "websocket"; scope: ConnectionReplayScope; thread: string; key: string };
+const localAuthorities = new WeakMap<OcxReasoningReplayScopeRef, LocalAuthority>();
 
 function isRec(value: unknown): value is Rec {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function hasPrincipal(scope: OcxReasoningReplayScopeRef | undefined): boolean {
+  return typeof scope?.clientPrincipalId === "string" && scope.clientPrincipalId.trim().length > 0;
+}
+
+export function bindKimiLocalReplayScope(
+  scope: OcxReasoningReplayScopeRef | undefined,
+  options: Pick<HandleResponsesOptions, "admission" | "inboundTransport" | "replayScope">,
+  ownThread: string | undefined,
+): void {
+  if (!scope) return;
+  localAuthorities.delete(scope);
+  if (hasPrincipal(scope) || options.admission?.kind !== "loopback" || !currentRequestIsLocal()) return;
+  if (options.inboundTransport !== "websocket") {
+    localAuthorities.set(scope, { kind: "http" });
+    return;
+  }
+  const connection = connectionReplayScopeForThread(options.replayScope, ownThread);
+  const key = connectionReplayScopeOwnerKey(connection);
+  if (connection && key && ownThread) localAuthorities.set(scope, { kind: "websocket", scope: connection, thread: ownThread, key });
+}
+
+function callerNamespace(scope: OcxReasoningReplayScopeRef | undefined): string | undefined {
+  if (hasPrincipal(scope)) return JSON.stringify(["principal", scope!.clientPrincipalId]);
+  const authority = scope && localAuthorities.get(scope);
+  if (authority?.kind === "http") return JSON.stringify(["local", "http"]);
+  if (authority?.kind === "websocket" && connectionReplayScopeForThread(authority.scope, authority.thread)) {
+    return JSON.stringify(["local", "websocket", authority.key]);
+  }
+  return undefined;
+}
+
 function scopeIdentity(scope: OcxReasoningReplayScopeRef | undefined): string | undefined {
   const current = scope?.current;
   const owner = scope?.nativeReasoningOwner;
-  const fields = [scope?.clientPrincipalId, scope?.clientThreadId, current?.providerName,
+  const fields = [callerNamespace(scope), scope?.clientThreadId, current?.providerName,
     current?.providerDestinationIdentity, current?.providerDestinationDurableIdentity,
     current?.adapterName, current?.modelId, current?.credentialIdentity,
     current?.credentialDurableIdentity, owner?.destination, owner?.credential, scope?.nativeReasoningEndpoint];
@@ -42,12 +78,15 @@ export function kimiReplayScopeForEndpoint(
   url: string,
 ): OcxReasoningReplayScopeRef | undefined {
   if (!scope) return undefined;
-  return {
+  const snapshot: OcxReasoningReplayScopeRef = {
     ...scope,
     ...(scope.current ? { current: { ...scope.current } } : {}),
     ...(scope.nativeReasoningOwner ? { nativeReasoningOwner: { ...scope.nativeReasoningOwner } } : {}),
     nativeReasoningEndpoint: durableReplayDestinationIdentity(url),
   };
+  const authority = localAuthorities.get(scope);
+  if (authority) localAuthorities.set(snapshot, authority);
+  return snapshot;
 }
 
 function itemIdentity(item: Rec): NativeItem | undefined {
@@ -83,7 +122,7 @@ export function rememberKimiNativeReasoning(output: unknown, scope: OcxReasoning
   const current = nativeScope(scope, at);
   if (!current) return;
   const items = output.flatMap(item => isRec(item) && item.type === "reasoning" ? [itemIdentity(item)] : [])
-    .filter((item): item is NativeItem => item !== undefined);
+    .filter((item): item is NativeItem => item !== undefined && (hasPrincipal(scope) || item.ciphertext !== undefined));
   if (items.length === 0) return;
   const { entry, key } = current;
   entry.at = at;
@@ -102,6 +141,7 @@ function isCurrentKimiNative(item: Rec, scope: OcxReasoningReplayScopeRef | unde
   const bound = nativeScope(scope, Date.now());
   const identity = itemIdentity(item);
   if (!bound || !identity) return false;
+  if (!hasPrincipal(scope) && !identity.ciphertext) return false;
   if (identity.id && identity.ciphertext) return bound.entry.items.has(itemKey(identity));
   return [...bound.entry.items.values()].some(candidate => identity.id
     ? candidate.id === identity.id : candidate.ciphertext === identity.ciphertext);
