@@ -43,6 +43,10 @@ When a file contains the retired OpenCode Free provider, an active file read att
 
 Installation, a restarted user service, external-device connectivity and paid-provider access require separate acceptance.
 
+## Standalone web search
+
+To use Codex standalone search with a known third-party model, select it by provider or by a model alias. Enable the OpenAI search backend and set `webSearchSidecar.model` to a native ChatGPT model that does not require model access on a specific account, such as `gpt-6.2-sol`. OCX uses that model to forward `/v1/alpha/search` to ChatGPT and keeps the third-party model for the conversation. A scoped API key must allow both routes.
+
 ## Per-key model conversion
 
 Add `modelConversion` to an existing entry in `apiKeys` to enable conversion for that key on the auxiliary `10100` listener. Omitting the field or setting `enabled` to `false` disables it. The key's normal authentication and scope checks still apply; no GUI controls are added.
@@ -128,6 +132,8 @@ The paths in these tables are relative to `codexPassthrough`. All defaults are `
 | `privateErrorBodyReadDeadline` | Keep the fixed 5-second total, first-byte and inactivity deadlines for HTTP error bodies protected with private credentials. When disabled, remove the fixed total deadline and use `stallTimeoutSec` for first-byte and inactivity waits; cancellation, the 64 KiB limit and credential masking remain active. |
 | `synthesizeTerminalFailure` | Apply existing synthetic terminal-failure handling when no usable terminal event arrives. |
 | `normalizeHostedImages` | Convert supported hosted-image results for the client and clean their display paths from subsequent input. |
+
+With `synthesizeTerminalFailure: false`, OpenCodex makes an exception for Codex clients that receive canonical ChatGPT Responses over HTTP SSE. If the upstream reports an overload and ends the stream normally before any output, tool activity, or usable terminal event, OpenCodex keeps the original error frame and appends `response.failed` with `server_is_overloaded` and `Retry-After`. It uses the upstream's valid retry advice or one second when none is available. Codex can show the overload and retry the request.
 
 For a native Responses streaming combo attempt, `synthesizeTerminalFailure: false` still subjects a real `response.done` with `response.status: "completed"` and an output array to the upstream required-tool contract. The check leaves a valid block unchanged. With `repairResponseToolCalls: false`, it cannot count a repaired name the client did not receive as fulfillment. A missing required call can be retried only before commitment and when replay is safe; observed hosted-tool effects prevent replay.
 

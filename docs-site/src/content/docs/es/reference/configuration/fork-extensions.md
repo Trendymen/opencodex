@@ -45,6 +45,12 @@ Cuando un archivo contiene el proveedor retirado OpenCode Free, una lectura acti
 
 La instalación, el reinicio del servicio del usuario, la conexión desde dispositivos externos y el acceso a proveedores de pago requieren aceptación por separado.
 
+<a id="standalone-web-search"></a>
+
+## Búsqueda web independiente
+
+Para usar la búsqueda independiente de Codex con un modelo conocido de un proveedor externo, selecciona el modelo con el prefijo del proveedor o mediante un alias. Activa el backend de búsqueda de OpenAI y elige en `webSearchSidecar.model` un modelo nativo de ChatGPT que no requiera acceso en una cuenta específica, por ejemplo `gpt-6.2-sol`. OCX usa ese modelo al reenviar `/v1/alpha/search` a ChatGPT y mantiene el modelo externo para la conversación. Una clave de API con restricciones debe permitir ambas rutas.
+
 <a id="per-key-model-conversion"></a>
 
 ## Conversión de modelos por clave API
@@ -140,6 +146,8 @@ Las rutas de estas tablas son relativas a `codexPassthrough`. Todos los valores 
 | `privateErrorBodyReadDeadline` | Conserva los plazos fijos de 5 segundos para el total, el primer byte y la inactividad al leer cuerpos de error HTTP protegidos con credenciales privadas. Al desactivarlo, elimina el plazo total fijo y usa `stallTimeoutSec` para las esperas del primer byte y de inactividad; la cancelación, el límite de 64 KiB y la ocultación de credenciales siguen activos. |
 | `synthesizeTerminalFailure` | Aplica el tratamiento existente de fallo terminal sintético cuando no llega un evento terminal utilizable. |
 | `normalizeHostedImages` | Convierte los resultados de imágenes alojadas admitidos para el cliente y elimina sus rutas de presentación de la entrada posterior. |
+
+Con `synthesizeTerminalFailure: false`, OpenCodex aplica una excepción para los clientes Codex que reciben respuestas del servicio canónico ChatGPT Responses por HTTP SSE. Si el proveedor informa de una sobrecarga y cierra el flujo normalmente antes de enviar salida, actividad de herramientas o un evento terminal utilizable, OpenCodex conserva el evento de error original y añade un `response.failed` con `server_is_overloaded` y `Retry-After`. Usa el tiempo de espera válido que indica el proveedor o un segundo si no hay ninguno. Codex puede mostrar la causa de la sobrecarga y reintentar la solicitud.
 
 En un intento Combo de Responses nativo con streaming, incluso con `synthesizeTerminalFailure: false`, un `response.done` real con `response.status: "completed"` y un array de salida sigue sujeto al contrato original de herramientas obligatorias. La comprobación no modifica un bloque válido. Con `repairResponseToolCalls: false`, no puede contar como cumplimiento un nombre reparado que el cliente no recibió. Una llamada obligatoria ausente solo puede reintentarse antes de confirmar la respuesta y cuando la repetición sea segura; los efectos observados de herramientas alojadas impiden repetirla.
 
