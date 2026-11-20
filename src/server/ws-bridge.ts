@@ -56,6 +56,7 @@ export interface WsData {
    */
   admission?: DataPlaneAdmission;
   readonly usageApiKeyId?: string;
+  readonly usageApiKeyPrincipalId?: string;
   /** Local-only loopback replay identity; revalidated each turn without retaining its secret. */
   replayPrincipal?: HandleResponsesOptions["replayPrincipal"];
   /**

@@ -630,16 +630,20 @@ export function resolveFilteredReplayPrincipal(
   return undefined;
 }
 
-function configuredRelayKeyId(token: string | null | undefined, config: OcxConfig): string | undefined {
+function configuredRelayKey(token: string | null | undefined, config: OcxConfig) {
   const resolved = token ? resolveDataPlaneAdmissionSecret(token, config) : null;
-  return resolved?.kind === "configured" ? resolved.keyId : undefined;
+  return resolved?.kind === "configured" ? resolved : undefined;
 }
 
 export function resolveLoopbackResponsesRelayUsage(headers: Headers, config: OcxConfig) {
-  const relayBearer = configuredRelayKeyId(authorizationCredential(headers), config);
-  const apiKeyId = configuredRelayKeyId(headers.get("x-opencodex-api-key"), config)
-    ?? relayBearer ?? configuredRelayKeyId(headers.get("x-api-key"), config);
-  return apiKeyId === undefined ? undefined : { apiKeyId, stripBearer: relayBearer !== undefined };
+  const relayBearer = configuredRelayKey(authorizationCredential(headers), config);
+  const selected = configuredRelayKey(headers.get("x-opencodex-api-key"), config)
+    ?? relayBearer ?? configuredRelayKey(headers.get("x-api-key"), config);
+  return selected === undefined ? undefined : {
+    apiKeyId: selected.keyId,
+    contextPrincipalId: selected.contextPrincipalId,
+    stripBearer: relayBearer !== undefined,
+  };
 }
 
 export function removeLoopbackRelayBearer(headers: Headers): void {
@@ -664,7 +668,7 @@ export function markLoopbackRelayRecoveryRequest(req: Request): void {
 
 export function hasBlockingRelayRecoveryHeader(req: Request, config: OcxConfig): boolean {
   return ["x-opencodex-api-key", "x-api-key"].some(name => req.headers.has(name)
-    && (!loopbackRelayRecoveryRequests.has(req) || configuredRelayKeyId(req.headers.get(name), config) === undefined));
+    && (!loopbackRelayRecoveryRequests.has(req) || configuredRelayKey(req.headers.get(name), config) === undefined));
 }
 
 /** Stable structural replay identity. This does not replace process-local opaque-state ownership. */
