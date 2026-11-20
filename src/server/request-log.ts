@@ -171,9 +171,7 @@ export interface RequestLogContext extends UpstreamErrorDiagnostics, LinkRequest
   /** In-memory only: conversationId holds the log-only Hermes digest, which a native id replaces. */
   conversationIdIsHermesFallback?: boolean;
   surface?: "claude" | "claude-desktop" | "grok";
-  /** The matched configured key's id. Set ONLY for admissionKind "configured" —
-   *  never a sentinel, so a hand-edited entry whose id happens to be "loopback"
-   *  cannot absorb unrelated traffic. */
+  /** The matched configured key's id, including optional attribution on loopback. */
   apiKeyId?: string;
   /** Which kind of admission opened this request. Carries no secret. */
   admissionKind?: "configured" | "environment" | "loopback";
@@ -358,9 +356,7 @@ export interface RequestLogEntry extends UpstreamErrorDiagnostics, LinkRequestLo
    * never conversation-derived.
    */
   localTerminalReason?: string;
-  /** The matched configured key's id. Set ONLY for admissionKind "configured" —
-   *  never a sentinel, so a hand-edited entry whose id happens to be "loopback"
-   *  cannot absorb unrelated traffic. */
+  /** The matched configured key's id, including optional attribution on loopback. */
   apiKeyId?: string;
   /** Which kind of admission opened this request. Carries no secret. */
   admissionKind?: "configured" | "environment" | "loopback";

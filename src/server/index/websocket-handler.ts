@@ -335,6 +335,7 @@ export function createWebsocketHandler(
             provider: "unknown",
             ...(requestMetricsRecorder ? { requestMetricsRecorder } : {}),
             ...(wsAdmission ? admissionFields(wsAdmission) : {}),
+            ...(ws.data.usageApiKeyId ? { apiKeyId: ws.data.usageApiKeyId } : {}),
             client: ws.data.client ?? "unknown",
             inboundProtocol: "responses",
           };

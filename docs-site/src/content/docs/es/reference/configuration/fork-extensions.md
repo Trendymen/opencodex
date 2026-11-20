@@ -23,6 +23,8 @@ Para una API LAN separada, mantén el servicio principal en loopback con un puer
 
 Este modo auxiliar sirve el panel y la API de administración existentes en `http://127.0.0.1:10101` y vincula la API de modelos a `0.0.0.0:10100`. Se admiten otros puertos de administración en loopback si no entran en conflicto con otro listener configurado. Antes de activarlo, configura una clave API o un token nativo del plano de datos; un token de administrador por sí solo no autoriza solicitudes de modelos.
 
+En las conexiones locales directas al listener principal de loopback, Responses por HTTP, Compact y Responses por WebSocket atribuyen los registros y el uso al ID original de la clave Relay válida. Envía la clave en `x-opencodex-api-key` para conservar la cabecera `Authorization` del cliente. La recuperación de tareas v2 cifradas sigue requiriendo el token bearer nativo de ChatGPT del cliente y la cuenta correspondiente. Este listener admite una clave Relay reconocida junto con esas credenciales como excepción del Fork a la [regla original sobre cabeceras de clave API](/es/reference/configuration/agents/#encrypted-v2-task-recovery). El proxy excluye el secreto Relay de las solicitudes al proveedor y de los registros. El listener auxiliar sigue exigiendo sus credenciales habituales.
+
 Cuando el servicio principal ya está vinculado a una dirección fuera de loopback, para activar esta opción su puerto debe ser `10100`:
 
 ```json

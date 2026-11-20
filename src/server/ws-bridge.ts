@@ -55,6 +55,7 @@ export interface WsData {
    * attribution.
    */
   admission?: DataPlaneAdmission;
+  readonly usageApiKeyId?: string;
   /** Local-only loopback replay identity; revalidated each turn without retaining its secret. */
   replayPrincipal?: HandleResponsesOptions["replayPrincipal"];
   /**

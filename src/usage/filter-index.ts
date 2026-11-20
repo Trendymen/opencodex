@@ -73,7 +73,7 @@ import {
   UsageLedgerRebuildRequiredError,
   type UsageLedgerScanResult,
 } from "./ledger-scanner";
-import { USAGE_CODEX_CLIENT_LABELS, type UsageSourceFilter } from "./source-filter";
+import { KEY_ATTRIBUTION_ADMISSION_KINDS, USAGE_CODEX_CLIENT_LABELS, type UsageSourceFilter } from "./source-filter";
 import { usageAttributions } from "./summary";
 import type { UsageTimeWindow } from "./time-range";
 
@@ -1240,7 +1240,7 @@ function candidateBranches(
     rowClauses.push("r.api_key_id = ?");
     rowValues.push(device.id);
   } else if (device?.kind === "unconfigured") {
-    rowClauses.push("r.admission_kind = 'configured' AND r.api_key_id IS NOT NULL AND r.api_key_id <> ''");
+    rowClauses.push("r.api_key_id IS NOT NULL AND r.api_key_id <> ''");
     const ids = query.configuredApiKeyIds ?? [];
     if (ids.length > 0) {
       rowClauses.push(`r.api_key_id NOT IN (${ids.map(() => "?").join(", ")})`);
@@ -1285,7 +1285,13 @@ function candidateBranches(
   // transactions, so a concurrent refresh can index a row at exactly that offset mid-read.
   rowClauses.push("r.byte_offset < ?");
   rowValues.push(snapshot.indexedOffset);
-  const alternativeSql = clientAlternatives
+  const alternatives = device?.kind === "unconfigured"
+    ? clientAlternatives.flatMap(alternative => KEY_ATTRIBUTION_ADMISSION_KINDS.map(kind => ({
+      clauses: [...alternative.clauses, "r.admission_kind = ?"],
+      values: [...alternative.values, kind],
+    })))
+    : clientAlternatives;
+  const alternativeSql = alternatives
     .map(alternative => alternative.clauses.length > 0 ? `(${alternative.clauses.join(" AND ")})` : "")
     .filter(clause => clause !== "")
     .join(" OR ");
@@ -1298,8 +1304,8 @@ function candidateBranches(
     // one API key or client matches a handful.
     const baseIndex = rowAccessIndexWithoutClient(query);
     const cursor = paged ? " AND r.byte_offset > ?" : "";
-    return clientAlternatives.map((alternative, ordinal) => {
-      const index = alternative.clauses.length > 0 ? "idx_usage_rows_client" : baseIndex;
+    return alternatives.map((alternative, ordinal) => {
+      const index = client !== undefined && client !== "all" ? "idx_usage_rows_client" : baseIndex;
       const clauses = [...rowClauses, ...alternative.clauses];
       return {
         label: `row[${ordinal}]${index ? ` ${index}` : " primary key"}`,
@@ -1329,7 +1335,7 @@ function candidateBranches(
         ...attrValues,
         snapshot.indexedOffset,
         ...rowValues,
-        ...clientAlternatives.flatMap(alternative => alternative.values),
+        ...alternatives.flatMap(alternative => alternative.values),
       ],
     },
     {
@@ -1338,7 +1344,7 @@ function candidateBranches(
       values: [
         snapshot.generation,
         ...rowValues,
-        ...clientAlternatives.flatMap(alternative => alternative.values),
+        ...alternatives.flatMap(alternative => alternative.values),
       ],
     },
   ];
