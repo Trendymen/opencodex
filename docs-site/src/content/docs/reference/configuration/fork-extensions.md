@@ -21,6 +21,8 @@ For a separate LAN API, keep the primary service on loopback at a port other tha
 
 This auxiliary mode serves the existing dashboard and management API at `http://127.0.0.1:10101` and binds the model API to `0.0.0.0:10100`. Other loopback management ports are valid when they do not conflict with another configured listener. Configure a native data-plane API key or token before enabling it; an admin token alone does not authorize model requests.
 
+For direct local connections to the primary loopback listener, Responses HTTP, Compact, and Responses WebSocket attribute logs and usage to the original ID of the valid Relay key. Send the key in `x-opencodex-api-key` to preserve the caller's own `Authorization` header. V2 encrypted-task recovery still requires the caller's native ChatGPT bearer and matching account. This listener accepts a recognized Relay key alongside that pair as a Fork exception to the [upstream API-key-header rule](/reference/configuration/agents/#encrypted-v2-task-recovery). The proxy keeps the Relay secret out of upstream requests and logs. The auxiliary listener still requires its usual model credentials.
+
 When the primary service already binds a non-loopback address, enabling this option requires its port to be `10100`:
 
 ```json

@@ -299,8 +299,7 @@ export interface PersistedUsageEntry extends LinkRequestLogCarrier {
   provider: string;
   model: string;
   surface?: "claude" | "claude-desktop" | "grok";
-  /** Matched configured key id; absent for environment/loopback admissions and
-   *  for every row written before attribution existed. */
+  /** Matched configured key id. May be present on a loopback row with Relay attribution. */
   apiKeyId?: string;
   admissionKind?: "configured" | "environment" | "loopback";
   /** The inbound wire, not the client product — see `surface`. */

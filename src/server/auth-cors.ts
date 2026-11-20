@@ -581,6 +581,8 @@ export function isContextPrincipalCurrent(principal: string | undefined, config:
   return false;
 }
 
+const filteredLoopbackBearerPrincipals = new WeakMap<Request, string>();
+
 /**
  * The caller principal for a context-relay request, which is a stricter question than admission.
  *
@@ -599,6 +601,10 @@ export function resolveContextPrincipal(req: Request, config: OcxConfig, admissi
   const bearer = authorizationCredential(req.headers);
   const apiKey = req.headers.get("x-api-key")?.trim();
   for (const [token, source] of [[dedicated, "dedicated"], [bearer, "bearer"], [apiKey, "x-api-key"]] as const) {
+    if (source === "bearer") {
+      const retained = filteredLoopbackBearerPrincipals.get(req);
+      if (retained && isContextPrincipalCurrent(retained, config)) return retained;
+    }
     if (!token) continue;
     const resolved = resolveDataPlaneAdmissionSecret(token, config, source);
     const principal = contextPrincipalIdOf(resolved ?? undefined);
@@ -607,7 +613,7 @@ export function resolveContextPrincipal(req: Request, config: OcxConfig, admissi
   return undefined;
 }
 
-/** Preserve only loopback replay identity removed by the forwarding-header filter. */
+/** Preserve loopback replay identity removed by credential filtering. */
 export function resolveFilteredReplayPrincipal(
   req: Request,
   config: OcxConfig,
@@ -615,12 +621,50 @@ export function resolveFilteredReplayPrincipal(
   forwardHeaders: Headers,
 ): Readonly<{ clientPrincipalId: string }> | undefined {
   if (admission.kind !== "loopback"
-    || !(req.headers.has("x-opencodex-api-key") || req.headers.has("x-api-key"))) return undefined;
+    || !(req.headers.has("x-opencodex-api-key") || req.headers.has("x-api-key")
+      || (req.headers.has("authorization") && !forwardHeaders.has("authorization")))) return undefined;
   const principal = resolveContextPrincipal(req, config, admission);
   const forwardedPrincipal = resolveContextPrincipal(new Request(req.url, { headers: forwardHeaders }), config, admission);
   // A surviving bearer keeps its existing per-frame resolution and key-rotation semantics.
   if (principal && principal !== forwardedPrincipal) return Object.freeze({ clientPrincipalId: principal });
   return undefined;
+}
+
+function configuredRelayKeyId(token: string | null | undefined, config: OcxConfig): string | undefined {
+  const resolved = token ? resolveDataPlaneAdmissionSecret(token, config) : null;
+  return resolved?.kind === "configured" ? resolved.keyId : undefined;
+}
+
+export function resolveLoopbackResponsesRelayUsage(headers: Headers, config: OcxConfig) {
+  const relayBearer = configuredRelayKeyId(authorizationCredential(headers), config);
+  const apiKeyId = configuredRelayKeyId(headers.get("x-opencodex-api-key"), config)
+    ?? relayBearer ?? configuredRelayKeyId(headers.get("x-api-key"), config);
+  return apiKeyId === undefined ? undefined : { apiKeyId, stripBearer: relayBearer !== undefined };
+}
+
+export function removeLoopbackRelayBearer(headers: Headers): void {
+  headers.delete("authorization");
+  headers.delete("chatgpt-account-id");
+}
+
+export function withLoopbackRelayBearerRemoved(req: Request, config: OcxConfig, admission: DataPlaneAdmission): Request {
+  const filtered = new Request(req);
+  removeLoopbackRelayBearer(filtered.headers);
+  const replay = resolveFilteredReplayPrincipal(req, config, admission, filtered.headers);
+  if (replay) filteredLoopbackBearerPrincipals.set(filtered, replay.clientPrincipalId);
+  return filtered;
+}
+
+const loopbackRelayRecoveryRequests = new WeakSet<Request>();
+
+// The primary loopback handler marks the request it passes to the model handler.
+export function markLoopbackRelayRecoveryRequest(req: Request): void {
+  loopbackRelayRecoveryRequests.add(req);
+}
+
+export function hasBlockingRelayRecoveryHeader(req: Request, config: OcxConfig): boolean {
+  return ["x-opencodex-api-key", "x-api-key"].some(name => req.headers.has(name)
+    && (!loopbackRelayRecoveryRequests.has(req) || configuredRelayKeyId(req.headers.get(name), config) === undefined));
 }
 
 /** Stable structural replay identity. This does not replace process-local opaque-state ownership. */

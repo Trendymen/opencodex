@@ -14,6 +14,12 @@ export const USAGE_CODEX_CLIENT_LABELS = ["codex_cli", "codex_desktop", "codex_i
 export type UsageDeviceFilter = { kind: "all" | "no-key" | "unconfigured" } | { kind: "key"; id: string };
 export interface UsageSourceFilter { client: UsageSourceClient; device: UsageDeviceFilter }
 
+export const KEY_ATTRIBUTION_ADMISSION_KINDS = ["configured", "loopback"] as const;
+
+export function hasUsageKeyAttribution(entry: PersistedUsageEntry): entry is PersistedUsageEntry & { apiKeyId: string } {
+  return Boolean(entry.apiKeyId) && KEY_ATTRIBUTION_ADMISSION_KINDS.some(kind => kind === entry.admissionKind);
+}
+
 /** Reject excessive snapshots instead of truncating identity or retaining unbounded keys. */
 export const MAX_USAGE_CONFIGURED_KEYS = 1024;
 export function snapshotConfiguredKeyIds(ids: readonly string[]): string[] {
@@ -36,8 +42,8 @@ export function matchesUsageSource(entry: PersistedUsageEntry, filter: UsageSour
   const device = filter.device;
   if (device.kind === "no-key" && entry.apiKeyId !== undefined) return false;
   if (device.kind === "key" && entry.apiKeyId !== device.id) return false;
-  if (device.kind === "unconfigured" && (!configuredIds || entry.admissionKind !== "configured"
-    || !entry.apiKeyId || configuredIds.has(entry.apiKeyId))) return false;
+  if (device.kind === "unconfigured" && (!configuredIds || !hasUsageKeyAttribution(entry)
+    || configuredIds.has(entry.apiKeyId))) return false;
   if (filter.client === "all") return true;
   if (filter.client === "codex") {
     return isLegacyCodexUsage(entry)
