@@ -109,6 +109,8 @@ import {
   markTrustedHubManagementRequest,
   jsonResponse,
   admissionFields,
+  captureFilteredLoopbackBearer,
+  carryFilteredLoopbackBearerPrincipal,
   isContextPrincipalCurrent,
   markLoopbackRelayRecoveryRequest,
   removeLoopbackRelayBearer,
@@ -599,6 +601,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         if (!websocketLease) return serverBusyResponse(req, "Codex WebSockets", policy);
         const relayUsage = loopbackRelayUsage(admission);
         const forwardHeaders = selectForwardHeaders(req.headers);
+        const filteredBearer = relayUsage?.stripBearer ? captureFilteredLoopbackBearer(req, config, admission) : undefined;
         if (relayUsage?.stripBearer) removeLoopbackRelayBearer(forwardHeaders);
         const replayPrincipal = resolveFilteredReplayPrincipal(req, config, admission, forwardHeaders);
         // An unidentified loopback caller gets a server-minted replay scope bound to this
@@ -619,7 +622,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             classifyUsageClient(req.headers), replayPrincipal, replayScope,
           ), ...(relayUsage?.contextPrincipalId ? {
             usageApiKeyId: relayUsage.apiKeyId, usageApiKeyPrincipalId: relayUsage.contextPrincipalId,
-          } : {}), peerLocal: currentRequestIsLocal() },
+          } : {}), ...(filteredBearer ? { filteredBearer } : {}), peerLocal: currentRequestIsLocal() },
         })) return undefined as unknown as Response;
         releaseConnectionReplayScope(replayScope);
         websocketLease.release();
@@ -1462,30 +1465,32 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           logged = true;
           addFinalRequestLog(requestId, start, logCtx, status, meta);
         };
+        const inboundReq = req;
+        if (relayUsage?.stripBearer) req = withLoopbackRelayBearerRemoved(req, config, admission);
         const sessionReq = withCallerSessionIdentity(withGrokSessionIdentity(req), admission);
-        const modelReq = relayUsage?.stripBearer ? withLoopbackRelayBearerRemoved(sessionReq, config, admission) : sessionReq;
+        if (relayUsage?.stripBearer) carryFilteredLoopbackBearerPrincipal(req, sessionReq);
         const capturedReplayPrincipal = relayUsage?.stripBearer
-          ? resolveFilteredReplayPrincipal(sessionReq, config, admission, modelReq.headers) : undefined;
+          ? resolveFilteredReplayPrincipal(inboundReq, config, admission, sessionReq.headers) : undefined;
         const replayPrincipal = capturedReplayPrincipal && {
           get clientPrincipalId() {
             const principal = capturedReplayPrincipal.clientPrincipalId;
             return isContextPrincipalCurrent(principal, ctx.config) ? principal : undefined;
           },
         };
-        if (relayUsage) markLoopbackRelayRecoveryRequest(modelReq);
+        if (relayUsage) markLoopbackRelayRecoveryRequest(sessionReq);
         // Capture at authentication: runAdmittedHttpTurn can wait for body capacity first (#7859).
         const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
-        return runAdmittedHttpTurn(modelReq, policy, async turnAdmissionLease => {
+        return runAdmittedHttpTurn(sessionReq, policy, async turnAdmissionLease => {
           let response: Response;
           try {
-            response = await handleResponses(modelReq, config, logCtx, {
-              codexSessionIdSynthesized: !req.headers.has("session_id") && sessionReq.headers.has("session_id"),
+            response = await handleResponses(sessionReq, config, logCtx, {
+              codexSessionIdSynthesized: !inboundReq.headers.has("session_id") && sessionReq.headers.has("session_id"),
               turnAdmissionLease,
               admission,
               ...(replayPrincipal ? { replayPrincipal } : {}),
               advisorAdmissionPolicy,
-              onRequestBodyRead: () => disableResponsesRequestTimeout(req, requestServer),
-              abortSignal: req.signal,
+              onRequestBodyRead: () => disableResponsesRequestTimeout(inboundReq, requestServer),
+              abortSignal: inboundReq.signal,
               comboSelectionKeepalive: {},
               onFirstOutput: () => recordFirstOutput(logCtx, start),
               onNativePassthroughTerminal: status => {
@@ -1501,19 +1506,19 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           } catch (error) {
             const archiveError = reasoningArchiveErrorResponse(error);
             if (archiveError) return withRequestLogId(
-              withCors(responseWithDeferredRequestLog(archiveError, requestId, start, logCtx), req, policy), requestId,
+              withCors(responseWithDeferredRequestLog(archiveError, requestId, start, logCtx), inboundReq, policy), requestId,
             );
             // A bounded upstream body can fail before handleResponses returns a client response.
             // Finalize before rethrow so accounting observes the physical send while the caller
             // retains the existing reset/rejection instead of receiving a synthesized response.
             finalizeNativePassthroughLog(
-              req.signal.aborted ? 499 : 502,
-              { closeReason: req.signal.aborted ? "client_cancel" : "non_stream" },
+              inboundReq.signal.aborted ? 499 : 502,
+              { closeReason: inboundReq.signal.aborted ? "client_cancel" : "non_stream" },
             );
             throw error;
           }
           return withCodexResponseHeaders(
-            responseWithDeferredRequestLog(response, requestId, start, logCtx), req, policy, requestId,
+            responseWithDeferredRequestLog(response, requestId, start, logCtx), inboundReq, policy, requestId,
           );
         }, { requestId, start, logCtx });
       }
