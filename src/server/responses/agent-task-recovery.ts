@@ -4,7 +4,7 @@ import { decodeJwtPayload, extractAccountId } from "../../oauth/chatgpt";
 import type { OcxConfig } from "../../types";
 import { boundedBodyDecodeFailure, readBoundedResponseBody } from "../../lib/bounded-body";
 import { isTransientUpstreamStatus, retryBackoffDelayMs, sleepWithAbort } from "../../lib/upstream-retry";
-import { isApiAuthRequired, isProxyAdmissionSecret } from "../auth-cors";
+import { hasBlockingRelayRecoveryHeader, isApiAuthRequired, isProxyAdmissionSecret } from "../auth-cors";
 import {
   backendTaskCiphertextRuns,
   hasStrictBackendEncryptedAgentTask,
@@ -332,9 +332,7 @@ function isNativeChatGptAccessToken(token: string): boolean {
 function recoveryAdmission(req: Request, config: OcxConfig): RecoveryAdmission | null {
   if (isApiAuthRequired(config)) return null;
   if (!CODEX_ORIGINATORS.has(req.headers.get("originator") ?? "")) return null;
-  // Remote/shared proxy admission is intentionally unsupported: caller-controlled
-  // Codex metadata is not strong enough to authorize use of a stored ChatGPT session.
-  if (req.headers.has("x-opencodex-api-key") || req.headers.has("x-api-key")) return null;
+  if (hasBlockingRelayRecoveryHeader(req, config)) return null;
 
   const authorization = req.headers.get("authorization")?.trim() ?? "";
   const match = /^Bearer\s+(\S+)$/i.exec(authorization);

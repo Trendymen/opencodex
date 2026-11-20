@@ -4,6 +4,7 @@ import {
   type PersistedUsageEntry,
 } from "../../usage/log";
 import { scanUsageLedgerCooperatively } from "../../usage/ledger-scanner";
+import { hasUsageKeyAttribution } from "../../usage/source-filter";
 
 /**
  * Per-key usage as the API tab renders it.
@@ -27,7 +28,7 @@ export interface ApiKeyUsageSnapshot {
    * SET, not of a key, so it is singular and lives beside the map: it is what
    * lets the GUI tell "this key was used zero times" from "nothing is
    * attributable yet". Keyed on the kind rather than on `apiKeyId`, because an
-   * environment or loopback row is attributed traffic with no configured key.
+   * recognized admission can lack a configured key.
    */
   attributionSince?: string;
 }
@@ -57,9 +58,7 @@ function usableTimestamp(value: unknown): number | null {
  * Pure: one pass over an already-read snapshot, so it is unit-testable without
  * touching the filesystem.
  *
- * Rows are bucketed only when `admissionKind === "configured"`. Keying on
- * `apiKeyId` alone would let a hand-edited entry whose id is `loopback` absorb
- * traffic it never admitted.
+ * A configured or loopback row counts only when it carries a matched `apiKeyId`.
  */
 export function rollupApiKeyUsage(
   entries: PersistedUsageEntry[],
@@ -99,7 +98,7 @@ export function createApiKeyUsageAccumulator(
       if (timestamp !== null && (attributionSince === undefined || timestamp < attributionSince)) {
         attributionSince = timestamp;
       }
-      if (entry.admissionKind !== "configured" || !entry.apiKeyId || !seen.has(entry.apiKeyId)) return;
+      if (!hasUsageKeyAttribution(entry) || !seen.has(entry.apiKeyId)) return;
 
       const bucket = totals.get(entry.apiKeyId) ?? { requests7d: 0, totalRequests: 0 };
       // The request happened even if its clock reading is unusable, so it still

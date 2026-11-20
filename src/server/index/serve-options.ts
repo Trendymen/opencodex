@@ -109,12 +109,17 @@ import {
   markTrustedHubManagementRequest,
   jsonResponse,
   admissionFields,
+  markLoopbackRelayRecoveryRequest,
+  removeLoopbackRelayBearer,
   resolveApiAuth,
+  resolveLoopbackResponsesRelayUsage,
   resolveResponsesApiAuth,
   resolveFilteredReplayPrincipal,
   resolveContextPrincipal,
+  type DataPlaneAdmission,
   type RequestPolicyView,
   withCors,
+  withLoopbackRelayBearerRemoved,
   withManagementCors,
 } from "../auth-cors";
 import { managementSessionIssuance } from "../management-auth";
@@ -227,7 +232,7 @@ import { withGrokSessionIdentity } from "../../grok/session-identity";
 import { withCallerSessionIdentity } from "../caller-session-identity";
 import { agentAssertionUnsupportedResponse, hasAgentAssertionAuthorization } from "../../lib/authorization-scheme";
 import { runTurnStateCallerScope } from "../turn-state-handles";
-import { classifyRequestPeer, runWithRequestPeer } from "../../lib/request-peer-scope";
+import { classifyRequestPeer, currentRequestIsLocal, runWithRequestPeer } from "../../lib/request-peer-scope";
 
 export {
   claudeInterceptRouteAllowed,
@@ -337,6 +342,9 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         : ingress === "unauthenticated-loopback" || ingress === "claude-intercept" || ingress === "local-control"
           ? loopbackPolicy()
           : config;
+      const loopbackRelayUsage = (admission: DataPlaneAdmission) =>
+        ingress === "public" && admission.kind === "loopback" && currentRequestIsLocal()
+          ? resolveLoopbackResponsesRelayUsage(req.headers, config) : undefined;
       // Codex runtime agent assertion_only (Authorization: AgentAssertion) is refused before
       // admission or routing: it is never a bearer, never an admission secret, and no pool or
       // routed credential may stand in for it.
@@ -588,7 +596,9 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         }
         const websocketLease = tryReserveCodexWebSocket();
         if (!websocketLease) return serverBusyResponse(req, "Codex WebSockets", policy);
+        const relayUsage = loopbackRelayUsage(admission);
         const forwardHeaders = selectForwardHeaders(req.headers);
+        if (relayUsage?.stripBearer) removeLoopbackRelayBearer(forwardHeaders);
         const replayPrincipal = resolveFilteredReplayPrincipal(req, config, admission, forwardHeaders);
         // An unidentified loopback caller gets a server-minted replay scope bound to this
         // socket and its handshake thread; a keyed caller keeps the durable principal path.
@@ -606,7 +616,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             websocketLease,
             sessionLaneIdFromRequest(req.headers),
             classifyUsageClient(req.headers), replayPrincipal, replayScope,
-          ), peerLocal: classifyRequestPeer(ingress, requestServer.requestIP?.(req)?.address, config.dashboardTrustedProxy, req.headers).local },
+          ), ...(relayUsage ? { usageApiKeyId: relayUsage.apiKeyId } : {}), peerLocal: currentRequestIsLocal() },
         })) return undefined as unknown as Response;
         releaseConnectionReplayScope(replayScope);
         websocketLease.release();
@@ -1277,18 +1287,21 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
+        const relayUsage = loopbackRelayUsage(admission);
         const logCtx: RequestLogContext = {
           model: "unknown",
           provider: "unknown",
           ...requestMetricsLogContext, client: classifyUsageClient(req.headers),
           ...admissionFields(admission),
+          ...(relayUsage ? { apiKeyId: relayUsage.apiKeyId } : {}),
           inboundProtocol: "responses",
         };
         const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
-        return runAdmittedHttpTurn(req, policy, async turnAdmissionLease => {
+        const compactReq = relayUsage?.stripBearer ? withLoopbackRelayBearerRemoved(req, config, admission) : req;
+        return runAdmittedHttpTurn(compactReq, policy, async turnAdmissionLease => {
           let response: Response;
           try {
-            response = await handleResponsesCompact(req, config, logCtx, turnAdmissionLease, admission, {
+            response = await handleResponsesCompact(compactReq, config, logCtx, turnAdmissionLease, admission, {
               advisorAdmissionPolicy,
               onRequestBodyRead: () => disableResponsesRequestTimeout(req, requestServer),
             });
@@ -1427,11 +1440,13 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
+        const relayUsage = loopbackRelayUsage(admission);
         const logCtx: RequestLogContext = {
           model: "unknown",
           provider: "unknown",
           ...requestMetricsLogContext, client: classifyUsageClient(req.headers),
           ...admissionFields(admission),
+          ...(relayUsage ? { apiKeyId: relayUsage.apiKeyId } : {}),
           inboundProtocol: "responses",
         };
         if (req.headers.get("x-opencodex-grok") === "1") logCtx.surface = "grok";
@@ -1445,12 +1460,14 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           addFinalRequestLog(requestId, start, logCtx, status, meta);
         };
         const sessionReq = withCallerSessionIdentity(withGrokSessionIdentity(req), admission);
+        const modelReq = relayUsage?.stripBearer ? withLoopbackRelayBearerRemoved(sessionReq, config, admission) : sessionReq;
+        if (relayUsage) markLoopbackRelayRecoveryRequest(modelReq);
         // Capture at authentication: runAdmittedHttpTurn can wait for body capacity first (#7859).
         const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
-        return runAdmittedHttpTurn(sessionReq, policy, async turnAdmissionLease => {
+        return runAdmittedHttpTurn(modelReq, policy, async turnAdmissionLease => {
           let response: Response;
           try {
-            response = await handleResponses(sessionReq, config, logCtx, {
+            response = await handleResponses(modelReq, config, logCtx, {
               codexSessionIdSynthesized: !req.headers.has("session_id") && sessionReq.headers.has("session_id"),
               turnAdmissionLease,
               admission,

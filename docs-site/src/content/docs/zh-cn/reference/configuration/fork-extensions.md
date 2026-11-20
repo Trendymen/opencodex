@@ -21,6 +21,8 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 此 auxiliary 模式在 `http://127.0.0.1:10101` 提供现有控制台和管理 API，并把模型 API 绑定到 `0.0.0.0:10100`。其他回环管理端口也有效，但不能与其他配置的 listener 冲突。开启前须配置原生数据面 API Key 或 token；仅有 admin token 不能授权模型请求。
 
+本机直连回环主入口时，Responses HTTP、Compact 和 Responses WebSocket 将日志和用量归到有效 Relay Key 的原 ID。通过 `x-opencodex-api-key` 发送 Relay Key，可以保留调用者自己的 `Authorization`。V2 密文恢复仍要求调用者自带原生 ChatGPT bearer 及匹配的账号。此入口允许恢复请求同时携带有效 Relay Key，这是 Fork 对[上游 API Key 请求头限制（英文）](/reference/configuration/agents/#encrypted-v2-task-recovery)的例外。Relay Key 原文不会进入上游请求或日志。辅助入口仍要求原有模型凭据。
+
 主服务已经绑定非回环地址时，启用该选项要求主端口为 `10100`：
 
 ```json

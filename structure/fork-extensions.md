@@ -11,6 +11,7 @@
 
 ## 请求与工具边界
 
+- `src/server/index/serve-options.ts` 在本机直连回环主入口的 Responses、Compact 和 Responses WebSocket 握手校验可选 Relay Key，保留回环准入，把原 `apiKeyId` 写入日志和用量。模型路径移除已识别的 Relay bearer，既有上下文和重放所有者继续独立校验。HTTP 密文恢复可忽略已识别的 Relay Key 请求头，仍校验调用者自带的原生 ChatGPT bearer 及匹配账号。辅助模型入口沿用原准入和归属规则。`src/server/management/api-key-usage.ts` 将带 Key ID 的回环记录和经 Key 准入的记录归到同一个 ID；`src/usage/source-filter.ts` 与用量索引也保留当前配置已无该 ID 的历史记录。
 - `/v1/alpha/search` 经 ChatGPT 转发时，可为明确指定 Provider 或模型别名的已知第三方模型选择独立搜索模型。启用的 `openai` 搜索后端从 `webSearchSidecar.model` 读取无需账号专属权限的原生模型。受限 key 需要同时允许原对话路由和实际搜索模型。原生及账号限定的搜索仍使用客户端选择的模型。
 - `/v1/alpha/search` 和独立图片接口识别有效 OCX Bearer，包括主动带 key 的回环请求。上游鉴权由当前配置的账号或凭据完成，key 的模型和 Provider 限制仍生效。Direct 在读取主账号凭据前，沿用主账号策略绑定的等待期限。Direct 图片优先使用符合 key 权限的已有图片后端。默认图片 key 池在发送前暂停时，可改用已登录主账号。客户端创建的语音通话可经官方 Realtime 地址加入，`x-opencodex-api-key` 携带 OCX key，`Authorization` 携带原 ChatGPT 账号的 Bearer，`chatgpt-account-id` 须与 Bearer 中的账号声明一致。代理发出的语音别名继续绑定创建者 key。
 - GPT 家族和官方目的地分开判断。官方 Responses 保持原生消息/schema；`src/server/responses/codex-ws-request.ts` 只在构造 canonical 上游 WebSocket 帧时按对应许可映射有效的 Lite header，显式 HTTP 值优先同名 metadata。HTTP 请求体不预先合成 WS metadata，其他字段保持原样。
