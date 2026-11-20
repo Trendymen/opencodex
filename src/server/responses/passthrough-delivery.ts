@@ -211,6 +211,7 @@ import { repairNestedExecCallsInJson } from "../../responses/nested-exec-call-re
 import { createInboundResponsesDebugObserver, observeClientBoundResponsesSse, persistInboundResponsesDebugSummary } from "../../fork/inbound-response-debug";
 import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { codexRawJsonSse, relayUnmodifiedCodexSse } from "../../fork/codex-passthrough-response";
+import { codexWebsocketSafety, markCodexOverloadSource } from "../../fork/codex-overload-provenance";
 import { codexPrivateCredentialSources, createCodexPrivateCredentialGuard, readCodexPrivateErrorText,
   protectCodexPrivateSse, codexPrivateProtectionFailure, CodexPrivateCredentialProtectionError, codexPrivateErrorBodyReadDeadlines } from "../../fork/codex-passthrough-secrets";
 
@@ -1507,6 +1508,12 @@ export async function deliverPassthroughResponse(
       // branch retained bytes without a bound. Force the existing bounded,
       // single-reader relay before tee; HTTP fallback responses stay unmarked.
       const forceCodexWsEagerRelay = isCodexWsUpstreamResponse(upstreamResponse);
+      const overloadSource = codexPermissions?.synthesizeTerminalFailure === false
+        && options.inboundTransport !== "websocket" && (options.inboundWire ?? "responses") === "responses"
+        && clientRequestedStream === true && !canonicalBufferedJson
+        ? { safety: forceCodexWsEagerRelay ? codexWebsocketSafety(upstreamResponse) ?? { unsafe: true } : undefined,
+          retryAfter: headers.get("retry-after"), signal: upstream.signal, maskCredential: privateGuard?.mask }
+        : undefined;
       const phaseBarrierRequiresEagerRelay = inferResponsesMessagePhases;
       const inlineEagerRewrite = needsClientRewrite
         && (forceCodexWsEagerRelay || win32EagerRewrite || eagerPath?.useEagerRelay === true || phaseBarrierRequiresEagerRelay);
@@ -1602,12 +1609,14 @@ export async function deliverPassthroughResponse(
         // forced-rewrite traffic, and Darwin explicit eager traffic apply
         // client rewrites inline rather than via the tee()+JS-pull chain.
         if (!headers.has("content-type")) headers.set("content-type", "text/event-stream");
-        return markEagerRelaySseResponse(
+        const result = markEagerRelaySseResponse(
           markNativePassthroughSseResponse(new Response(eagerBody, {
             status: upstreamResponse.status,
             headers,
           })),
         );
+        if (overloadSource) markCodexOverloadSource(result, overloadSource);
+        return result;
       }
       const turnAc = new AbortController();
       const clientGone = new AbortController();
@@ -1705,10 +1714,12 @@ export async function deliverPassthroughResponse(
           { upstreamError: logCtx.upstreamError, terminalBoundary: codexSafetyBufferingOptions, maskCredential: synthesizedCopyMask, redactForwardedEvidence: forwardedEvidenceRedaction,
             onSyntheticTail: (payload, verdict) => noteRelaySyntheticTail(logCtx, payload, verdict) },
         ), downstreamObserver, persistDownstreamOnce);
-      return markNativePassthroughSseResponse(new Response(clientBody, {
+      const result = markNativePassthroughSseResponse(new Response(clientBody, {
         status: upstreamResponse.status,
         headers,
       }));
+      if (overloadSource) markCodexOverloadSource(result, overloadSource);
+      return result;
     }
     if (hasResponseMediaType(headers, "application/json")) {
       // Bounded whole-body read: a non-streaming upstream JSON body is fully materialized
