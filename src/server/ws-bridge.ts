@@ -29,6 +29,7 @@ import { codexPassthroughResponsePermissions } from "../fork/codex-passthrough-t
 import { CodexPrivateCredentialProtectionError } from "../fork/codex-passthrough-secrets";
 import { codexLocalFailure, decideCodexLocalError } from "../fork/codex-passthrough-local-errors";
 import { readBoundedResponseBody } from "../lib/bounded-body";
+import { currentRequestIsPrimaryLoopback } from "../lib/request-peer-scope";
 
 export { safeResponseHeaders } from "./safe-response-headers";
 
@@ -76,6 +77,7 @@ export interface WsData {
    * Fixed at the handshake; only `true` counts as local, so an absent value is denied.
    */
   readonly peerLocal?: boolean;
+  readonly peerPrimaryLoopback?: boolean;
   /** Discriminator: Responses reframing vs transparent live/realtime sideband relay. */
   kind?: "responses" | "live-sideband" | "remote-workspace-agent";
   remoteWorkspaceConnection?: { receive(raw: string | Uint8Array): void };
@@ -174,6 +176,7 @@ export function buildResponsesWsData(
   return {
     headers,
     admission,
+    ...(currentRequestIsPrimaryLoopback() ? { peerPrimaryLoopback: true } : {}),
     ...(replayPrincipal ? { replayPrincipal } : {}),
     ...(replayScope ? { replayScope } : {}),
     ...(client ? { client } : {}),

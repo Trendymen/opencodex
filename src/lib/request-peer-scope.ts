@@ -11,7 +11,7 @@ import { normalizeProxyAddress, parseDashboardTrustedProxy } from "../config/das
  * Antigravity ACP provider, plan 080). A turn with no recorded scope is not local: internal or
  * context-free calls fail closed.
  */
-export interface RequestPeerSnapshot { readonly local: boolean }
+export interface RequestPeerSnapshot { readonly local: boolean; readonly primaryLoopback?: boolean }
 
 const scope = new AsyncLocalStorage<RequestPeerSnapshot>();
 
@@ -43,7 +43,8 @@ export function classifyRequestPeer(
 ): RequestPeerSnapshot {
   const loopback = LOCAL_INGRESSES.has(ingress) && typeof peerAddress === "string" && LOOPBACK_ADDRESSES.has(peerAddress);
   const relayed = headers !== undefined && FORWARDING_HEADERS.some(name => headers.has(name));
-  return Object.freeze({ local: loopback && !relayed && !(ingress === "public" && isDeclaredProxyPeer(peerAddress, declaredProxy)) });
+  const local = loopback && !relayed && !(ingress === "public" && isDeclaredProxyPeer(peerAddress, declaredProxy));
+  return Object.freeze({ local, ...(local && ingress === "public" ? { primaryLoopback: true } : {}) });
 }
 
 function isDeclaredProxyPeer(peerAddress: string, declaredProxy: unknown): boolean {
@@ -61,4 +62,9 @@ export function runWithRequestPeer<T>(snapshot: RequestPeerSnapshot | undefined,
 /** True only when the current request was recorded as local. */
 export function currentRequestIsLocal(): boolean {
   return scope.getStore()?.local === true;
+}
+
+export function currentRequestIsPrimaryLoopback(): boolean {
+  const peer = scope.getStore();
+  return peer?.local === true && peer.primaryLoopback === true;
 }

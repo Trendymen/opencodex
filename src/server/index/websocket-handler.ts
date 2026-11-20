@@ -100,6 +100,7 @@ import { runTurnStateCallerScope } from "../turn-state-handles";
 import { runWithRequestPeer } from "../../lib/request-peer-scope";
 /** The socket recorded a local peer at its upgrade; any other socket has no local snapshot. */
 const LOCAL_PEER = Object.freeze({ local: true });
+const PRIMARY_LOOPBACK_PEER = Object.freeze({ local: true, primaryLoopback: true });
 import { admitHttpWorkflowTurn, workflowDecisionRefusalResponse } from "../workflow-refusal";
 
 /**
@@ -322,7 +323,8 @@ export function createWebsocketHandler(
         delete payload.type;
         turnAdmissionLease.bindAbortController(turnAbort);
         // The frame runs with its own caller slot, which admission fills for turn-state handle binding.
-        void runWithRequestPeer(ws.data.peerLocal === true ? LOCAL_PEER : undefined, () => runTurnStateCallerScope(async () => {
+        const localPeer = ws.data.peerPrimaryLoopback === true ? PRIMARY_LOOPBACK_PEER : LOCAL_PEER;
+        void runWithRequestPeer(ws.data.peerLocal === true ? localPeer : undefined, () => runTurnStateCallerScope(async () => {
           const start = Date.now();
           const requestId = nextRequestLogId(start);
           // Resolved once at the handshake — a frame has no request headers left
