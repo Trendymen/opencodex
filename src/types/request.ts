@@ -45,6 +45,8 @@ export interface OcxReasoningReplayScopeRef {
    */
   readonly clientThreadId: string;
   current?: Readonly<OcxReasoningReplayIdentity>;
+  nativeReasoningOwner?: Readonly<NativeReasoningOwner>;
+  nativeReasoningEndpoint?: string;
 }
 
 /** One replayed hosted search cell, rebuilt as the `web_search` call/result pair `callId`. */
@@ -135,6 +137,8 @@ export interface OcxParsedRequest {
    * prepareOpaqueBlobRecovery after an authoritative rejection; consumers strip replayed blobs.
    */
   _stripReasoningEncryptedContent?: boolean;
+  /** An upstream refusal requires ciphertext removal even for a known native item. */
+  _reasoningReplayExplicitRejection?: boolean;
   /** Native compaction remains nonportable even when reasoning-only retention is enabled. */
   _stripNativeCompactionEncryptedContent?: boolean;
   /** Retention kept reasoning ciphertext across a model/account change; arms streamed rejection recovery. */

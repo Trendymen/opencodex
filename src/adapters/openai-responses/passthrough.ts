@@ -33,6 +33,8 @@ export { FORWARD_HEADERS } from "./transport";
 import { collectFunctionCallRepairSchemas } from "../../responses/function-call-compat";
 import { agentMessageConversionOptions } from "../../fork/agent-message-format";
 import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../../fork/glm-kimi-compat";
+import { kimiReplayScopeForEndpoint } from "../../fork/kimi-reasoning-replay";
+import { reasoningReplayOpaqueBlobRejectionMemoized } from "../../responses/reasoning-replay-cache";
 import { addSpawnAgentForkTurnsGuidance } from "../../fork/spawn-agent-compat";
 import { debugResponsesOutboundShape } from "../../fork/outbound-debug";
 import { modelRecordValue } from "../../reasoning-effort";
@@ -420,7 +422,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         const isAzureResponses = provider.adapter === "azure" || provider.adapter === "azure-openai"
           || new URL(url).hostname.toLowerCase().endsWith(".openai.azure.com");
         const arkKimi = !forward && provider.arkKimiResponsesModels?.includes(parsed.modelId);
-        if (arkKimi) outBody = stripArkKimiOrphanCipher(outBody);
+        if (arkKimi && !parsed._reasoningReplayScope?.current) outBody = stripArkKimiOrphanCipher(outBody);
         if (isXaiResponsesDestination(provider) || isMetaAiResponsesDestination(url) || isAzureResponses
           || isKimiCodingResponsesHttpsUrl(url) || arkKimi || isOpenCodeGoResponsesUrl(url)) {
           outBody = stripUnsupportedOutputInclude(outBody);
@@ -473,18 +475,21 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           plaintextV2AgentMessageAliasedToolNames = prepared.aliasedAgentMessageToolNames;
         }
       }
+      const kimiConfigured = !forward && provider.arkKimiResponsesModels?.includes(parsed.modelId) === true;
+      const kimiOpaqueRejected = kimiConfigured && (parsed._reasoningReplayExplicitRejection === true
+        || reasoningReplayOpaqueBlobRejectionMemoized(parsed._reasoningReplayScope));
       const glmKimiCompatibility = applyGlmKimiOutboundCompatibility({
         body: outBody,
         provider,
         modelId: parsed.modelId,
         threadId: incoming.headers.get("thread-id") ?? incoming.headers.get("thread_id"),
         url,
-        reasoningReplayScope: parsed._reasoningReplayScope,
+        reasoningReplayScope: kimiConfigured ? kimiReplayScopeForEndpoint(parsed._reasoningReplayScope, url) : parsed._reasoningReplayScope,
+        reasoningReplayExplicitRejection: kimiOpaqueRejected,
       });
       outBody = glmKimiCompatibility.body;
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
-      const kimiReasoningProjected = provider.arkKimiResponsesModels?.includes(parsed.modelId) === true
-        && parsed._reasoningReplayScope?.current !== undefined;
+      const kimiReasoningProjected = kimiConfigured && parsed._reasoningReplayScope?.current !== undefined && !kimiOpaqueRejected;
       const stripNativeCompaction = parsed._stripNativeCompactionEncryptedContent === true
         || threadServingIdentityChanged;
       // Providers with the strict plaintext tool-continuation contract cannot consume any

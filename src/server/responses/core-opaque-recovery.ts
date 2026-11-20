@@ -332,10 +332,10 @@ export function isSelfIdentifiedOpaqueBlobRejection(bodyText: string): boolean {
  * inspects its bounded zero-output prelude even when a restored thread has no serving record;
  * successful native ciphertext remains unchanged and blobless turns do not gain inspection.
  */
-export function retainedReasoningStreamCandidate(parsed: OcxParsedRequest, outboundBody: string | undefined): boolean {
+export function retainedReasoningStreamCandidate(parsed: OcxParsedRequest, outboundBody: string | undefined, retainedKimiNative = false): boolean {
   // A restored thread has no process-local serving record. Inspect its actual outbound
   // opaque state too; only an explicit zero-output rejection can authorize the rebuild.
-  return parsed._stripReasoningEncryptedContent !== true
+  return (parsed._stripReasoningEncryptedContent !== true || retainedKimiNative)
     && outboundResponsesBodyCarriesOpaqueBlob(outboundBody);
 }
 
@@ -348,9 +348,10 @@ export function retainedReasoningStreamRejection(
   parsed: OcxParsedRequest,
   outboundBody: string | undefined,
   preflightLog: RequestLogContext,
+  retainedKimiNative = false,
 ): boolean {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
-  if (!retainedReasoningStreamCandidate(parsed, outboundBody)) return false;
+  if (!retainedReasoningStreamCandidate(parsed, outboundBody, retainedKimiNative)) return false;
   const { type, response } = payload as { type?: unknown; response?: { error?: unknown } };
   if (type !== "error" && type !== "response.failed") return false;
   const envelope = type === "error" ? payload : { error: response?.error };
@@ -497,6 +498,7 @@ export async function consoleGoUploadRejectionBody(
 
 export function prepareOpaqueBlobRecovery(parsed: OcxParsedRequest): void {
   parsed._stripReasoningEncryptedContent = true;
+  parsed._reasoningReplayExplicitRejection = true;
   delete parsed._nativeReasoningRetainedAcrossRoute;
   parsed._stripNativeCompactionEncryptedContent = true;
   // The destination rejected state another serving identity minted. A reasoning item's id names
