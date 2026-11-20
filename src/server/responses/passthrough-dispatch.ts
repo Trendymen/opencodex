@@ -151,6 +151,7 @@ import type { AttemptRecoveryKind } from "../../usage/log";
 import { resolveWireProtocolOverride } from "../adapter-resolve";
 import { refreshPoolForwardAuth, refreshNativeMainForwardAuth, withClaudeNativeSession } from "./core-auth";
 import { bindRouteReasoningReplayScope } from "./core-replay";
+import { rememberAcceptedPassthroughResponse } from "../../fork/kimi-passthrough-response";
 import type { OAuthAccessSnapshot } from "../../oauth";
 import { publicOAuthErrorPresentation, OAuthAccountPausedError, OAuthLoginRequiredError, OAuthTokenRefreshBusyError, publicOAuthAuthenticationErrorMessage } from "../../oauth";
 import { AnthropicAccountCooldownError } from "../../oauth/anthropic-routing";
@@ -602,9 +603,8 @@ export async function preparePassthroughExchange(
         normalizedResponse, responseEffects.plaintextV2AgentMessageToolNames, responseEffects.plaintextV2AgentMessageAliasedToolNames,
       );
       if (plaintextRestore.overflowed) return;
-      const restoredResponse = plaintextRestore.value as typeof normalizedResponse;
       // Replay overlap compares the items the client echoes, including visible reasoning shape.
-      const replayResponse = restoredResponse;
+      const restoredResponse = plaintextRestore.value as typeof normalizedResponse;
       if (
         undeclaredToolGuardActive
         && undeclaredToolCallNameInResponse(
@@ -620,15 +620,15 @@ export async function preparePassthroughExchange(
       }
       const normalizedReplayResponse = (undeclaredToolGuardActive
         ? normalizeDefaultNamespaceInResponse(
-            replayResponse,
+            restoredResponse,
             declaredWireToolNames,
             declaredBareWireToolNames,
           ).value
-        : replayResponse) as typeof replayResponse;
+        : restoredResponse) as typeof restoredResponse;
       const firstCompletion = !inspectedCompletionSeen;
       inspectedCompletionSeen = true;
       const publishAcceptedResponse = (accepted: unknown): void => {
-        rememberPassthroughResponse?.(accepted as typeof replayResponse);
+        rememberAcceptedPassthroughResponse(accepted, response, route, parsed, rememberPassthroughResponse);
         if (firstCompletion && (inspectedTerminal === null || firstTerminalAllowsRecall)) {
           // A model-less first completion permanently declines recall; later terminal
           // frames are hidden by the client boundary and cannot supply its identity.
