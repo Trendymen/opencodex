@@ -583,6 +583,11 @@ export function isContextPrincipalCurrent(principal: string | undefined, config:
 
 const filteredLoopbackBearerPrincipals = new WeakMap<Request, string>();
 
+export function carryFilteredLoopbackBearerPrincipal(source: Request, target: Request): void {
+  const principal = filteredLoopbackBearerPrincipals.get(source);
+  if (principal) filteredLoopbackBearerPrincipals.set(target, principal);
+}
+
 /**
  * The caller principal for a context-relay request, which is a stricter question than admission.
  *
@@ -609,6 +614,38 @@ export function resolveContextPrincipal(req: Request, config: OcxConfig, admissi
     const resolved = resolveDataPlaneAdmissionSecret(token, config, source);
     const principal = contextPrincipalIdOf(resolved ?? undefined);
     if (principal) return principal;
+  }
+  return undefined;
+}
+
+function filteredBearerFingerprint(token: string): string {
+  return createHmac("sha256", CONTEXT_PRINCIPAL_SALT)
+    .update("filtered-websocket-bearer\0").update(token.trim()).digest("hex");
+}
+
+export function captureFilteredLoopbackBearer(req: Request, config: OcxConfig, admission: DataPlaneAdmission): string | undefined {
+  const bearer = authorizationCredential(req.headers);
+  if (!bearer || admission.kind !== "loopback") return undefined;
+  const principal = contextPrincipalIdOf(resolveDataPlaneAdmissionSecret(bearer, config, "bearer") ?? undefined);
+  return principal && principal === resolveContextPrincipal(req, config, admission)
+    ? filteredBearerFingerprint(bearer) : undefined;
+}
+
+export function resolveFilteredLoopbackBearer(fingerprint: string, config: OcxConfig): string | undefined {
+  const match = (token: string | undefined): string | undefined => {
+    if (!token || !secretEquals(fingerprint, filteredBearerFingerprint(token))) return undefined;
+    return contextPrincipalIdOf(resolveDataPlaneAdmissionSecret(token, config, "bearer") ?? undefined);
+  };
+  const environment = match(configuredApiAuthToken(config));
+  if (environment) return environment;
+  for (const key of config.apiKeys ?? []) {
+    const current = match(key.key);
+    if (current) return current;
+    const pending = key.pendingRotation;
+    if (pending && Date.parse(pending.expiresAt) > Date.now()) {
+      const rotated = match(pending.key);
+      if (rotated) return rotated;
+    }
   }
   return undefined;
 }
