@@ -151,7 +151,7 @@ import type { AttemptRecoveryKind } from "../../usage/log";
 import { resolveWireProtocolOverride } from "../adapter-resolve";
 import { refreshPoolForwardAuth, refreshNativeMainForwardAuth, withClaudeNativeSession } from "./core-auth";
 import { bindRouteReasoningReplayScope } from "./core-replay";
-import { rememberAcceptedPassthroughResponse } from "../../fork/kimi-passthrough-response";
+import { createKimiPassthroughReplay } from "../../fork/kimi-passthrough-response";
 import type { OAuthAccessSnapshot } from "../../oauth";
 import { publicOAuthErrorPresentation, OAuthAccountPausedError, OAuthLoginRequiredError, OAuthTokenRefreshBusyError, publicOAuthAuthenticationErrorMessage } from "../../oauth";
 import { AnthropicAccountCooldownError } from "../../oauth/anthropic-routing";
@@ -628,7 +628,7 @@ export async function preparePassthroughExchange(
       const firstCompletion = !inspectedCompletionSeen;
       inspectedCompletionSeen = true;
       const publishAcceptedResponse = (accepted: unknown): void => {
-        rememberAcceptedPassthroughResponse(accepted, response, route, parsed, rememberPassthroughResponse);
+        recordPhysicalSend.remember(accepted, response, rememberPassthroughResponse);
         if (firstCompletion && (inspectedTerminal === null || firstTerminalAllowsRecall)) {
           // A model-less first completion permanently declines recall; later terminal
           // frames are hidden by the client boundary and cannot supply its identity.
@@ -730,7 +730,7 @@ export async function preparePassthroughExchange(
       parsed,
       currentRequest: () => request,
     });
-    const recordPhysicalSend = replayGuard.sendHandler;
+    const recordPhysicalSend = createKimiPassthroughReplay(replayGuard, () => ({ parsed, route, url: request.url }));
     /**
      * The operator's replacement grant for THIS logical request.
      *
@@ -1682,7 +1682,7 @@ export async function preparePassthroughExchange(
           preOutputRefusalHold: preOutputRefusalHold(),
           onPhysicalSend: (retryRequest, body) => {
             sendBudgetState.noteTargetSends(1);
-            replayGuard.record(retryRequest, body);
+            recordPhysicalSend.record(retryRequest, body);
           },
           onResponse: (response, retryAuthCtx, retryRequest) => {
             adoptCodexWsStage(response, logCtx);
@@ -1740,7 +1740,7 @@ export async function preparePassthroughExchange(
       && (recoveryContentType.includes("text/event-stream") || (!recoveryContentType && upstreamRequestsStream))
       && !opaqueBlobRecoveryGuard.attempted
       && !configuredTransientSendBudgetExhausted()
-      && (outboundResponsesBodyCarriesEncryptedFunctionOutput(request.body) || (!sendBudgetState.ambiguousResendSpent && retainedReasoningStreamCandidate(parsed, request.body)));
+      && (outboundResponsesBodyCarriesEncryptedFunctionOutput(request.body) || (!sendBudgetState.ambiguousResendSpent && retainedReasoningStreamCandidate(parsed, request.body, recordPhysicalSend.hasRetainedReasoning(request.body))));
     if (streamedFunctionOutputCandidate) {
       const preflightLog: RequestLogContext = { model: logCtx.model, provider: logCtx.provider };
       const preflight = await preflightComboStreamResponse(upstreamResponse, preflightLog,
@@ -1753,7 +1753,7 @@ export async function preparePassthroughExchange(
           // intentionally understands only Responses error/message fields. Preserve only this
           // exact identity so the projected 502 can enter the existing single-shot recovery.
           if (decryptRejection) preflightLog.upstreamError = ENCRYPTED_FUNCTION_OUTPUT_REJECTION;
-          return decryptRejection || (!sendBudgetState.ambiguousResendSpent && retainedReasoningStreamRejection(payload, parsed, request.body, preflightLog));
+          return decryptRejection || (!sendBudgetState.ambiguousResendSpent && retainedReasoningStreamRejection(payload, parsed, request.body, preflightLog, recordPhysicalSend.hasRetainedReasoning(request.body)));
         }, {
           allowMissingContentType: !recoveryContentType && upstreamRequestsStream,
           replayReadErrors: true,

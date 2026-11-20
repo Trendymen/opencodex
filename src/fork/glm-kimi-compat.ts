@@ -355,6 +355,7 @@ export function applyGlmKimiOutboundCompatibility(args: {
   threadId?: string | null;
   url?: string;
   reasoningReplayScope?: OcxReasoningReplayScopeRef;
+  reasoningReplayExplicitRejection?: boolean;
 }): GlmKimiOutboundCompatibilityResult {
   const kimiTrace = isVolcengineAgentPlanKimi(args.provider, args.modelId);
   const threadIdTag = debugOpaqueTag(args.threadId);
@@ -381,8 +382,8 @@ export function applyGlmKimiOutboundCompatibility(args: {
   }
   let body = normalizeVolcengineAgentPlanAssistantContent(args.body, args.provider);
   body = normalizeThirdPartyPlaintextAgentMessages(body, args.provider, args.modelId);
-  if (args.provider.arkKimiResponsesModels?.includes(args.modelId)) {
-    body = projectForeignKimiReasoning(body, args.reasoningReplayScope);
+  if (args.provider.authMode !== "forward" && args.provider.arkKimiResponsesModels?.includes(args.modelId)) {
+    body = projectForeignKimiReasoning(body, args.reasoningReplayScope, args.reasoningReplayExplicitRejection);
   }
   body = appendTrailingUserTurnForPrefillRestrictedModel(body, args.provider, args.modelId);
   let lowered: { body: unknown; diagnostic?: KimiToolSchemaLoweringDiagnostic };

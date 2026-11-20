@@ -1249,7 +1249,7 @@ export async function prepareResponsesRequest(
   // later turn, and a model switch is not a spawn, so the spawn requirement failed the thread
   // closed permanently without ever attempting recovery. The trust boundary is
   // `recoveryAdmission()` in ./agent-task-recovery -- Codex originator, live native ChatGPT
-  // bearer, matching chatgpt-account-id, no inbound API key, no proxy-admission secret -- which
+  // bearer, matching chatgpt-account-id, and the separate proxy-key checks -- which
   // admits only the owner of the session that would be spent. `threadSpawn` narrowed which of
   // that owner's own requests could use their own session; it kept nobody else out. The combo
   // gate above keeps its spawn requirement: that path has its own native-target filtering and
@@ -1333,6 +1333,7 @@ export async function prepareResponsesRequest(
             "_promptCacheKeyIsSharedCohort",
             "_cursorClientThreadId",
             "_reasoningReplayScope",
+            "_reasoningReplayExplicitRejection",
             "_nativeReasoningRetention",
             "_cursorIsolateConversation",
             "_codexNewHistory",
@@ -1662,6 +1663,7 @@ export async function prepareResponsesRequest(
             _nativeReasoningRetention: previous._nativeReasoningRetention,
             _cursorIsolateConversation: previous._cursorIsolateConversation, _memoryModelPhase: previous._memoryModelPhase,
             _stripReasoningEncryptedContent: previous._stripReasoningEncryptedContent, _dropForeignReasoningItemIds: previous._dropForeignReasoningItemIds,
+            _reasoningReplayExplicitRejection: previous._reasoningReplayExplicitRejection,
             _providerContinuationCandidate: previous._providerContinuationCandidate, _providerContinuationOwner: previous._providerContinuationOwner,
             _responseModelId: previous._responseModelId, _wireModelOverride: previous._wireModelOverride,
             _openAiVirtualSelectedModelId: previous._openAiVirtualSelectedModelId, _portableCompaction: previous._portableCompaction });

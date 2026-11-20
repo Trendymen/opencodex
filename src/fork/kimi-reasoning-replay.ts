@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isTranslatorBudgetExceededError } from "../lib/translator-budget";
 import { RETAINED_PREFIX, RETAINED_SUFFIX, reasoningTextOf } from "../responses/reasoning-retention";
+import { durableReplayDestinationIdentity } from "../responses/reasoning-replay-cache";
 import type { OcxReasoningReplayScopeRef } from "../types";
 
 type Rec = Record<string, unknown>;
@@ -10,9 +11,13 @@ const MAX_ITEMS_PER_SCOPE = 256;
 const TTL_MS = 60 * 60 * 1000;
 
 interface NativeScope {
-  identity: string;
   at: number;
-  items: Set<string>;
+  items: Map<string, NativeItem>;
+}
+
+interface NativeItem {
+  id?: string;
+  ciphertext?: string;
 }
 
 const nativeReasoning = new Map<string, NativeScope>();
@@ -21,68 +26,91 @@ function isRec(value: unknown): value is Rec {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function scopeIdentity(scope: OcxReasoningReplayScopeRef | undefined): { key: string; identity: string } | undefined {
+function scopeIdentity(scope: OcxReasoningReplayScopeRef | undefined): string | undefined {
   const current = scope?.current;
-  if (!scope?.clientThreadId || !current?.providerDestinationDurableIdentity || !current.credentialDurableIdentity) return undefined;
+  const owner = scope?.nativeReasoningOwner;
+  const fields = [scope?.clientPrincipalId, scope?.clientThreadId, current?.providerName,
+    current?.providerDestinationIdentity, current?.providerDestinationDurableIdentity,
+    current?.adapterName, current?.modelId, current?.credentialIdentity,
+    current?.credentialDurableIdentity, owner?.destination, owner?.credential, scope?.nativeReasoningEndpoint];
+  return fields.every(value => typeof value === "string" && value.trim().length > 0)
+    ? JSON.stringify(fields) : undefined;
+}
+
+export function kimiReplayScopeForEndpoint(
+  scope: OcxReasoningReplayScopeRef | undefined,
+  url: string,
+): OcxReasoningReplayScopeRef | undefined {
+  if (!scope) return undefined;
   return {
-    key: JSON.stringify([scope.clientPrincipalId ?? null, scope.clientThreadId]),
-    identity: JSON.stringify([
-      current.providerName,
-      current.providerDestinationDurableIdentity,
-      current.adapterName,
-      current.modelId,
-      current.credentialDurableIdentity,
-    ]),
+    ...scope,
+    ...(scope.current ? { current: { ...scope.current } } : {}),
+    ...(scope.nativeReasoningOwner ? { nativeReasoningOwner: { ...scope.nativeReasoningOwner } } : {}),
+    nativeReasoningEndpoint: durableReplayDestinationIdentity(url),
   };
 }
 
-function itemKeys(item: Rec): string[] {
-  return [
-    ["encrypted_content", item.encrypted_content],
-    ["id", item.id],
-  ].flatMap(([name, value]) => typeof value === "string" && value.length > 0
-    ? [createHash("sha256").update(name + "\0" + value).digest("hex")]
-    : []);
+function itemIdentity(item: Rec): NativeItem | undefined {
+  const hasId = Object.hasOwn(item, "id");
+  const hasCiphertext = Object.hasOwn(item, "encrypted_content");
+  if (!hasId && !hasCiphertext) return undefined;
+  if (hasId && (typeof item.id !== "string" || !item.id.trim())) return undefined;
+  if (hasCiphertext && (typeof item.encrypted_content !== "string" || !item.encrypted_content.trim())) return undefined;
+  return {
+    ...(hasId ? { id: createHash("sha256").update(`id\0${item.id}`).digest("hex") } : {}),
+    ...(hasCiphertext ? { ciphertext: createHash("sha256").update(`encrypted_content\0${item.encrypted_content}`).digest("hex") } : {}),
+  };
 }
 
-function nativeScope(scope: OcxReasoningReplayScopeRef | undefined, at: number): { entry: NativeScope; key: string; identity: string } | undefined {
-  const bound = scopeIdentity(scope);
-  if (!bound) return undefined;
-  const entry = nativeReasoning.get(bound.key);
+function itemKey(item: NativeItem): string {
+  return JSON.stringify([item.id ?? null, item.ciphertext ?? null]);
+}
+
+function nativeScope(scope: OcxReasoningReplayScopeRef | undefined, at: number): { entry: NativeScope; key: string } | undefined {
+  const key = scopeIdentity(scope);
+  if (!key) return undefined;
+  const entry = nativeReasoning.get(key);
   if (entry && at - entry.at >= TTL_MS) {
-    nativeReasoning.delete(bound.key);
-    return undefined;
+    nativeReasoning.delete(key);
+    return { entry: { at, items: new Map() }, key };
   }
-  if (entry && entry.identity !== bound.identity) {
-    nativeReasoning.delete(bound.key);
-    return undefined;
-  }
-  return { entry: entry ?? { identity: bound.identity, at, items: new Set() }, key: bound.key, identity: bound.identity };
+  return { entry: entry ?? { at, items: new Map() }, key };
 }
 
 export function rememberKimiNativeReasoning(output: unknown, scope: OcxReasoningReplayScopeRef | undefined): void {
   if (!Array.isArray(output)) return;
-  const keys = output.flatMap(item => isRec(item) && item.type === "reasoning" ? itemKeys(item) : []);
-  if (keys.length === 0) return;
-  const bound = scopeIdentity(scope);
-  if (!bound) return;
   const at = Date.now();
   const current = nativeScope(scope, at);
-  const entry: NativeScope = current?.entry ?? { identity: bound.identity, at, items: new Set() };
+  if (!current) return;
+  const items = output.flatMap(item => isRec(item) && item.type === "reasoning" ? [itemIdentity(item)] : [])
+    .filter((item): item is NativeItem => item !== undefined);
+  if (items.length === 0) return;
+  const { entry, key } = current;
   entry.at = at;
-  for (const key of keys) {
-    entry.items.delete(key);
-    entry.items.add(key);
-    while (entry.items.size > MAX_ITEMS_PER_SCOPE) entry.items.delete(entry.items.values().next().value!);
+  for (const item of items) {
+    const itemId = itemKey(item);
+    entry.items.delete(itemId);
+    entry.items.set(itemId, item);
+    while (entry.items.size > MAX_ITEMS_PER_SCOPE) entry.items.delete(entry.items.keys().next().value!);
   }
-  nativeReasoning.delete(bound.key);
-  nativeReasoning.set(bound.key, entry);
+  nativeReasoning.delete(key);
+  nativeReasoning.set(key, entry);
   while (nativeReasoning.size > MAX_SCOPES) nativeReasoning.delete(nativeReasoning.keys().next().value!);
 }
 
 function isCurrentKimiNative(item: Rec, scope: OcxReasoningReplayScopeRef | undefined): boolean {
   const bound = nativeScope(scope, Date.now());
-  return bound?.entry !== undefined && itemKeys(item).some(key => bound.entry.items.has(key));
+  const identity = itemIdentity(item);
+  if (!bound || !identity) return false;
+  if (identity.id && identity.ciphertext) return bound.entry.items.has(itemKey(identity));
+  return [...bound.entry.items.values()].some(candidate => identity.id
+    ? candidate.id === identity.id : candidate.ciphertext === identity.ciphertext);
+}
+
+export function containsRetainedKimiNativeReasoning(body: unknown, scope: OcxReasoningReplayScopeRef | undefined): boolean {
+  return isRec(body) && Array.isArray(body.input) && body.input.some(item =>
+    isRec(item) && item.type === "reasoning" && typeof item.encrypted_content === "string"
+    && item.encrypted_content.length > 0 && isCurrentKimiNative(item, scope));
 }
 
 function readableText(item: Rec): string {
@@ -95,22 +123,24 @@ function readableText(item: Rec): string {
 }
 
 /** Project foreign reasoning into readable history only when the destination cannot consume its native state. */
-export function projectForeignKimiReasoning(body: unknown, scope?: OcxReasoningReplayScopeRef): unknown {
+export function projectForeignKimiReasoning(body: unknown, scope?: OcxReasoningReplayScopeRef, forceForeign = false): unknown {
   if (!isRec(body) || !Array.isArray(body.input)) return body;
   if (!scope?.current) return body;
   let changed = false;
   const input: unknown[] = [];
+  const removedIds = new Set<string>();
   for (const item of body.input) {
     if (!isRec(item) || item.type !== "reasoning") {
       input.push(item);
       continue;
     }
-    if (isCurrentKimiNative(item, scope)) {
+    if (!forceForeign && isCurrentKimiNative(item, scope)) {
       input.push(item);
       continue;
     }
     const text = readableText(item);
     changed = true;
+    if (typeof item.id === "string" && item.id.length > 0) removedIds.add(item.id);
     if (text.length > 0) {
       input.push({
         type: "message",
@@ -119,5 +149,7 @@ export function projectForeignKimiReasoning(body: unknown, scope?: OcxReasoningR
       });
     }
   }
-  return changed ? { ...body, input } : body;
+  if (!changed) return body;
+  return { ...body, input: input.filter(item => !isRec(item) || item.type !== "item_reference"
+    || typeof item.id !== "string" || !removedIds.has(item.id)) };
 }
