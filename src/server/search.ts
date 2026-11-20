@@ -6,8 +6,8 @@ import { isolateCodexPoolClientMetadata, mergeCodexSelectedHeaders } from "../co
  * codex-rs's built-in search client executes CLIENT-SIDE: it POSTs `alpha/search` against the
  * configured base_url with the same ChatGPT bearer auth used for model requests. Under Design B
  * injection base_url is this proxy, so the request otherwise dies on the /v1/* JSON-404 guard.
- * The endpoint is private to the ChatGPT Codex backend, so the honest answer while a forward
- * provider is configured is to copy bytes. When none is, a configured web-search sidecar
+ * The ChatGPT forward provider serves the full search protocol. For a routed third-party
+ * model, the relay can use the configured OpenAI search model. With no forward provider, a sidecar
  * (anthropic / xai / gemini / exa) can still answer — see src/web-search/alpha-search.ts.
  * That fallback never runs while a forward candidate exists, and never borrows a different
  * paid backend than the one the operator named.
@@ -26,7 +26,7 @@ import {
   CodexThreadAffinityExpiredError,
 } from "../codex/auth-context";
 import { codexAccountNamespaceForModel } from "../codex/account-namespace-match";
-import { NATIVE_RESERVE_MODEL } from "../codex/catalog/native-models";
+import { ACCOUNT_GATED_NATIVE_OPENAI_MODELS, NATIVE_RESERVE_MODEL, SUPPORTED_NATIVE_OPENAI_SLUGS } from "../codex/catalog/native-models";
 import { MAIN_CODEX_ACCOUNT_ID } from "../codex/account-id";
 import { isCodexReserveRequestEligible } from "../codex/loopback-target";
 import { nativeMainStartupGateSnapshot } from "../codex/native-profile-startup";
@@ -44,7 +44,7 @@ import {
   resolveFirstUsableOpenAiSidecar,
   type ExactOpenAiSidecarAccount,
 } from "../providers/openai-sidecar";
-import { previewRouteModel, routeModel } from "../router";
+import { knownModelIdsForProvider, previewRouteModel, routeModel, type RouteResult } from "../router";
 import { handleAlphaSearchSidecarFallback, handleDevinAlphaSearch } from "../web-search/alpha-search";
 import { readJsonRequestBody, resolveInboundBodyLimitBytes } from "./request-decompress";
 import { ForwardAdmissionCredentialError, validateForwardAdmissionCredential } from "./auth-cors";
@@ -64,6 +64,15 @@ import { codexModelAvailabilityErrorResponse, nativeMainRefreshFailureResponse }
 const SEARCH_UPSTREAM_TIMEOUT_MS = 200_000;
 export const SEARCH_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
 
+function isKnownDirectSearchRoute(config: OcxConfig, route: RouteResult): boolean {
+  if (route.routeReason !== "explicit-provider-namespace" && route.routeReason !== "model-alias") return false;
+  const { providerName, provider, modelId } = route;
+  return provider.retainModels?.includes(modelId) === true
+    || Object.hasOwn(provider.modelDisplayNames ?? {}, modelId)
+    || provider.arkKimiResponsesModels?.includes(modelId) === true
+    || knownModelIdsForProvider(providerName, provider, config).includes(modelId);
+}
+
 export async function handleSearch(
   req: Request,
   config: OcxConfig,
@@ -80,11 +89,14 @@ export async function handleSearch(
   const model = (body as { model?: unknown } | null)?.model;
   if (typeof model === "string" && model) logCtx.model = model;
 
-  if (typeof model === "string" && model.trim()) {
+  const requestedSearchModel = typeof model === "string" && model.trim() ? model : undefined;
+  let requestedRoute: RouteResult | undefined;
+  if (requestedSearchModel) {
     try {
-      const route = previewRouteModel(config, model);
+      const route = previewRouteModel(config, requestedSearchModel);
+      requestedRoute = route;
       if (route.providerName === "devin" || route.staticPolicy.model.adapter === "devin") {
-        const denial = admissionScopeDenial(config, admission, model, route);
+        const denial = admissionScopeDenial(config, admission, requestedSearchModel, route);
         if (denial) return denial;
         logCtx.provider = route.providerName;
         logCtx.routeDecision = route.routeDecision;
@@ -152,9 +164,23 @@ export async function handleSearch(
     return handleAlphaSearchSidecarFallback(body, config, req.signal, logCtx, admission);
   }
 
-  const searchModel = typeof model === "string" && model.trim() ? model : undefined;
+  let searchModel = requestedSearchModel;
   if (!accountNamespace) {
-    const denial = admissionScopeDenial(config, admission, searchModel, {
+    const sidecar = config.webSearchSidecar;
+    const helperModel = sidecar?.model;
+    if (sidecar?.enabled !== false
+      && (sidecar?.backend ?? "openai") === "openai"
+      && helperModel && helperModel !== NATIVE_RESERVE_MODEL
+      && SUPPORTED_NATIVE_OPENAI_SLUGS.has(helperModel)
+      && !ACCOUNT_GATED_NATIVE_OPENAI_MODELS.has(helperModel)
+      && requestedRoute && requestedRoute.providerName !== candidates[0]!.providerName
+      && isKnownDirectSearchRoute(config, requestedRoute)) {
+      const denial = admissionScopeDenial(config, admission, requestedSearchModel, requestedRoute);
+      if (denial) return denial;
+      searchModel = helperModel;
+      relayBody = { ...(body as Record<string, unknown>), model: searchModel };
+    }
+    const denial = admissionScopeDenial(config, admission, requestedSearchModel, {
       providerName: candidates[0]!.providerName,
       modelId: searchModel,
     });
@@ -215,7 +241,7 @@ export async function handleSearch(
   }
 
   if (!accountNamespace) {
-    const denial = admissionScopeDenial(config, admission, searchModel, {
+    const denial = admissionScopeDenial(config, admission, requestedSearchModel, {
       providerName: upstream.providerName,
       modelId: searchModel,
     });
