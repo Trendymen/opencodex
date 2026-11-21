@@ -1397,7 +1397,9 @@ function LogDetailDialog({
                   // rather than being dropped: it is the exact wire code, which is what a bug
                   // report needs.
                   const recovery = attempt.recoveryKinds.map(kind => t(recoveryKindKey(kind))).join(", ");
+                  const outcome = classifyRequestOutcome(attempt);
                   const reason = attemptFailure.cause ?? attempt.errorCode
+                    ?? (attempt.status >= 100 && outcome !== "completed" ? t(OUTCOME_KEYS[outcome]) : undefined)
                     ?? (recovery || attemptCost?.kind !== "unavailable"
                       ? t("logs.detail.attempt.completed") : t(metricReasonKey(attemptCost.reason)));
                   return (
