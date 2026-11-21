@@ -172,8 +172,8 @@ export async function consumeComboFailure(
       // So is a sidecar loop's (web search, image bridge) envelope, whose message is the proxy's own
       // "Provider error 413" summary of a body it already read.
       if (response.status === 413) {
-        providerIntakeRefusal = legacy === undefined && !isRewrittenUpstreamError(response) && !isProxyFormattedFailure(body.text)
-          && isProviderIntakeRefusalBody(body.text);
+        providerIntakeRefusal = legacy === undefined && !isRewrittenUpstreamError(response) && !isProxyFormattedFailure(readBody.text)
+          && isProviderIntakeRefusalBody(readBody.text);
       }
       // Status-independent: the nested record is what normalization selects, so a root verdict
       // beside it has to be captured here or the conflict rule never sees it.
