@@ -55,7 +55,7 @@ export async function handleResponsesInner(
     // #8997: refuse a Command Code decision model before transport preparation (OAuth credential
     // resolution or refresh), sidecar auth or sidecar work. Nothing is sent, so the candidate is not
     // reported as a compaction-recovery source route either.
-    const decisionRefusal = commandCodeDecisionRouteRefusal(requestState.route.provider, requestState.parsed.modelId, logCtx);
+    const decisionRefusal = commandCodeDecisionRouteRefusal(requestState.route.provider, requestState.route.modelId, logCtx);
     if (decisionRefusal) return decisionRefusal;
     finish = response => markCodexPassthroughAttemptResponse(response, options.codexPassthroughTurn, {
       providerName: requestState.route.providerName, provider: requestState.route.provider, inboundWire: options.inboundWire ?? "responses",
