@@ -1,7 +1,7 @@
 # Trendymen Fork 差异
 
 记录当前代码相对 [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex) 已 rebase 基线的剩余能力。
-当前基线为 `v2.100.7`（`a8f689f2c77727842c424cb9a219dfeabce25eb5`）。包版本见 [package.json](package.json)，CLI 与桌面包的版本源由[版本同步工具](scripts/release-version-sources.ts)统一更新。正式发布状态以 Fork Tag 和对应的 Release 为准。
+当前基线为 `v2.100.8`（`9e0e298ef9720cfeaa1209f090a68e4d1965d2a1`）。包版本见 [package.json](package.json)，CLI 与桌面包的版本源由[版本同步工具](scripts/release-version-sources.ts)统一更新。正式发布状态以 Fork Tag 和对应的 Release 为准。
 
 官方文档保留上游原文。Fork 结构约束见 [structure/fork-extensions.md](structure/fork-extensions.md)，配置用法见 [Fork reference](docs-site/src/content/docs/reference/fork-extensions.md)，发布补充见 [FORK_MAINTAINERS.md](FORK_MAINTAINERS.md)。
 能力变化时原地更新本文；历史设计、执行步骤、冲突和验证流水从 Git 历史、任务材料及 Release Notes 查阅。
@@ -13,7 +13,7 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 
 | 剩余能力 | 实现入口 |
 | --- | --- |
-| GPT 官方订阅的原生 Responses 提供 23 项请求、响应、头字段和本地错误许可，全部默认开启并保留原功能条件。Direct/Pool（含新增账号）共用 Provider 配置，按每次最终目的地判断；第三方及转译入站不受影响。私有 SSE 5 秒、上游 WS 静默 90 秒及私有 HTTP 错误正文 5 秒期限可分别关闭，恢复重发与凭据保护保留；同名配置头合并时，按实际出站组核对原成员和 caller 持有情况。日志区分本地保护失败与原始上游 HTTP 状态。需保护私有值的未分类成功正文在交付前安全拒绝；不安全的 HTTP 错误正文被舍弃并保留上游状态，具体规则见 [Fork 配置](docs-site/src/content/docs/reference/configuration/fork-extensions.md#gpt-subscription-processing)。 | [配置合同](src/fork/codex-passthrough-contract.ts)、[turn](src/fork/codex-passthrough-turn.ts)、[私有值保护](src/fork/codex-passthrough-secrets.ts)、[面板](gui/src/components/provider-workspace/CodexPassthroughSettings.tsx) |
+| GPT 官方订阅的原生 Responses 提供 23 项请求、响应、头字段和本地错误许可，全部默认开启并保留原功能条件。Direct/Pool（含新增账号）共用 Provider 配置，按每次最终目的地判断；第三方及转译入站不受影响。私有 SSE 5 秒、上游 WS 静默 90 秒及私有 HTTP 错误正文 5 秒期限可分别关闭，恢复重发与凭据保护保留；同名配置头合并时，按实际出站组核对原成员和 caller 持有情况。日志区分本地保护失败与原始上游 HTTP 状态。Combo 是否因 Provider 413 换目标由完整的原始上游正文判定，包括脱敏结果为空的情况；脱敏正文只用于后续分类和交付。需保护私有值的未分类成功正文在交付前安全拒绝；不安全的 HTTP 错误正文被舍弃并保留上游状态，具体规则见 [Fork 配置](docs-site/src/content/docs/reference/configuration/fork-extensions.md#gpt-subscription-processing)。 | [配置合同](src/fork/codex-passthrough-contract.ts)、[turn](src/fork/codex-passthrough-turn.ts)、[私有值保护](src/fork/codex-passthrough-secrets.ts)、[Combo 失败处理](src/server/responses/core-combo-failure.ts)、[面板](gui/src/components/provider-workspace/CodexPassthroughSettings.tsx) |
 | 原生 Responses 流式 Combo 的实际 Codex 许可为 `synthesizeTerminalFailure: false` 时，带 `completed` 状态和 output 数组的真实 `response.done` 仍遵守官方必选工具合同。有效 block 不由该检查改写；关闭 `repairResponseToolCalls` 时，检查器不会把客户端未收到的修复后名称当作履约。已观察到 hosted 工具效果等不可安全重放证据时，缺工具失败不得再次发送。 | [必选工具检查](src/server/responses/combo-required-tool-stream.ts)、[交付许可](src/server/responses/passthrough-delivery.ts) |
 | Canonical ChatGPT 转发只在真实上游 WS 组帧时按 Lite 许可映射有效 header，显式 HTTP 值优先同名 metadata；HTTP 请求体不预先补写 WS metadata。未声明 hosted-search 工具时的自动历史投影受 `normalizeRequestParameters` 控制，Provider 显式 Lite 历史投影保持独立。citation 索引与 title 修补、内部 `reasoning.enabled` 清理也受该许可控制；Provider input metadata 剥离保持独立。 | [passthrough.ts](src/adapters/openai-responses/passthrough.ts)、[WS 组帧](src/server/responses/codex-ws-request.ts) |
 | 分开判断 GPT 模型族、native 路由、保留别名和官方目的地；第三方托管 GPT 不等于官方服务。 | [model identity](src/providers/openai-model-identity.ts)、[destination](src/providers/openai-tiers-destination.ts) |
