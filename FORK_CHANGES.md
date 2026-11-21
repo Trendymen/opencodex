@@ -61,9 +61,12 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 ## 保留边界
 
 - 官方 `omitDisabledNativeModels` 保持默认关闭，开启后仅省略符合条件的禁用原生模型；模型 catalog 不再追加 Fork 进度提示。
+- 同步 GPT-6.2 Astra 和 Sol 条目时，识别旧构建在启用或关闭 WebSocket 时生成的回退条目。其余字段符合历史模板时，升级到 GPT-6.2 自带的模型资料，并按当前 WebSocket 配置写入对应字段。[模型目录迁移](src/codex/catalog/metadata.ts)
 - Combo 的必选工具资格预筛（包括 Chat 目标与 Meta Responses）、当前轮工具目录与历史 item provenance、`additional_tools` 提升及不支持的 `output.encrypted_content` 清理采用官方实现。canonical forward 的工具提升还须 `normalizeRequestParameters` 许可允许，关闭或全关时保留字段存在性、值和数组顺序；第三方沿用官方自动目的地及 Provider opt-in 条件。Fork 的孤儿输出合法具名来源标签、Console Go 重复输出合并和订阅许可保持各自条件；缺失或非法来源使用官方 unknown 标记。
 - Responses 采用官方 [pipeline](src/server/responses/core-pipeline.ts) 的 prepare、transport 和 retention 生命周期，Fork 在早退与最终交付边界附上实际许可；无效保留摘要仍返回官方 502 合同。[Combo preflight](src/server/responses/core-combo.ts) 的正常 SSE 重放与失败响应投影携带所选 child 的许可、显式 `null` 和本地失败身份。[共享头列表](src/codex/forward-transport-headers.ts) 保留 routing hint 项，HTTP/WS 共用；[transport](src/adapters/openai-responses/transport.ts) 在关闭合成时保留 Provider 静态值优先。普通 Pool 的选中身份隔离、main-pool 的身份保留及必要构建的身份错误映射采用官方实现。默认 encrypted-content 规范化沿用官方身份切换清理条件，显式关闭时跳过该规范化。canonical 缓冲 Combo 在 required-tool 校验后仍检查 `normalizeHostedImages`：关闭时保留 `image_generation_call`，不写显示工件。真实账号切换仍需验收。
-- Responses 在解析传输凭据、准备 sidecar 或记录压缩恢复来源之前，按官方规则拒绝 [Command Code System One 决策模型](src/server/responses/command-code-decision-refusal.ts)。Combo 和路由策略可以继续选择下一候选。已进入额度冷却的 Codex Pool 主账号返回 429 时，[Combo](src/server/responses/core-combo.ts) 按账号处理冷却，池内可用账号仍可接手。Direct 模式按目标处理冷却。
+- Responses 按最终目标识别 Command Code System One 决策模型，在恢复加密任务、解析传输凭据或准备 sidecar 前返回 `404 model_not_found`。Combo 的恢复重选跳过决策模型，Combo 和路由策略仍可选择其他候选。[决策模型拒绝](src/server/responses/command-code-decision-refusal.ts) · [Combo](src/server/responses/core-combo.ts)
+- Codex Pool 主账号因额度返回 429 时，Combo 按实际请求模型的额度组查询账号冷却，池内可用账号仍可接手。Direct 模式按原 Combo 目标处理冷却。[Combo](src/server/responses/core-combo.ts)
+- 旧版日志记录缺少细分原因时，尝试详情根据 HTTP 状态显示结果，并保留已有的恢复说明。[日志页](gui/src/pages/Logs.tsx)
 - 关闭终态合成时，原始 `response.done` 的工具快照仍进入官方 [activity](src/codex/websocket-activity.ts) 观察层；客户端工具结果回传前不按 idle 回收，回传后允许回收，Provider 工具继续按实际所有权分类。原始 WS payload 保持不变。
 - 关闭终态合成时，Codex 客户端的 [ChatGPT Responses HTTP SSE](src/server/responses/passthrough-delivery.ts) 遇到输出前确认的上游过载，会在上游正常结束且缺少有效终态时追加带 `Retry-After` 的 `response.failed`，并保留原始错误帧。等待时间优先沿用有效的上游建议，缺省为 1 秒，由 Codex 发起重试。
 - [canonical 请求重建](src/server/responses/request-prepare.ts) 复用初次展开的 replay 线程和 owner，保留 plaintext V2 决定及已解析的 native reasoning retention 选择。续接无法恢复时记录本地拒绝及已实际发送的恢复尝试。模型、账号切换及有界重建继续使用官方判定。[Fork fetch 包装](src/fork/codex-passthrough-fetch.ts)复核 canonical 目的地并注册 HTTP 预发送失败标记，底层 [fetch helper](src/server/responses/fetch-helpers.ts)保留传输职责。物理重放检查继续读取实际出站 body，Remote Link 的接受事件和 activity holds 沿用官方合同。
