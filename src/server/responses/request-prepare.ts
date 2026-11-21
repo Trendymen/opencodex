@@ -1240,7 +1240,7 @@ export async function prepareResponsesRequest(
   }
 
   if (!options.abortSignal?.aborted) {
-    const decisionRefusal = commandCodeDecisionRouteRefusal(route.provider, parsed.modelId, logCtx);
+    const decisionRefusal = commandCodeDecisionRouteRefusal(route.provider, route.modelId, logCtx);
     if (decisionRefusal) return decisionRefusal;
   }
   let recoveryFailureReason: AgentTaskRecoveryFailureReason | undefined;
