@@ -18,6 +18,7 @@ import { isCodexAccountCooldownResponse } from "../../codex/account-cooldown-res
 import { resolveWireProtocolOverride } from "../adapter-resolve";
 import { parseSyntheticRowId } from "../fast-row";
 import { resolveOpenAiVirtualModel } from "../../providers/openai-virtual-models";
+import { isCommandCodeDecisionRoute } from "../../providers/command-code-decision-models";
 import { comboCooldownRetryAfterSeconds, isDefiniteContextOverflow, type CodexAccountModelRefusal } from "../../combos/failover";
 import { fallbackTriggerForStatus, guardFallbackHop } from "../../routing/fallback-policy";
 import {
@@ -308,7 +309,6 @@ export function comboExecutionBudgetPolicy(declaredTargets: number): RequestExec
   };
 }
 
-
 /**
  * A budget scope that keeps its own recovery ledgers but spends the SAME request-wide counter.
  *
@@ -334,7 +334,6 @@ export function deriveSendBudgetScope(
 ): RequestExecutionBudget {
   return deriveRequestExecutionBudget(parent, policy);
 }
-
 
 /**
  * The ladder one combo target may run, expressed as an allowance on the request-wide counter.
@@ -411,7 +410,6 @@ function eligibleJevComboChoices(
   }
   return choices;
 }
-
 
 /** Dispatch a Responses combo within its shared send budget and preserve terminal child failures. */
 export async function executeComboResponses(
@@ -732,6 +730,15 @@ export async function executeComboResponses(
   const recovery = agentTaskRecoveryConfig(config);
   const encryptedTaskRecoveryAdmitted = (options.inboundWire ?? "responses") === "responses"
     && isThreadSpawnRequest(req.headers) && !!recovery && !options.comboAttempt;
+  const recoveryAttemptEligible = (target: (typeof combo.targets)[number]): boolean => {
+    if (!recoveryEligible(target)) return false;
+    if (!encryptedTaskRecoveryAdmitted) return true;
+    try {
+      const selector = `${target.provider}/${target.model}`, { fastRow, effortRow } = parseSyntheticRowId(selector, config);
+      const route = routeConcreteModel(config, fastRow?.baseId ?? effortRow?.baseId ?? selector);
+      return !isCommandCodeDecisionRoute(route.provider, route.modelId);
+    } catch { return true; }
+  };
   const recoverUnreadableEncryptedTask = async (): Promise<boolean> => {
     if (encryptedTaskRecoveryAttempted) return false;
     encryptedTaskRecoveryAttempted = true;
@@ -826,7 +833,7 @@ export async function executeComboResponses(
 
   if (unreadableEncryptedAgentTask && !pick) {
     pick = await pickWithWait({
-      eligible: recoveryEligible,
+      eligible: recoveryAttemptEligible,
       allowCooldownReprobe: encryptedTaskRecoveryAdmitted,
       now: initialNow,
     });
@@ -844,7 +851,7 @@ export async function executeComboResponses(
       return options.abortSignal?.aborted
         ? clientCancelledResponse()
         : comboUnavailable(comboId, undefined,
-          comboExclusion(config, comboId, recoveryEligible));
+          comboExclusion(config, comboId, recoveryAttemptEligible));
     }
     if (!(await recoverUnreadableEncryptedTask())) {
       return options.abortSignal?.aborted
@@ -1193,6 +1200,7 @@ export async function executeComboResponses(
     // The physical destination after provider aliases and blockedModelRedirects: hops are
     // classified by where the request really goes, not by the selector the combo names.
     const targetRoute = routeConcreteModel(config, `${pick.target.provider}/${pick.target.model}`);
+    let accountRoute = targetRoute;
     // Every child send rechecks live metered consent and the key's current scope; a member that
     // fails either is skipped and an eligible sibling may still run.
     const dispatchScope = currentAdmissionScope();
@@ -1492,6 +1500,12 @@ export async function executeComboResponses(
           && !isComboTargetInCooldown(comboId, target),
         );
       const nativeChild = protocolLanes?.nativeChild(pick.target, targetRoute, targetSendBudget, turnEffort, jevEffortApplies);
+      if (!nativeChild) {
+        const selector = `${pick.target.provider}/${pick.target.model}`;
+        const { fastRow, effortRow } = parseSyntheticRowId(selector, config);
+        const baseId = fastRow?.baseId ?? effortRow?.baseId;
+        try { if (baseId) accountRoute = routeConcreteModel(config, baseId); } catch { /* The child handles an unresolved route. */ }
+      }
       response = nativeChild ? await dispatchNativeComboChild({
         source: options.protocolSource!,
         plan: nativeChild,
@@ -1769,7 +1783,7 @@ export async function executeComboResponses(
         const recoveredTarget = await pickWithWait({
           exclude: pick.attempted,
           eligible: target => {
-            if (!recoveryEligible(target)) return false;
+            if (!recoveryAttemptEligible(target)) return false;
             try {
               const route = routeConcreteModel(config, `${target.provider}/${target.model}`);
               return route.codexAccountMode === undefined
@@ -1845,12 +1859,14 @@ export async function executeComboResponses(
     // account label, which is stamped for pool and main-pool contexts alone (#8880).
     const poolAccountLabel = poolAccountProviderLabel(childLog.provider, pick.target.provider)
       ?? (childLog.accountLogLabel === "main" ? `${pick.target.provider}-main` : undefined);
+    const actualPoolAccountLabel = poolAccountProviderLabel(childLog.provider, accountRoute.providerName)
+      ?? (childLog.accountLogLabel === "main" ? `${accountRoute.providerName}-main` : undefined);
     const failedAccount = failure.response.status === 402
       ? creditRefusedAnthropicAccountLabel(
         config, pick.target.provider, pick.target.model, poolAccountLabel, failure.classificationText, failure.upstreamCode,
         failure.response,
       )
-      : cooledPoolAccountLabel(config, pick.target.provider, pick.target.model, poolAccountLabel)
+      : cooledPoolAccountLabel(config, accountRoute.providerName, accountRoute.modelId, actualPoolAccountLabel)
       ?? (failure.response.status === 429 && failureCooldownScope === "target"
       ? cooledGenericOAuthAccountLabel(config, pick.target.provider, pick.target.model, childLog.accountLogLabel, failure.retryAfter)
       : undefined);
@@ -1931,7 +1947,7 @@ export async function executeComboResponses(
       if (unreadableEncryptedAgentTask && !comboPayloadReadable) {
         const recoveredTarget = await pickWithWait({
           exclude: attemptedTargets,
-          eligible: recoveryEligible,
+          eligible: recoveryAttemptEligible,
           cooldownReprobeTargets: carriedReprobe ? Object.entries(carriedReprobe) : undefined,
           now: failureNow,
         });

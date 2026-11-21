@@ -33,8 +33,8 @@
 - `src/server/responses/core-lifetime.ts` 的预算与账号 lease 包装共用 marker 搬运，保留官方 same-target retry hold、模型计划拒绝、本地账号冷却标记、禁止重放状态及 Fork 的实际订阅许可和本地失败身份；包装后的响应继续使用原有 EOF、错误与取消释放路径。
 - `src/adapters/openai-responses/transport.ts` 在共享传输构建点转发 caller 的 routing hint。关闭 hint 合成时，Provider 静态同名头优先；开启时仍按最终 body 合成。`normalizeEncryptedContent: false` 跳过 OCX1 解封装和 native compaction 密文规范化；默认开启时沿用官方身份切换清理条件。
 - `src/server/responses/core-pipeline.ts` 为准备阶段的早退响应附上 admission 许可；路由确定后为实际尝试的响应附上许可，包括 retention 交付后的响应与无效摘要的 502。retention 的 prepare、deliver、dispose 和发送资源释放仍由官方 pipeline 管理。
-- `src/server/responses/request-prepare.ts` 在尝试恢复加密任务前拒绝已选中的 Command Code System One 决策模型。Responses pipeline 也检查恢复后重新选出的目标。
-- `src/server/responses/core-combo.ts` 采用 child 的预检结果时携带原响应的订阅许可、内部 `null` 哨兵和本地失败/重放身份，覆盖 SSE 回放与失败投影；不以父路由默认值覆盖 child，官方工具 ownership 的携带规则保持不变。
+- `src/server/responses/request-prepare.ts` 在尝试恢复加密任务前，按重定向后的目标拒绝 Command Code System One 决策模型。Responses pipeline 也检查恢复后重新选出的目标。决策模型不会触发 Combo 的恢复请求。
+- `src/server/responses/core-combo.ts` 采用 child 的预检结果时携带原响应的订阅许可、内部 `null` 哨兵和本地失败/重放身份，覆盖 SSE 回放与失败投影；不以父路由默认值覆盖 child，官方工具 ownership 的携带规则保持不变。Codex Pool 主账号的 429 按实际请求模型的额度组判断账号冷却，目标级冷却仍关联原 Combo 条目。
 - `src/fork/combo-adapter-preflight.ts` 为转译事件预检处理停滞、取消和迭代器关闭；`src/server/responses/run-turn-execution.ts` 使用该预检。
 - `src/server/responses/request-prepare.ts` 在 canonical source 重建时向 `src/fork/codex-passthrough-request.ts` 传入首次展开使用的 `replayThreadId` 和 `replayOwnerKey`，并保留初次解析的 plaintext V2 决定、已准备状态及 native reasoning retention 选项。明文编译仍检查该决定和当前配置；模型、账号切换及流内恢复沿用原 retention 值，sticky strip 仍由官方 replay 模块管理。
 - `src/adapters/openai-responses/reasoning.ts` 不根据同项的正文推测未知 opaque 内容的来源；身份切换或上游拒绝后的恢复沿用官方清理条件。
