@@ -19,6 +19,7 @@ import { addProtocolEntryReason, markProtocolEntry, protocolMarkFeatures } from 
 import { admitsHostedAdvisor, scopedAnthropicServerTools } from "../messages-native-scope";
 import { advisorServerToolDestination } from "../../adapters/anthropic/advisor-tool";
 import { isAntigravityRoute } from "../antigravity-direct-eligibility";
+import { commandCodeDecisionRouteRefusal } from "./command-code-decision-refusal";
 import { capturePolicyRequestRoute, assertPolicyNormalizedRoute, recordPolicyPreparedDestination, policyCandidateRefusalResponse, markPolicyCandidateRefusal, MandatoryToolChoiceUnavailableError, mandatoryToolChoiceUnavailableResponse } from "./policy-request-scope";
 import {
   agentTaskRecoveryConfig,
@@ -1238,22 +1239,18 @@ export async function prepareResponsesRequest(
     previewSelectionAdmission?.release();
   }
 
+  if (!options.abortSignal?.aborted) {
+    const decisionRefusal = commandCodeDecisionRouteRefusal(route.provider, parsed.modelId, logCtx);
+    if (decisionRefusal) return decisionRefusal;
+  }
   let recoveryFailureReason: AgentTaskRecoveryFailureReason | undefined;
   let recoveryAttempts: PersistedUsageAttempt[] | undefined;
   let recoveryNoticeInjected = false;
-  // Native fallback and explicitly trusted direct Responses routes can consume ciphertext,
-  // so recover only after final route selection.
-  //
-  // Deliberately NOT gated on `threadSpawn` (#4089). Switching a live thread from a native
-  // ChatGPT model to a routed provider replays a backend-minted encrypted agent message on every
-  // later turn, and a model switch is not a spawn, so the spawn requirement failed the thread
-  // closed permanently without ever attempting recovery. The trust boundary is
-  // `recoveryAdmission()` in ./agent-task-recovery -- Codex originator, live native ChatGPT
-  // bearer, matching chatgpt-account-id, and the separate proxy-key checks -- which
-  // admits only the owner of the session that would be spent. `threadSpawn` narrowed which of
-  // that owner's own requests could use their own session; it kept nobody else out. The combo
-  // gate above keeps its spawn requirement: that path has its own native-target filtering and
-  // per-attempt failover, and the reported defect is on this path.
+  // Native fallback and explicitly trusted direct Responses routes can consume ciphertext.
+  // A live thread can replay encrypted tasks after a model switch as well as a spawn (#4089).
+  // `recoveryAdmission()` checks the Codex originator, live native ChatGPT bearer, matching
+  // chatgpt-account-id and separate proxy-key rules before spending the caller's session.
+  // Combo recovery has its own spawn gate, native-target filtering and per-attempt failover.
   if (
     inboundWire === "responses"
     && agentTaskRecovery
