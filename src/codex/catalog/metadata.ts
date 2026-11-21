@@ -760,8 +760,6 @@ const HISTORICAL_DERIVED_FALLBACK_VALUES: ReadonlyMap<string, ReadonlyArray<unkn
   ["opencodex_native_source_priority", [1]],
   // 90% of the 272,000-token window configured natives received.
   ["auto_compact_token_limit", [244_800]],
-  // Written only when WebSockets were enabled, and then as the template's own value.
-  ["prefer_websockets", [undefined, true]],
   // Account prompts never reach a borrowed row.
   ["availability_nux", [undefined]],
 ]);
@@ -775,9 +773,19 @@ function isUnchangedHistoricalConfiguredFallback(entry: RawEntry): boolean {
     const borrowed = template === slug ? null : upstreamNativeEntry(template);
     if (!borrowed) return false;
     neutralizeBorrowedInstructions(borrowed);
+    const hasWebsockets = Object.hasOwn(entry, "supports_websockets");
+    const hasPreference = Object.hasOwn(entry, "prefer_websockets");
+    if (hasWebsockets
+      ? entry.supports_websockets !== true
+        || hasPreference !== Object.hasOwn(borrowed, "prefer_websockets")
+        || !Bun.deepEquals(entry.prefer_websockets, borrowed.prefer_websockets)
+      : hasPreference) return false;
     const fields = new Set([...Object.keys(entry), ...Object.keys(borrowed)]);
     return [...fields].every(field => {
       if (IDENTITY_FALLBACK_FIELDS.has(field)) return true;
+      if (field === "supports_websockets" || field === "prefer_websockets") return true;
+      // Earlier GPT-6 Sol builds clamped the maximum window to 272,000.
+      if (field === "max_context_window" && template === NATIVE_GPT6_SOL_MODEL && entry[field] === 272_000) return true;
       const derived = HISTORICAL_DERIVED_FALLBACK_VALUES.get(field);
       return derived ? derived.includes(entry[field]) : Bun.deepEquals(entry[field], borrowed[field]);
     });
