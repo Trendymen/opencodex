@@ -759,7 +759,7 @@ export function shouldUpgradeToUpstreamEntry(entry: RawEntry): boolean {
 // must equal the template, and build-derived fields must hold the exact values those builds wrote
 // (checked against rows generated at c320932c19^, the commit before GPT-6.2 was pinned).
 const HISTORICAL_CONFIGURED_TEMPLATES = [NATIVE_GPT61_SOL_MODEL, NATIVE_GPT6_SOL_MODEL] as const;
-const HISTORICAL_CONFIGURED_DESCRIPTION = /^OpenAI native model added through providers\.openai\.models; uses GPT-[0-9.]+-Sol capabilities\.$/;
+const HISTORICAL_CONFIGURED_DESCRIPTION = "OpenAI native model added through providers.openai.models; uses GPT-6-Sol capabilities.";
 const IDENTITY_FALLBACK_FIELDS: ReadonlySet<string> = new Set(["slug", "display_name", "description"]);
 // A Map, so a persisted key such as `constructor` never resolves to an inherited property.
 const HISTORICAL_DERIVED_FALLBACK_VALUES: ReadonlyMap<string, ReadonlyArray<unknown>> = new Map<string, ReadonlyArray<unknown>>([
@@ -775,7 +775,7 @@ const HISTORICAL_DERIVED_FALLBACK_VALUES: ReadonlyMap<string, ReadonlyArray<unkn
 function isUnchangedHistoricalConfiguredFallback(entry: RawEntry): boolean {
   const slug = entry.slug as string;
   if (entry.display_name !== configuredNativeOpenAiDisplayName(slug)) return false;
-  if (typeof entry.description !== "string" || !HISTORICAL_CONFIGURED_DESCRIPTION.test(entry.description)) return false;
+  if (entry.description !== HISTORICAL_CONFIGURED_DESCRIPTION) return false;
   return HISTORICAL_CONFIGURED_TEMPLATES.some(template => {
     // The projected template is what an earlier build copied, minus fields catalog rows never carry.
     const borrowed = template === slug ? null : upstreamNativeEntry(template);
