@@ -121,6 +121,17 @@ export async function consumeComboFailure(
       ? "" : protectText(readBody.text, readBody.displaySafe && !readBody.truncated);
     const body = protectText ? { ...readBody, text: protectedText,
       displaySafe: !readBody.oversized && readBody.displaySafe && !(readBody.text && !protectedText) } : readBody;
+    // The same whole-body rule for the provider-413 hop (#9017): a hard refusal or proxy marker
+    // past the 500-character cut must still keep the combo from sending the turn elsewhere.
+    // A native lane's rewritten envelope (Messages or Chat native) is not the provider's body: its
+    // terminal codes and an oversized original are gone, so only the original read may clear it.
+    // So is a sidecar loop's (web search, image bridge) envelope, whose message is the proxy's own
+    // "Provider error 413" summary of a body it already read.
+    if (response.status === 413) {
+      providerIntakeRefusal = !readBody.oversized && readBody.displaySafe && !readBody.truncated
+        && legacy === undefined && !isRewrittenUpstreamError(response) && !isProxyFormattedFailure(readBody.text)
+        && isProviderIntakeRefusalBody(readBody.text);
+    }
     if (body.displaySafe && !body.truncated && (permissions?.redactUpstreamErrors === false || localGateway)) originalErrorText = body.text;
     // A 5xx body counts as quota or classification evidence only when it decoded as valid
     // UTF-8, matching shouldRetryCodexPoolAccountQuota. A malformed byte keeps the status-only
@@ -164,16 +175,6 @@ export async function consumeComboFailure(
       // hard refusal after the cut must still veto a moderation hop.
       if (response.status === 400 || response.status === 422) {
         providerModerationRefusal = isProviderModerationRefusal(response.status, body.text, undefined, true);
-      }
-      // The same whole-body rule for the provider-413 hop (#9017): a hard refusal or proxy marker
-      // past the 500-character cut must still keep the combo from sending the turn elsewhere.
-      // A native lane's rewritten envelope (Messages or Chat native) is not the provider's body: its
-      // terminal codes and an oversized original are gone, so only the original read may clear it.
-      // So is a sidecar loop's (web search, image bridge) envelope, whose message is the proxy's own
-      // "Provider error 413" summary of a body it already read.
-      if (response.status === 413) {
-        providerIntakeRefusal = legacy === undefined && !isRewrittenUpstreamError(response) && !isProxyFormattedFailure(readBody.text)
-          && isProviderIntakeRefusalBody(readBody.text);
       }
       // Status-independent: the nested record is what normalization selects, so a root verdict
       // beside it has to be captured here or the conflict rule never sees it.
