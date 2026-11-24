@@ -6,6 +6,7 @@ import { SendBudgetExhaustedError, errorDestinationText, providerErrorDestinatio
 import { appendLoadedToolDefinitions, toolLoadingModelMatches } from "../../claude/inbound-tool-loading";
 import { applyChatToolDispatch } from "../../claude/chat-tool-dispatch";
 import { resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
+import { preserveKimiAgentTaskRoutePermission } from "../../fork/spawn-agent-compat";
 import { isRec } from "../../claude/inbound-records";
 import { isOpenCodeGoResponsesUrl } from "../../adapters/opencode-go-additional-tools";
 import { buildResponsesTransport } from "../../adapters/openai-responses/transport";
@@ -750,7 +751,7 @@ export async function prepareResponsesTransport(
   const resolveSelectionAdapter = (provider: OcxProviderConfig, retention = config.cacheRetention): ProviderAdapter => {
     if (copilotAutoAdapter) provider = { ...provider, adapter: copilotAutoAdapter };
     const adapterProvider = options.comboAttempt && provider.allowEncryptedV2AgentTasks === true
-      ? { ...provider, allowEncryptedV2AgentTasks: false }
+      ? preserveKimiAgentTaskRoutePermission({ ...provider, allowEncryptedV2AgentTasks: false }, provider)
       : provider;
     const resolved = resolveAdapter(adapterProvider, retention, route.providerName);
     // Capture this physical adapter's destination. A retry/rebind gets a fresh decision, and

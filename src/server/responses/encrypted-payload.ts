@@ -95,6 +95,8 @@ import {
 } from "../relay";
 import { hasResponsesItemIdRepair, relaySseWithResponsesItemIdRepair } from "../responses-item-id-repair";
 import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/catalog";
+import { isBackendTaskCiphertext, looksLikeUnknownOpaqueSlot, OMITTED_ENCRYPTED_CONTENT_TEXT } from "../../lib/agent-task-ciphertext";
+export { backendTaskCiphertextRuns, isBackendTaskCiphertext, OMITTED_ENCRYPTED_CONTENT_TEXT } from "../../lib/agent-task-ciphertext";
 
 
 export function looksLikeBackendCiphertext(payload: string): boolean {
@@ -104,33 +106,6 @@ export function looksLikeBackendCiphertext(payload: string): boolean {
   // lowered by the compatibility path below rather than poisoning every later native replay.
   return isStructurallyValidFernetToken(payload);
 }
-
-/**
- * Pre-route compatibility keeps an encoded-looking unknown slot opaque until the destination is
- * known. A routed destination strips that slot instead of exposing possible truncated ciphertext;
- * the canonical backend later applies the stricter structural classifier.
- */
-function looksLikeUnknownOpaqueSlot(payload: string): boolean {
-  return payload.length >= 64 && /^[A-Za-z0-9+/=_-]+$/.test(payload);
-}
-
-/**
- * The canonical backend's task ciphertext currently uses the Fernet-looking
- * `gAAAA` prefix. This is deliberately only a token-shape predicate: callers
- * that could make a routing or recovery decision must additionally bind it to
- * the strict NEW_TASK envelope below.
- */
-export function backendTaskCiphertextRuns(payload: string): string[] {
-  return payload.match(/gAAAA[A-Za-z0-9+/=_-]{59,}/g)
-    ?.filter(looksLikeUnknownOpaqueSlot) ?? [];
-}
-
-export function isBackendTaskCiphertext(payload: string): boolean {
-  const runs = backendTaskCiphertextRuns(payload);
-  return runs.length === 1 && runs[0] === payload;
-}
-
-
 
 /**
  * Backend-minted ciphertext runs are Fernet tokens (base64url, version byte 0x80).
@@ -409,9 +384,6 @@ export function hasEncryptedContentPart(content: unknown): boolean {
   ));
 }
 
-
-/** The marker `prepareOpaqueBlobRecovery` already substitutes for an undecryptable part. */
-export const OMITTED_ENCRYPTED_CONTENT_TEXT = "[encrypted content omitted]";
 
 /**
  * The Fernet WIRE shape, without validating the body: version prefix, base64url alphabet, and a

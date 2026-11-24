@@ -10,6 +10,7 @@ import { adoptCodexWsStage, capturePassthroughAffinity } from "./passthrough-obs
 import { codexPassthroughStreamPolicy, resolveCodexPassthroughAttempt } from "../../fork/codex-passthrough-turn";
 import { codexPassthroughProviderFetch as providerFetch } from "../../fork/codex-passthrough-fetch";
 import { codexPrivateRetryBodyReader } from "../../fork/codex-passthrough-secrets";
+import { createKimiPlaintextAgentGuard } from "../../fork/kimi-plaintext-agent-guard";
 import type { PassthroughDispatchInputs, PassthroughAdapterHandoff } from "../responses-passthrough-dispatch-types";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { requestPacingOverloadResponse } from "./pacing-overload";
@@ -51,15 +52,11 @@ import {
   codexTransientProbeGrant,
   createCodexAuthDispatchGuard,
 } from "../../codex/auth-context";
-import {
-  restoreRoutedNamespaceCalls,
-} from "../../responses/namespace-tool-compat";
+import { restoreRoutedNamespaceCalls } from "../../responses/namespace-tool-compat";
 import { restoreRoutedCustomCalls } from "../../responses/custom-tool-compat";
 import { formatErrorResponse, type ResponsesTerminalStatus } from "../../bridge";
 import { redactSecretString } from "../../lib/redact";
-import {
-  collectFunctionCallRepairSchemas,
-} from "../../responses/function-call-compat";
+import { collectFunctionCallRepairSchemas } from "../../responses/function-call-compat";
 import { authorizedBareNamespaceToolAliases as authorizedBareNamespaceAliases } from "./bare-namespace-aliases";
 import { outboundToolScope } from "./outbound-request-body";
 import { hasResponsesSnapshotRepair } from "../responses-snapshot-repair";
@@ -381,6 +378,7 @@ export async function preparePassthroughExchange(
     // when the client itself declared bare `exec`, because otherwise code-mode normalization could
     // authorize the unrelated code-mode helper names.
     const authorizedBareNamespaceToolAliases = authorizedBareNamespaceAliases(toolBridgeMaps.toolNsMap);
+    const opaqueAgentGuard = createKimiPlaintextAgentGuard({ provider: route.provider, modelId: route.modelId, plaintextDecision: parsed._plaintextV2Decision, schemas: functionRepairSchemas, aliases: () => [responseEffects.routedNamespaceToolAliases, authorizedBareNamespaceToolAliases] });
     const restoreAuthorizedBareNamespaceToolCalls = (value: unknown): unknown =>
       restoreRoutedNamespaceCalls(value, authorizedBareNamespaceToolAliases).value;
     const normalizeFunctionCompletionJson = (text: string): string => normalizeCodexResponseSnapshotJson(text,
@@ -509,6 +507,7 @@ export async function preparePassthroughExchange(
       && route.provider.authMode === "oauth";
     const noteInspectedPayload = (payload: unknown) => {
       if (!inboundDebugUsesRawTerminalRepairTap) inboundDebugObserver?.notePayload(payload);
+      opaqueAgentGuard?.inspect(payload);
       // First terminal stays authoritative even in metadata-only inspection, which
       // intentionally continues parsing after a failed/incomplete terminal.
       const terminal = inspectedTerminalStatus(payload);
@@ -576,7 +575,7 @@ export async function preparePassthroughExchange(
     const rememberPassthroughResponseChecked = (
       response: { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
     ) => {
-      if (inspectionSawUndeclaredTool) return;
+      if (inspectionSawUndeclaredTool || opaqueAgentGuard?.inspect(response) || opaqueAgentGuard?.cacheSafe() === false) return;
       if (isEventStream && inspectedTerminal !== "completed" && plaintextClientTerminal !== "completed") return;
       if (inspectedCompletionSeen) return;
       const nestedDecision = nestedExecInspection?.prepareResponseForCache(response);
@@ -605,6 +604,7 @@ export async function preparePassthroughExchange(
       if (plaintextRestore.overflowed) return;
       // Replay overlap compares the items the client echoes, including visible reasoning shape.
       const restoredResponse = plaintextRestore.value as typeof normalizedResponse;
+      if (opaqueAgentGuard?.inspect(restoredResponse)) return;
       if (
         undeclaredToolGuardActive
         && undeclaredToolCallNameInResponse(

@@ -1,7 +1,15 @@
 import { collectResponsesToolGroups } from "../responses/tool-groups";
+import { isOpenAiOperatedResponsesDestination } from "../providers/openai-tiers-destination";
+import { isBackendTaskCiphertext, OMITTED_ENCRYPTED_CONTENT_TEXT } from "../lib/agent-task-ciphertext";
+import type { OcxProviderConfig } from "../types";
 
 const FORK_TURNS_GUIDANCE = "This field's JSON type is string. Its value must be `none`, `all`, or a positive integer string. For three turns, use `{\"fork_turns\":\"3\"}`; the string content is only `3`, without quote characters. Do not JSON.stringify this field value separately.";
 const SPAWN_AGENT_KEY = "collaboration__spawn_agent";
+const PLAIN_MESSAGE_GUIDANCE = "Write the complete task or message as readable plain text in this field. Do not encrypt, encode, or replace it with an opaque token.";
+export const COLLABORATION_MESSAGE_NAMES: ReadonlySet<string> = new Set(["spawn_agent", "send_message", "followup_task"]);
+export const KIMI_PLAINTEXT_AGENT_ERROR_CODE = "unreadable_agent_tool_message";
+const ORIGINAL_ENCRYPTED_AGENT_PERMISSION = Symbol("kimi-original-encrypted-agent-permission");
+type ProviderWithOriginalAgentPermission = OcxProviderConfig & { [ORIGINAL_ENCRYPTED_AGENT_PERMISSION]?: boolean };
 const SAFE_PARAMETERS_KEYS = new Set(["type", "properties", "required", "additionalProperties", "description", "title"]);
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -18,6 +26,40 @@ function hasUnconstrainedForkTurnsString(parameters: Record<string, unknown> | u
 }
 
 type AuthorizedFunctionSchema = { name: string; namespace?: string; parameters?: Record<string, unknown> };
+
+export function preserveKimiAgentTaskRoutePermission(projected: OcxProviderConfig, original: OcxProviderConfig): OcxProviderConfig {
+  const result: ProviderWithOriginalAgentPermission = { ...projected, [ORIGINAL_ENCRYPTED_AGENT_PERMISSION]: original.allowEncryptedV2AgentTasks === true };
+  return result;
+}
+
+export function isKimiPlaintextAgentMessageRoute(
+  provider: OcxProviderConfig,
+  modelId: string,
+  plaintextDecision: boolean | undefined,
+): boolean {
+  return plaintextDecision === true && provider.authMode !== "forward" && !isOpenAiOperatedResponsesDestination(provider)
+    && !((provider as ProviderWithOriginalAgentPermission)[ORIGINAL_ENCRYPTED_AGENT_PERMISSION] ?? (provider.allowEncryptedV2AgentTasks === true))
+    && provider.arkKimiResponsesModels?.includes(modelId) === true;
+}
+
+function withPlainMessageGuidance(
+  tool: unknown,
+  authorized: ReadonlyMap<string, AuthorizedFunctionSchema> | undefined,
+): unknown {
+  if (!isObject(tool) || tool.type !== "function" || typeof tool.name !== "string"
+    || !COLLABORATION_MESSAGE_NAMES.has(tool.name) || !isObject(tool.parameters)
+    || tool.parameters.type !== "object" || !isObject(tool.parameters.properties)) return tool;
+  const schema = authorized?.get(`collaboration__${tool.name}`);
+  if (schema?.namespace !== "collaboration" || schema.name !== tool.name) return tool;
+  const message = tool.parameters.properties.message;
+  if (!isObject(message) || message.type !== "string"
+    || (message.description !== undefined && typeof message.description !== "string")) return tool;
+  const description = message.description ?? "";
+  if (description.includes(PLAIN_MESSAGE_GUIDANCE)) return tool;
+  return { ...tool, parameters: { ...tool.parameters, properties: { ...tool.parameters.properties,
+    message: { ...message, description: description ? `${description}\n\n${PLAIN_MESSAGE_GUIDANCE}` : PLAIN_MESSAGE_GUIDANCE },
+  } } };
+}
 
 function withForkTurnsGuidance(
   tool: unknown,
@@ -49,13 +91,14 @@ function withForkTurnsGuidance(
 function withCollaborationSpawnAgentGuidance(
   tools: unknown[],
   authorized: ReadonlyMap<string, AuthorizedFunctionSchema>,
+  plaintextAuthorized: ReadonlyMap<string, AuthorizedFunctionSchema> | undefined,
 ): unknown[] {
   let changed = false;
   const next = tools.map(tool => {
     if (!isObject(tool) || tool.type !== "namespace" || tool.name !== "collaboration" || !Array.isArray(tool.tools)) return tool;
     let childrenChanged = false;
     const children = tool.tools.map(child => {
-      const nextChild = withForkTurnsGuidance(child, authorized);
+      const nextChild = withPlainMessageGuidance(withForkTurnsGuidance(child, authorized), plaintextAuthorized);
       childrenChanged ||= nextChild !== child;
       return nextChild;
     });
@@ -69,19 +112,20 @@ function withCollaborationSpawnAgentGuidance(
 export function addSpawnAgentForkTurnsGuidance(
   body: unknown,
   authorized: ReadonlyMap<string, AuthorizedFunctionSchema>,
+  plaintextAuthorized?: ReadonlyMap<string, AuthorizedFunctionSchema>,
 ): unknown {
   if (!isObject(body)) return body;
   const groups = collectResponsesToolGroups(body);
   if (groups.length === 0) return body;
   let changed = false;
-  const tools = Array.isArray(body.tools) ? withCollaborationSpawnAgentGuidance(body.tools, authorized) : body.tools;
+  const tools = Array.isArray(body.tools) ? withCollaborationSpawnAgentGuidance(body.tools, authorized, plaintextAuthorized) : body.tools;
   changed ||= tools !== body.tools;
   let input = body.input;
   if (Array.isArray(body.input)) {
     let inputChanged = false;
     const next = body.input.map(item => {
       if (!isObject(item) || item.type !== "additional_tools" || !Array.isArray(item.tools)) return item;
-      const tools = withCollaborationSpawnAgentGuidance(item.tools, authorized);
+      const tools = withCollaborationSpawnAgentGuidance(item.tools, authorized, plaintextAuthorized);
       if (tools === item.tools) return item;
       inputChanged = true;
       return { ...item, tools };
@@ -174,6 +218,30 @@ function topLevelStringMember(text: string, key: string): { start: number; end: 
     cursor = skipWhitespace(text, cursor + 1);
   }
   return latest;
+}
+
+export function omitOpaqueKimiCollaborationHistory(body: unknown): unknown {
+  if (!isObject(body) || !Array.isArray(body.input)) return body;
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!isObject(item) || item.type !== "function_call" || item.namespace !== "collaboration"
+      || typeof item.name !== "string" || !COLLABORATION_MESSAGE_NAMES.has(item.name)) return item;
+    if (typeof item.arguments === "string") {
+      let args: unknown;
+      try { args = JSON.parse(item.arguments); } catch { return item; }
+      if (!isObject(args) || typeof args.message !== "string" || !isBackendTaskCiphertext(args.message.trim())) return item;
+      const member = topLevelStringMember(item.arguments, "message");
+      if (!member || member.value !== args.message) return item;
+      changed = true;
+      return { ...item, arguments: `${item.arguments.slice(0, member.start)}${JSON.stringify(OMITTED_ENCRYPTED_CONTENT_TEXT)}${item.arguments.slice(member.end)}` };
+    }
+    if (isObject(item.arguments) && typeof item.arguments.message === "string" && isBackendTaskCiphertext(item.arguments.message.trim())) {
+      changed = true;
+      return { ...item, arguments: { ...item.arguments, message: OMITTED_ENCRYPTED_CONTENT_TEXT } };
+    }
+    return item;
+  });
+  return changed ? { ...body, input } : body;
 }
 
 export function repairSpawnAgentForkTurnsArguments(

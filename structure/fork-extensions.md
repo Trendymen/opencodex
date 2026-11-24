@@ -19,6 +19,8 @@
 - `src/fork/kimi-reasoning-replay.ts` 对配置的非 forward Kimi 路由逐项判断推理来源。原生条目必须命中当前调用者、会话、模型、实际端点和凭据的登记，条目 ID 与密文按同一条记录配对。无 Relay Key 时只允许直连主回环的本机请求匹配已持有的密文，WebSocket 还要求有效连接绑定当前线程。其他项的可读内容在原位置转为历史消息，清理无法解析的条目引用。上游明确拒绝后的重建优先清理密文。登记受进程内容量和期限限制。无 replay scope 的直接 adapter 调用沿用原清理。
 - `src/adapters/openai-responses/tool-output-recovery.ts` 将孤儿工具输出转为用户消息时，同时保留官方 item provenance 与 Fork 的合法具名来源标签；缺失或非法来源使用官方 unknown 标记。历史工具声明继续按官方当前轮目录判断。
 - nested exec 和 `spawn_agent.fork_turns` 修复须由当前工具声明授权，保留 preview、完成项和 continuation 的区别。`fork_turns` 只解包一层合法字段值，重复键/未知 schema 跳过。
+- V2 明文任务开启时，非 forward Responses 路由仅对 `arkKimiResponsesModels` 中未允许原生密文的模型添加协作正文提示。`src/fork/spawn-agent-compat.ts` 按本轮授权识别 `collaboration` 的 `spawn_agent`、`send_message` 和 `followup_task`。发往这些模型的历史中，这三个具名工具的 `message` 若整体匹配后端密文形态，Relay 会替换该字段为省略标记，保留调用 ID 和工具结果。若模型新返回的 `message` 整体匹配该形态，`src/fork/kimi-plaintext-agent-guard.ts` 在交付工具调用前终止响应并提示用明文重发。拒绝的响应不进入续接缓存。
+- `src/fork/kimi-split-agent-call.ts` 仅在配置的 Kimi Responses 路由处理已授权的 `collaboration.spawn_agent` 和 `collaboration.wait_agent` 碎片。Relay 校验工具身份、碎片顺序和完整 JSON 参数，再交付正常调用。发往 Kimi 的续接请求过滤已确认的失败碎片组，并移除会隔开已确认调用及其唯一匹配结果的空助手项。桌面会话记录保留。
 - OpenAI Chat、Google、Command Code、Anthropic、Kiro 和 Cursor 适配器在各自工具条件满足时为请求加入进度提示；tool-catalog 提示只使用当前可见工具。模型 catalog 及派生缓存和原生 Responses 不自动追加这些提示，模型是否输出可见进度不作保证。code-mode 结果回显和宿主提示沿用官方处理；代理不合成进度、不执行或自动重试补丁，空成功输出的提示不能覆盖失败输出。
 - `src/fork/annotation-instructions.ts` 改写入站 annotation chip 说明；输出侧保留代码块及其他正文，并去除规范指令的反引号。
 - `src/claude/intercept/picker-listener.ts` 的上传拒绝与有界 linger 沿用[官方 picker 合同](clients/claude-desktop.md#picker-mode-the-desktop-egress-proxy)。无 body 的 HTTP/1.1 400/503 可复用同一 socket，其他上传与 HTTP/2 sibling 不受拒绝影响，拒绝后可重复 shutdown。

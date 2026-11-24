@@ -1,7 +1,8 @@
 import { recordUpstreamProviderErrorDetail, recordUpstreamValidationDetail, type FailureDetail } from "../request-log-failure-detail";
 import { carryProxyErrorPresentation } from "../../lib/client-error-body";
 import { carryPolicyCandidateRefusal } from "./policy-request-scope";
-import { comboFailureEvidence, carryProxyError } from "../../lib/client-error-body";
+import { comboFailureEvidence, carryProxyError, isProxyError } from "../../lib/client-error-body";
+import { KIMI_PLAINTEXT_AGENT_ERROR_CODE } from "../../fork/spawn-agent-compat";
 import { carryWorkflowRefusal } from "../workflow-refusal";
 import {
   codexAccountModelRefusal,
@@ -36,7 +37,7 @@ import { resolveClientRetryAfter } from "../../lib/retry-after";
 import { formatErrorResponse } from "../../bridge";
 import { upstreamCodeForComboFailure } from "../../bridge/errors";
 import { OLLAMA_LATE_ATTRIBUTION_LIMIT_MESSAGE } from "../../adapters/ollama-native";
-import { carryReplayRefusal, isNonReplayableResponse, isReplayRefusalResponse, markResponseNonReplayable, UPSTREAM_RESET_REPLAY_REFUSED_CODE } from "../../lib/upstream-retry";
+import { applyReplayRefusalClientHeaders, carryReplayRefusal, isNonReplayableResponse, isReplayRefusalResponse, markResponseNonReplayable, UPSTREAM_RESET_REPLAY_REFUSED_CODE } from "../../lib/upstream-retry";
 import { MODEL_NOT_ALLOWED_FOR_KEY } from "../admission-model-scope";
 import { usageFromResponsesPayload } from "../request-log";
 import type { ResponsesTerminalStatus } from "../../bridge";
@@ -204,6 +205,7 @@ export async function consumeComboFailure(
   const cyberFailure = isCyberPolicyCode(upstreamCode) || isCyberPolicyMessage(classificationText);
   const normalizedUpstreamCode = cyberFailure ? CYBER_POLICY_ERROR_CODE
     : replayRefusal ? UPSTREAM_RESET_REPLAY_REFUSED_CODE : upstreamCode;
+  const kimiRefusal = nonReplayable && isProxyError(response) && normalizedUpstreamCode === KIMI_PLAINTEXT_AGENT_ERROR_CODE;
   const message = cyberFailure
     ? upstreamMessage
       ?? (isCyberPolicyCode(upstreamCode) ? CYBER_POLICY_FALLBACK_MESSAGE : classificationText)
@@ -241,11 +243,13 @@ export async function consumeComboFailure(
     message,
     {
       ...(normalizedUpstreamCode !== undefined ? { code: normalizedUpstreamCode } : {}),
+      ...(kimiRefusal ? { classified: true } : {}),
       ...(clientRetryAfter !== undefined ? { retryAfter: clientRetryAfter } : {}),
     },
   ) : new Response(originalErrorText, { status: response.status, statusText: response.statusText, headers: responseHeaders });
   carryCodexPassthroughResponse(response, failureResponse);
   if (nonReplayable) markResponseNonReplayable(failureResponse);
+  if (kimiRefusal) applyReplayRefusalClientHeaders(failureResponse.headers);
   carryProxyError(response, failureResponse);
   carryWorkflowRefusal(response, failureResponse);
   carryReplayRefusal(response, failureResponse);

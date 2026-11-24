@@ -35,7 +35,9 @@ import { agentMessageConversionOptions } from "../../fork/agent-message-format";
 import { applyGlmKimiOutboundCompatibility, persistKimiToolSchemaCatalog } from "../../fork/glm-kimi-compat";
 import { kimiReplayScopeForEndpoint } from "../../fork/kimi-reasoning-replay";
 import { reasoningReplayOpaqueBlobRejectionMemoized } from "../../responses/reasoning-replay-cache";
-import { addSpawnAgentForkTurnsGuidance } from "../../fork/spawn-agent-compat";
+import { addSpawnAgentForkTurnsGuidance, isKimiPlaintextAgentMessageRoute, omitOpaqueKimiCollaborationHistory } from "../../fork/spawn-agent-compat";
+import { isKimiSplitAgentRoute, removeFailedKimiSplitHistory } from "../../fork/kimi-split-agent-call";
+import { currentTurnWireToolCatalogBody } from "../../server/responses-undeclared-tool-guard";
 import { debugResponsesOutboundShape } from "../../fork/outbound-debug";
 import { modelRecordValue } from "../../reasoning-effort";
 import { estimateInputTokens } from "../../server/responses/input-admission";
@@ -59,7 +61,7 @@ import { usageFromResponsesPayload } from "./usage";
 import { normalizeToolSchemas, promoteClientLoadedTools, stripUnsupportedHostedTools } from "./tool-schema";
 import { annotateEmptyResponsesToolOutputs, backfillWebSearchQueries, normalizeDuplicateResponsesToolOutputs, normalizeResponsesToolResultAdjacency, repairOrphanedInputItems, repairOversizedReplayCallIds, repairUnidentifiedToolOutputItems, restoreBridgedWebSearchCalls } from "./tool-output-recovery";
 import { bridgeSearchReplayScope } from "../../responses/bridge-search-replay-cache";
-import { tagHistoricalInputItems } from "../../responses/item-provenance";
+import { computeReplayPrefixLength, tagHistoricalInputItems } from "../../responses/item-provenance";
 import { applyTierDecisionToResponsesBody, normalizeCanonicalForwardContinuationEnvelope, normalizeCanonicalForwardPromptEnvelope, stripCanonicalForwardSamplingParams, stripPreviousResponseId, stripStatefulResponsesParams, stripUnsupportedForwardParams } from "./canonical-forward";
 import { normalizeImageGenClientTools, preferConfiguredHostedTools } from "./image-gen";
 import { stripMuseSparkUnsupportedWebSearchFields, stripOpenAiOnlyWebSearchFields } from "./web-search";
@@ -221,6 +223,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       let convertedMuseToolNameAliases: Map<string, string> | undefined;
       const unexpandedMiss = !!parsed.previousResponseId && parsed._previousResponseInputExpanded !== true;
       const replayPrefixLen = parsed._replayPrefixLen;
+      let currentReplayPrefixLen = replayPrefixLen;
       let outBody = parsed._rawBody;
       // Clone and tag before any input rewrite can remove, replace, or reorder replay items.
       if (
@@ -234,12 +237,23 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           input: tagHistoricalInputItems(outBody.input, replayPrefixLen),
         };
       }
+      if (isKimiSplitAgentRoute(provider, parsed.modelId)) {
+        const currentTools = collectFunctionCallRepairSchemas(currentTurnWireToolCatalogBody(parsed._rawBody, replayPrefixLen ?? 0));
+        const cleaned = removeFailedKimiSplitHistory(outBody, currentTools);
+        if (cleaned !== outBody && typeof replayPrefixLen === "number" && isPlainObject(cleaned) && Array.isArray(cleaned.input)) {
+          currentReplayPrefixLen = computeReplayPrefixLength(cleaned.input, replayPrefixLen);
+        }
+        outBody = cleaned;
+      }
+      if (isKimiPlaintextAgentMessageRoute(provider, parsed.modelId, parsed._plaintextV2Decision)) {
+        outBody = omitOpaqueKimiCollaborationHistory(outBody);
+      }
       outBody = stripPreviousResponseId(
         outBody,
         permissions?.expandRequestHistory !== false && (forward || parsed._previousResponseInputExpanded === true),
       );
       if (isMetaAiResponsesDestination(url)) {
-        outBody = normalizeMuseToolCatalog(outBody, parsed._replayPrefixLen, provider.supportsResponsesCustomTools);
+        outBody = normalizeMuseToolCatalog(outBody, currentReplayPrefixLen, provider.supportsResponsesCustomTools);
       }
       const agentMessageOptions = agentMessageConversionOptions({
         provider,
@@ -384,7 +398,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         if (!isMetaAiResponsesDestination(url)) outBody = promoteClientLoadedTools(outBody);
       }
       if (!isOpenAiOperatedResponsesDestination(provider)) {
-        outBody = addSpawnAgentForkTurnsGuidance(outBody, collectFunctionCallRepairSchemas(outBody));
+        const plaintextAuthorized = isKimiPlaintextAgentMessageRoute(provider, parsed.modelId, parsed._plaintextV2Decision)
+          ? collectFunctionCallRepairSchemas(currentTurnWireToolCatalogBody(parsed._rawBody, parsed._replayPrefixLen ?? 0)) : undefined;
+        outBody = addSpawnAgentForkTurnsGuidance(outBody, collectFunctionCallRepairSchemas(outBody), plaintextAuthorized);
       }
       if (!isCanonicalOpenAiForwardProvider(provider)) {
         const rewritten = rewriteRoutedCustomToolsForUpstream(
@@ -413,7 +429,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         // generic capability fallback removes the private OpenAI fields. Grok relayed through
         // OpenCode Go speaks the same dialect, which the final model id and URL identify.
         outBody = normalizeXaiResponsesWebSearch(outBody, provider, { modelId: parsed.modelId, responseUrl: url });
-        outBody = injectXaiResponsesXSearch(outBody, provider, parsed._replayPrefixLen);
+        outBody = injectXaiResponsesXSearch(outBody, provider, currentReplayPrefixLen);
         // xAI, Meta, Azure and Kimi Code (#8075) answer 400 for `output.encrypted_content`
         // instead of ignoring it; Codex Desktop asks for it on every turn (#7878).
         // Go multiplexes backends with different include support (#8702). Use its exact

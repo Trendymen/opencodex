@@ -11,7 +11,7 @@ const openaiCodes = [
   "invalid_api_key", "permission_denied", "location_not_supported", "subscription_required", "server_is_overloaded", "invalid_request_error",
   "usage_limit_reached", "slow_down", "misalignment_policy_violation", "invalid_prompt", "bio_policy", "model_not_in_plan",
   "upstream_reset_replay_refused", "upstream_no_response", "upstream_closed_before_response", "claude_subscription_cooldown",
-  "model_not_found", "model_not_allowed_for_key", "undeclared_tool_call", "required_tool_contract_unsatisfied",
+  "model_not_found", "model_not_allowed_for_key", "undeclared_tool_call", "required_tool_contract_unsatisfied", "unreadable_agent_tool_message",
   "translation_buffer_limit", "invalid_refusal", "unsupported_feature", "agent_assertion_unsupported", "upstream_error",
   "upstream_sse_truncated", "upstream_sse_error", "upstream_sse_unterminated", "upstream_sse_invalid", "upstream_stream_incomplete", "upstream_stream_error", "upstream_stall_timeout",
   "upstream_incomplete", "server_busy", "outbound_body_too_large", "codex_no_account", "memory_model_target_unavailable", "intercept_target_unavailable",

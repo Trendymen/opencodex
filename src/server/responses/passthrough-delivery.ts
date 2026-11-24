@@ -214,7 +214,8 @@ import { codexRawJsonSse, relayUnmodifiedCodexSse } from "../../fork/codex-passt
 import { codexWebsocketSafety, markCodexOverloadSource } from "../../fork/codex-overload-provenance";
 import { codexPrivateCredentialSources, createCodexPrivateCredentialGuard, readCodexPrivateErrorText,
   protectCodexPrivateSse, codexPrivateProtectionFailure, CodexPrivateCredentialProtectionError, codexPrivateErrorBodyReadDeadlines } from "../../fork/codex-passthrough-secrets";
-
+import { createKimiPlaintextAgentGuard, KIMI_PLAINTEXT_AGENT_ERROR_CODE, KIMI_PLAINTEXT_AGENT_ERROR_MESSAGE } from "../../fork/kimi-plaintext-agent-guard";
+import { createKimiSplitAgentCallRepair } from "../../fork/kimi-split-agent-call";
 import { isDebugEnabled } from "../../lib/debug-settings";
 
 const PLAINTEXT_V2_SSE_PREFIX_LIMIT = 4096;
@@ -514,6 +515,8 @@ export async function deliverPassthroughResponse(
   } = nativeExchange;
   const { commitReasoningReplayServingRoute, recordTerminalOutcomes } = responseEffects;
   const { parsed, subagentQuotaFailureModel, clientRequestedStream, translatorBudget, inboundWire } = requestState;
+  const opaqueAgentGuard = createKimiPlaintextAgentGuard({ provider: route.provider, modelId: route.modelId, plaintextDecision: parsed._plaintextV2Decision, schemas: functionRepairSchemas, aliases: () => [responseEffects.routedNamespaceToolAliases, authorizedBareNamespaceToolAliases], budget: translatorBudget, onRefusal: () => rememberProxyErrorMessage(logCtx, KIMI_PLAINTEXT_AGENT_ERROR_MESSAGE, { status: 502, type: "upstream_error", code: KIMI_PLAINTEXT_AGENT_ERROR_CODE }) });
+  const splitAgentCalls = createKimiSplitAgentCallRepair({ provider: route.provider, modelId: route.modelId, schemas: functionRepairSchemas, budget: translatorBudget });
   // #7427: opt-in estimated usage for a provider that omits it. Client-facing only; the request log,
   // spend and quota read the provider's original body.
   const estimateUsage = estimatesMissingUsage(route.provider, options);
@@ -1096,6 +1099,7 @@ export async function deliverPassthroughResponse(
         payloadRewrites.length > 0
           ? payloadRewriteAsBlockRewrite(composeSsePayloadRewrites(...payloadRewrites))
           : undefined,
+        splitAgentCalls?.blockRewrite,
         inferResponsesMessagePhases
           ? createResponsesMessagePhaseBlockRewrite(translatorBudget)
           : undefined,
@@ -1157,6 +1161,7 @@ export async function deliverPassthroughResponse(
         codexPermissions?.repairResponseToolCalls !== false && functionRepairSchemas.size > 0
           ? createResponsesFunctionToolRepairBlockRewrite(functionRepairSchemas, translatorBudget)
           : undefined,
+        opaqueAgentGuard?.blockRewrite,
         // Last: every rewrite above can still rename or reshape a call item, so the guard must
         // compare the names the client will actually receive against the declared catalog.
         // Deferred-catalog wires keep the rewrite for its normalization half only: a provider's
@@ -1190,7 +1195,7 @@ export async function deliverPassthroughResponse(
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
       // Publish validated continuation items after wire repairs and before image display projection.
       const clientCacheInspector = !canonicalBufferedJson && !grokUpstreamEchoEnabled
-        && (responseEffects.plaintextV2AgentMessageToolNames.size > 0 || !!codexPermissions && !!rememberPassthroughResponse && blockRewrites.length > 0)
+        && (splitAgentCalls !== undefined || opaqueAgentGuard !== undefined || responseEffects.plaintextV2AgentMessageToolNames.size > 0 || !!codexPermissions && !!rememberPassthroughResponse && blockRewrites.length > 0)
         ? createSseInspector({ allowResponseDone: codexPermissions?.synthesizeTerminalFailure === false,
           onTerminal: nativeExchange.notePlaintextClientTerminal,
           onCompletedResponse: rememberPassthroughResponseChecked }) : undefined;
@@ -1807,6 +1812,8 @@ export async function deliverPassthroughResponse(
         }
       }
       // Both response formats use this body, before a refused turn can enter continuation state.
+      if (splitAgentCalls) { const repaired = splitAgentCalls.rewriteJson(clientJson); if (repaired === undefined) return splitAgentCalls.errorResponse(); clientJson = repaired; }
+      if (opaqueAgentGuard?.rejectJson(clientJson)) return opaqueAgentGuard.errorResponse();
       if (nativeExchange.undeclaredToolGuardActive) {
         const undeclared = (() => {
           try {
