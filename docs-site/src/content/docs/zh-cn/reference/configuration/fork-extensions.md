@@ -90,7 +90,7 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 | 字段 | Fork 行为 |
 | --- | --- |
 | `agentMessageFormat` | `preserve` 保留原生消息；`user_message` 转换第三方 Responses 的完整可读文本/媒体，包含第三方 GPT 模型。官方目的地始终保留原生格式。省略时沿用目的地默认策略；密文、未知 part、空内容不做部分转换。 |
-| `inferResponsesMessagePhaseModels` | 显式启用原生 phase 推断的精确模型 ID，排除官方目的地和 GPT/OpenAI 族。宣布阶段自称 `final_answer` 先降为 `commentary`，最终 item/terminal 证据决定相位；failed/incomplete 不补合成 final phase。 |
+| `inferResponsesMessagePhaseModels` | 显式启用原生 phase 推断的精确模型 ID，排除官方目的地和 GPT/OpenAI 族。宣布阶段自称 `final_answer` 或未带 phase 时先降为 `commentary`，最终 item/terminal 证据决定相位；failed/incomplete 不补合成 final phase。 |
 | `defaultMaxOutputTokens`、`modelMaxOutputTokens` | 既有输出默认值扩展到 key-auth Responses 缺失的 `max_output_tokens`。模型级优先于 Provider 级，客户端显式值优先于两者；forward 不注入。 |
 
 有有效窗口且估算剩余 token 超过 512 时，补写预算为 `max(512, min(configured, remaining - headroom))`，余量为 256–4,096 token；无有效窗口或剩余 token 不超过 512 时保留配置值，让上游明确拒绝超窗。

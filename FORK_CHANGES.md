@@ -31,7 +31,7 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 
 | 剩余能力 | 实现入口 |
 | --- | --- |
-| `inferResponsesMessagePhaseModels` 为原生第三方 Responses 补 phase，包含普通 JSON，排除官方目的地和 GPT 族，区分宣布阶段、后续工作及终态证据。命中名单时优先使用该推断，其他路由继续使用官方 `messagePhaseInference`；避免两层缓冲丢失 EOF 尾项。 | [message phase](src/fork/responses-message-phase.ts) |
+| `inferResponsesMessagePhaseModels` 为原生第三方 Responses 补 phase，包含普通 JSON，排除官方目的地和 GPT 族，区分宣布阶段（含缺省 phase）、后续工作及终态证据。命中名单时优先使用该推断，其他路由继续使用官方 `messagePhaseInference`；避免两层缓冲丢失 EOF 尾项。 | [message phase](src/fork/responses-message-phase.ts) |
 | annotation chip 入站说明改写和输出侧规范指令去反引号，保留代码块及其他正文。 | [instructions](src/fork/annotation-instructions.ts)、[directive](src/responses/annotation-directive.ts) |
 | 客户端请求 summary 时，仅对符合条件的转译适配器 content-channel reasoning 做投影，保留原字段、预算和生命周期。`openai-chat` 指向已识别的官方 xAI HTTPS 目的地时保留原始 reasoning content，并在完成前流式交付；SSE、JSON 和已存重放不做 summary 投影。原生 Responses 同样采用官方 content 保真合同，已移除原生额外 summary 投影及其专用 replay 包装。 | [summary rewrite](src/server/responses-reasoning-summary-rewrite.ts)、[adapter delivery](src/server/responses/adapter-delivery.ts) |
 | `opencode-go` 缺省保留 Responses reasoning 正文，显式 `false` 优先。 | [registry](src/providers/registry/entries-core.ts) |

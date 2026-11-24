@@ -85,16 +85,18 @@ function assistantMessageWithExplicitPhase(payload: Rec): { id: string; phase: M
 }
 
 /**
- * An upstream can announce an assistant message as `final_answer` and then finalize the same item
- * as `commentary`. The client renders the announcement as soon as it arrives, so that later
- * correction reads as an answer folding back into the activity row. The announcement is not
- * evidence, so it is demoted before delivery: the explicit `done` event and the terminal snapshot
- * still promote the item when it really is the turn's final answer.
+ * An upstream can announce an assistant message as `final_answer`, or leave the phase off, and
+ * then finalize the same item as `commentary`. The client renders a message that is not marked
+ * `commentary` as soon as it arrives, so the later correction reads as an answer folding back into
+ * the activity row. The announcement is not evidence, so it is demoted before delivery: the
+ * explicit `done` event and the terminal snapshot still promote the item when it really is the
+ * turn's final answer.
  */
 function announcesAssistantFinalAnswer(payload: Rec): boolean {
   if (payload.type !== "response.output_item.added" || !isRec(payload.item)) return false;
   const item = payload.item;
-  return item.type === "message" && item.role === "assistant" && item.phase === "final_answer";
+  if (item.type !== "message" || item.role !== "assistant") return false;
+  return item.phase === "final_answer" || item.phase === undefined || item.phase === null;
 }
 
 function stampItemPhase(payload: Rec, phase: MessagePhase): Rec {
