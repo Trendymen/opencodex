@@ -23,6 +23,8 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 本机直连回环主入口时，Responses HTTP、Compact 和 Responses WebSocket 将日志和用量归到有效 Relay Key 的原 ID。通过 `x-opencodex-api-key` 发送 Relay Key，可以保留调用者自己的 `Authorization`。V2 密文恢复仍要求调用者自带原生 ChatGPT bearer 及匹配的账号。此入口允许恢复请求同时携带有效 Relay Key，这是 Fork 对[上游 API Key 请求头限制（英文）](/reference/configuration/agents/#encrypted-v2-task-recovery)的例外。Relay Key 原文不会进入上游请求或日志。辅助入口仍要求原有模型凭据。
 
+通过辅助入口的 Responses HTTP 或 WebSocket 恢复 V2 密文时，开启 `agentTaskRecovery.enabled`，并直接连接 `http://127.0.0.1:10100/v1`。用 `x-opencodex-api-key` 发送已配置的 Relay Key，用于鉴权和归属用量。恢复使用调用者自己的 ChatGPT bearer 和匹配的 `chatgpt-account-id`。WebSocket 回合需要恢复时会再校验 Relay Key。Codex Desktop 应保持 ChatGPT 登录，保留 `requires_openai_auth = true`，在自定义 Provider 的 `http_headers` 中设置 Relay 请求头，并移除 `experimental_bearer_token` 和 `env_key`，让 Codex 发送登录凭据。Relay 只向恢复端点传递 ChatGPT 凭据。
+
 主服务已经绑定非回环地址时，启用该选项要求主端口为 `10100`：
 
 ```json
@@ -37,7 +39,7 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 
 辅助入口接受兼容路径归一化到 `/v1/` 后的全部原生数据面：模型发现、Responses、Chat Completions、Messages、token 计数、images、audio，以及受支持的 WebSocket/SSE 路由。具体可用性仍取决于原生路由的 Provider 支持和功能配置。不另设模型或端点白名单；除[按 key 转换模型](#按-key-转换模型)适用的情况外，请求与响应沿用原生处理。`/v1/link-management` 前缀被拒绝。
 
-辅助入口对控制台、管理 API、session 签发、配对、health/readiness 和 Remote Workspace 返回 JSON `404`。本机调用、admin 凭据、已有 GUI session 和伪造 `Host` 也不能访问。客户端配对和账号管理应使用主管理服务。模型凭据继续遵守原生 scope、用量、Direct、上游凭据和音频凭据规则；凭据变更沿用原生 HTTP/WebSocket 行为，该选项不增加逐帧撤销机制。
+辅助入口对控制台、管理 API、session 签发、配对、health/readiness 和 Remote Workspace 返回 JSON `404`。本机调用、admin 凭据、已有 GUI session 和伪造 `Host` 也不能访问。客户端配对和账号管理应使用主管理服务。模型凭据继续遵守原生 scope、用量、Direct、上游凭据和音频凭据规则。模型准入沿用原生 HTTP 和 WebSocket 的撤销规则。
 
 保存拓扑只影响下次启动，不移动当前 socket，也不自动改号；拓扑非法或必需端口被占用时直接失败。保存后重启代理。`ocx status` 显示主管理 URL 和模型 listener 状态。`ocx status --json` 新增 `forkModelApiListener`，保持 `schemaVersion: 1`：`enabled` 表示期望配置，`active`、`hostname` 和 `port` 来自运行中的进程，`restartRequired` 比较启动拓扑与保存拓扑。缺少已验证的同进程响应时，`active` 和 `restartRequired` 为 `null`，`inactiveReason` 为 `unverified`；服务未运行时报告 `active: false` 和 `not-running`。运行中关闭的入口报告 `disabled`；primary 模式报告 `primary-non-loopback`，表示无需辅助 listener。状态不含凭据。
 

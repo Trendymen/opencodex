@@ -697,13 +697,37 @@ export function withLoopbackRelayBearerRemoved(req: Request, config: OcxConfig, 
 }
 
 const loopbackRelayRecoveryRequests = new WeakSet<Request>();
+const forkModelApiRecoveryRequests = new WeakMap<Request, string | null>();
 
 // The primary loopback handler marks the request it passes to the model handler.
 export function markLoopbackRelayRecoveryRequest(req: Request): void {
   loopbackRelayRecoveryRequests.add(req);
 }
 
+export function forkModelApiRecoveryPrincipal(
+  req: Request,
+  admission: DataPlaneAdmission,
+  config: OcxConfig,
+  directLoopback: boolean,
+): string | null {
+  if (!directLoopback || req.headers.has("x-api-key")
+    || admission.kind !== "configured" || admission.source !== "dedicated") return null;
+  const selected = configuredRelayKey(req.headers.get("x-opencodex-api-key"), config);
+  return selected?.keyId === admission.keyId && selected.contextPrincipalId === admission.contextPrincipalId
+    ? selected.contextPrincipalId ?? null : null;
+}
+
+export function markForkModelApiRecoveryRequest(req: Request, principal: string | null): void {
+  forkModelApiRecoveryRequests.set(req, principal);
+}
+
 export function hasBlockingRelayRecoveryHeader(req: Request, config: OcxConfig): boolean {
+  const forkPrincipal = forkModelApiRecoveryRequests.get(req);
+  if (forkPrincipal !== undefined) {
+    if (!forkPrincipal || !isContextPrincipalCurrent(forkPrincipal, config) || req.headers.has("x-api-key")) return true;
+    const dedicated = req.headers.get("x-opencodex-api-key");
+    return dedicated !== null && configuredRelayKey(dedicated, config)?.contextPrincipalId !== forkPrincipal;
+  }
   return ["x-opencodex-api-key", "x-api-key"].some(name => req.headers.has(name)
     && (!loopbackRelayRecoveryRequests.has(req) || configuredRelayKey(req.headers.get(name), config) === undefined));
 }

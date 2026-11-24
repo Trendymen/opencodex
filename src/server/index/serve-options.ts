@@ -1,5 +1,6 @@
 import { messagesUnknownEndpointMessage } from "../../lib/messages-error-body";
 import { forkModelApiRouteAllowed } from "../../fork/model-api-listener";
+import { convertedResponsePeerAddress } from "../../fork/model-conversion-http";
 import type { Server, ServerWebSocket } from "bun";
 import {
   claudeInterceptRouteAllowed,
@@ -111,7 +112,9 @@ import {
   admissionFields,
   captureFilteredLoopbackBearer,
   carryFilteredLoopbackBearerPrincipal,
+  forkModelApiRecoveryPrincipal,
   isContextPrincipalCurrent,
+  markForkModelApiRecoveryRequest,
   markLoopbackRelayRecoveryRequest,
   removeLoopbackRelayBearer,
   resolveApiAuth,
@@ -348,6 +351,8 @@ export function createServeOptions(ctx: ServeOptionsContext) {
       const loopbackRelayUsage = (admission: DataPlaneAdmission) =>
         ingress === "public" && admission.kind === "loopback" && currentRequestIsLocal()
           ? resolveLoopbackResponsesRelayUsage(req.headers, config) : undefined;
+      const forkRecoveryPrincipal = (admission: DataPlaneAdmission) => forkModelApiRecoveryPrincipal(req, admission, config,
+        classifyRequestPeer("public", convertedResponsePeerAddress(req) ?? requestServer.requestIP?.(req)?.address, config.dashboardTrustedProxy, req.headers).local);
       // Codex runtime agent assertion_only (Authorization: AgentAssertion) is refused before
       // admission or routing: it is never a bearer, never an admission secret, and no pool or
       // routed credential may stand in for it.
@@ -622,7 +627,8 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             classifyUsageClient(req.headers), replayPrincipal, replayScope,
           ), ...(relayUsage?.contextPrincipalId ? {
             usageApiKeyId: relayUsage.apiKeyId, usageApiKeyPrincipalId: relayUsage.contextPrincipalId,
-          } : {}), ...(filteredBearer ? { filteredBearer } : {}), peerLocal: currentRequestIsLocal() },
+          } : {}), ...(filteredBearer ? { filteredBearer } : {}),
+          ...(ingress === "fork-model-api" ? { forkModelRecoveryPrincipal: forkRecoveryPrincipal(admission) } : {}), peerLocal: currentRequestIsLocal() },
         })) return undefined as unknown as Response;
         releaseConnectionReplayScope(replayScope);
         websocketLease.release();
@@ -1478,6 +1484,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           },
         };
         if (relayUsage) markLoopbackRelayRecoveryRequest(sessionReq);
+        if (ingress === "fork-model-api") markForkModelApiRecoveryRequest(sessionReq, forkRecoveryPrincipal(admission));
         // Capture at authentication: runAdmittedHttpTurn can wait for body capacity first (#7859).
         const advisorAdmissionPolicy = captureAdmissionPolicy(config, admission);
         return runAdmittedHttpTurn(sessionReq, policy, async turnAdmissionLease => {

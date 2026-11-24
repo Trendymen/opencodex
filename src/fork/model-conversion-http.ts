@@ -27,6 +27,12 @@ export type ModelConversionDeps = {
 const COPY_ALLOWANCE = 32;
 const RESPONSE_COPY_ALLOWANCE = 8;
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+const convertedResponsePeers = new WeakMap<Request, string | null>();
+
+export function convertedResponsePeerAddress(request: Request): string | null | undefined {
+  return convertedResponsePeers.get(request);
+}
+
 const ROUTES = new Map<string, ConversionProtocol>([
   ["/v1/responses", "responses"],
   ["/v1/responses/compact", "compact"],
@@ -349,6 +355,7 @@ export function wrapModelConversionFetch<T>(original: ModelConversionFetch<T>, d
     const admission = protocol === "messages" ? resolveApiAuth(request, policy) : resolveResponsesApiAuth(request, policy);
     const rules = admission?.kind === "configured" ? deps.rules.get(admission.keyId) : undefined;
     if (admission?.kind !== "configured" || !rules?.length || !isAllowedRequestOrigin(request, policy)) return original.call(server, request, server);
+    const responsePeer = protocol === "responses" ? server.requestIP?.(request)?.address ?? null : null;
     const sameAdmission = () => {
       const currentPolicy = requestPolicyView(deps.config(), "0.0.0.0");
       const current = protocol === "messages" ? resolveApiAuth(request, currentPolicy) : resolveResponsesApiAuth(request, currentPolicy);
@@ -404,6 +411,7 @@ export function wrapModelConversionFetch<T>(original: ModelConversionFetch<T>, d
         headers.delete("content-encoding");
         const { turn, context, retainedMetadata } = prepared;
         let rewritten: Request | undefined = new Request(request.url, { method: request.method, headers, body: prepared.body, signal: request.signal });
+        if (protocol === "responses") convertedResponsePeers.set(rewritten, responsePeer);
         const observedRequest = requestBodySettled(rewritten);
         rewrittenSettled = typeof prepared.body === "string" ? observedRequest
           : Promise.race([observedRequest, conversionStreamSettled(prepared.body)]);

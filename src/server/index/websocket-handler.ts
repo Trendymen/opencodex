@@ -73,6 +73,7 @@ import {
   isApiAuthRequired,
   jsonResponse,
   admissionFields,
+  markForkModelApiRecoveryRequest,
   resolveApiAuth,
   resolveResponsesApiAuth,
   isContextPrincipalCurrent,
@@ -366,6 +367,7 @@ export function createWebsocketHandler(
             headers: fwd,
             ...(linkSocket ? {} : { body: JSON.stringify(turnBody) }),
           });
+          if (ws.data.forkModelRecoveryPrincipal !== undefined) markForkModelApiRecoveryRequest(req, ws.data.forkModelRecoveryPrincipal);
           if (linkSocket) attachParsedRequestBody(req, turnBody);
           try {
             // A socket can be the first ingress for a root. Admit every inference frame,

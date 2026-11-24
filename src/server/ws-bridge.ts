@@ -59,6 +59,7 @@ export interface WsData {
   readonly usageApiKeyId?: string;
   readonly usageApiKeyPrincipalId?: string;
   readonly filteredBearer?: string;
+  readonly forkModelRecoveryPrincipal?: string | null;
   /** Local-only loopback replay identity; revalidated each turn without retaining its secret. */
   replayPrincipal?: HandleResponsesOptions["replayPrincipal"];
   /**
