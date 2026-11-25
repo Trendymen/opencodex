@@ -45,10 +45,9 @@ const OPENAI_API_RESPONSES_URL = `${OPENAI_API_BASE_URL}/responses`;
 function resolvedResponsesEndpoint(provider: OpenAiDestinationShape): string | undefined {
   if (typeof provider.baseUrl !== "string") return undefined;
   try {
-    const raw = provider.responsesPath === undefined
+    return provider.responsesPath === undefined
       ? openaiResponsesUrl(provider.baseUrl)
       : `${provider.baseUrl.replace(/\/$/, "")}${provider.responsesPath}`;
-    return normalizedOpenAiBaseUrl(raw);
   } catch {
     return undefined;
   }
@@ -57,7 +56,16 @@ function resolvedResponsesEndpoint(provider: OpenAiDestinationShape): string | u
 function isOfficialOpenAiResponsesDestination(provider: OpenAiDestinationShape): boolean {
   // Exact normalized URL keeps lookalike/suffix hosts out of this set: `api.openai.com.evil.test`
   // resolves to its own origin, never to the official one.
-  return resolvedResponsesEndpoint(provider) === OPENAI_API_RESPONSES_URL;
+  return normalizedOpenAiBaseUrl(resolvedResponsesEndpoint(provider)) === OPENAI_API_RESPONSES_URL;
+}
+
+export function isOfficialOpenAiResponsesUrl(url: string | undefined): boolean {
+  return url === OPENAI_API_RESPONSES_URL;
+}
+
+export function isOfficialOpenAiKeyResponsesDestination(provider: OpenAiDestinationShape): boolean {
+  return provider.adapter === "openai-responses" && (provider.authMode ?? "key") === "key"
+    && isOfficialOpenAiResponsesUrl(resolvedResponsesEndpoint(provider));
 }
 
 export function isOfficialOpenAiApiBaseUrl(baseUrl: string | undefined): boolean {

@@ -33,6 +33,7 @@ Pool 安装身份改写后的 turn metadata 将超出 U+00FF 的字符转为 JSO
 | --- | --- |
 | `inferResponsesMessagePhaseModels` 为原生第三方 Responses 补 phase，包含普通 JSON，排除官方目的地和 GPT 族，区分宣布阶段（含缺省 phase）、后续工作及终态证据。命中名单时优先使用该推断，其他路由继续使用官方 `messagePhaseInference`；避免两层缓冲丢失 EOF 尾项。 | [message phase](src/fork/responses-message-phase.ts) |
 | annotation chip 入站说明改写和输出侧规范指令去反引号，保留代码块及其他正文。 | [instructions](src/fork/annotation-instructions.ts)、[directive](src/responses/annotation-directive.ts) |
+| 订阅目标不可用时，故障转移组合可用官方 OpenAI API Key 继续处理需要解密的 V2 子代理任务。Relay 原样发送任务密文，在实际发送前再次确认目的地为官方 Responses 接口。 | [目标判断](src/fork/official-openai-combo-agent-task.ts)、[发送检查](src/server/responses/request-transport.ts) |
 | 客户端请求 summary 时，仅对符合条件的转译适配器 content-channel reasoning 做投影，保留原字段、预算和生命周期。`openai-chat` 指向已识别的官方 xAI HTTPS 目的地时保留原始 reasoning content，并在完成前流式交付；SSE、JSON 和已存重放不做 summary 投影。原生 Responses 同样采用官方 content 保真合同，已移除原生额外 summary 投影及其专用 replay 包装。 | [summary rewrite](src/server/responses-reasoning-summary-rewrite.ts)、[adapter delivery](src/server/responses/adapter-delivery.ts) |
 | `opencode-go` 缺省保留 Responses reasoning 正文，显式 `false` 优先。 | [registry](src/providers/registry/entries-core.ts) |
 | SSE 正常 EOF / synthetic failure tail 前 flush；派生错误先按通用规则及选中出站凭据脱敏再限长，保留真实 Responses terminal 及单枚 `[DONE]`。裸错误采用官方 typed/untyped 证据归并和状态分类，不再增加竞争的 Fork EOF 读取重放；reader error 和 nested-exec barrier 不承诺 flush。 | [relay](src/server/relay.ts)、[eager relay](src/server/relay-eager.ts)、[rewrite](src/server/sse-payload-rewrite.ts) |

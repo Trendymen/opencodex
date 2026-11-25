@@ -245,6 +245,10 @@ customModels 类型、CRUD 和 catalog 行已是官方能力。Fork 增加严格
 
 `POST /api/providers` 在尚未发布便失败时，恢复原 Provider 条目；`setDefault: true` 同时恢复原默认值。`ConfigWritePublishedError` 保留已经发布的 Provider 和默认值，使其与磁盘一致。
 
+## V2 任务回退到 OpenAI API
+
+如果希望订阅目标不可用时继续执行 V2 任务，在故障转移组合里把官方 OpenAI API 模型排在所有 Codex 订阅目标之后。任务需要解密时，Relay 使用该提供方的 API Key，通过 HTTP 直接把密文发给 `https://api.openai.com/v1/responses`。这条路径无需开启 `agentTaskRecovery` 或 `allowEncryptedV2AgentTasks`。
+
 ## 加密子任务恢复
 
 恢复默认关闭，启用后使用额外的认证 ChatGPT 请求。以下示例开启恢复，其余字段使用 Fork 严格后端任务的默认值：

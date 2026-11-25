@@ -114,6 +114,7 @@ import { captureAccountAutoPauseAttempt } from "../../oauth/account-auto-pause";
 import { selectProactiveApiKeyTransport, transientRetryPolicyFor } from "../../providers/key-failover";
 import { distributedKeyPhysicalFetch, hasConflictingApiKeyHeaders } from "../../providers/api-key-response-ownership";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
+import { isOfficialOpenAiResponsesUrl } from "../../providers/openai-tiers-destination";
 import { providerConsumesCallerAuthorization } from "../../providers/caller-authorization";
 import { releaseCodexAuthContextProbeLease, stripCodexRuntimeProviderFields } from "../../codex/auth-context";
 import {
@@ -167,6 +168,7 @@ export async function prepareResponsesTransport(
     | "route"
     | "parsed"
     | "inboundWire"
+    | "officialApiComboAgentTask"
     | "selectedForwardHeaders"
     | "translatorBudget"
     | "completedToolBlocks"
@@ -175,7 +177,7 @@ export async function prepareResponsesTransport(
   >,
 ) {
   const { config, logCtx, options, req } = requestContext;
-  const { route, parsed, inboundWire, translatorBudget } = requestState;
+  const { route, parsed, inboundWire, translatorBudget, officialApiComboAgentTask } = requestState;
   const deferPhysicalAttribution = route.providerName === "github-copilot" && route.provider.authMode !== "forward";
   let copilotCandidate: { model: string; adapter: string; accountLogLabel?: string } | undefined;
   bindResponsesSpendTarget(logCtx);
@@ -1138,8 +1140,11 @@ export async function prepareResponsesTransport(
     }
     const stripWithheldAdvisorBeta = () => hostedAdvisorCredentialWithheld
       || (route.provider.adapter === "anthropic" && options.hostedAdvisorSpendScope?.optionalWithheld === true);
-    if (route.provider.authMode === "forward" && !hostedAdvisorDispatches.has(wireRequest)
+    if (route.provider.authMode === "forward" && !officialApiComboAgentTask && !hostedAdvisorDispatches.has(wireRequest)
       && !stripWithheldAdvisorBeta()) return undefined;
+    const officialApiTaskRefusal = officialApiComboAgentTask
+      ? new Error("Encrypted V2 combo task requires the official OpenAI Responses URL and selected API key")
+      : undefined;
     return async (input, init, execute, reacquirePacing) => {
       let destination = input;
       let dispatchInit = init;
@@ -1226,12 +1231,15 @@ export async function prepareResponsesTransport(
             // Copilot's local negotiation may refuse before this point, and spend admission
             // may still refuse at the HTTP executor. Its note follows that final admission.
             const deferredCopilotNote = route.providerName === "github-copilot" && route.provider.authMode !== "forward";
-            const deferAttemptNote = deferredCopilotNote || advisorCredential !== undefined || pinned !== undefined;
+            const deferAttemptNote = deferredCopilotNote || advisorCredential !== undefined || pinned !== undefined
+              || officialApiTaskRefusal !== undefined;
             if (!explicitAttemptCommit && !deferAttemptNote) commitKeyAttemptSend();
             // The WS executor dials its own socket: HTTP connection policy and body coding do not apply.
             // WS eligibility (egress, pacing, URL) was checked for the provider it was built for; a
             // provider reselected above was not, so it takes the HTTP fallback under its own route.
-            const physicalFetch = ((input, physicalInit) => ws?.provider === route.provider ? execute(input, physicalInit) : sendWithConnectionPolicy(
+            // Use the HTTP sender for an encrypted API combo task so the final URL is checked
+            // after plugin rewrites, before any request bytes leave.
+            const physicalFetch = ((input, physicalInit) => ws?.provider === route.provider && !officialApiComboAgentTask ? execute(input, physicalInit) : sendWithConnectionPolicy(
               passiveKeyPhysicalFetch(distributedKeyPhysicalFetch(anthropicBillingPhysicalFetch(fetchImpl, route.providerName, route.provider), route.providerName, route.provider, target), config, route.providerName, route.provider),
               input,
               { ...physicalInit, redirect: "manual",
@@ -1245,7 +1253,17 @@ export async function prepareResponsesTransport(
                   const attempt = logCtx.activeAttempt;
                   if (attempt?.sendCount) copilotReceipt = { attempt, ordinal: attempt.ordinal, sendCount: attempt.sendCount };
                 } : undefined),
-                ...(pinned || recoveryOwner || vertexAuthority || advisorCredential || stripAdvisorBeta ? physicalSendGuardInit((finalTarget, finalHeaders) => {
+                ...(pinned || recoveryOwner || vertexAuthority || advisorCredential || stripAdvisorBeta || officialApiTaskRefusal ? physicalSendGuardInit((finalTarget, finalHeaders) => {
+                    if (officialApiTaskRefusal) {
+                      const host = finalHeaders.get("host")?.toLowerCase();
+                      if (!options.officialApiAgentTaskFallbackIsCurrent?.() || !isOfficialOpenAiResponsesUrl(finalTarget)
+                        || (host !== undefined && host !== "api.openai.com")
+                        || binding?.kind !== "api-key" || !expectedKey || (route.provider.authMode ?? "key") !== "key"
+                        || finalHeaders.get("authorization") !== `Bearer ${expectedKey}`
+                        || hasConflictingApiKeyHeaders(finalHeaders.keys(), "authorization")) {
+                        throw officialApiTaskRefusal;
+                      }
+                    }
                     if (pinned && (!pinned.current() || !pinned.matches(finalTarget, finalHeaders))) {
                       throw new Error("Anthropic image recovery destination or credential changed before dispatch");
                     }
@@ -1264,6 +1282,9 @@ export async function prepareResponsesTransport(
             response = await fetchWithHeaderTimeout(target, dispatchInit, dispatchInit.signal ?? options.abortSignal ?? req.signal,
               resolveConnectTimeoutMs(connectTimeoutMs, { localUpstream: isLocalUpstream(target) }), requestParsed.stream, physicalFetch);
           } catch (error) {
+            if (officialApiTaskRefusal && error === officialApiTaskRefusal) {
+              return markProxyError(formatErrorResponse(400, "invalid_request_error", officialApiTaskRefusal.message));
+            }
             if (pinned || !advisorRefusal || error !== advisorRefusal || !hostedAdvisor || advisorRebuilt) throw error;
             const signal = dispatchInit.signal ?? options.abortSignal ?? req.signal;
             rebuildHostedAdvisor = async () => {

@@ -16,6 +16,7 @@
 - `/v1/alpha/search` 和独立图片接口识别有效 OCX Bearer，包括主动带 key 的回环请求。上游鉴权由当前配置的账号或凭据完成，key 的模型和 Provider 限制仍生效。Direct 在读取主账号凭据前，沿用主账号策略绑定的等待期限。Direct 图片优先使用符合 key 权限的已有图片后端。默认图片 key 池在发送前暂停时，可改用已登录主账号。客户端创建的语音通话可经官方 Realtime 地址加入，`x-opencodex-api-key` 携带 OCX key，`Authorization` 携带原 ChatGPT 账号的 Bearer，`chatgpt-account-id` 须与 Bearer 中的账号声明一致。代理发出的语音别名继续绑定创建者 key。
 - GPT 家族和官方目的地分开判断。官方 Responses 保持原生消息/schema；`src/server/responses/codex-ws-request.ts` 只在构造 canonical 上游 WebSocket 帧时按对应许可映射有效的 Lite header，显式 HTTP 值优先同名 metadata。HTTP 请求体不预先合成 WS metadata，其他字段保持原样。
 - `agentMessageFormat`、GLM/Kimi lowering 和 `encrypted` 注解清理在出站副本上运行，保持原 input、工具授权和重放状态。未设置 `agentMessageFormat` 的 forward 鉴权在前后两次处理均保留原生 agent message；第三方显式 `user_message` 仍可转换可读内容。可信直接 key-auth relay 的注解例外不扩大到 combo。
+- 故障转移组合可把需要解密的当前 V2 任务交给排在所有 Codex 订阅目标之后的官方 OpenAI API 模型。候选筛选和子请求准备按最终模型的 Responses 路由检查 `https://api.openai.com/v1/responses`。发送使用 HTTP/SSE，插件改写后再次检查实际 URL 和所选 API Key，禁止自动跟随重定向。密文由官方 API 解密，第三方组合目标沿用已有的恢复和拒绝规则。
 - `src/fork/kimi-reasoning-replay.ts` 对配置的非 forward Kimi 路由逐项判断推理来源。原生条目必须命中当前调用者、会话、模型、实际端点和凭据的登记，条目 ID 与密文按同一条记录配对。无 Relay Key 时只允许直连主回环的本机请求匹配已持有的密文，WebSocket 还要求有效连接绑定当前线程。其他项的可读内容在原位置转为历史消息，清理无法解析的条目引用。上游明确拒绝后的重建优先清理密文。登记受进程内容量和期限限制。无 replay scope 的直接 adapter 调用沿用原清理。
 - `src/adapters/openai-responses/tool-output-recovery.ts` 将孤儿工具输出转为用户消息时，同时保留官方 item provenance 与 Fork 的合法具名来源标签；缺失或非法来源使用官方 unknown 标记。历史工具声明继续按官方当前轮目录判断。
 - nested exec 和 `spawn_agent.fork_turns` 修复须由当前工具声明授权，保留 preview、完成项和 continuation 的区别。`fork_turns` 只解包一层合法字段值，重复键/未知 schema 跳过。

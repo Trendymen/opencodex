@@ -245,6 +245,10 @@ Failed saves to `PUT /api/provider-context-caps` restore that route's live conte
 
 If `POST /api/providers` fails before publication, it restores the previous provider entry and, for `setDefault: true`, the previous default. A `ConfigWritePublishedError` retains the already-published provider and default so they remain consistent with disk.
 
+## V2 task failover to the OpenAI API
+
+To continue a V2 task when Codex subscription targets are unavailable, place the official OpenAI API model after all of them in a failover combo. When the task requires decryption, Relay sends the ciphertext directly to `https://api.openai.com/v1/responses` over HTTP using that provider's API key. This path does not require `agentTaskRecovery` or `allowEncryptedV2AgentTasks`.
+
 ## Encrypted task recovery
 
 Recovery remains disabled by default and uses an additional authenticated ChatGPT request when enabled. This example enables recovery with the Fork's strict backend defaults:

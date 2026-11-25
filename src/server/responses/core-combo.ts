@@ -2,6 +2,7 @@ import { advisorPlanRootConfig } from "./advisor-plan-slot";
 import { admitsHostedAdvisor, scopedAnthropicServerTools } from "../messages-native-scope";
 import { selectResponseReplayOwner } from "./replay-owner";
 import { isPlaintextV2AgentMessagesEnabled } from "../../config/multi-agent-surface";
+import { isOfficialOpenAiComboAgentTaskRoute, officialOpenAiComboAgentTaskFallbackTargets } from "../../fork/official-openai-combo-agent-task";
 import { comboLogLabel, comboTargetLogLabel } from "../../combos/resolve";
 import { clientFacingModelLabel, clientFacingModelText } from "../../lib/error-destination";
 import { carryLocalFailureState, projectLocalModelRefusalLog, upstreamErrorIsLocal } from "../request-log-failure-detail";
@@ -445,6 +446,10 @@ export async function executeComboResponses(
   // Every image probe and the child it admits plan with these request-start sidecar settings.
   const comboVisionSidecar = { settings: admissionSnapshot.vision };
   const liveConfig = advisorPlanRootConfig(config);
+  const requestComboDefinition = config.combos?.[comboId];
+  const liveComboDefinition = liveConfig.combos?.[comboId];
+  const officialApiFallbackIsCurrent = () => config.combos?.[comboId] === requestComboDefinition
+    && liveConfig.combos?.[comboId] === liveComboDefinition;
   // Resolve against the original request once; every bridge candidate receives the same trusted
   // result after its provisional Authorization is removed, including an explicitly keyless result.
   const replayPrincipal = options.replayPrincipal
@@ -595,18 +600,22 @@ export async function executeComboResponses(
     }
   };
 
-  const unreadableEncryptedAgentTask = hasUnreadableEncryptedAgentTask(
-    (body as { input?: unknown } | undefined)?.input,
-  ) || (
-    agentTaskRecoveryConfig(config) !== null
-    && hasStrictBackendEncryptedAgentTask((body as { input?: unknown } | undefined)?.input)
-  );
+  const taskInput = (body as { input?: unknown } | undefined)?.input;
+  const unreadableTask = hasUnreadableEncryptedAgentTask(taskInput);
+  const strictBackendTask = !unreadableTask && hasStrictBackendEncryptedAgentTask(taskInput);
+  const apiFallbackTargetKeys = (unreadableTask || strictBackendTask) && combo.strategy === "failover"
+    ? officialOpenAiComboAgentTaskFallbackTargets(config, combo.targets, options.inboundWire ?? "responses")
+    : undefined;
+  const unreadableEncryptedAgentTask = unreadableTask
+    || (strictBackendTask && (agentTaskRecoveryConfig(config) !== null || (apiFallbackTargetKeys?.size ?? 0) > 0));
   const canDecryptUnreadableAgentTask = (target: (typeof combo.targets)[number]): boolean => {
     const provider = config.providers[target.provider];
     if (!provider || provider.disabled === true) return false;
     try {
       const route = routeConcreteModel(config, `${target.provider}/${target.model}`);
-      return isCanonicalOpenAiForwardProvider(route.provider);
+      return isCanonicalOpenAiForwardProvider(route.provider)
+        || (apiFallbackTargetKeys?.has(targetKey(target)) === true && officialApiFallbackIsCurrent()
+          && isOfficialOpenAiComboAgentTaskRoute(route, options.inboundWire ?? "responses"));
     } catch {
       return false;
     }
@@ -1538,6 +1547,8 @@ export async function executeComboResponses(
         // parent arrived with.
         sendBudget: targetSendBudget,
         comboAttempt: true,
+        officialApiAgentTaskFallbackIsCurrent: apiFallbackTargetKeys?.has(targetKey(pick.target))
+          ? officialApiFallbackIsCurrent : undefined,
         comboVisionSidecar,
         ...(omittingImages ? { comboOmitImages: true }
           : capability.requiresVisionPlan(pick.target) ? { comboRequiresVisionPlan: true } : {}),

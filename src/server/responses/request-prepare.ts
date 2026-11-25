@@ -117,6 +117,7 @@ import {
 import { evidenceFromBody } from "../../routing/request-evidence";
 import { resolvePolicyProfileId } from "../../routing/profile";
 import { OPENAI_CODEX_PROVIDER_ID, isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
+import { isOfficialOpenAiComboAgentTaskRoute } from "../../fork/official-openai-combo-agent-task";
 import { resolveNativeReasoningRetention } from "../../config/schema/native-reasoning-retention";
 import { isThreadSpawnRequest } from "../effort-policy";
 import {
@@ -1537,11 +1538,11 @@ export async function prepareResponsesRequest(
     }
   }
 
-  // Encrypted child tasks may reach the canonical native backend or an explicitly trusted
-  // direct Responses route. This runs against the FINAL route so native-only fallback can
-  // rescue an incompatible primary without weakening combo behavior.
-  const finalRouteCanPassThroughEncryptedTask = !options.comboAttempt
-    && canPassThroughEncryptedV2AgentTask(route, inboundWire);
+  const officialApiComboAgentTask = options.comboAttempt === true && options.officialApiAgentTaskFallbackIsCurrent !== undefined
+    && (unreadableEncryptedAgentTask || finalRouteHasStrictBackendEncryptedTask)
+    && isOfficialOpenAiComboAgentTaskRoute(route, inboundWire);
+  const finalRouteCanPassThroughEncryptedTask = officialApiComboAgentTask
+    || (!options.comboAttempt && canPassThroughEncryptedV2AgentTask(route, inboundWire));
   if (
     (route.combo !== undefined || !isCanonicalOpenAiForwardProvider(route.provider))
     && !finalRouteCanPassThroughEncryptedTask
@@ -1567,11 +1568,8 @@ export async function prepareResponsesRequest(
   if (inboundWire === "responses" && !finalRouteCanPassThroughEncryptedTask) {
     // Only the raw Responses passthrough puts input items on the wire verbatim, so that is the
     // only wire this has to repair: translated wires rebuild the body from parsed messages, where
-    // `inputContentParts` drops an encrypted part instead of forwarding it. The exemption is the
-    // canonical Codex backend alone, because it is the one destination that minted these bytes and
-    // can read them. `authMode: "forward"` is NOT that test -- a noncanonical forward gateway is
-    // somebody else's server that happens to be configured for passthrough, and it receives the
-    // ciphertext like any other third party.
+    // `inputContentParts` drops an encrypted part instead of forwarding it. Resolve the wire
+    // before checking for the canonical Codex backend; a forward gateway is still a third party.
     //
     // Combo children run this too. Each child carries its own `structuredClone` of the body
     // (`concreteComboRequestBody`) and its own concrete route, so a sibling's repair is invisible
@@ -1948,6 +1946,7 @@ export async function prepareResponsesRequest(
   if (codexPermissions) commitCanonicalEffects?.(); else commitSkillsSnapshot?.();
   return {
     inboundWire,
+    officialApiComboAgentTask,
     ...(turnMembership ? { turnMembership } : {}),
     ...(turnMembership && inboundWire === "responses" && parsed.stream && !parsed._compactionRequest ? { completedToolBlocks: true as const } : {}),
     clientDeclaredEmptyToolCatalog: options.clientDeclaredEmptyToolCatalog === true,

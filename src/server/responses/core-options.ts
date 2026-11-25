@@ -282,6 +282,8 @@ export interface HandleResponsesOptions {
   callerDirectAuth?: CallerDirectAuth | null;
   /** Internal recursion guard; callers outside this module must not set it. */
   comboAttempt?: boolean;
+  /** Check that the combo definition authorizing this encrypted V2 fallback is still current. */
+  officialApiAgentTaskFallbackIsCurrent?: () => boolean;
   /** `union` combo with no member whose window fits: the child keeps the loose direct admission. */
   comboContextDegraded?: boolean;
   /** A union combo admitted this image-bearing child through a dispatchable vision plan. */

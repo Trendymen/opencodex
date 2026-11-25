@@ -267,6 +267,10 @@ Si falla el guardado en `PUT /api/provider-context-caps`, se restauran los campo
 
 Si `POST /api/providers` falla antes de publicar, se restaura la entrada anterior del proveedor y, para `setDefault: true`, el valor predeterminado anterior. Un `ConfigWritePublishedError` conserva el proveedor y el valor predeterminado ya publicados para que sigan siendo coherentes con el disco.
 
+## Conmutación de tareas V2 a la API de OpenAI
+
+Para continuar una tarea V2 cuando los destinos de suscripción de Codex no estén disponibles, coloca el modelo de la API oficial de OpenAI después de todos ellos en un combo de conmutación por error. Cuando la tarea requiere descifrado, Relay envía el texto cifrado directamente a `https://api.openai.com/v1/responses` por HTTP con la clave API de ese proveedor. Esta ruta no requiere `agentTaskRecovery` ni `allowEncryptedV2AgentTasks`.
+
 <a id="encrypted-task-recovery"></a>
 
 ## Recuperación de tareas cifradas
