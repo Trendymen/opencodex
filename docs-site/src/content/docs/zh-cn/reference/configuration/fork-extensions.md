@@ -73,11 +73,13 @@ description: Trendymen Fork 的 Provider、恢复、自定义模型和诊断配�
 }
 ```
 
-这只是配置片段：保留已有 key 凭据和其他设置。`enabled` 为 `true` 且省略 `rules` 时使用上面的默认规则；`rules: []` 不转换。规则按顺序检查，第一条命中即生效。`match` 和可选的 `exclude` 使用区分大小写、匹配完整模型名的 glob（`*` 和 `?`）；可识别的 Provider 或账号前缀会先分离。每条规则都必须提供目标 `model` 和有效的 `maxEffort`。策略结构无效时启动失败，不会静默关闭转换。
+这只是配置片段：保留已有 key 凭据和其他设置。`enabled` 为 `true` 且省略 `rules` 时使用上面的默认规则；`rules: []` 不转换。规则按顺序检查，第一条命中即生效。`match` 和可选的 `exclude` 使用区分大小写、匹配完整模型名的 glob（`*` 和 `?`）；可识别的 Provider 或账号前缀会先分离。每条规则都必须提供目标 `model` 和有效的 `maxEffort`。
 
 转换覆盖 Responses、Responses compact、Chat Completions、Messages、Messages token 计数和 Responses WebSocket。Images、audio 和其他路由沿用原生处理。命中请求使用目标模型，effort 按配置上限限制；未指定 effort 时设为上限。请求交给主处理器前，Messages 将 `minimal` 映射为 `low`、`ultra` 映射为 `max`；`none` 禁用 thinking 并省略 effort 字段。转换时不改变仍启用的 thinking token 预算，后续转译可能改变该预算。WebSocket 续接省略已有设置时保持继承。客户端在协议模型字段和受支持的模型头中看到原请求模型；无法安全投影的可选诊断 metadata 可能被移除。用量和日志按主处理器的处理结果记录，包括实际使用的模型和 token 数。
 
-策略在启动时读取，并在进程及其 WebSocket 连接内保持不变。修改规则后需要重启进程。策略只作用于辅助入口，直接请求主服务不应用转换。primary `10100` 拓扑存在启用的非空策略时启动失败，请使用上面的辅助入口拓扑。未配置策略的 key 沿用原生行为。
+配置文件中 `apiKeys[].modelConversion` 的变更在下个 HTTP 请求或已连接 WebSocket 的下个独立新回合生效。进行中的请求及其响应、本轮控制消息和续接继续使用本轮选定的规则。即使启动时没有配置策略，运行中也可以新增。转换只作用于辅助入口。primary `10100` 拓扑存在启用的非空策略时仍会启动失败，请使用上面的辅助入口拓扑。
+
+配置文件无法读取或解析时，入口按 key 使用上次成功加载的规则。某个 key 的转换策略无效时，该 key 回退到自己的上次成功规则，其他 key 的有效变更仍可生效。受影响的 key 没有有效历史时，模型和 effort 原样透传，原有鉴权和 scope 检查继续生效。主动移除 key 或其转换策略、禁用转换，或提供有效空规则时，该 key 的旧规则会被清除。文件或策略修复后，有效变更继续生效。
 
 主处理器可能通过固定 effort、记忆或压缩路由、模型重定向或子代理回退，覆盖转换后的模型或 effort。入口不会因这些设置可能生效而拒绝请求；实际使用的模型和 effort 因此可能与转换规则不同。修改这些设置也可能影响正在处理的请求。
 

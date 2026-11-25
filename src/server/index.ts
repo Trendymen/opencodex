@@ -30,7 +30,7 @@ import {
   loopbackCompanionBindError,
   websocketsEnabled,
 } from "../config";
-import { flushConfigDirHardeningAndReaps } from "../config/paths";
+import { flushConfigDirHardeningAndReaps, getConfigPath } from "../config/paths";
 import { trackBackgroundWork } from "../lib/background-work";
 import { migrateStartupSubagentModels } from "./subagent-models-startup";
 import { migrateStartupReserveCapability } from "./reserve-capability-startup";
@@ -223,6 +223,7 @@ function startServerWithSpendLedgerOwner(port: number | undefined, deps: StartSe
   // Captured before loadConfig() starts the optional ACL flight so stop() drains the same dir
   // even if OPENCODEX_HOME changes underneath a long-lived process.
   const startupConfigDir = getConfigDir();
+  const startupConfigPath = getConfigPath();
   const startupConfig = migrateStartupReserveCapability(migrateStartupSubagentModels(
     runModelRenameStartupMigration(
       runDevinProviderMergeStartupMigration(
@@ -333,7 +334,7 @@ function startServerWithSpendLedgerOwner(port: number | undefined, deps: StartSe
   function bindListener(options: Bun.Serve.Options<WsData>): Server<WsData> {
     return deps.bindListener ? deps.bindListener(options) : Bun.serve<WsData>(options);
   }
-  const forkModelApiListener = createForkModelApiListener<WsData>(forkLogicalTopology, { bind: bindListener, track: spendLedgerLifecycle.track });
+  const forkModelApiListener = createForkModelApiListener<WsData>(forkLogicalTopology, { bind: bindListener, track: spendLedgerLifecycle.track, configPath: startupConfigPath });
   setCorsOrigin(listenPort);
 
   // Canonicalize an explicit "localhost" bind (including its fully-qualified spelling) to IPv4

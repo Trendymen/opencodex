@@ -25,7 +25,7 @@ This appendix describes the Trendymen Fork's additions to upstream. The other re
 
 The optional model API listener keeps a loopback management service separate from a LAN data endpoint on port `10100`. It reuses native model routes and credentials, rejects management and pairing on the auxiliary endpoint, and reports actual listener state through a verified local management read. It defaults to off and topology changes require a restart. See [Model API listener](/reference/configuration/fork-extensions/#model-api-listener) for both supported topologies and the native primary-mode boundary.
 
-The auxiliary listener can apply model conversion and an effort ceiling per API key. The protocol model identity returned to the client is restored, while the primary service receives the converted request. See [Per-key model conversion](/reference/configuration/fork-extensions/#per-key-model-conversion) for configuration and limits.
+The auxiliary listener can apply model conversion and an effort ceiling per API key. Rule changes apply to the next HTTP request or the next independent turn on an existing WebSocket connection. The protocol model identity returned to the client is restored, while the primary service receives the converted request. See [Per-key model conversion](/reference/configuration/fork-extensions/#per-key-model-conversion) for configuration and limits.
 
 Encrypted task recovery adds strict backend-envelope handling, one bounded native replay after exhausted transient-5xx retries, and a ciphertext-free notice when an admitted parent `MESSAGE` times out. Unreadable ciphertext is terminal; it is not forwarded to ordinary third-party routes or stored in continuation state. Recovery remains opt-in.
 

@@ -1,4 +1,5 @@
 import type { Server } from "bun";
+import { fileBackedConfigPath } from "../config/rebase-provenance";
 import { isLinkManagementPath } from "../link/management-routes";
 import { AuxiliaryListenerBindError } from "../server/ports";
 import type { OcxConfig } from "../types";
@@ -26,6 +27,7 @@ export function forkModelApiRouteAllowed(url: URL): boolean {
 export function createForkModelApiListener<T>(topology: ForkModelApiTopology, deps: {
   bind: ForkModelApiBinder<T>;
   track: <S extends { stop(close?: boolean): void | Promise<void> }>(server: S) => S;
+  configPath?: string;
 }): ForkModelApiListener<T> {
   let server: Server<T> | undefined;
   let stopping: Promise<void> | undefined;
@@ -35,7 +37,8 @@ export function createForkModelApiListener<T>(topology: ForkModelApiTopology, de
   if (hasPolicy && (!config?.providers || typeof config.providers !== "object")) {
     throw new ModelConversionConfigurationError();
   }
-  const conversion = hasPolicy ? createForkModelConversion<T>(() => config!) : undefined;
+  const configPath = topology.mode === "auxiliary" && config ? deps.configPath ?? fileBackedConfigPath(config) : undefined;
+  const conversion = hasPolicy || configPath ? createForkModelConversion<T>(() => config!, configPath) : undefined;
   if (topology.mode === "primary" && conversion?.active) throw new ModelConversionConfigurationError();
   return {
     start(options) {

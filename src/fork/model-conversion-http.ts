@@ -19,6 +19,7 @@ export type ModelConversionFetch<T> = (req: Request, server: Server<T>) => Respo
 export type ModelConversionDeps = {
   config: () => OcxConfig;
   rules: ReadonlyMap<string, readonly ModelConversionRule[]>;
+  getRules?: () => ReadonlyMap<string, readonly ModelConversionRule[]>;
   boundBodyLimit?: number;
   responseBodyLimit?: number;
   bodyBudget?: InboundBodyBudget;
@@ -353,7 +354,7 @@ export function wrapModelConversionFetch<T>(original: ModelConversionFetch<T>, d
     }
     const policy = requestPolicyView(deps.config(), "0.0.0.0");
     const admission = protocol === "messages" ? resolveApiAuth(request, policy) : resolveResponsesApiAuth(request, policy);
-    const rules = admission?.kind === "configured" ? deps.rules.get(admission.keyId) : undefined;
+    const rules = admission?.kind === "configured" ? (deps.getRules?.() ?? deps.rules).get(admission.keyId) : undefined;
     if (admission?.kind !== "configured" || !rules?.length || !isAllowedRequestOrigin(request, policy)) return original.call(server, request, server);
     const responsePeer = protocol === "responses" ? server.requestIP?.(request)?.address ?? null : null;
     const sameAdmission = () => {

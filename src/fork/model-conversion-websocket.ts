@@ -5,7 +5,6 @@ import { MAX_WS_FRAME_BYTES } from "../server/index/live-sideband";
 import { resolveInboundBodyLimitBytes } from "../server/request-decompress";
 import type { WsData } from "../server/ws-bridge";
 import type { ModelConversionDeps } from "./model-conversion-http";
-import type { ModelConversionRule } from "./model-conversion-config";
 import { overlayConvertedJson } from "./model-conversion-json";
 import { applyConversionSpans, applyConversionSpansText, conversionStreamByteLength, scanConversionJson, type ScannedConversionJson } from "./model-conversion-json-scan";
 import { convertModelRequest, type ConversionTurn } from "./model-conversion-request";
@@ -24,7 +23,7 @@ type MessageScope = { turn: Turn; control: boolean };
 type SocketState<T> = {
   socket: ServerWebSocket<T>;
   facade: ServerWebSocket<T>;
-  rules: readonly ModelConversionRule[];
+  keyId: string;
   current?: Turn;
   failed?: MessageScope;
 };
@@ -105,9 +104,8 @@ export function wrapModelConversionWebsocket<T>(handler: Bun.WebSocketHandler<T>
     if (cached) return cached;
     const data = socket.data as unknown as WsData;
     if (!data || data.kind === "live-sideband" || data.kind === "remote-workspace-agent" || data.admission?.kind !== "configured") return undefined;
-    const rules = deps.rules.get(data.admission.keyId);
-    if (!rules?.length) return undefined;
-    const state: SocketState<T> = { socket, facade: socket, rules };
+    if (!deps.getRules && !deps.rules.get(data.admission.keyId)?.length) return undefined;
+    const state: SocketState<T> = { socket, facade: socket, keyId: data.admission.keyId };
     const methods = new Map<PropertyKey, unknown>();
     state.facade = new Proxy(socket, {
       get(target, key) {
@@ -161,8 +159,10 @@ export function wrapModelConversionWebsocket<T>(handler: Bun.WebSocketHandler<T>
   function message(state: SocketState<T>, raw: string | Buffer<ArrayBuffer>): void | Promise<void> {
     state.failed = undefined;
     const data = state.socket.data as unknown as WsData;
+    const rules = (deps.getRules?.() ?? deps.rules).get(state.keyId) ?? [];
     const bytes = rawBytes(raw);
     const priorScope = (): MessageScope => ({ turn: state.current ?? {}, control: true });
+    if (!rules.length && !state.current?.turn) return invoke(state, raw, priorScope());
     if (bytes > MAX_WS_FRAME_BYTES || data.responsesActivity?.closing) return invoke(state, raw, priorScope());
     if (data.nativeControl && bytes > resolveInboundBodyLimitBytes(deps.config().maxInboundBodyBytes)) {
       return invoke(state, raw, priorScope());
@@ -204,52 +204,15 @@ export function wrapModelConversionWebsocket<T>(handler: Bun.WebSocketHandler<T>
       const create = value.type === "response.create";
       const control = !create || !!data.nativeControl;
       const previous = state.current;
-      if (control && previous?.clientModel && Object.hasOwn(value, "model")
+      const continuation = create && control;
+      if (control && (!continuation || !deps.getRules) && previous?.clientModel && (previous.turn || !deps.getRules) && Object.hasOwn(value, "model")
         && value.model !== previous.clientModel && value.model !== previous.turn?.targetModel) {
         state.socket.send(conflictFrame("invalid_request_error")); return;
       }
-      if (control && !previous?.turn) {
+      if (control && !previous?.turn && (!create || !deps.getRules)) {
         return dispatch(raw, priorScope());
       }
       const config = deps.config();
-      const converted = convertModelRequest(value, state.rules, config, previous?.turn, "responses");
-      const continuation = create && control && previous?.turn !== undefined;
-      const controlInput: Record<string, unknown> = { ...value, type: "response.steer" };
-      if (continuation && Object.hasOwn(value, "reasoning")
-        && (value.reasoning === null || (record(value.reasoning) && value.reasoning.effort == null))) {
-        controlInput.reasoning = { ...(record(value.reasoning) ? value.reasoning : {}), effort: previous.effectiveEffort ?? previous.turn!.maxEffort };
-      }
-      const controlConverted = continuation
-        ? convertModelRequest(controlInput, state.rules, config, previous.turn, "responses") : undefined;
-      const controlValue: Record<string, unknown> | undefined = controlConverted && record(controlConverted.value)
-        ? { ...controlConverted.value, type: "response.create" } : undefined;
-      const overlay = !scan && converted.turn ? overlayConvertedJson(originalText!, value, converted.value) : undefined;
-      const metadata = scan?.metadata ?? overlay?.metadata;
-      const inheritedControl = !create && previous !== undefined;
-      let turn = inheritedControl ? previous : undefined;
-      if (!turn) {
-        const coreClientMetadata = converted.turn && record(value.metadata)
-          ? JSON.parse(JSON.stringify(value.metadata)) as Record<string, unknown> : undefined;
-        const retainedBytes = metadata === undefined || !converted.turn ? 0
-          : 32 * (Buffer.byteLength(JSON.stringify(metadata)) + Buffer.byteLength(JSON.stringify(coreClientMetadata ?? {}))) + 1024;
-        const releaseMetadata = retainedBytes ? reserve(retainedBytes) : undefined;
-        if (retainedBytes && !releaseMetadata) { state.socket.send(conflictFrame("server_busy")); return; }
-        const nextTurn = converted.turn ? { ...converted.turn, clientMetadata: metadata } : undefined;
-        const clientModel = typeof value.model === "string" ? value.model : previous?.clientModel;
-        const effectiveEffort = record(converted.value) && record(converted.value.reasoning) && typeof converted.value.reasoning.effort === "string"
-          ? converted.value.reasoning.effort : undefined;
-        turn = {
-          ...(nextTurn ? { turn: nextTurn } : {}),
-          ...(coreClientMetadata ? { context: { coreClientMetadata } } : {}),
-          ...(clientModel !== undefined ? { clientModel } : {}),
-          ...(effectiveEffort !== undefined ? { effectiveEffort } : {}),
-          ...(releaseMetadata ? { releaseMetadata } : {}),
-        };
-        candidate = turn;
-      }
-      if (!record(converted.value)) {
-        state.socket.send(conflictFrame("invalid_request_error")); return;
-      }
       const maxBytes = Math.min(MAX_WS_FRAME_BYTES, resolveInboundBodyLimitBytes(config.maxInboundBodyBytes));
       const projectedBytes = (projection: Record<string, unknown>): number => {
         if (!scan) return Buffer.byteLength(overlayConvertedJson(originalText!, value, projection).text);
@@ -258,39 +221,141 @@ export function wrapModelConversionWebsocket<T>(handler: Bun.WebSocketHandler<T>
         void stream.cancel().catch(() => {});
         return length;
       };
-      if (continuation && controlValue && (projectedBytes(controlValue) > maxBytes || projectedBytes(converted.value) > maxBytes)) {
-        state.socket.send(conflictFrame("inbound_body_too_large")); return;
-      }
-      const transformed = continuation ? raw : converted.changed ? scan ? applyConversionSpansText(scan, converted.value) : overlay!.text : raw;
-      if (!continuation && rawBytes(transformed) > maxBytes) { state.socket.send(conflictFrame("inbound_body_too_large")); return; }
+      const prepareTurn = (): { value: Record<string, unknown>; turn: Turn; transformed: string | Buffer<ArrayBuffer> } | undefined => {
+        try {
+          const independentInput = deps.getRules && create && previous?.turn && !Object.hasOwn(value, "model")
+            ? { ...value, model: previous.turn.clientModel } : value;
+          const result = convertModelRequest(independentInput, rules, config, deps.getRules && create ? undefined : previous?.turn, "responses");
+          const converted = independentInput !== value && !result.turn ? { value, changed: false } : result;
+          if (!record(converted.value)) { state.socket.send(conflictFrame("invalid_request_error")); return undefined; }
+          const overlay = !scan && converted.turn ? overlayConvertedJson(originalText!, value, converted.value) : undefined;
+          const metadata = scan?.metadata ?? overlay?.metadata;
+          let turn = !create && previous !== undefined ? previous : undefined;
+          if (!turn) {
+            const coreClientMetadata = converted.turn && record(value.metadata)
+              ? JSON.parse(JSON.stringify(value.metadata)) as Record<string, unknown> : undefined;
+            const retainedBytes = metadata === undefined || !converted.turn ? 0
+              : 32 * (Buffer.byteLength(JSON.stringify(metadata)) + Buffer.byteLength(JSON.stringify(coreClientMetadata ?? {}))) + 1024;
+            const releaseMetadata = retainedBytes ? reserve(retainedBytes) : undefined;
+            if (retainedBytes && !releaseMetadata) { state.socket.send(conflictFrame("server_busy")); return undefined; }
+            const nextTurn = converted.turn ? { ...converted.turn, clientMetadata: metadata } : undefined;
+            const clientModel = typeof value.model === "string" ? value.model : previous?.clientModel;
+            const effectiveEffort = record(converted.value.reasoning) && typeof converted.value.reasoning.effort === "string"
+              ? converted.value.reasoning.effort : undefined;
+            turn = {
+              ...(nextTurn ? { turn: nextTurn } : {}),
+              ...(coreClientMetadata ? { context: { coreClientMetadata } } : {}),
+              ...(clientModel !== undefined ? { clientModel } : {}),
+              ...(effectiveEffort !== undefined ? { effectiveEffort } : {}),
+              ...(releaseMetadata ? { releaseMetadata } : {}),
+            };
+            candidate = turn;
+          }
+          const transformed = converted.changed ? scan ? applyConversionSpansText(scan, converted.value) : overlay!.text : raw;
+          if (rawBytes(transformed) > maxBytes) { state.socket.send(conflictFrame("inbound_body_too_large")); return undefined; }
+          return { value: converted.value, turn, transformed };
+        } catch {
+          state.socket.send(conflictFrame("invalid_request_error"));
+          return undefined;
+        }
+      };
       const before = data.turnId;
-      const context: MessageScope = { turn: continuation ? previous : turn, control };
-      if (create && !continuation) state.current = turn;
       try {
-        if (!continuation || !controlValue) return dispatch(transformed, context);
+        if (!continuation) {
+          const prepared = prepareTurn();
+          if (!prepared) return;
+          const context: MessageScope = { turn: prepared.turn, control };
+          if (create) state.current = prepared.turn;
+          return dispatch(prepared.transformed, context);
+        }
+        const controlInput: Record<string, unknown> = { ...value, type: "response.steer" };
+        if (previous?.turn && Object.hasOwn(value, "reasoning")
+          && (value.reasoning === null || (record(value.reasoning) && value.reasoning.effort == null))) {
+          controlInput.reasoning = { ...(record(value.reasoning) ? value.reasoning : {}), effort: previous.effectiveEffort ?? previous.turn.maxEffort };
+        }
+        let controlValue = value;
+        let invalidControl = false;
+        if (previous?.turn) {
+          try {
+            const converted = convertModelRequest(controlInput, rules, config, previous.turn, "responses");
+            if (record(converted.value)) controlValue = { ...converted.value, type: "response.create" };
+          } catch {
+            invalidControl = true;
+          }
+        }
+        const context: MessageScope = { turn: previous ?? {}, control: true };
         const original = data.nativeControl!;
         const descriptor = Object.getOwnPropertyDescriptor(data, "nativeControl");
         if (!descriptor || !("value" in descriptor) || !descriptor.writable) {
           state.socket.send(conflictFrame("invalid_request_error")); return;
         }
+        let restoreRefusedInput: (() => void) | undefined;
+        const suppressRefusedResults = (frame: Record<string, unknown>) => {
+          const input = Object.getOwnPropertyDescriptor(frame, "input");
+          if (!input) return;
+          // The handler records results on true, so hide rejected input until it returns.
+          Object.defineProperty(frame, "input", { value: undefined, configurable: true, enumerable: input.enumerable, writable: true });
+          restoreRefusedInput = () => Object.defineProperty(frame, "input", input);
+        };
         const controlProxy = new Proxy({} as typeof original, {
           get(_target, key) {
             if (key === "continue") return (frame: Record<string, unknown>) => {
               const undo = applyFrameProjection(frame, value, controlValue);
+              const inputDescriptor = Object.getOwnPropertyDescriptor(frame, "input");
+              if (inputDescriptor && (!("value" in inputDescriptor) || !inputDescriptor.configurable)) {
+                undo();
+                throw new Error("Invalid native continuation input");
+              }
+              const rejected = Symbol();
+              let rejection: "invalid_request_error" | "inbound_body_too_large" | undefined;
+              let inputGuarded = true;
+              const restoreInput = () => {
+                if (!inputGuarded) return;
+                if (inputDescriptor) Object.defineProperty(frame, "input", inputDescriptor);
+                else delete frame.input;
+                inputGuarded = false;
+              };
+              const validateControl = () => {
+                restoreInput();
+                if (invalidControl) rejection = "invalid_request_error";
+                else if (projectedBytes(controlValue) > maxBytes) rejection = "inbound_body_too_large";
+                if (rejection) throw rejected;
+              };
+              // Native controls decide whether to continue before reading input, and read it before sending.
+              Object.defineProperty(frame, "input", {
+                configurable: true,
+                enumerable: inputDescriptor?.enumerable ?? false,
+                get() { validateControl(); return inputDescriptor?.value; },
+                set(next) { validateControl(); Reflect.set(frame, "input", next); },
+              });
               let continued: boolean;
-              try { continued = original.continue(frame); }
-              catch (error) { undo(); throw error; }
+              try {
+                continued = original.continue(frame);
+                if (continued && inputGuarded) validateControl();
+                else restoreInput();
+              } catch (error) {
+                restoreInput();
+                undo();
+                if (error === rejected && rejection) {
+                  suppressRefusedResults(frame);
+                  state.socket.send(conflictFrame(rejection));
+                  return true;
+                }
+                throw error;
+              }
               if (typeof continued !== "boolean") { undo(); throw new Error("Invalid native continuation result"); }
               if (!continued) {
                 undo();
                 if (data.turnId !== before || state.current !== previous || data.nativeControl !== controlProxy) {
                   throw new Error("Native continuation changed during dispatch");
                 }
-                applyFrameProjection(frame, value, converted.value as Record<string, unknown>);
-                context.turn = turn;
+                const prepared = prepareTurn();
+                if (!prepared) { suppressRefusedResults(frame); return true; }
+                applyFrameProjection(frame, value, prepared.value);
+                context.turn = prepared.turn;
                 context.control = false;
-                state.current = turn;
-              } else if (record(controlValue.reasoning) && typeof controlValue.reasoning.effort === "string") {
+                state.current = prepared.turn;
+              } else if (previous && record(controlValue.reasoning) && typeof controlValue.reasoning.effort === "string") {
                 previous.effectiveEffort = controlValue.reasoning.effort;
               }
               return continued;
@@ -303,12 +368,17 @@ export function wrapModelConversionWebsocket<T>(handler: Bun.WebSocketHandler<T>
         if (!Reflect.set(data, "nativeControl", controlProxy, data) || data.nativeControl !== controlProxy) {
           state.socket.send(conflictFrame("invalid_request_error")); return;
         }
-        try { return dispatch(transformed, context); }
-        finally { if (data.nativeControl === controlProxy) Reflect.set(data, "nativeControl", original, data); }
+        try { return dispatch(raw, context); }
+        finally {
+          restoreRefusedInput?.();
+          if (data.nativeControl === controlProxy) Reflect.set(data, "nativeControl", original, data);
+        }
       }
       finally {
-        if (create && data.turnId === before && state.current === turn) state.current = previous;
-        else if (candidate && state.current === turn && data.turnId !== before) { accepted = true; releaseTurn(previous); }
+        if (candidate && state.current === candidate) {
+          if (data.turnId === before) state.current = previous;
+          else { accepted = true; releaseTurn(previous); }
+        }
       }
     } catch (error) {
       if (invoking) { state.failed = failureScope; throw error; }

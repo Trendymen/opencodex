@@ -25,7 +25,7 @@ description: 相对已 rebase 上游版本的兼容与维护差异。
 
 可选模型 API 入口把回环管理服务与 `10100` 端口上的局域网数据入口分开。它复用原生模型路由和凭据，辅助入口拒绝管理和配对，并通过已验证的本机管理读取报告真实状态。默认关闭，拓扑变更需要重启。两种有效配置和原生 primary 模式边界见[模型 API 入口](/zh-cn/reference/configuration/fork-extensions/#模型-api-入口)。
 
-辅助入口可按 API key 配置模型转换和 effort 上限，返回客户端的协议模型身份会还原，主服务收到转换后的请求。配置和限制见[按 key 转换模型](/zh-cn/reference/configuration/fork-extensions/#按-key-转换模型)。
+辅助入口可按 API key 配置模型转换和 effort 上限。规则变更在下个 HTTP 请求或已连接 WebSocket 的下个独立新回合生效。返回客户端的协议模型身份会还原，主服务收到转换后的请求。配置和限制见[按 key 转换模型](/zh-cn/reference/configuration/fork-extensions/#按-key-转换模型)。
 
 加密子任务恢复增加 strict backend envelope、原生 transient 5xx 重试耗尽后的单次重放，以及已准入父任务 `MESSAGE` 超时后的无密文通知。拒解密文是终局，不转发到普通第三方路由，也不写 continuation state；恢复保持显式启用。
 
