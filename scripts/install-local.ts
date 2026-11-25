@@ -39,6 +39,13 @@ const ANY_GUI_FONT_DECLARATION = /--font-ui:[^;}]*/g;
 const GUI_LOGS_SCROLL_RULE = ".logs-table-wrap{position:relative}";
 const GUI_LOGS_SCROLL_PATCH = `\n/* install-local: logs scroll */\n${GUI_LOGS_SCROLL_RULE}\n`;
 const GUI_LOGS_TABLE_RULE = /(?:^|[{}])\s*\.logs-table-wrap\s*\{/;
+const GUI_COMBOS_SCROLL_FILE = "ocx_local_combos_scroll.css";
+const GUI_COMBOS_SCROLL_LINK = `<link rel="stylesheet" href="/assets/${GUI_COMBOS_SCROLL_FILE}">`;
+const GUI_COMBOS_SCROLL_CSS = [
+  "#models-panel-combos .combos-workspace-shell-body>.rb-suggest-policy>.rb-suggest{flex:0 0 auto;max-height:40vh;overflow:auto;margin:0 16px 12px}",
+  "#models-panel-combos .combos-workspace-shell-body>.combos-workspace-root{flex:1 1 0;min-height:0;height:auto}",
+  "",
+].join("\n");
 
 export function patchBuiltGuiFontStack(
   assetsDir = join(root, "gui", "dist", "assets"),
@@ -136,6 +143,38 @@ export function assertGuiLogsScroll(assetsDir: string, label = "gui/dist/assets"
       throw new Error(`${label} is missing the logs table scroll patch at the end of a target CSS file`);
     }
   }
+}
+
+function guiCombosScrollFiles(distDir: string): { indexPath: string; cssPath: string; html: string } {
+  const indexPath = join(distDir, "index.html");
+  const assetsDir = join(distDir, "assets");
+  const indexStat = lstatSync(indexPath);
+  if (!lstatSync(assetsDir).isDirectory() || realpathSync(assetsDir) !== resolve(assetsDir)
+    || !indexStat.isFile() || indexStat.nlink !== 1) {
+    throw new Error("combo scroll patch requires a regular GUI index and assets directory");
+  }
+  return { indexPath, cssPath: join(assetsDir, GUI_COMBOS_SCROLL_FILE), html: readFileSync(indexPath, "utf8") };
+}
+
+export function assertGuiCombosScroll(distDir: string): void {
+  const { cssPath, html } = guiCombosScrollFiles(distDir);
+  if (html.split(GUI_COMBOS_SCROLL_FILE).length !== 2
+    || !html.includes(`${GUI_COMBOS_SCROLL_LINK}\n  </head>`)
+    || !lstatSync(cssPath).isFile() || readFileSync(cssPath, "utf8") !== GUI_COMBOS_SCROLL_CSS) {
+    throw new Error("GUI is missing its combo scroll stylesheet or index link");
+  }
+}
+
+export function patchBuiltGuiCombosScroll(distDir = join(root, "gui", "dist")): void {
+  const { indexPath, cssPath, html } = guiCombosScrollFiles(distDir);
+  if (html.includes(GUI_COMBOS_SCROLL_FILE)) {
+    assertGuiCombosScroll(distDir);
+    return;
+  }
+  if (html.split("</head>").length !== 2) throw new Error("GUI index must contain one closing head tag");
+  writeFileSync(cssPath, GUI_COMBOS_SCROLL_CSS, { flag: "wx" });
+  writeFileSync(indexPath, html.replace("</head>", `  ${GUI_COMBOS_SCROLL_LINK}\n  </head>`), "utf8");
+  assertGuiCombosScroll(distDir);
 }
 
 export function localInstallRestartArgs(serviceWasInstalled: boolean): string[] {
@@ -957,6 +996,7 @@ function verifyLocalPackageTree(packageDir: string, name: string, version: strin
   const cli = validated && validatedPackageCli(validated.root);
   if (!validated || !cli) throw new Error("package identity or CLI entrypoint is invalid");
   assertGuiFontStack(join(validated.root, "gui", "dist", "assets"), "installed gui/dist/assets");
+  assertGuiCombosScroll(join(validated.root, "gui", "dist"));
   assertGuiLogsScroll(join(validated.root, "gui", "dist", "assets"), "installed gui/dist/assets");
   assertGuiLogsScroll(join(validated.root, "gui", "dist", "classic", "assets"), "installed gui/dist/classic/assets");
   return { root: validated.root, cli };
@@ -1096,7 +1136,8 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
     patch: () => {
       console.log("==> Patching built GUI font stack...");
       const fontPatch = patchBuiltGuiFontStack();
-      console.log("==> Patching built GUI logs table scroll...");
+      console.log("==> Patching built GUI scroll styles...");
+      patchBuiltGuiCombosScroll();
       patchBuiltGuiLogsScroll();
       patchBuiltGuiLogsScroll(join(root, "gui", "dist", "classic", "assets"), "built gui/dist/classic/assets");
       return fontPatch;
@@ -1168,7 +1209,7 @@ export async function runLocalInstaller(args = process.argv.slice(2)): Promise<n
         if (versionResult.status !== 0 || versionResult.stdout.trim() !== `opencodex ${version}`) {
           throw new Error("installed CLI version did not match the package transaction target");
         }
-        console.log("    installed GUI font stack and logs table scroll patch verified");
+        console.log("    installed GUI font stack and scroll patches verified");
         localInstallAfterReplace(serviceWasInstalled, restart);
       },
       restart: () => {
